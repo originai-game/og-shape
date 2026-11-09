@@ -415,6 +415,80 @@ mod tests {
     }
 
     #[test]
+    fn a_bulge_makes_an_arc_edge_whichever_way_the_points_run() {
+        let p = |x, y, bulge| PolyPoint {
+            x,
+            y,
+            bulge,
+            ..Default::default()
+        };
+        // A 10 × 10 square whose bottom edge bows out 5: a half circle.
+        let ccw = vec![
+            p(0.0, 0.0, 5.0),
+            p(10.0, 0.0, 0.0),
+            p(10.0, 10.0, 0.0),
+            p(0.0, 10.0, 0.0),
+        ];
+        let a = poly(&Poly {
+            points: ccw.clone(),
+        })
+        .unwrap();
+        let want = 100.0 + trig::PI * 25.0 / 2.0;
+        // 12 chords on the half circle lose about 1.1 % of its area.
+        assert!((a.area() - want).abs() / want < 5e-3, "{}", a.area());
+        // The same outline listed clockwise: the bulge stays on its edge.
+        let mut cw: Vec<PolyPoint> = ccw.iter().rev().copied().collect();
+        for q in &mut cw {
+            q.bulge = 0.0;
+        }
+        cw[2].bulge = 5.0; // the edge (10, 0) → (0, 0)
+        let b = poly(&Poly { points: cw }).unwrap();
+        assert!((a.area() - b.area()).abs() < 1e-9);
+        // Bowing in takes the half circle out; the ends are corners.
+        let inward = poly(&Poly {
+            points: vec![
+                p(0.0, 0.0, -5.0),
+                p(10.0, 0.0, 0.0),
+                p(10.0, 10.0, 0.0),
+                p(0.0, 10.0, 0.0),
+            ],
+        })
+        .unwrap();
+        let want = 100.0 - trig::PI * 25.0 / 2.0;
+        assert!((inward.area() - want).abs() / want < 1e-2);
+        let c = &inward.regions[0].outer;
+        assert_eq!(c.sharp.iter().filter(|s| **s).count(), 4);
+        // A rounded corner next to an arc is refused.
+        let mut round = ccw;
+        round[1].radius = 1.0;
+        assert_eq!(
+            poly(&Poly { points: round }),
+            Err(ProfileError::ArcCorner(1))
+        );
+    }
+
+    #[test]
+    fn polygon_flats_set_the_size_across_the_flats() {
+        let hex = polygon(&Polygon {
+            sides: 6,
+            flats: 10.0,
+            ..Default::default()
+        })
+        .unwrap();
+        let ys = hex.regions[0].outer.points.iter().map(|p| p.y);
+        let (lo, hi) = ys.fold((0.0f64, 0.0f64), |(a, b), y| (a.min(y), b.max(y)));
+        assert!((hi - lo - 10.0).abs() < 1e-12, "{}", hi - lo);
+        assert_eq!(
+            polygon(&Polygon {
+                sides: 6,
+                radius: 5.0,
+                flats: 10.0
+            }),
+            Err(ProfileError::Conflict("radius and flats"))
+        );
+    }
+
+    #[test]
     fn bad_sizes_are_error_values() {
         assert_eq!(
             circle(&Circle::default()),

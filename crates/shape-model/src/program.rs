@@ -293,10 +293,22 @@ impl Session {
             "box" | "cylinder" | "cone" | "sphere" | "dome" | "tube" | "torus" | "wedge"
             | "extrude" | "revolve" | "sweep" | "loft" | "thread" | "wire" | "body" | "knurl"
             | "gear" => {
+                // Everything is read and checked before the part is added,
+                // so a failing operation leaves the model as it was.
+                let on = match a.opt("on") {
+                    Some(_) => {
+                        let f = a.frame("on")?;
+                        if !f.is_rigid(1e-9) {
+                            return Err(a.bad("on", "a frame: finite, orthonormal, right-handed"));
+                        }
+                        Some(f)
+                    }
+                    None => None,
+                };
                 let solid = generate(a)?;
                 let i = m.add(a.str("name")?, solid)?;
-                if a.opt("on").is_some() {
-                    m.at(i, &a.frame("on")?)?;
+                if let Some(f) = on {
+                    m.at(i, &f)?;
                 }
                 Ok((id(i), true))
             }

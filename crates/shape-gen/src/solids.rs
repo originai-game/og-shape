@@ -1001,4 +1001,27 @@ mod tests {
         );
         assert_eq!(revolve(&p, &Revolve::default()), Err(GenError::CrossesAxis));
     }
+
+    #[test]
+    fn a_part_torus_is_its_share_of_the_ring() {
+        let d = TorusDesc {
+            radius: 10.0,
+            tube_radius: 2.0,
+            segments: 32,
+            tube_segments: 16,
+            ..Default::default()
+        };
+        let whole = torus_desc(&d).unwrap().measure();
+        let quarter = torus_desc(&TorusDesc {
+            angle: trig::PI / 2.0,
+            ..d
+        })
+        .unwrap()
+        .measure();
+        assert!(quarter.closed);
+        // 8 of the ring's 32 steps, exactly the same sections.
+        assert!((quarter.volume * 4.0 - whole.volume).abs() < 1e-9 * whole.volume);
+        let m = torus_desc(&TorusDesc { segments: 2, ..d });
+        assert!(matches!(m, Err(GenError::Invalid(_))));
+    }
 }
