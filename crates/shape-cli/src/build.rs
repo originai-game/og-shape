@@ -1,48 +1,47 @@
 //! `shape build <program.json>`: replays the program and reports what it
 //! built, as JSON: the parts with their triangle counts and the joints.
 
-use crate::args::{Args, Failure, failed, load};
+use shape_model::Model;
+use shape_tools::Import;
 
-pub fn run(a: Args) -> Result<String, Failure> {
-    a.only(&[])?;
-    let model = load(&a.program()?)?;
+use crate::args::Args;
+use crate::report::{array, object, string};
+use crate::source::{Local, Source, load};
+use crate::{Failure, failed};
+
+/// The built model's name and parts: each part's name, parent, joint
+/// (or null) and triangle count.
+pub fn report(model: &Model) -> Result<String, Failure> {
     let built = model.build().map_err(failed)?;
     let scene = built.scene();
     let parts: Vec<String> = scene
         .parts
         .iter()
         .map(|p| {
-            let joint = p
-                .joint
-                .as_ref()
-                .map_or("null".to_string(), |j| json_str(&j.name));
-            format!(
-                "{{\"name\":{},\"parent\":{},\"joint\":{},\"triangles\":{}}}",
-                json_str(&p.name),
-                json_str(&p.parent),
-                joint,
-                p.solid.triangles.len()
-            )
+            object(&[
+                ("name", string(&p.name)),
+                ("parent", string(&p.parent)),
+                (
+                    "joint",
+                    p.joint.as_ref().map_or("null".into(), |j| string(&j.name)),
+                ),
+                ("triangles", p.solid.triangles.len().to_string()),
+            ])
         })
         .collect();
-    Ok(format!(
-        "{{\"name\":{},\"parts\":[{}]}}",
-        json_str(&scene.name),
-        parts.join(",")
-    ))
+    Ok(object(&[
+        ("name", string(&scene.name)),
+        ("parts", array(&parts)),
+    ]))
 }
 
-/// A JSON string literal.
-fn json_str(s: &str) -> String {
-    let mut out = String::from("\"");
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
+/// The command line.
+pub fn run(a: &Args) -> Result<String, Failure> {
+    a.only(&[])?;
+    match load(&Local, &a.input()?, &Import::default())? {
+        Source::Program(m) => report(&m),
+        Source::Mesh(_) => Err(Failure::Usage(
+            "build takes a program; `shape import` reports a mesh file".into(),
+        )),
     }
-    out.push('"');
-    out
 }

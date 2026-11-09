@@ -1,10 +1,80 @@
-//! `shape measure <program.json>`: measures of every part and of the
-//! whole model as JSON (`docs/design.md` §7), with no thresholds.
+//! `shape measure <program.json | mesh>`: measures as JSON
+//! (`docs/design.md` §7), with no thresholds. A program gives every part
+//! and the whole model (`shape_model::program::measures_json`); a mesh
+//! file gives every part placed, and the parts joined
+//! (`shape_tools::MeshMeasures`, null for a skinned file, which cannot be
+//! joined).
 
-use crate::args::{Args, Failure, failed, load};
+use shape_tools::Measure;
 
-pub fn run(a: Args) -> Result<String, Failure> {
-    a.only(&[])?;
-    let model = load(&a.program()?)?;
-    shape_model::program::measures_json(&model).map_err(failed)
+use crate::args::{Args, IMPORT_OPTIONS};
+use crate::report::{array, object, string};
+use crate::source::{Local, Mesh, Source, load};
+use crate::{Failure, failed};
+
+/// What to measure besides the defaults. The zero value skips the exact
+/// self-intersection count.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MeasureDesc {
+    /// Meshes only: count self-intersecting triangle pairs (exact; costs a
+    /// sweep over the triangles).
+    pub intersections: bool,
+}
+
+/// The measures of a program or a mesh.
+pub fn measure(source: &Source, d: &MeasureDesc) -> Result<String, Failure> {
+    match source {
+        Source::Program(m) => shape_model::program::measures_json(m).map_err(failed),
+        Source::Mesh(mesh) => mesh_measures(mesh, d),
+    }
+}
+
+fn mesh_measures(mesh: &Mesh, d: &MeasureDesc) -> Result<String, Failure> {
+    let placed = mesh.placed()?;
+    let parts: Vec<String> = placed
+        .iter()
+        .zip(&mesh.imported.parts)
+        .map(|((name, s), p)| {
+            let m = shape_tools::measure(
+                s,
+                &Measure {
+                    uvs: p.uvs.as_deref(),
+                    intersections: d.intersections,
+                    ..Default::default()
+                },
+            );
+            object(&[("name", string(name)), ("measures", m.to_json())])
+        })
+        .collect();
+    let whole = if mesh.skinned() {
+        "null".to_string()
+    } else {
+        shape_tools::measure(
+            &mesh.joined()?,
+            &Measure {
+                images: &mesh.imported.images,
+                intersections: d.intersections,
+                ..Default::default()
+            },
+        )
+        .to_json()
+    };
+    Ok(object(&[
+        ("name", string(&mesh.name)),
+        ("format", string(&mesh.format)),
+        ("parts", array(&parts)),
+        ("whole", whole),
+    ]))
+}
+
+/// The command line.
+pub fn run(a: &Args) -> Result<String, Failure> {
+    a.only(&[IMPORT_OPTIONS[0], IMPORT_OPTIONS[1], "--intersections"])?;
+    let source = load(&Local, &a.input()?, &a.import()?)?;
+    measure(
+        &source,
+        &MeasureDesc {
+            intersections: a.switch("--intersections"),
+        },
+    )
 }

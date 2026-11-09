@@ -1,17 +1,13 @@
-//! Command-line arguments: one positional program path and `--flag value`
+//! Command-line arguments: one positional input path and `--flag value`
 //! options, read by name.
+//!
+//! Entry: [`Args`].
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use shape_model::Model;
+use shape_tools::Import;
 
-/// Why a command did not run.
-pub enum Failure {
-    /// The command line was wrong.
-    Usage(String),
-    /// The command ran and failed.
-    Failed(String),
-}
+use crate::{Failure, Input};
 
 /// The arguments after the command name.
 pub struct Args {
@@ -20,7 +16,15 @@ pub struct Args {
 }
 
 /// Flags that take no value.
-const SWITCHES: [&str; 2] = ["--no-edges", "--no-ground"];
+const SWITCHES: [&str; 7] = [
+    "--no-edges",
+    "--no-ground",
+    "--weld-all",
+    "--fuse",
+    "--lock-border",
+    "--intersections",
+    "--z-up",
+];
 
 impl Args {
     /// Splits `-o x`, `--name value` and switches from positionals.
@@ -48,16 +52,24 @@ impl Args {
         }
     }
 
-    /// The one program path.
-    pub fn program(&self) -> Result<PathBuf, Failure> {
+    /// The one input path: a program or a mesh file.
+    pub fn input(&self) -> Result<Input, Failure> {
         match &self.positional[..] {
-            [p] => Ok(PathBuf::from(p)),
-            [] => Err(Failure::Usage("no program given".into())),
+            [p] => Ok(Input::Path(PathBuf::from(p))),
+            [] => Err(Failure::Usage("no input given".into())),
             _ => Err(Failure::Usage(format!(
-                "one program, not {:?}",
+                "one input, not {:?}",
                 self.positional
             ))),
         }
+    }
+
+    /// How to read an OBJ file: `--unit-mm` and `--z-up`.
+    pub fn import(&self) -> Result<Import, Failure> {
+        Ok(Import {
+            unit_mm: self.number("--unit-mm")?.unwrap_or(0.0),
+            z_up: self.switch("--z-up"),
+        })
     }
 
     /// The value of `--name` (or its short form), if given.
@@ -100,26 +112,15 @@ impl Args {
 
     /// The output path (`-o` / `--out`).
     pub fn out(&self) -> Result<PathBuf, Failure> {
-        self.value(&["-o", "--out"])?
-            .map(PathBuf::from)
+        self.out_opt()?
             .ok_or_else(|| Failure::Usage("no output: -o <path>".into()))
+    }
+
+    /// The output path, if given.
+    pub fn out_opt(&self) -> Result<Option<PathBuf>, Failure> {
+        Ok(self.value(&["-o", "--out"])?.map(PathBuf::from))
     }
 }
 
-/// Reads and replays a program.
-pub fn load(path: &Path) -> Result<Model, Failure> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| Failure::Failed(format!("{}: {e}", path.display())))?;
-    shape_model::program::run(&text)
-        .map_err(|e| Failure::Failed(format!("{}: {e}", path.display())))
-}
-
-/// Writes bytes to a file.
-pub fn write(path: &Path, bytes: &[u8]) -> Result<(), Failure> {
-    std::fs::write(path, bytes).map_err(|e| Failure::Failed(format!("{}: {e}", path.display())))
-}
-
-/// A model error as a failure.
-pub fn failed(e: impl std::fmt::Display) -> Failure {
-    Failure::Failed(e.to_string())
-}
+/// The options every command that reads a mesh takes.
+pub const IMPORT_OPTIONS: [&str; 2] = ["--unit-mm", "--z-up"];
