@@ -182,6 +182,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "shape-mesh"
+version = "0.0.0"
+dependencies = [
+ "shape-core",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.16.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
