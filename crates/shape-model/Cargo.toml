@@ -1,0 +1,25 @@
+[package]
+name = "shape-model"
+description = "og-shape models: named parts, groups and assemblies, placement, joints, pose and materials, built into an export scene; and the JSON program a binding records."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+shape-core.workspace = true
+shape-2d.workspace = true
+shape-gen.workspace = true
+shape-mesh.workspace = true
+shape-bool.workspace = true
+shape-edit.workspace = true
+shape-bevel.workspace = true
+shape-tools.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+gltf = { version = "1.4.1", default-features = false, features = ["utils", "names", "extras"] }

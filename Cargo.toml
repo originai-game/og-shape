@@ -28,6 +28,8 @@ shape-mesh = { path = "crates/shape-mesh" }
 shape-edit = { path = "crates/shape-edit" }
 shape-tools = { path = "crates/shape-tools" }
 shape-bevel = { path = "crates/shape-bevel" }
+shape-model = { path = "crates/shape-model" }
+serde_json = { version = "1.0.154", default-features = false, features = ["std"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

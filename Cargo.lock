@@ -412,6 +412,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "shape-model"
+version = "0.0.0"
+dependencies = [
+ "gltf",
+ "serde_json",
+ "shape-2d",
+ "shape-bevel",
+ "shape-bool",
+ "shape-core",
+ "shape-edit",
+ "shape-gen",
+ "shape-mesh",
+ "shape-tools",
+]
+
+[[package]]
 name = "shape-tools"
 version = "0.0.0"
 dependencies = [
