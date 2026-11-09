@@ -129,6 +129,9 @@ pub fn face(s: &Solid, part: &str, which: &str) -> Result<Frame, ModelError> {
             .iter()
             .map(|&i| centroid(s, i).dot(dir))
             .fold(f64::NEG_INFINITY, f64::max);
+        if facing.is_empty() {
+            return Err(ModelError::NotFacing(part.into(), which.into()));
+        }
         let tol = 1e-6 * far.abs().max(1.0);
         facing
             .into_iter()

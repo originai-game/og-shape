@@ -46,6 +46,9 @@ pub enum ModelError {
     NotFlat(String, String),
     /// The edges named fork: a path follows a line (the part and the name).
     Forks(String, String),
+    /// No face of the part looks that way within 1° (the part and the
+    /// direction).
+    NotFacing(String, String),
     /// The faces or edges read have no area or no length.
     Degenerate(String),
     /// Not a side of a box: `+X`, an edge `+X-Y`, a corner `+X-Y+Z`.
@@ -116,6 +119,9 @@ impl fmt::Display for ModelError {
                 f,
                 "{p:?}: the edges named {n:?} fork; a path follows a line, not a junction"
             ),
+            ModelError::NotFacing(p, d) => {
+                write!(f, "no face of {p:?} looks {d} (within 1°)")
+            }
             ModelError::Degenerate(w) => write!(f, "{w} has no area or no length"),
             ModelError::BadSides(s) => write!(
                 f,

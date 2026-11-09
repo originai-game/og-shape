@@ -85,19 +85,7 @@ pub struct Session {
 
 /// Replays a program (`{"name": …, "ops": [...]}`) into a model.
 pub fn run(program: &str) -> Result<Model, ModelError> {
-    let v: Value =
-        serde_json::from_str(program).map_err(|e| ModelError::Program(format!("not JSON: {e}")))?;
-    let name = v.get("name").and_then(Value::as_str).unwrap_or("model");
-    let ops = v
-        .get("ops")
-        .and_then(Value::as_array)
-        .ok_or_else(|| ModelError::Program("no \"ops\" list".into()))?;
-    let mut s = Session::new(name);
-    for (i, op) in ops.iter().enumerate() {
-        s.apply_value(op)
-            .map_err(|e| ModelError::Program(format!("op {i}: {e}")))?;
-    }
-    Ok(s.model)
+    Ok(Session::replay(program)?.model)
 }
 
 impl Session {
@@ -107,6 +95,23 @@ impl Session {
             model: Model::new(name),
             ops: Vec::new(),
         }
+    }
+
+    /// Replays a program into a session that goes on recording.
+    pub fn replay(program: &str) -> Result<Session, ModelError> {
+        let v: Value = serde_json::from_str(program)
+            .map_err(|e| ModelError::Program(format!("not JSON: {e}")))?;
+        let name = v.get("name").and_then(Value::as_str).unwrap_or("model");
+        let ops = v
+            .get("ops")
+            .and_then(Value::as_array)
+            .ok_or_else(|| ModelError::Program("no \"ops\" list".into()))?;
+        let mut s = Session::new(name);
+        for (i, op) in ops.iter().enumerate() {
+            s.apply_value(op)
+                .map_err(|e| ModelError::Program(format!("op {i}: {e}")))?;
+        }
+        Ok(s)
     }
 
     /// The model so far.

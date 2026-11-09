@@ -1,0 +1,19 @@
+[package]
+name = "shape-cli"
+description = "The og-shape command line: build, export, measure and preview a model program."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "shape"
+path = "src/main.rs"
+
+[dependencies]
+shape-model.workspace = true
+shape-tools.workspace = true
+
+[lints]
+workspace = true

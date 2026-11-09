@@ -1,0 +1,471 @@
+/**
+ * og-shape: the private TypeScript binding over the kernel's wasm build
+ * (`docs/design.md` §3), in the engine's API style: zero-value desc
+ * objects with camelCase fields, errors thrown as `Error` with the
+ * kernel's message, three.js names where they fit.
+ *
+ * Entry: {@link load}. It gives an {@link Og}: `og.model({ name })` starts
+ * a {@link Shape} (one model), whose methods add, place, edit, group and
+ * joint parts and read frames back. Profiles are plain objects built by
+ * `og.rect`, `og.circle` and the others.
+ *
+ * Units: the model's (millimetres by default); angles in radians
+ * (`og.deg(90)`). Every frame is in the world at rest. Frames are turned
+ * in the kernel (wasm), never with JavaScript's `Math.sin`, so a program
+ * gives the same bytes on every host. `shape.program()` is the recorded
+ * program: `shape build/export/measure/preview` replay it natively.
+ */
+
+import { Model as WasmModel, initSync } from "../pkg/shape_wasm.js";
+
+export type Vec3 = [number, number, number];
+
+/** A frame as the kernel writes it. */
+export interface FrameData {
+  origin: Vec3;
+  x: Vec3;
+  y: Vec3;
+  z: Vec3;
+}
+
+/** A polyline in the world. */
+export interface Path {
+  points: Vec3[];
+  closed: boolean;
+}
+
+/** A profile: an object with one key (`{ rect: {...} }`), as `og.rect` gives. */
+export type Profile = Record<string, unknown>;
+
+/** A part or a group of a model. */
+export class Part {
+  constructor(
+    readonly id: number,
+    readonly name: string,
+  ) {}
+  toJSON(): number {
+    return this.id;
+  }
+}
+
+type Parts = Part | Part[];
+
+function list(p: Parts): Part[] {
+  return Array.isArray(p) ? p : [p];
+}
+
+/** A wasm call: the JSON answer, or the kernel's error thrown. */
+type Call = (op: string, fields: Record<string, unknown>) => any;
+
+/** A place to build on: an origin and right-handed axes, in the world. */
+export class Frame implements FrameData {
+  readonly origin: Vec3;
+  readonly x: Vec3;
+  readonly y: Vec3;
+  readonly z: Vec3;
+
+  /** @internal */
+  constructor(
+    d: FrameData,
+    private readonly call: Call,
+  ) {
+    this.origin = d.origin;
+    this.x = d.x;
+    this.y = d.y;
+    this.z = d.z;
+  }
+
+  private wrap(op: string, fields: Record<string, unknown>): Frame {
+    return new Frame(this.call(op, { frame: this, ...fields }), this.call);
+  }
+
+  /** The same frame moved `distance` along its normal (+z). */
+  offset(distance: number): Frame {
+    return this.wrap("offset", { distance });
+  }
+
+  /** The same frame moved along its own axes. */
+  move(x = 0, y = 0, z = 0): Frame {
+    return this.wrap("translate", { x, y, z });
+  }
+
+  /** The same frame turned about its own X, then Y, then Z (radians). */
+  turn(rx = 0, ry = 0, rz = 0): Frame {
+    return this.wrap("turn", { rx, ry, rz });
+  }
+
+  /** A frame given in this frame's coordinates, in the world. */
+  compose(local: FrameData): Frame {
+    return this.wrap("compose", { local });
+  }
+
+  toJSON(): FrameData {
+    return { origin: this.origin, x: this.x, y: this.y, z: this.z };
+  }
+}
+
+/** Where a generator puts its part: on a frame (its own space's origin there). */
+interface Placed {
+  name: string;
+  on?: FrameData;
+}
+
+export interface MaterialDesc {
+  /** The material's name in the file; empty takes the part's. */
+  name?: string;
+  /** sRGB `"#rrggbb"` or `[r, g, b]` in 0..1; white by default. */
+  color?: string | Vec3;
+  metalness?: number;
+  /** 1 by default (matte). */
+  roughness?: number;
+  emissive?: string | Vec3;
+  /** 1 by default; below 1 the material blends. */
+  opacity?: number;
+}
+
+export type JointKind = "revolute" | "continuous" | "prismatic" | "fixed" | "floating";
+
+export interface JointDesc {
+  name: string;
+  /** The part (or group) the child moves on. */
+  parent: Part;
+  kind?: JointKind;
+  /** The pivot, in the world at rest. */
+  on: FrameData;
+  /** A world direction, `"+X"`…`"-Z"` or `[x, y, z]`; `on`'s normal by default. */
+  axis?: string | Vec3;
+  /** Radians for turns, the model's unit for slides; revolute and prismatic need one. */
+  range?: [number, number];
+  /** This joint's value is `multiplier` × another's. */
+  mimic?: { joint: string; multiplier?: number };
+}
+
+export interface PreviewDesc {
+  /** Pixels across a view; 256 by default. */
+  width?: number;
+  height?: number;
+  /** Views round the turntable; 4 by default. */
+  views?: number;
+  /** Views a row; all in one row by default. */
+  columns?: number;
+  /** Radians above the horizon; 25° by default. */
+  elevation?: number;
+  /** Radians from the front (the kernel's −Y side). */
+  azimuth?: number;
+  noEdges?: boolean;
+  noGround?: boolean;
+}
+
+/** One model. Every method is one kernel operation. */
+export class Shape {
+  /** @internal */
+  constructor(
+    private readonly m: WasmModel,
+    private readonly call: Call,
+  ) {}
+
+  private part(op: string, fields: Record<string, unknown>): Part {
+    const r = this.call(op, fields);
+    return new Part(r.id, String(fields.name));
+  }
+
+  private frame(op: string, fields: Record<string, unknown>): Frame {
+    return new Frame(this.call(op, fields), this.call);
+  }
+
+  private frames(op: string, fields: Record<string, unknown>): Frame[] {
+    return this.call(op, fields).frames.map((f: FrameData) => new Frame(f, this.call));
+  }
+
+  // ── generators: each makes a named part, in its own space or `on` a frame ──
+
+  /** A box centred in x and y, from z = 0 up. */
+  box(d: Placed & { width: number; depth: number; height: number }): Part {
+    return this.part("box", d);
+  }
+  /** A cylinder on z = 0 about z (`radiusTop` for a frustum). */
+  cylinder(d: Placed & { radius: number; height: number; radiusTop?: number }): Part {
+    return this.part("cylinder", d);
+  }
+  cone(d: Placed & { radius: number; height: number }): Part {
+    return this.part("cone", d);
+  }
+  /** A tube on z = 0: `outer` and `inner` radii. */
+  tube(d: Placed & { outer: number; inner: number; height: number }): Part {
+    return this.part("tube", d);
+  }
+  sphere(d: Placed & { radius: number }): Part {
+    return this.part("sphere", d);
+  }
+  dome(d: Placed & { radius: number }): Part {
+    return this.part("dome", d);
+  }
+  torus(d: Placed & { radius: number; tube: number }): Part {
+    return this.part("torus", d);
+  }
+  wedge(d: Placed & { width: number; height: number; depth: number }): Part {
+    return this.part("wedge", d);
+  }
+  /** A profile extruded along +z. */
+  extrude(
+    d: Placed & { profile: Profile; height: number; twist?: number; taper?: number; bothSides?: boolean },
+  ): Part {
+    return this.part("extrude", d);
+  }
+  /** A profile (x the radius) turned about +y. */
+  revolve(d: Placed & { profile: Profile; angle?: number }): Part {
+    return this.part("revolve", d);
+  }
+  sweep(d: Placed & { profile: Profile; path: Vec3[]; up?: Vec3; twist?: number; scaleEnd?: number }): Part {
+    return this.part("sweep", d);
+  }
+  loft(d: Placed & { sections: { profile: Profile; z: number }[]; samples?: number; steps?: number }): Part {
+    return this.part("loft", d);
+  }
+  thread(d: Placed & { radius: number; pitch: number; length: number; depth: number }): Part {
+    return this.part("thread", d);
+  }
+
+  // ── placement ──
+
+  /** Puts the part's own space on `frame`; what is under it moves along. */
+  at(part: Part, frame: FrameData): void {
+    this.call("at", { id: part, frame });
+  }
+  /** Moves the part by a rigid motion of the world. */
+  transform(part: Part, frame: FrameData): void {
+    this.call("transform", { id: part, frame });
+  }
+  /** The frame of a named face (or the face furthest along `"+X"`…): origin at its centroid, +z its normal. */
+  face(part: Part, name: string): Frame {
+    return this.frame("face", { id: part, name });
+  }
+  /** The named edges as a path in the world. */
+  edge(part: Part, name: string): Path {
+    return this.call("edge", { id: part, name });
+  }
+  /** A frame on the bounding box: `"+X"`, `"+X-Y"`, `"+X-Y+Z"`. */
+  bbox(parts: Parts, sides: string): Frame {
+    return this.frame("bbox", { ids: list(parts), sides });
+  }
+  /** A frame of the part's own space, in the world. */
+  local(part: Part, frame: FrameData): Frame {
+    return this.frame("local", { id: part, frame });
+  }
+  placement(part: Part): Frame {
+    return this.frame("placement", { id: part });
+  }
+  anchor(assembly: Part, name: string): Frame {
+    return this.frame("anchor", { id: assembly, name });
+  }
+  grid(d: { nx: number; ny?: number; px?: number; py?: number; stagger?: boolean; on?: FrameData }): Frame[] {
+    return this.frames("grid", d);
+  }
+  ring(d: { n: number; radius: number; start?: number; angle?: number; on?: FrameData }): Frame[] {
+    return this.frames("ring", d);
+  }
+  along(path: Path, d: { pitch?: number; count?: number }): Frame[] {
+    return this.frames("along", { path, ...d });
+  }
+  snap(parts: Parts, d: { points: Vec3[]; direction?: Vec3 }): Frame[] {
+    return this.frames("snap", { ids: list(parts), ...d });
+  }
+  /** The face and edge names a part carries. */
+  names(part: Part): { faces: string[]; edges: string[] } {
+    return this.call("names", { id: part });
+  }
+
+  // ── structure ──
+
+  group(d: { name: string; children: Part[] }): Part {
+    return this.part("group", d);
+  }
+  assembly(d: { name: string; children: Part[]; anchors?: Record<string, FrameData> }): Part {
+    return this.part("assembly", d);
+  }
+  attach(assembly: Part, d: { name: string; children: Part[] }): Part {
+    return this.part("attach", { to: assembly, ...d });
+  }
+  copy(part: Part, name: string): Part {
+    return this.part("copy", { id: part, name });
+  }
+  /** A mirror image across the plane's XY (its normal is +z). */
+  mirror(part: Part, d: { plane: FrameData; name: string }): Part {
+    return this.part("mirror", { id: part, ...d });
+  }
+
+  // ── edits ──
+
+  /** `target` minus `tool`; the tool is used up. */
+  cut(target: Part, tool: Part): void {
+    this.call("cut", { target, tool });
+  }
+  join(target: Part, tool: Part): void {
+    this.call("join", { target, tool });
+  }
+  intersect(target: Part, tool: Part): void {
+    this.call("intersect", { target, tool });
+  }
+  /** Cuts the volume `part` fills out of `host`; `part` stays. */
+  seat(host: Part, part: Part): void {
+    this.call("seat", { host, part });
+  }
+  hole(
+    part: Part,
+    d: { diameter: number; at: FrameData | FrameData[]; depth?: number; counterbore?: [number, number]; countersink?: [number, number] },
+  ): void {
+    this.call("hole", { id: part, ...d });
+  }
+  pocket(part: Part, d: { profile: Profile; depth?: number; at?: FrameData | FrameData[] }): void {
+    this.call("pocket", { id: part, ...d });
+  }
+  split(part: Part, d: { frame: FrameData; keep?: "above" | "below" }): void {
+    this.call("split", { id: part, ...d });
+  }
+  shell(part: Part, d: { thickness: number; open?: string | string[] }): void {
+    this.call("shell", { id: part, ...d });
+  }
+  dent(part: Part, d: { at: Vec3[]; radius: number; depth: number }): void {
+    this.call("dent", { id: part, ...d });
+  }
+  fillet(part: Part, d: { radius: number; edges?: string | string[]; segments?: number; profile?: number }): void {
+    this.call("fillet", { id: part, ...d });
+  }
+  chamfer(
+    part: Part,
+    d: { distance: number; distance2?: number; angle?: number; edges?: string | string[]; segments?: number },
+  ): void {
+    this.call("chamfer", { id: part, ...d });
+  }
+  soften(part: Part, d: { radius: number; angle?: number; edges?: string | string[]; segments?: number }): void {
+    this.call("soften", { id: part, ...d });
+  }
+
+  // ── materials, joints, pose ──
+
+  material(parts: Parts, d: MaterialDesc): void {
+    this.call("material", { ids: list(parts), ...d });
+  }
+  /** How `child` moves on `d.parent`. Several on one child compose in order. */
+  joint(child: Part, d: JointDesc): void {
+    this.call("joint", { child, ...d });
+  }
+  /** Poses a joint (radians or the unit), within its range. */
+  pose(joint: string, value: number): void {
+    this.call("pose", { joint, value });
+  }
+
+  // ── output ──
+
+  /** Measures of every part and of the whole model. */
+  measure(): any {
+    return JSON.parse(this.m.measure());
+  }
+  /** The posed model as GLB: metres, Y up, joints as `s3d_joint` extras. */
+  glb(): Uint8Array {
+    return this.m.glb();
+  }
+  obj(): string {
+    return this.m.obj();
+  }
+  stl(): Uint8Array {
+    return this.m.stl();
+  }
+  /** A turntable of the posed model as one PNG, from the CPU rasterizer. */
+  preview(d: PreviewDesc = {}): Uint8Array {
+    return this.m.preview(
+      d.width ?? 0,
+      d.height ?? 0,
+      d.views ?? 0,
+      d.columns ?? 0,
+      d.elevation ?? -1,
+      d.azimuth ?? 0,
+      d.noEdges ?? false,
+      d.noGround ?? false,
+    );
+  }
+  /** The recorded program (JSON), which `shape` replays to the same bytes. */
+  program(): string {
+    return this.m.program();
+  }
+  /** Frees the model's wasm memory. */
+  free(): void {
+    this.m.free();
+  }
+}
+
+function caller(m: WasmModel): Call {
+  return (op, fields) => JSON.parse(m.apply(JSON.stringify({ op, ...fields })));
+}
+
+/** The loaded kernel. */
+export interface Og {
+  /** A new, empty model. */
+  model(d: { name: string; units?: "mm" | "cm" | "m" }): Shape;
+  /** A model replayed from a recorded program. */
+  replay(program: string): Shape;
+  /** A frame at `origin` looking along `normal` (face axes), or with Y toward `up`. */
+  frame(d: { origin?: Vec3; normal?: Vec3; up?: Vec3 }): Frame;
+  /** The world frame. */
+  readonly world: Frame;
+  /** Degrees to radians. */
+  deg(degrees: number): number;
+  rect(d: { width: number; height: number; radius?: number }): Profile;
+  circle(d: { radius: number; segments?: number }): Profile;
+  ellipse(d: { rx: number; ry: number; segments?: number }): Profile;
+  slot(d: { length: number; width: number }): Profile;
+  polygon(d: { sides: number; radius: number }): Profile;
+  poly(d: { points: ([number, number] | { x: number; y: number; radius?: number })[] }): Profile;
+  gear(d: { teeth: number; module: number; pressureAngle?: number }): Profile;
+  union(...profiles: Profile[]): Profile;
+  subtract(...profiles: Profile[]): Profile;
+  intersect(...profiles: Profile[]): Profile;
+}
+
+/**
+ * Loads the kernel. `wasm` is the module's bytes (or a compiled module);
+ * by default it is read from `../pkg/shape_wasm_bg.wasm` with `node:fs`
+ * (bun and node).
+ */
+export async function load(wasm?: BufferSource | WebAssembly.Module): Promise<Og> {
+  let module = wasm;
+  if (module === undefined) {
+    const fs = await import("node:fs");
+    module = fs.readFileSync(new URL("../pkg/shape_wasm_bg.wasm", import.meta.url));
+  }
+  initSync({ module });
+  // Frames are pure: they are turned by a model that records nothing.
+  const frames = new WasmModel("frames");
+  const call = caller(frames);
+  const og: Og = {
+    model(d) {
+      const m = new WasmModel(d.name);
+      const shape = new Shape(m, caller(m));
+      if (d.units !== undefined) caller(m)("units", { unit: d.units });
+      return shape;
+    },
+    replay(program) {
+      const m = WasmModel.replay(program);
+      return new Shape(m, caller(m));
+    },
+    frame(d) {
+      return new Frame(
+        call("frame", { origin: d.origin ?? [0, 0, 0], normal: d.normal ?? [0, 0, 1], up: d.up }),
+        call,
+      );
+    },
+    world: new Frame({ origin: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }, call),
+    deg: (degrees) => (degrees * Math.PI) / 180,
+    rect: (d) => ({ rect: d }),
+    circle: (d) => ({ circle: d }),
+    ellipse: (d) => ({ ellipse: d }),
+    slot: (d) => ({ slot: d }),
+    polygon: (d) => ({ polygon: d }),
+    poly: (d) => ({ poly: d }),
+    gear: (d) => ({ gear: d }),
+    union: (...p) => ({ union: p }),
+    subtract: (...p) => ({ subtract: p }),
+    intersect: (...p) => ({ intersect: p }),
+  };
+  return og;
+}
