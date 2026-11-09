@@ -69,8 +69,79 @@ const CAPS: [&str; 4] = ["top", "bottom", "start", "end"];
 /// cos 0.5°: faces closer than this are coplanar for the naming rule.
 const COPLANAR_COS: f64 = 0.999_961_923_064_171_3;
 
-/// `target op tool`, with names carried through.
+/// The solid's connected pieces (sharing a vertex after exact welding),
+/// each a solid with its names, in canonical order.
+pub fn components(s: &Solid) -> Vec<Solid> {
+    let mut parent: Vec<u32> = (0..s.positions.len() as u32).collect();
+    fn find(p: &mut [u32], mut i: u32) -> u32 {
+        while p[i as usize] != i {
+            p[i as usize] = p[p[i as usize] as usize];
+            i = p[i as usize];
+        }
+        i
+    }
+    for t in &s.triangles {
+        for k in 1..3 {
+            let (a, b) = (find(&mut parent, t[0]), find(&mut parent, t[k]));
+            if a != b {
+                parent[a.max(b) as usize] = a.min(b);
+            }
+        }
+    }
+    let mut groups: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    for (i, t) in s.triangles.iter().enumerate() {
+        groups.entry(find(&mut parent, t[0])).or_default().push(i);
+    }
+    groups
+        .into_values()
+        .map(|tris| {
+            let mut c = Solid {
+                positions: s.positions.clone(),
+                ..Default::default()
+            };
+            for i in tris {
+                let tags: Vec<&str> = s.face_tags[i].iter().map(|&x| s.names.name(x)).collect();
+                c.push_triangle(s.triangles[i], s.surfaces[i], &tags);
+            }
+            for (&(a, b), tags) in &s.edge_tags {
+                let tags: Vec<&str> = tags.iter().map(|&x| s.names.name(x)).collect();
+                c.tag_edge(a, b, &tags);
+            }
+            // Canonicalize drops the other pieces' vertices and edges.
+            let _ = c.canonicalize();
+            c
+        })
+        .collect()
+}
+
+/// Fuses a solid made of several closed shells (`merge`, or a provider's
+/// interpenetrating parts) into one by joining them in turn. A solid of
+/// one piece comes back as it is.
+pub fn fuse(s: &Solid) -> Result<Solid, BoolError> {
+    let mut parts = components(s).into_iter();
+    let Some(mut acc) = parts.next() else {
+        return Err(BoolError::Empty);
+    };
+    for p in parts {
+        acc = boolean_once(&acc, &p, &Boolean::default())?;
+    }
+    Ok(acc)
+}
+
+/// `target op tool`, with names carried through. An operand of several
+/// shells is fused first ([`fuse`]).
 pub fn boolean(target: &Solid, tool: &Solid, d: &Boolean) -> Result<Solid, BoolError> {
+    let fused = |s: &Solid| {
+        if components(s).len() > 1 {
+            fuse(s)
+        } else {
+            Ok(s.clone())
+        }
+    };
+    boolean_once(&fused(target)?, &fused(tool)?, d)
+}
+
+fn boolean_once(target: &Solid, tool: &Solid, d: &Boolean) -> Result<Solid, BoolError> {
     let op = match d.op {
         BoolOp::Join => CsgOp::Union,
         BoolOp::Cut => CsgOp::Subtract,
@@ -292,6 +363,21 @@ mod tests {
         assert!(s.measure().closed);
         // The pin's bottom rim lies on the plate's top: a real edge (cut).
         assert!(!s.edges(&["cut"]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn overlapping_shells_are_fused_before_a_boolean() {
+        let mut two = plate();
+        let mut other = plate();
+        other.map_positions(|p| p + DVec3::new(20.0, 10.0, 3.0), false);
+        two.append(&other);
+        two.canonicalize().unwrap();
+        assert_eq!(components(&two).len(), 2);
+        let f = fuse(&two).unwrap();
+        let m = f.measure();
+        assert!(m.closed && m.components == 1);
+        let want = 2.0 * 80.0 * 40.0 * 6.0 - 60.0 * 30.0 * 3.0;
+        assert!((m.volume - want).abs() < 1e-6, "{}", m.volume);
     }
 
     #[test]

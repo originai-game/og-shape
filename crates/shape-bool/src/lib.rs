@@ -11,4 +11,4 @@ pub mod fracture;
 pub mod named;
 
 pub use csg::{CsgOp, OperandError, csg, csg_points, csg_traced};
-pub use named::{BoolError, BoolOp, Boolean, boolean};
+pub use named::{BoolError, BoolOp, Boolean, boolean, components, fuse};

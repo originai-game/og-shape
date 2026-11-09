@@ -288,6 +288,107 @@ pub fn cases() -> Vec<Case> {
                 )
             },
         },
+        Case {
+            name: "edit.holes.pocket",
+            run: |h| {
+                let plate = cuboid(&BoxDesc {
+                    width: 80.0,
+                    depth: 50.0,
+                    height: 10.0,
+                })
+                .unwrap();
+                let at = [(-30.0, -15.0), (30.0, -15.0), (-30.0, 15.0), (30.0, 15.0)]
+                    .map(|(x, y)| shape_edit::above(x, y))
+                    .to_vec();
+                let s = shape_edit::hole(
+                    &plate,
+                    &shape_edit::Hole {
+                        diameter: 6.6,
+                        at,
+                        ..Default::default()
+                    },
+                );
+                let s = s.and_then(|s| {
+                    shape_edit::hole(
+                        &s,
+                        &shape_edit::Hole {
+                            diameter: 5.0,
+                            at: vec![shape_edit::above(0.0, 15.0)],
+                            counterbore: (9.0, 4.0),
+                            ..Default::default()
+                        },
+                    )
+                });
+                let s = s.and_then(|s| {
+                    shape_edit::hole(
+                        &s,
+                        &shape_edit::Hole {
+                            diameter: 4.0,
+                            at: vec![shape_edit::above(0.0, -5.0)],
+                            depth: 6.0,
+                            countersink: (8.0, trig::PI / 2.0),
+                            ..Default::default()
+                        },
+                    )
+                });
+                let s = s.and_then(|s| {
+                    shape_edit::pocket(
+                        &s,
+                        &shape_edit::Pocket {
+                            profile: slot(&Slot {
+                                length: 20.0,
+                                width: 8.0,
+                            })
+                            .unwrap(),
+                            depth: 3.0,
+                            at: vec![shape_edit::above(20.0, 0.0)],
+                        },
+                    )
+                });
+                solid(h, s)
+            },
+        },
+        Case {
+            name: "edit.shell.split.dent",
+            run: |h| {
+                let b = cuboid(&BoxDesc {
+                    width: 40.0,
+                    depth: 30.0,
+                    height: 20.0,
+                })
+                .unwrap();
+                solid(
+                    h,
+                    shape_edit::shell(
+                        &b,
+                        &shape_edit::Shell {
+                            thickness: 2.0,
+                            open: vec!["top".into()],
+                        },
+                    ),
+                )?;
+                let f = shape_core::Frame {
+                    origin: shape_core::DVec3::new(0.0, 0.0, 7.0),
+                    ..shape_core::Frame::IDENTITY
+                };
+                solid(h, shape_edit::split(&b, &f, shape_edit::Keep::Below))?;
+                let spots = vec![
+                    shape_core::DVec3::new(-10.0, 0.0, 20.0),
+                    shape_core::DVec3::new(10.0, 0.0, 20.0),
+                ];
+                solid(
+                    h,
+                    shape_edit::dent(
+                        &b,
+                        &shape_edit::Dent {
+                            at: spots,
+                            radius: 8.0,
+                            depth: 3.0,
+                        },
+                    ),
+                )
+            },
+        },
     ]
 }
 

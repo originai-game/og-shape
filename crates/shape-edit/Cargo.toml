@@ -1,0 +1,18 @@
+[package]
+name = "shape-edit"
+description = "og-shape edits: split, hole, pocket, seat, shell, dent, merge, with names carried through."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+shape-core.workspace = true
+shape-2d.workspace = true
+shape-mesh.workspace = true
+shape-gen.workspace = true
+shape-bool.workspace = true
+
+[lints]
+workspace = true

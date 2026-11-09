@@ -218,6 +218,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "shape-edit"
+version = "0.0.0"
+dependencies = [
+ "shape-2d",
+ "shape-bool",
+ "shape-core",
+ "shape-gen",
+ "shape-mesh",
+]
+
+[[package]]
 name = "shape-gen"
 version = "0.0.0"
 dependencies = [
@@ -234,6 +245,7 @@ dependencies = [
  "shape-2d",
  "shape-bool",
  "shape-core",
+ "shape-edit",
  "shape-gen",
  "shape-mesh",
 ]

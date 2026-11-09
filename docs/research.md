@@ -341,3 +341,20 @@ aarch64 Linux.
    arrangement as CSG with one operand. Until it exists, `repair`
    (phase 5) runs before booleans on imported meshes. Phase 5 re-checks
    this decision on real provider outputs (`docs/plan.md`).
+   **Partly done:** `fuse` joins the separate shells of a solid (`merge`
+   output, interpenetrating provider parts) before any boolean. A single
+   surface that folds through itself is still refused.
+4. **Exact edge-on-edge crossings (found in phase 2).** The minimal case
+   is reproducible: `cuboid(40, 40, 10)` minus a centred
+   `cylinder(r = 2, 24 segments)` through it gives an open result with 100
+   boundary edges. A blind one (z from 4) gives 46 non-manifold edges. With
+   r = 3, also 24 segments, the result is closed. The plate's top-cap
+   diagonal runs through the cylinder's vertex columns. The crossing
+   points are made, but the pieces around them are classified wrongly.
+   The root cause is not isolated yet. Until it is fixed in `csg.rs`:
+   - `shape-edit` turns its round tools half a segment off the axes, which
+     clears the case for holes;
+   - a countersink's cone runs on below the bore, a quarter segment off
+     it, so it crosses the bore wall rather than touching it.
+   
+   The fix must make the minimal case closed with the tools unturned.

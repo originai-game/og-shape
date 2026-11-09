@@ -58,6 +58,26 @@
   operands; `csg` and its output bytes are unchanged.
 - CSG broad phase: a sweep along x replaces the all-pairs box test, with
   the output unchanged. Two 65 536-triangle spheres: 9.0 s → 1.15 s.
+- `shape-edit` (phase 2), after sand3d's verbs:
+  - `split` by a frame's plane, keeping above or below;
+  - `hole` at frames or points (`above(x, y)`): through or to a depth,
+    with a counterbore or countersink, starting where the axis enters.
+    Mouth edges are named `hole`, bores `hole.side`, floors `hole.bottom`;
+  - `pocket`: a profile cut in from a face, named `pocket.bottom` and
+    `pocket.side`;
+  - `seat`: the volume a part fills, refused when they share none;
+  - `shell`: hollowing by an inner solid offset through a least-squares
+    fit of the planes at each vertex. Faces are opened by name or by
+    direction (`+z`); curved faces are refused;
+  - `dent`: round hollows pressed in, with crack-free local subdivision;
+  - `merge`: no boolean.
+  sand3d's own holes, pockets and shell cases are rebuilt as tests,
+  including the wall thickness.
+- `shape-bool::fuse` and `components`: a solid of several shells is fused
+  before a boolean.
+- Known CSG defect, with a minimal case: edges crossing exactly on edges
+  (`docs/research.md` §5.4, item 4). Round edit tools are turned to avoid
+  it.
 - Plan: aarch64 macOS joins the gate later; phase 0 benchmarks booleans on
   synthetic AI-mesh defects instead of provider outputs, which re-check the
   decision in phase 5.

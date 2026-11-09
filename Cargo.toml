@@ -25,6 +25,7 @@ shape-2d = { path = "crates/shape-2d" }
 shape-gen = { path = "crates/shape-gen" }
 shape-bool = { path = "crates/shape-bool" }
 shape-mesh = { path = "crates/shape-mesh" }
+shape-edit = { path = "crates/shape-edit" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
