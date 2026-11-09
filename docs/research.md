@@ -625,3 +625,182 @@ fit. Blender clamps it silently. `fillet(2)` there succeeds.
 Every output hash is the same natively (x86-64) and as wasm32-wasip1
 under wasmtime (golden cases `bevel.box`, `bevel.curved`, `bevel.sand3d`,
 `bevel.adj`).
+
+## 11. Phase 5b part 1: skins from the program (`shape-skin`, 2026-11-09)
+
+### 11.1 Decisions
+
+- **Data model.** `Solid.skin: Option<Skin>`. A `Bone` has a name, a
+  parent index (parents first), a rest `Frame` (its pivot, rigid) and an
+  inverse bind matrix (4×4, column-major, kernel units). The two are kept
+  apart because an imported skin's inverse bind matrix need not be its
+  node's inverse (glTF allows it). `Weights` holds four `(bone, f64)`
+  pairs in canonical form (largest first, ties to the lower bone, unused
+  `(0, 0)`, sum 1). It is plain data, so interpolation is
+  `Weights::blend` (sum per bone, keep four, normalize): what welding uses
+  now and decimation will use in part 2.
+- **Welding rule.** When `canonicalize` welds vertices at one position,
+  the vertex takes the mean of the copies' weights. The copies are sorted
+  first (`Weights::cmp_total`), so the bits do not depend on build order.
+  Copies with no weights do not count. Equal copies, the common case,
+  pass through unchanged.
+- **Refuse, never drop.** `boolean`, `fuse`, `split`, `hole`, `pocket`,
+  `seat`, `shell`, `dent`, `fillet`, `chamfer` and `soften` return a
+  `Skinned` error for a skinned operand. `components` carries the skin.
+  `append` and `merge` keep it when the skeletons are equal and otherwise
+  leave the new vertices unweighted, which `Skin::check` reports.
+  `map_positions` moves weights with their vertices but not bones (its map
+  need not be rigid), so a program places a solid before skinning it.
+  `obj` and `stl` hold meshes only, as before; `preview` draws what it is
+  given (pose first).
+- **Regions.** A bone's `regions` are face names. A face belongs to a
+  bone if it carries `r` or `r.*` (a named boolean's qualified tags). A
+  face with no bone, or with two, is an error value that lists its names.
+  So is a region no face carries. The usual program tags each part
+  (`tag_all_faces`) before joining them, so the seam is the boolean's cut
+  curve.
+- **Distance.** Dijkstra over the mesh's edges (edge lengths), multi-
+  source from a bone's faces, cut off at `blend / 2`. The heap orders by
+  distance and then vertex index, and the adjacency is sorted, so the bits
+  are the same everywhere. Graph distance is an upper bound on geodesic
+  distance: about 8 % long across a regular triangulation, exact along
+  edges. A smoother distance (heat method, or exact geodesics after
+  Mitchell–Mount–Papadimitriou) needs a linear solve or much more code,
+  and the bands here are refined finely, so the graph metric is enough for
+  part 1.
+- **Blend.** A bone's raw weight at distance `d` is
+  `1 − smoothstep(2d / blend)` within the band and 1 on its own faces. The
+  raw weights are normalized. Across a two-bone seam this is
+  `f/(1+f) → ½ → 1/(1+f)`, with equal slopes on both sides, so it is C¹.
+  `blend = 0` gives hard seams: a seam vertex is ½–½.
+- **Refinement.** In a band, rigid long triangles cannot bend: a cylinder
+  side from `extrude` has one triangle from end to end. So edges longer
+  than `max_edge` (default `blend / 4`) with an end inside a band are
+  split at their midpoints, round after round. A triangle with two split
+  edges cuts its remaining quad along the shorter diagonal. The surface
+  does not move, and names and surfaces follow the pieces.
+- **Posing: linear blend skinning.** For each bone, the skinning matrix
+  is `posed world · inverse bind`, where `posed world = parent posed world
+  · parent rest⁻¹ · rest · turn`. A `Turn` is an axis in the bone's rest
+  axes and an angle in radians, the kernel's units. Dual quaternions fix
+  the "candy wrapper" collapse of a joint twisted about its own axis. The
+  figure's joints bend about hinges. With a blend of about four limb radii,
+  the 90° bends invert no triangle except slivers (§11.3), so dual
+  quaternions are not needed yet. They would change the GLB too: glTF
+  skins are linear, and three.js poses them linearly.
+- **GLB.** A skinned part (no joint) gets a glTF skin.
+  - Its bones are nodes under the part's node, each at its rest frame
+    relative to its parent bone, in glTF space.
+  - Inverse bind matrices are `C · IBM · C⁻¹`, with `C(p) = y_up(p) ·
+    0.001`.
+  - Per vertex: `JOINTS_0` as u16 and `WEIGHTS_0` as f32, the largest
+    weight set to one minus the others so the f32 sum is 1.
+  - Vertices split at real edges take their weights from one source
+    vertex, so the exported mesh cannot tear along a crease.
+  - A skinned part hung on a joint is refused: glTF ignores a skinned
+    node's transform, but three.js binds with it, so the two would
+    disagree.
+- **Determinism.** Only `+ - * /` and `sqrt` are used; `sin_cos` comes
+  from `trig` (turns) and `acos` from `trig` (the measure). The data
+  structures are `BTreeMap`, `BTreeSet` and a `BinaryHeap` with a total
+  order. The golden cases `skin.weld`, `skin.weights`, `skin.pose` and
+  `skin.glb` are the same natively and on wasm32 under wasmtime.
+
+### 11.2 Measure
+
+`measure_pose` reports, with no thresholds:
+- closed and non-manifold edges of the posed mesh;
+- triangles whose posed normal is more than 90° from their rest normal
+  as the skin moves it (each corner's blend of bone matrices, averaged):
+  their count, their total rest area, and the best shape among them
+  (twice the area over the longest edge squared: 0.866 for equilateral,
+  near 0 for a sliver);
+- collapsed triangles;
+- the range of posed-to-rest area ratios, and the volume ratio.
+
+A thin sliver can flip under any non-rigid map: its middle vertex moves
+off the line by more than the sliver is wide. The shape figure separates
+those slivers from real folds.
+
+### 11.3 Measurements (x86-64, release)
+
+An arm: an upper cylinder (r 10, z 0–60) joined to a forearm (r 9,
+z 55–120), the elbow pivot at z 57.5, bent 90°:
+
+| blend | triangles | inverted | their area mm² | best shape | min area ratio | volume ratio |
+|---|---|---|---|---|---|---|
+| 10 | 5 790 | 320 | 87.8 | 0.711 | 0.026 | 0.986 |
+| 20 | 4 312 | 15 | 15.6 | 0.463 | 0.139 | 0.970 |
+| 30 | 4 082 | 113 | 36.6 | 0.016 | 0.160 | 0.956 |
+| 40 | 2 900 | 0 | 0 | — | 0.369 | 0.937 |
+| 60 | 2 652 | 96 | 116.2 | 0.016 | 0.165 | 0.909 |
+
+- At 10 and 20 mm (one and two radii), well-shaped triangles invert: the
+  inner crease folds.
+- At 30 and 60 mm, only slivers invert (best shape 0.016). They come from
+  the boolean's seam: the upper arm's cap diagonals cross the forearm's
+  circle 0.02 mm from its vertices, which leaves strips 0.04 mm wide
+  along the forearm.
+- At 40 mm (four radii), nothing inverts at 45°, 90° or 120°.
+- Guide note for later: blend about four limb radii.
+
+The acceptance figure (`crates/shape-skin/tests/figure/mod.rs`):
+- Built from a lofted torso, a sphere head, swept limbs, sphere hands and
+  cuboid feet: 6 124 triangles, one closed shell.
+- Skinned with ten bones and a blend of 24 mm (limb radii 5–8): 26 150
+  triangles, 13 077 vertices.
+- Skinning it and measuring one pose take about 0.2 s.
+
+| pose | closed | inverted | their area mm² | best shape | max turn | area ratio | volume ratio |
+|---|---|---|---|---|---|---|---|
+| rest | yes | 0 | 0 | — | 20.8° | 1.000–2.63 | 1.000 |
+| bend: left elbow −90° about x, right knee +90° | yes | 11 | 1.58 | 0.023 | 165.7° | 0.179–9.56 | 0.989 |
+| wave: the bend, plus right arm raised 100°, a step, the head turned 25° | yes | 45 | 9.25 | 0.122 | 167.2° | 0.179–52.0 | 1.030 |
+
+- **Rest.** The 20.8° and the 2.63 area ratio at rest are rounding on
+  boolean slivers of near-zero area. The skinning matrices are exactly
+  the identity.
+- **Bend.** The 11 inverted triangles are slivers (best shape 0.023,
+  1.6 mm² in all, out of 24 376 mm² of surface). No triangle of
+  better shape turns past 90°.
+- **Wave.** The 100° shoulder raise also folds a few triangles in the
+  armpit (best shape 0.12).
+- **GLB.** About 1.0 MB. It is not committed: the example writes it on
+  request.
+- **Read back with the `gltf` crate** and skinned from the file's own
+  nodes, inverse bind matrices, `JOINTS_0` and `WEIGHTS_0`, it matches the
+  kernel's pose to under 5 µm for all three poses. No two copies of a
+  vertex separate.
+- **three.js r170** (`GLTFLoader.parse` under Node 22, headless) loads
+  one `SkinnedMesh` with the ten bones. Posed like the bend through the
+  bones' quaternions, then skinned with `SkinnedMesh.applyBoneTransform`:
+  - 14 581 vertices, 0 torn copies;
+  - the 1 368 vertices fully on a turned bone are within 7.8e-10 m of
+    the rigid turn about their pivot.
+
+  The script is not in the repository: the gate has no Node, and `three`
+  would be an npm dependency. It was run by hand.
+
+Previews: `docs/previews/phase5b/rest.png`, `bend.png`, `wave.png`.
+
+### 11.4 For part 2 (imported skins)
+
+- Import, from stream D's glTF reader:
+  - `JOINTS_0` and `WEIGHTS_0` into `Weights::from_raw`, which drops
+    zeros and renormalizes;
+  - skin joints into `Bone`s, ordered parents first and with world rest
+    frames from the node hierarchy;
+  - inverse bind matrices as given.
+
+  Non-rigid bone nodes (scale) do not fit `Frame` and need a decision.
+  The mesh's node transform must be applied or refused.
+- Repair: welding already carries weights (`canonicalize`). Floater and
+  degenerate removal drop vertices, so remap the weights with them.
+- Decimation: each collapse sets the new vertex's weights with
+  `Weights::blend` of the two ends (by the collapse parameter). Keeping
+  bone-influence borders means a cost term or a lock on edges whose ends
+  have different main bones.
+- Unwrap: seams split vertices, so the copies take their source's
+  weights, as the GLB export already does through `split`.
+- Every stream D tool that does not carry skins yet must refuse a skinned
+  input with an error value, as the booleans do.

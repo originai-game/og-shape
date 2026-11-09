@@ -16,9 +16,9 @@
 //!   `forearm.*` a boolean writes.
 //! - A seam is where faces of two bones meet. A vertex is fully weighted
 //!   to its own bone, except within `blend / 2` of a seam, measured along
-//!   the surface (Dijkstra over the mesh's edges, exact for the refined
-//!   bands), where the other bone's weight rises smoothly to ½ on the
-//!   seam: the raw weight of a bone at surface distance `d` is
+//!   the surface (Dijkstra over the mesh's edges: an upper bound on the
+//!   geodesic distance), where the other bone's weight rises smoothly to
+//!   ½ on the seam: the raw weight of a bone at surface distance `d` is
 //!   `1 − smoothstep(2d / blend)`, normalized over the bones. The blend
 //!   is C¹ across the seam.
 //! - Edges longer than `max_edge` that reach into a blend band are split
@@ -30,7 +30,8 @@
 //!
 //! Posing is linear blend skinning. Dual quaternions are not used: they
 //! fix the collapse of twisted joints, and the figures here bend about
-//! hinges, where `measure_pose` shows no inverted triangle at 90°
+//! hinges, where with a blend of about four limb radii `measure_pose`
+//! finds no inverted triangle but seam slivers at 90°
 //! (`docs/research.md` §11).
 
 mod mat;
