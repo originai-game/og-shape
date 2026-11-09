@@ -292,3 +292,23 @@
   and GLB on the committed `golden/meshes/ball_defects.obj`); no existing
   hash moved.
 - The gate runs on aarch64 macOS too (`macos-latest`): five targets.
+- Imported skins are carried through the mesh tools (phase 5b part 2).
+  - Repair keeps them: weights follow the vertices through welding,
+    degenerate and floater removal, orientation and hole filling (a new
+    centre vertex takes its rim's blend); `collapse_short_edges` blends.
+  - `apply_transform` bakes a rigid transform into the vertices, rest
+    frames and inverse bind matrices. A scaled or mirroring transform on a
+    skinned part is `RepairError::Skinned`.
+  - `join` merges skeletons by bone name. Bones of one name that
+    disagree, or skinned and unskinned parts, are `RepairError::Skinned`
+    naming them. `RepairError::Skinned`'s message now says what cannot be
+    kept.
+  - `decimate` and `lods` blend weights by the collapse and keep
+    bone-weight borders with a penalty (0.5 % of the diagonal per unit of
+    weight change). New field `Decimate::cross_bone_borders` (off) drops
+    it. `DecimateError::Skinned` is no longer returned.
+  - Unwrap leaves weights alone; `glb_plain` still refuses skins.
+  - Golden cases `meshtools.skin.repair`, `meshtools.skin.decimate` and
+    `meshtools.skin.join`; no existing hash moved. `bench/meshtools`
+    gains `skin-decimate` (decimate to half, pose, compare); results in
+    `docs/research.md` §11.5, previews in `docs/previews/phase5b/`.

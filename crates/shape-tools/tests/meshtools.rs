@@ -2,6 +2,8 @@
 //! importers, external buffers, and the whole chain (import → repair →
 //! decimate → unwrap → measure → preview → export) on a broken mesh.
 
+#[path = "support/hausdorff.rs"]
+mod hausdorff;
 #[path = "support/skinned.rs"]
 mod skinned;
 #[path = "support/fbx.rs"]
@@ -314,9 +316,7 @@ fn binary_fbx_with_pivots_compressed_arrays_and_a_texture() {
 
 #[test]
 fn a_skinned_glb_is_read_whole_and_never_broken_silently() {
-    use shape_tools::{
-        DecimateError, PlainGlbError, RepairError, apply_transform, collapse_short_edges,
-    };
+    use shape_tools::{PlainGlbError, apply_transform, collapse_short_edges};
     let imported = import(&skinned::skinned_glb(true), &Import::default(), &no_files).unwrap();
     assert_eq!(imported.parts.len(), 1);
     let part = &imported.parts[0];
@@ -345,28 +345,41 @@ fn a_skinned_glb_is_read_whole_and_never_broken_silently() {
         ),
         "{json}"
     );
-    // Tools that cannot carry a skin yet refuse it.
-    assert!(matches!(
-        join(&imported.parts),
-        Err(RepairError::Skinned(_))
-    ));
-    assert!(matches!(
-        apply_transform(part),
-        Err(RepairError::Skinned(_))
-    ));
-    assert!(matches!(
-        repair(s, &Repair::default()),
-        Err(RepairError::Skinned(_))
-    ));
+    // The mesh tools carry the skin (phase 5b part 2); a plain GLB still
+    // refuses it.
+    let joined = join(&imported.parts).unwrap();
+    joined
+        .skin
+        .as_ref()
+        .unwrap()
+        .check(joined.positions.len())
+        .unwrap();
+    let placed = apply_transform(part).unwrap();
+    assert_eq!(placed.skin, s.skin);
+    let (fixed, _) = repair(s, &Repair::default()).unwrap();
+    fixed
+        .skin
+        .as_ref()
+        .unwrap()
+        .check(fixed.positions.len())
+        .unwrap();
     let half = Decimate {
         ratio: 0.5,
         ..Default::default()
     };
-    assert_eq!(decimate(s, &half).unwrap_err(), DecimateError::Skinned);
-    assert_eq!(
-        collapse_short_edges(s, 1.0).unwrap_err(),
-        DecimateError::Skinned
-    );
+    let (low, _) = decimate(s, &half).unwrap();
+    low.skin
+        .as_ref()
+        .unwrap()
+        .check(low.positions.len())
+        .unwrap();
+    let (short, _) = collapse_short_edges(s, 1.0).unwrap();
+    short
+        .skin
+        .as_ref()
+        .unwrap()
+        .check(short.positions.len())
+        .unwrap();
     assert_eq!(
         glb_plain(s, &PlainGlb::default()).unwrap_err(),
         PlainGlbError::Skinned
@@ -535,4 +548,131 @@ fn a_uniform_armature_scale_comes_out_of_the_bones() {
     let lopsided = skinned::skinned_glb_under(true, Some([0.01, 0.02, 0.01]));
     let err = import(&lopsided, &Import::default(), &no_files).unwrap_err();
     assert!(err.to_string().contains("unevenly"), "{err}");
+}
+
+/// The phase 5b acceptance on a skinned GLB written here: decimated to
+/// half, it keeps its bones and weights and bends as the full mesh does.
+#[test]
+fn a_skinned_glb_decimated_to_half_keeps_its_skin_and_bends_the_same() {
+    use shape_skin::{Pose, Turn, measure_pose, pose};
+    let tube = skinned::skinned_tube();
+    let bytes = glb(&Scene {
+        name: "tube".into(),
+        parts: vec![Part::new("tube", &tube)],
+    })
+    .unwrap();
+    let full = import(&bytes, &Import::default(), &no_files).unwrap().parts[0]
+        .solid
+        .clone();
+    let (mut full, _) = repair(&full, &Repair::default()).unwrap();
+    full.canonicalize().unwrap();
+    let k = full.skin.clone().unwrap();
+    let bend = Pose {
+        turns: vec![Turn {
+            bone: "knee".into(),
+            axis: DVec3::X,
+            angle: 0.8,
+        }],
+    };
+    let posed_full = pose(&full, &bend).unwrap();
+    let mf = measure_pose(&full, &bend).unwrap();
+    assert_eq!(mf.inverted, 0);
+    for cross in [false, true] {
+        let (half, r) = decimate(
+            &full,
+            &Decimate {
+                ratio: 0.5,
+                cross_bone_borders: cross,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let kh = half.skin.as_ref().unwrap();
+        // The same bones; every vertex's weights sum to 1.
+        assert_eq!(kh.bones, k.bones);
+        kh.check(half.positions.len()).unwrap();
+        // No vertex weighted to a bone that did not weight a vertex of
+        // the full mesh within one edge of it.
+        let reach = half
+            .triangles
+            .iter()
+            .flat_map(|t| {
+                (0..3).map(|i| {
+                    (half.positions[t[i] as usize] - half.positions[t[(i + 1) % 3] as usize])
+                        .length()
+                })
+            })
+            .fold(0.0f64, f64::max);
+        for (p, w) in half.positions.iter().zip(&kh.weights) {
+            for (b, _) in w.pairs() {
+                let near =
+                    full.positions.iter().zip(&k.weights).any(|(q, wq)| {
+                        (*q - *p).length() <= reach && wq.pairs().any(|(x, _)| x == b)
+                    });
+                assert!(near, "vertex {p:?} weighted to bone {b} from nowhere near");
+            }
+        }
+        // Bent the same way, the two surfaces stay close, and nothing
+        // turns inside out.
+        let posed_half = pose(&half, &bend).unwrap();
+        let d = hausdorff::hausdorff(&posed_full, &posed_half);
+        let m = measure_pose(&half, &bend).unwrap();
+        eprintln!(
+            "tube: {} → {} triangles (bone borders {}), posed Hausdorff {d:.4} mm, inverted {}",
+            full.triangles.len(),
+            half.triangles.len(),
+            if cross { "crossed" } else { "kept" },
+            m.inverted
+        );
+        // Crossing borders: 5.8 mm and 41 inverted triangles here.
+        if !cross {
+            assert_eq!(m.inverted, 0);
+            assert!(
+                half.triangles.len() <= full.triangles.len() / 2 + 2,
+                "{r:?}"
+            );
+            assert!(d < 0.5, "{d}");
+        }
+    }
+}
+
+/// Joining skinned parts merges their skeletons by bone name; bones of one
+/// name that disagree are an error naming them.
+#[test]
+fn skinned_parts_join_by_bone_name() {
+    use shape_tools::{Affine, ImportedPart, RepairError, apply_transform};
+    let tube = skinned::skinned_tube();
+    let part = |name: &str, t: DVec3| ImportedPart {
+        name: name.into(),
+        solid: tube.clone(),
+        transform: Affine {
+            t,
+            ..Affine::IDENTITY
+        },
+        ..Default::default()
+    };
+    let same = [part("a", DVec3::ZERO), part("b", DVec3::ZERO)];
+    let j = join(&same).unwrap();
+    let k = j.skin.as_ref().unwrap();
+    assert_eq!(k.bones.len(), 2);
+    k.check(j.positions.len()).unwrap();
+    // Moved, a part's bones move with it, so they no longer match.
+    let moved = apply_transform(&part("b", DVec3::new(30.0, 0.0, 0.0))).unwrap();
+    let mk = moved.skin.as_ref().unwrap();
+    assert_eq!(mk.bones[1].rest.origin, DVec3::new(30.0, 0.0, 50.0));
+    // The inverse bind matrix moved with it: rest · IBM is the identity.
+    assert_eq!(mk.bones[1].inverse_bind[12], -30.0);
+    let err = join(&[
+        part("a", DVec3::ZERO),
+        part("b", DVec3::new(30.0, 0.0, 0.0)),
+    ])
+    .unwrap_err();
+    assert!(
+        matches!(&err, RepairError::Skinned(m) if m.contains("\"knee\"") && m.contains("\"root\"")),
+        "{err}"
+    );
+    // Skinned and unskinned parts are not joined.
+    let mut bare = part("c", DVec3::ZERO);
+    bare.solid.skin = None;
+    assert!(join(&[part("a", DVec3::ZERO), bare]).is_err());
 }

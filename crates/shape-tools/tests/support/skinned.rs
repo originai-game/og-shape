@@ -98,3 +98,57 @@ pub fn skinned_glb_posed(
     out.extend(bin);
     out
 }
+
+/// A tube 100 mm tall, rings every 2 mm, skinned to a `root` bone at its
+/// foot and a `knee` halfway up, weights blending over z ∈ [40, 60].
+pub fn skinned_tube() -> shape_mesh::Solid {
+    use shape_core::{DVec3, Frame};
+    use shape_mesh::{Bone, Skin, Solid, Weights};
+    let (rings, around, r) = (51usize, 32usize, 10.0);
+    let mut s = Solid::default();
+    let mut weights = Vec::new();
+    let weight = |z: f64| {
+        let t = ((z - 40.0) / 20.0).clamp(0.0, 1.0);
+        Weights::from_raw([(0u32, 1.0 - t), (1u32, t)])
+    };
+    for i in 0..rings {
+        let z = i as f64 * 2.0;
+        for k in 0..around {
+            let (sn, cs) =
+                shape_core::trig::sin_cos(k as f64 / around as f64 * shape_core::trig::TAU);
+            s.push_vertex(DVec3::new(r * cs, r * sn, z));
+            weights.push(weight(z));
+        }
+    }
+    let bottom = s.push_vertex(DVec3::ZERO);
+    let top = s.push_vertex(DVec3::new(0.0, 0.0, 100.0));
+    weights.extend([weight(0.0), weight(100.0)]);
+    let id = |i: usize, k: usize| (i * around + k % around) as u32;
+    for i in 0..rings - 1 {
+        for k in 0..around {
+            let (a, b, c, d) = (id(i, k), id(i, k + 1), id(i + 1, k + 1), id(i + 1, k));
+            s.push_triangle([a, b, c], 0, &["tube"]);
+            s.push_triangle([a, c, d], 0, &["tube"]);
+        }
+    }
+    for k in 0..around {
+        s.push_triangle([bottom, id(0, k + 1), id(0, k)], 1, &["bottom"]);
+        s.push_triangle([top, id(rings - 1, k), id(rings - 1, k + 1)], 2, &["top"]);
+    }
+    s.skin = Some(Skin {
+        bones: vec![
+            Bone::new("root", None, Frame::IDENTITY),
+            Bone::new(
+                "knee",
+                Some(0),
+                Frame {
+                    origin: DVec3::new(0.0, 0.0, 50.0),
+                    ..Frame::IDENTITY
+                },
+            ),
+        ],
+        weights,
+    });
+    s.canonicalize().unwrap();
+    s
+}

@@ -1552,6 +1552,106 @@ Previews: `docs/previews/phase5b/rest.png`, `bend.png`, `wave.png`.
 - Every stream D tool that does not carry skins yet must refuse a skinned
   input with an error value, as the booleans do.
 
+### 11.5 Part 2: imported skins through the mesh tools (stream D, 2026-11-09)
+
+Decisions:
+
+- **Weights follow vertices.** Every repair step that drops or merges
+  vertices remaps the skin with them (`remap_skin`). Vertices merged into
+  one take the mean of their weights (`Skin::weld`, as `canonicalize`
+  does). A hole filled around a new centre vertex gives it the even blend
+  of its rim's weights. `collapse_short_edges` blends as decimation does.
+- **Rigid placement only.** `apply_transform` bakes a rigid transform
+  into the vertices, the bones' rest frames and their inverse bind
+  matrices (`IBM' = IBM · M⁻¹`, so rest · IBM stays the identity). A
+  scaled or mirroring transform on a skinned part is
+  `RepairError::Skinned`: scale does not fit `Frame` (§11.4).
+- **Join merges skeletons by bone name.** Bones of one name must agree on
+  their parent's name, their rest frame (1e-6 mm, scaled by the
+  coordinate's size, and 1e-9 on the axes) and their inverse bind matrix
+  (1e-6, scaled likewise). Otherwise the error names every bone that
+  disagrees. Skinned and unskinned parts are not joined.
+- **Decimation blends by where the vertex lands.** A collapse onto the
+  kept vertex keeps its weights; one to the midpoint takes half of each
+  (`Weights::blend`, in `cmp_total` order so the result does not depend
+  on which end is which).
+- **Bone borders by a penalty, not a ban.** Removing vertex `v` costs, on
+  top of its quadric error, the quadric's area weight times
+  `(Δ · 0.005 · diagonal)²`, where `Δ` is the largest difference, on any
+  bone, between `v`'s weights and any neighbour's. In other words, a
+  change in weights counts as moving the surface by `Δ` × 0.5 % of the
+  bounding-box diagonal. A vertex inside a region weighted to one bone
+  costs nothing extra; the rows across a joint cost the most. The
+  reported `error` leaves the penalty out.
+  `Decimate::cross_bone_borders` drops it.
+  - Banning collapses across a change of dominant bone (the first
+    attempt) left 3.3 mm and 21 inverted triangles on the tube below. It
+    also cannot meet a triangle target on a mesh weighted everywhere
+    (Soldier: 198 mm rest error when forced to half).
+  - A penalty on the step between the edge's two ends only, rather than
+    across `v`'s whole ring, still left 0.84 mm on the tube.
+  - Scale swept over 0.005, 0.01, 0.02, 0.05 and 0.1 of the diagonal. All
+    keep the tube exact. The rest error at half grows with the scale:
+    Soldier 13.0, 17.9, 21.3, 24.8, 33.9 mm; RobotExpressive's hands 59.0,
+    69.3, 127.5, 128.4, 163.8 mm. The smallest, 0.005, is the default.
+- **Unwrap** changes no vertex, so weights are untouched. The GLB writer
+  splits vertices at UV seams and copies the weights (`split`).
+- **`glb_plain` still refuses skins:** it promises one mesh with no skin.
+
+Acceptance:
+
+- The skinned tube (`tests/meshtools.rs`): a cylinder r 10 mm and 100 mm
+  tall, rings every 2 mm, with `root` and `knee` blending over
+  z ∈ [40, 60]. It is written to a GLB, read back, repaired, decimated to
+  half and bent 0.8 rad at the knee.
+
+  | borders | triangles | posed Hausdorff to the full mesh | inverted |
+  |---|---|---|---|
+  | kept | 3264 → 1632 | 0.0000 mm | 0 |
+  | crossed | 3264 → 1632 | 5.806 mm | 41 |
+
+  With borders kept, the test asserts the same bones, `Skin::check`, no
+  stray weights, at most half the triangles (+2), under 0.5 mm and none
+  inverted.
+- Other tools' files, `bench/meshtools` `skin-decimate` (three.js r160
+  example models). Each skinned part is decimated to half, then the bone
+  with the most descendants is turned 0.5 rad about X:
+  - **Stray weights:** half-mesh vertices weighted to a bone that weights
+    no full-mesh vertex within the half mesh's longest edge.
+  - **Skin drift:** for vertices whose rest position the decimation kept
+    exactly, how far the posed half and the posed full mesh put them
+    apart. It isolates the weights from the geometric error.
+
+  | part | triangles | rest Hausdorff, kept / crossed | posed Hausdorff, kept | skin drift | inverted (full) |
+  |---|---|---|---|---|---|
+  | Soldier vanguard_Mesh | 11186 → 5592 | 12.95 / 9.90 mm | 12.95 mm | 0.000 mm | 1 (1) |
+  | Soldier vanguard_visor | 190 → 94 | 2.66 / 2.66 mm | 2.64 mm | 0.000 mm | 0 (0) |
+  | Xbot Beta_Joints | 20840 → 10420 | 1.71 / 1.71 mm | 1.71 mm | 0.000 mm | 0 (0) |
+  | Xbot Beta_Surface | 28272 → 14136 | 2.46 / 2.46 mm | 2.46 mm | 0.000 mm | 0 (0) |
+  | RobotExpressive Hand.L/R | 272 → 136 | 59.0 / 58.7 mm | 59.0 mm | 0.000 mm | 0 (0) |
+
+  Every part keeps its bones, its weights sum to 1, and none has stray
+  weights. The posed error equals the rest error: posing adds nothing to
+  what decimation already moved.
+- The cost of keeping borders: no triangles, since every target was met
+  (Soldier, borders kept, ends one under it: 5592 for 5593). The cost is in
+  rest accuracy at the same count: +3.05 mm on Soldier (31 %), +0.33 mm
+  on the Robot's hands, nothing on Xbot. The tube's 0.8 rad bend (5.8 mm
+  and 41 inverted triangles when crossed) is what it buys.
+  Measured threshold: posed Hausdorff to the posed full mesh at most the
+  rest Hausdorff (plus 0.02 mm), and skin drift 0.000 mm.
+- Previews (Soldier, at rest and with the spine turned, full and half):
+  `docs/previews/phase5b/soldier-{full,half}-{rest,posed}.png`.
+- Golden: `meshtools.skin.repair` (a cut cap and a seam-split ring,
+  welded, filled and short edges collapsed), `meshtools.skin.decimate`
+  (half with borders kept and crossed, LODs 0.5/0.25/0.1),
+  `meshtools.skin.join` (a rigid quarter turn baked, two parts merged,
+  parts placed apart refused).
+
+Gaps: a weight-aware quadric (weights as extra quadric dimensions,
+Hoppe 1999) would replace the penalty's scale with a principled one. It
+is untested here. Non-rigid placement of a skinned part stays refused.
+
 ## 12. The CLI's mesh tools and the MCP server (stream H, 2026-11-09)
 
 Stream H makes the kernel usable by any agent now, before the merge: the

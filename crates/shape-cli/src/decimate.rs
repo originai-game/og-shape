@@ -88,6 +88,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         target: a.number("--target")?.unwrap_or(0),
         max_error: a.number("--max-error")?.unwrap_or(0.0),
         lock_border: a.switch("--lock-border"),
+        ..Default::default()
     };
     if dec.ratio == 0.0 && dec.target == 0 {
         return Err(Failure::Usage("give --ratio R or --target N".into()));

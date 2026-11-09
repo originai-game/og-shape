@@ -685,6 +685,7 @@ fn decimate_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
             target: a.uint("target")? as usize,
             max_error: a.num("max_error")?,
             lock_border: a.flag("lock_border")?,
+            ..Default::default()
         },
         lods: a.u32("lods")?,
         out: a.path("out")?,

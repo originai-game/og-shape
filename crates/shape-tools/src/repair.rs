@@ -12,9 +12,16 @@
 //! take the surface of the first triangle on its rim. [`join`] keeps each
 //! part's names (imported faces carry their part's name).
 //!
-//! A skinned solid (`Solid::skin`) is refused by every step with
-//! [`RepairError::Skinned`]: they change vertices, and skins are carried
-//! only from phase 5b.
+//! Skins (`Solid::skin`) are carried through every step: weights follow
+//! their vertices, vertices merged into one take the mean of their weights
+//! (`Skin::weld`), and a vertex a hole fill adds takes the blend of its
+//! rim's. [`apply_transform`] bakes a rigid transform into the vertices,
+//! the bones' rest frames and their inverse bind matrices; [`join`] merges
+//! skeletons by bone name. What cannot be kept is an error value
+//! ([`RepairError::Skinned`]): a scaled or mirroring transform on a
+//! skinned part, bones of one name that disagree, skinned and unskinned
+//! parts joined. The self-union of [`Repair::fuse`] refuses skins (the
+//! report says so).
 //!
 //! What repair cannot do: a single surface that folds through itself (a
 //! self-intersecting sheet, not two closed shells) has no inside to keep;
@@ -26,7 +33,8 @@ use std::fmt;
 
 use shape_core::order::sorted_order;
 use shape_core::{DVec3, HashError};
-use shape_mesh::{Solid, Tag, edge_key};
+use shape_mesh::skin::Mat4;
+use shape_mesh::{Bone, Skin, Solid, Tag, Weights, edge_key};
 
 use crate::import::{Affine, ImportedPart};
 use crate::intersect::{degenerate, self_intersections};
@@ -111,8 +119,9 @@ pub enum RepairError {
     NaN,
     /// A weld distance or floater size is negative or not finite.
     BadDistance,
-    /// The solid (or the part named) is skinned: repair would change its
-    /// vertices and break the skin (carrying skins is phase 5b).
+    /// A skin that cannot be kept: what and why (a skinned part placed by
+    /// a scaled or mirroring transform, bones of one name that disagree,
+    /// skinned and unskinned parts joined).
     Skinned(String),
 }
 
@@ -123,10 +132,9 @@ impl fmt::Display for RepairError {
             RepairError::BadDistance => {
                 f.write_str("a weld distance or size is negative or not finite")
             }
-            RepairError::Skinned(w) => write!(
-                f,
-                "{w} is skinned; repair would break its skin, so it is refused"
-            ),
+            RepairError::Skinned(w) => {
+                write!(f, "{w}: the skin cannot be kept, so this is refused")
+            }
         }
     }
 }
@@ -141,20 +149,147 @@ impl From<HashError> for RepairError {
 
 /// The part's solid placed by its transform. A mirroring transform
 /// (negative determinant) reverses every triangle so faces still point
-/// out. Names are kept. A skinned part is refused: its bones, not its
-/// node, place it.
+/// out. Names are kept. On a skinned part the transform must be rigid: it
+/// moves the vertices, the bones' rest frames, and their inverse bind
+/// matrices together (`IBM · T⁻¹`); a scaled or mirroring one is
+/// [`RepairError::Skinned`].
 pub fn apply_transform(part: &ImportedPart) -> Result<Solid, RepairError> {
-    if part.solid.skin.is_some() {
-        return Err(RepairError::Skinned(format!("part {:?}", part.name)));
+    let m = &part.transform;
+    let Some(skin) = &part.solid.skin else {
+        return Ok(transformed(&part.solid, m));
+    };
+    if *m == Affine::IDENTITY {
+        return Ok(part.solid.clone());
     }
-    Ok(transformed(&part.solid, &part.transform))
+    let rigid = [m.x, m.y, m.z]
+        .iter()
+        .all(|a| (a.length() - 1.0).abs() < 1e-9)
+        && m.x.dot(m.y).abs() < 1e-9
+        && m.y.dot(m.z).abs() < 1e-9
+        && m.x.dot(m.z).abs() < 1e-9
+        && m.determinant() > 0.0;
+    if !rigid {
+        return Err(RepairError::Skinned(format!(
+            "part {:?} is skinned and placed by a scaled or mirroring transform",
+            part.name
+        )));
+    }
+    let mut out = transformed(&part.solid, m);
+    let inverse = crate::import::rigid_inverse(m);
+    let inv = affine_matrix(&inverse);
+    out.skin = Some(Skin {
+        bones: skin
+            .bones
+            .iter()
+            .map(|b| Bone {
+                name: b.name.clone(),
+                parent: b.parent,
+                rest: shape_core::Frame {
+                    origin: m.apply(b.rest.origin),
+                    x: m.rotate(b.rest.x),
+                    y: m.rotate(b.rest.y),
+                    z: m.rotate(b.rest.z),
+                },
+                inverse_bind: mat_mul(&b.inverse_bind, &inv),
+            })
+            .collect(),
+        weights: skin.weights.clone(),
+    });
+    Ok(out)
 }
 
-fn unskinned(s: &Solid) -> Result<(), RepairError> {
-    match s.skin {
-        Some(_) => Err(RepairError::Skinned("the solid".into())),
-        None => Ok(()),
+/// A column-major 4×4 matrix of an affine map.
+fn affine_matrix(a: &Affine) -> Mat4 {
+    [
+        a.x.x, a.x.y, a.x.z, 0.0, a.y.x, a.y.y, a.y.z, 0.0, a.z.x, a.z.y, a.z.z, 0.0, a.t.x, a.t.y,
+        a.t.z, 1.0,
+    ]
+}
+
+/// `a · b`, column-major.
+fn mat_mul(a: &Mat4, b: &Mat4) -> Mat4 {
+    let mut out = [0.0; 16];
+    for c in 0..4 {
+        for r in 0..4 {
+            out[4 * c + r] = (0..4).map(|k| a[4 * k + r] * b[4 * c + k]).sum();
+        }
     }
+    out
+}
+
+/// A merged skeleton, and each skinned part's bone indices in it.
+type Merged = (Vec<Bone>, Vec<Vec<u32>>);
+
+/// The skeletons of `parts` merged by bone name, and each skinned part's
+/// bone indices in it. Bones of one name must agree: the same parent's
+/// name, rest frame and inverse bind matrix to rounding (1e-6 mm, 1e-9 in
+/// the axes).
+fn merge_skeletons(parts: &[(&str, &Solid)]) -> Result<Option<Merged>, RepairError> {
+    let skinned: Vec<&str> = parts
+        .iter()
+        .filter(|p| p.1.skin.is_some())
+        .map(|p| p.0)
+        .collect();
+    if skinned.is_empty() {
+        return Ok(None);
+    }
+    let bare: Vec<&str> = parts
+        .iter()
+        .filter(|p| p.1.skin.is_none())
+        .map(|p| p.0)
+        .collect();
+    if !bare.is_empty() {
+        return Err(RepairError::Skinned(format!(
+            "parts {skinned:?} are skinned and {bare:?} are not; join them apart"
+        )));
+    }
+    let mut bones: Vec<Bone> = Vec::new();
+    let mut maps = Vec::new();
+    let mut conflicts: Vec<String> = Vec::new();
+    let near = |a: &Bone, b: &Bone| {
+        let f = (&a.rest, &b.rest);
+        (f.0.origin - f.1.origin).length() <= 1e-6 * f.0.origin.length().max(1.0)
+            && (f.0.x - f.1.x).length() <= 1e-9
+            && (f.0.y - f.1.y).length() <= 1e-9
+            && (f.0.z - f.1.z).length() <= 1e-9
+            && a.inverse_bind
+                .iter()
+                .zip(&b.inverse_bind)
+                .all(|(x, y)| (x - y).abs() <= 1e-6 * x.abs().max(1.0))
+    };
+    for (name, s) in parts {
+        let k = s.skin.as_ref().unwrap_or_else(|| unreachable!("{name}"));
+        let mut map = Vec::with_capacity(k.bones.len());
+        for b in &k.bones {
+            let parent_name = b.parent.map(|p| k.bones[p as usize].name.as_str());
+            let parent = b.parent.map(|p| map[p as usize]);
+            match bones.iter().position(|x| x.name == b.name) {
+                Some(i) => {
+                    let had = bones[i].parent.map(|p| bones[p as usize].name.as_str());
+                    if had != parent_name || !near(&bones[i], b) {
+                        conflicts.push(b.name.clone());
+                    }
+                    map.push(i as u32);
+                }
+                None => {
+                    bones.push(Bone {
+                        parent,
+                        ..b.clone()
+                    });
+                    map.push(bones.len() as u32 - 1);
+                }
+            }
+        }
+        maps.push(map);
+    }
+    if !conflicts.is_empty() {
+        conflicts.sort();
+        conflicts.dedup();
+        return Err(RepairError::Skinned(format!(
+            "bones {conflicts:?} differ between the parts (parent, rest frame or inverse bind)"
+        )));
+    }
+    Ok(Some((bones, maps)))
 }
 
 fn transformed(s: &Solid, m: &Affine) -> Solid {
@@ -166,11 +301,33 @@ fn transformed(s: &Solid, m: &Affine) -> Solid {
 /// Every part placed by its transform and joined into one solid, in
 /// canonical order (exactly coincident vertices are welded). Each part's
 /// surfaces stay their own; faces keep their names, so each part stays
-/// addressable by its name. A skinned part is refused.
+/// addressable by its name. Skinned parts' skeletons are merged by bone
+/// name: bones of one name must agree (parent, rest frame, inverse bind
+/// matrix), and skinned and unskinned parts are not joined; either is
+/// [`RepairError::Skinned`], naming them.
 pub fn join(parts: &[ImportedPart]) -> Result<Solid, RepairError> {
+    let placed: Vec<Solid> = parts
+        .iter()
+        .map(apply_transform)
+        .collect::<Result<_, _>>()?;
+    let named: Vec<(&str, &Solid)> = parts.iter().map(|p| p.name.as_str()).zip(&placed).collect();
+    let merged = merge_skeletons(&named)?;
     let mut out = Solid::default();
-    for p in parts {
-        out.append(&apply_transform(p)?);
+    for (i, s) in placed.into_iter().enumerate() {
+        let mut s = s;
+        if let (Some((bones, maps)), Some(k)) = (&merged, &s.skin) {
+            let map = &maps[i];
+            let weights = k
+                .weights
+                .iter()
+                .map(|w| Weights::from_raw(w.pairs().map(|(b, x)| (map[b as usize], x))))
+                .collect();
+            s.skin = Some(Skin {
+                bones: bones.clone(),
+                weights,
+            });
+        }
+        out.append(&s);
     }
     out.canonicalize()?;
     Ok(out)
@@ -213,7 +370,27 @@ fn rebuild(s: &Solid, triangles: &[usize], remap: &[u32], positions: Vec<DVec3>)
             out.tag_edge(a, b, &tags);
         }
     }
+    out.skin = s
+        .skin
+        .as_ref()
+        .map(|k| remap_skin(k, remap, out.positions.len()));
     out
+}
+
+/// A skin's weights moved to new vertex indices (`remap[old]`, or
+/// `u32::MAX` for gone); vertices merged into one take the mean of their
+/// weights (`Skin::weld`).
+pub(crate) fn remap_skin(k: &Skin, remap: &[u32], vertices: usize) -> Skin {
+    let mut copies: Vec<Vec<Weights>> = vec![Vec::new(); vertices];
+    for (old, &new) in remap.iter().enumerate() {
+        if let (Some(c), Some(w)) = (copies.get_mut(new as usize), k.weights.get(old)) {
+            c.push(*w);
+        }
+    }
+    Skin {
+        bones: k.bones.clone(),
+        weights: copies.into_iter().map(|mut c| Skin::weld(&mut c)).collect(),
+    }
 }
 
 /// How [`weld`] merges vertices. The zero value welds exact duplicates
@@ -238,7 +415,6 @@ pub struct Weld {
 /// positions, not on their order. Returns the solid and how many vertices
 /// went.
 pub fn weld(s: &Solid, d: &Weld) -> Result<(Solid, usize), RepairError> {
-    unskinned(s)?;
     let distance = d.distance;
     if !(distance >= 0.0 && distance.is_finite()) {
         return Err(RepairError::BadDistance);
@@ -324,7 +500,6 @@ pub fn weld(s: &Solid, d: &Weld) -> Result<(Solid, usize), RepairError> {
 /// opposite ways (a two-sided sheet) are both kept. Returns the solid and
 /// the counts `(degenerate, duplicates)`.
 pub fn remove_degenerate(s: &Solid) -> Result<(Solid, usize, usize), RepairError> {
-    unskinned(s)?;
     let mut seen: BTreeMap<[u32; 3], ()> = BTreeMap::new();
     let (mut deg, mut dup) = (0, 0);
     let mut keep = Vec::with_capacity(s.triangles.len());
@@ -385,7 +560,6 @@ pub(crate) fn pieces(s: &Solid) -> (Vec<u32>, usize) {
 /// order) is always kept. Returns the solid and the counts
 /// `(pieces dropped, triangles dropped)`.
 pub fn remove_floaters(s: &Solid, d: &Floaters) -> Result<(Solid, usize, usize), RepairError> {
-    unskinned(s)?;
     for v in [d.size, d.fraction] {
         if !(v >= 0.0 && v.is_finite()) {
             return Err(RepairError::BadDistance);
@@ -437,7 +611,6 @@ pub fn remove_floaters(s: &Solid, d: &Floaters) -> Result<(Solid, usize, usize),
 /// more than two triangles do not propagate. Returns the solid and how
 /// many triangles were turned.
 pub fn orient(s: &Solid) -> Result<(Solid, usize), RepairError> {
-    unskinned(s)?;
     let mut s = s.clone();
     s.canonicalize()?;
     let n = s.triangles.len();
@@ -543,7 +716,6 @@ pub fn close_holes(
     s: &Solid,
     max_edges: usize,
 ) -> Result<(Solid, usize, usize, usize), RepairError> {
-    unskinned(s)?;
     let mut s = s.clone();
     s.canonicalize()?;
     let mut directed: BTreeMap<(u32, u32), u32> = BTreeMap::new();
@@ -615,6 +787,14 @@ pub fn close_holes(
             // rim's centre, whose edges are all new.
             let c = rim.iter().map(|&v| s.positions[v as usize]).sum::<DVec3>() / rim.len() as f64;
             let ci = s.push_vertex(c);
+            if let Some(k) = &mut s.skin {
+                // The centre takes the blend of its rim's weights.
+                let items: Vec<(Weights, f64)> = rim
+                    .iter()
+                    .map(|&v| (k.weights[v as usize], 1.0 / rim.len() as f64))
+                    .collect();
+                k.weights[ci as usize] = Weights::blend(&items);
+            }
             (0..rim.len())
                 .map(|k| [rim[k], rim[(k + 1) % rim.len()], ci])
                 .collect()
@@ -705,7 +885,6 @@ fn fill(s: &Solid, rim: &[u32], edges: &BTreeMap<(u32, u32), u32>) -> Option<Vec
 /// triangles, floaters, orientation, holes, fuse, short edges) and reports
 /// what each changed. The result is in canonical order.
 pub fn repair(s: &Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairError> {
-    unskinned(s)?;
     let mut r = RepairReport::default();
     let (s, welded) = weld(
         s,

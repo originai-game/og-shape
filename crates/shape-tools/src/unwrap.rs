@@ -17,9 +17,10 @@
 //!    bisection. Charts sit `padding` texels apart at the given
 //!    resolution.
 //!
-//! The result depends only on the solid and the desc. Geometry and names
-//! are unchanged; UVs are per triangle corner, so chart borders are
-//! seams.
+//! The result depends only on the solid and the desc. Geometry, names
+//! and skin weights are unchanged; UVs are per triangle corner, so chart
+//! borders are seams, and a writer that splits a vertex at a seam gives
+//! each copy the vertex's weights.
 
 use core::cmp::Ordering;
 use std::collections::BTreeMap;
