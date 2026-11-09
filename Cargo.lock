@@ -430,6 +430,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "shape-mcp"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "shape-cli",
+ "shape-model",
+ "shape-tools",
+]
+
+[[package]]
 name = "shape-mesh"
 version = "0.0.0"
 dependencies = [
