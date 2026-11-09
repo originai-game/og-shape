@@ -210,3 +210,28 @@ fn an_open_result_names_what_touches() {
             .contains("most likely passes through itself")
     );
 }
+
+#[test]
+fn polygon_lofts_stacked_on_a_shared_face_join_manifold() {
+    // On main these joined with four to six edges used four times, which
+    // the result's directed check let through: `closed: false`, no error.
+    for sides in [6, 8] {
+        let p = |r: f64| shape_2d::polygon(&shape_2d::Polygon { sides, radius: r }).unwrap();
+        let a = loft(&Loft {
+            sections: vec![(p(10.0), 0.0), (p(8.0), 20.0)],
+            ..Default::default()
+        })
+        .unwrap();
+        let b = loft(&Loft {
+            sections: vec![(p(8.0), 0.0), (p(5.0), 15.0)],
+            ..Default::default()
+        })
+        .unwrap();
+        let b = moved(b, DVec3::new(0.0, 0.0, 20.0));
+        identities(&a, &b);
+        let (s, r) = boolean_report(&a, &b, &op(BoolOp::Join)).unwrap();
+        let m = s.measure();
+        assert!(m.closed && m.components == 1, "{sides}: {m:?}");
+        assert_eq!(r.touching_edges, 0);
+    }
+}

@@ -513,6 +513,155 @@ aarch64 Linux.
    crosses the bore wall rather than touching it along a ring: a ring of
    coincident edges is a different case and has not been tested unturned.
 
+5. **Operands that only touch (stream L, 2026-11-09; §13.6, items 1, 2
+   and 5).** Faces lying on faces, vertices within an ulp of a face or an
+   edge, edges on edges. Reproduced from `eval/phase6/` with the kernel's
+   generators (`crates/shape-bool/tests/touching.rs`, golden
+   `touching.*`):
+   - two lofts stacked on a shared face of different samplings (40 and
+     32 points on one 32-gon): open, 71 unmatched edges;
+   - hexagonal or octagonal lofts stacked the same way, and straight lofts
+     with `steps: 3`: `closed: false` (4–6 edges used four times) and no
+     error, failure 1 exactly;
+   - a box over a torus's quarter, whose 90° ring of vertices lies
+     8·10⁻¹⁴ off the box's face: open, 152–167 unmatched edges;
+   - phase 6's hinged strap (run `A`'s first build), a plate whose top
+     edges lie on a tube's vertex columns and whose ends are flush with
+     the tube's: open;
+   - phase 6's cup rim coplanar with its shelled wall's top: open, 83;
+   - phase 6's two elbows sharing a ring face, as the agents built them
+     (tori turned half a facet): open, 67 (128 in their full program).
+
+   **Why it failed.** Three faults, none in the predicates:
+   - *Rounded order.* Where an edge passes within rounding of a vertex,
+     its crossings with that vertex's edges are made a few ulps apart, and
+     their rounded positions put them out of order along an edge or past
+     an outline. spade then drops or splits a constraint, and a region
+     leaks. Follow-up 4's merge of crossings that round to one position
+     made this worse here: two crossings merged while a third lies, in
+     exact order, between them.
+   - *Classification.* A sliver region a rounding error wide is
+     classified by probes 10⁻¹⁶ off its surface, which no winding number
+     resolves.
+   - *The result check.* `open_edges` counts *directed* edges that do
+     not balance. An edge used four times, twice each way, balances: a
+     fin (an A and a B sliver on the same three positions, facing
+     opposite ways, both kept) or a pinch. `measure` counts it as
+     non-manifold, so `join` returned `closed: false` with no error
+     (§13.6, item 2).
+
+   **What was done.** `csg_points` keeps og-geom's arrangement as the
+   first pass; every closed result is the first pass's, so no golden
+   hash moved. When the first result is open, the arrangement is built
+   again by a second pass, and taken if it has fewer unmatched edges:
+   - crossings that round to one position stay separate points;
+   - points on an edge are ordered by their exact place on it. Where two
+     rounded places lie within 2⁻³⁰ of the edge of each other, the order
+     is decided by Shewchuk's expansion arithmetic (`exact.rs`: `+ − ×`
+     on f64, no fused multiply-add): a crossing of the edge with a
+     triangle's plane is `orient3d(T, p) / (orient3d(T, p) −
+     orient3d(T, q))`, with another edge `orient2d` likewise, an
+     operand's vertex its coordinate along the edge, and two such
+     fractions are compared by cross-multiplying. Both triangles that
+     share the edge get one order;
+   - a triangle whose rounded triangulation is not faithful (a
+     constraint dropped or split, an outline edge not bordering one
+     piece, a segment not two) is triangulated again in an exact layout:
+     corners at (0, 0), (1, 0), (0, 1), points on an edge at distinct
+     multiples of 2⁻⁵² along it in exact order, points inside by their
+     barycentric coordinates. Points at one position share a place. Two
+     points at different positions that the layout cannot tell apart are
+     separated by the smallest step along one of their segments, in that
+     layout only;
+   - points at one position are made one point (the result is welded by
+     position anyway). Where one position comes back along an outline,
+     the run between is collapsed too, if it is no longer than 2⁻³⁰ of
+     the operands' size. Each step collapses edges, so a closed surface
+     stays closed;
+   - a region whose boundary is, edge for edge, the boundary of a region
+     of the other operand, every triangle of both lying in one plane with
+     a triangle of the other (exactly, `coplanar`), lies on the other
+     surface. It is classified by orientation, with no probe: the other
+     solid lies behind a face facing the same way, in front of one facing
+     the other way. This is the first pass's rule for coincident faces,
+     decided symbolically;
+   - as a last resort, a region whose largest piece has an inradius under
+     2⁻³⁰ of the operands' size keeps its probe's answer unless the
+     result is open along it. Then, in each cluster of at most 12 such
+     regions on the open edges, the keep-or-drop choice that leaves the
+     fewest unmatched edges is taken: fewest changes first, then the
+     lowest-numbered. No region a probe can resolve is changed;
+   - in both passes, pairs of output triangles on the same three
+     positions facing opposite ways (fins) are dropped: they bound no
+     volume, and their edges cancel.
+
+   **What a boolean may return** (`named.rs`, `boolean_report`):
+   - a closed result;
+   - or one that is non-manifold only where the operands touch along an
+     edge: each such edge is used by two faces of each operand, one each
+     way. Two boxes sharing only an edge, or a box face on a tube's vertex
+     column, make such a union, which is correct. `BoolReport::
+     touching_edges` counts the edges, and `measure` reports the result
+     not closed. A pinch at the scale of rounding that has this shape is
+     reported the same way;
+   - anything else non-manifold is refused (`BoolError::NotManifold`),
+     and an open result always is.
+
+   **Voids.** A cut whose tool lies wholly inside the target leaves a
+   closed inner shell facing in. That is the correct result (sand3d's
+   no-op is not): the volume and mass drop by the tool's.
+   `BoolReport::voids` counts such shells. `fuse`, which `boolean` runs
+   on an operand of several shells, used to join an inward shell as if it
+   were a solid, which lost the void; it now cuts it from the rest, so
+   later booleans keep it.
+
+   **Errors.** An open result is diagnosed before blame, in this order:
+   - `crossing_pairs` runs only now; an operand that passes through
+     itself is `SelfIntersecting`, as before;
+   - operands that touch (the arrangement found triangles in one plane,
+     or meeting without crossing) give `OpenTouching`: "the result is
+     open (N unmatched edges) where the operands touch along coplanar or
+     tangent faces (target: …; tool: …)", naming up to six face names of
+     each;
+   - otherwise `OpenResult`, which no longer blames self-intersection.
+
+   **Results.** Every reproduction above closes, with the volume
+   identities to 1e-9, except the turned elbows. Their tori are turned
+   about their axis, and shape-model hands the boolean its operands in
+   the target's frame, so the two ring faces are tilted and only nearly
+   coplanar. They cross each other exactly at 10⁻¹⁶ angles, which makes
+   large regions no probe can classify. 67 unmatched edges became 8, and
+   the join is refused as `OpenTouching`, naming `qa.bottom` and
+   `qb.top`. The same elbows with the tori unturned (exactly coplanar
+   rings) join closed.
+
+   **Benchmark** (`bench/booleans`, new `touching` suite of seven cases:
+   the lofts, hexagonal lofts, the torus quarter, the strap, boxes
+   sharing an edge, the tube's vertex column on a box face, a tool
+   inside; x86-64, release, one thread):
+
+   | suite | engine | before: ok / refused / wrong | after |
+   |---|---|---|---|
+   | sand3d (17) | og-geom; og-shape-checked; -untangled | 17/0/0; 17/0/0; 16/1/0 | unchanged |
+   | Thingi10K (40) | the same | 40/0/0; 38/2/0; 40/0/0 | unchanged |
+   | synthetic (40) | the same | 19/0/21; 24/16/0; 29/11/0 | unchanged |
+   | touching (7) | og-geom | 4/0/3 | 4/0/3 (it is og-geom's f32 `csg`, unchanged) |
+   | touching (7) | og-shape-checked | 4/3/0 | **7/0/0** |
+   | touching (7) | og-shape-untangled | 4/3/0 | **7/0/0** |
+
+   No suite got worse. Of the 864 output hashes the og-shape engines and
+   og-geom give on these suites, the six that moved are the touching
+   cases refused before. Mean times are within run-to-run noise (Thingi10K,
+   og-shape-checked: 241.6 and 242.0 ms; on sand3d, og-geom, whose code
+   did not change, moved from 2.9 to 3.7 ms, og-shape-checked from 4.8 to
+   5.7), since the second pass runs only on an open result. On the
+   touching suite it costs 27–40 ms a case. The bench's own `closed` is the directed check, so
+   it scores the hexagonal lofts `ok` before (in f32 they come out
+   without fins).
+
+   Not done: a loft folding through itself, and loft corner
+   correspondence (§13.6, items 3–4), are stream N's.
+
 ## 6. Export and the CPU preview (phase 4, stream B; 2026-11-09)
 
 ### 6.1 Decisions
@@ -2322,8 +2471,19 @@ marked. None was fixed in this stream.
    (reported). The hint "an operand most likely passes through itself"
    points the author away from the cause. Boxes sharing a face join
    cleanly, so it is the general coplanar and tangent case that fails.
+   **Done, but for one case** (stream L, §5.4 item 5): the lofts, the
+   tangent strap, the cup rim, the box through a torus's ring of
+   vertices and untilted elbows join closed. Elbows whose ring faces are
+   only nearly coplanar (tori turned about their axis) are still refused,
+   now as "the result is open … where the operands touch along coplanar
+   or tangent faces", naming the faces.
 2. **`join` can return an open solid without an error**, against
    `docs/design.md` §6 ("never a best effort silently").
+   **Done** (stream L, §5.4 item 5): the result check counted directed
+   edges, which an edge used twice each way passes. A result is now
+   closed, or non-manifold only along edges where the operands touch
+   (two faces of each, reported as `BoolReport::touching_edges`), or
+   refused.
 3. **A curved loft (`steps` > 1) with a small end section folds through
    itself**: open, 2 non-manifold edges, no error (reported in runs `A`
    and `C`, not reproduced with the sections tried here).
@@ -2333,6 +2493,10 @@ marked. None was fixed in this stream.
    notes the missing corner correspondence).
 5. **A `cut` whose tool lies wholly inside the target changes nothing,
    silently** (an enclosed void; reported).
+   **Done** (stream L, §5.4 item 5): the void is kept, as the correct
+   result, and reported (`BoolReport::voids`); `fuse` no longer loses it
+   in a later boolean. The binding and the CLI do not show the report
+   yet.
 6. **Unknown desc fields are ignored**, so `cylinder({ segments })`,
    `sphere({ segments })` silently do nothing (reproduced). The program
    parser could refuse fields it does not know, as the MCP tools do.

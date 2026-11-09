@@ -2326,6 +2326,14 @@ pub struct CsgOutput {
     /// Whether the second pass (`docs/research.md` §5.4, item 5) built the
     /// result: the first came out open.
     pub second_pass: bool,
+    /// Directed edges, after welding by exact position, used more often
+    /// one way than the other: 0 for a closed result.
+    pub unmatched: usize,
+    /// Edges used four times, by two faces of each operand, one each way:
+    /// where the operands touch along an edge.
+    pub touching_edges: usize,
+    /// Other edges used other than once each way.
+    pub non_manifold: usize,
 }
 
 /// [`csg_points`], with where the operands touch.
@@ -2351,7 +2359,15 @@ pub fn csg_points_traced(
         let sb = weld64(1, false, b, &mut points, &mut at)?;
         let (c, kept) = arrange(points, sa, sb, op, robust);
         let (points, tris, origins, _) = emit(&c, &kept);
-        let (tris, origins) = cancel_fins(&points, tris, origins);
+        let w = weld_ids(&points);
+        let mut counts = edge_counts(&w, &tris, &origins);
+        let (tris, origins) = if counts.non_manifold + counts.touching > 0 {
+            let (t, o) = cancel_fins(&w, tris, origins);
+            counts = edge_counts(&w, &t, &o);
+            (t, o)
+        } else {
+            (tris, origins)
+        };
         let source = |pairs: &[TriPair]| {
             let mut v: Vec<(u32, u32)> = Vec::new();
             for &((ma, ia), (_, ib)) in pairs {
@@ -2372,18 +2388,20 @@ pub fn csg_points_traced(
             tris,
             origins,
             second_pass: robust,
+            unmatched: counts.unmatched,
+            touching_edges: counts.touching,
+            non_manifold: counts.non_manifold,
         })
     };
     let first = pass(false)?;
     // Operands that touch can make crossings a rounding error apart that
     // the first pass cannot keep apart; an open result there is built
     // again by the second pass. Every closed result is the first pass's.
-    let open = open_edges(&first.points, &first.tris);
-    if open == 0 {
+    if first.unmatched == 0 {
         return Ok(first);
     }
     let second = pass(true)?;
-    if open_edges(&second.points, &second.tris) < open {
+    if second.unmatched < first.unmatched {
         Ok(second)
     } else {
         Ok(first)
@@ -2398,19 +2416,10 @@ pub fn csg_points_traced(
 /// used four times (`docs/research.md` §5.4, item 5). Pairs are taken in
 /// output order.
 fn cancel_fins(
-    points: &[DVec3],
+    w: &[u32],
     tris: Vec<[u32; 3]>,
     origins: Vec<(u8, u32)>,
 ) -> (Vec<[u32; 3]>, Vec<(u8, u32)>) {
-    let mut id: BTreeMap<[u64; 3], u32> = BTreeMap::new();
-    let w: Vec<u32> = points
-        .iter()
-        .map(|p| {
-            let n = id.len() as u32;
-            *id.entry(p.to_array().map(|x| (x + 0.0).to_bits()))
-                .or_insert(n)
-        })
-        .collect();
     // Each triangle by its sorted corners, and whether its winding is the
     // sorted order's (an even permutation).
     let key = |t: [u32; 3]| {
@@ -2447,30 +2456,62 @@ fn cancel_fins(
         .unzip()
 }
 
-/// Directed edges, after welding by exact position, used more often one
-/// way than the other (zero-area triangles skipped).
-pub(crate) fn open_edges(points: &[DVec3], tris: &[[u32; 3]]) -> usize {
+/// Each point's id after welding by exact position (first-seen order).
+fn weld_ids(points: &[DVec3]) -> Vec<u32> {
     let mut id: BTreeMap<[u64; 3], u32> = BTreeMap::new();
-    let w: Vec<u32> = points
+    points
         .iter()
         .map(|p| {
             let n = id.len() as u32;
             *id.entry(p.to_array().map(|x| (x + 0.0).to_bits()))
                 .or_insert(n)
         })
-        .collect();
-    let mut directed: BTreeMap<(u32, u32), i64> = BTreeMap::new();
-    for t in tris {
+        .collect()
+}
+
+/// [`CsgOutput`]'s edge counts.
+struct EdgeCounts {
+    unmatched: usize,
+    touching: usize,
+    non_manifold: usize,
+}
+
+/// How a result's edges are used, after welding (`w`), zero-area
+/// triangles skipped: directed edges that do not balance, edges where the
+/// operands touch (two faces of each, one each way), and other edges not
+/// used once each way.
+fn edge_counts(w: &[u32], tris: &[[u32; 3]], origins: &[(u8, u32)]) -> EdgeCounts {
+    // Per edge, low id first: uses by (operand, low to high).
+    let mut uses: BTreeMap<(u32, u32), [u32; 4]> = BTreeMap::new();
+    for (t, &(m, _)) in tris.iter().zip(origins) {
         let t = t.map(|v| w[v as usize]);
         if t[0] == t[1] || t[1] == t[2] || t[0] == t[2] {
             continue;
         }
         for k in 0..3 {
             let (a, b) = (t[k], t[(k + 1) % 3]);
-            *directed.entry((a.min(b), a.max(b))).or_default() += if a < b { 1 } else { -1 };
+            let slot = 2 * (m.min(1) as usize) + usize::from(a > b);
+            uses.entry((a.min(b), a.max(b))).or_default()[slot] += 1;
         }
     }
-    directed.values().map(|n| n.unsigned_abs() as usize).sum()
+    let mut c = EdgeCounts {
+        unmatched: 0,
+        touching: 0,
+        non_manifold: 0,
+    };
+    for u in uses.values() {
+        let (fwd, back) = (u[0] + u[2], u[1] + u[3]);
+        c.unmatched += fwd.abs_diff(back) as usize;
+        if fwd == 1 && back == 1 {
+            continue;
+        }
+        if *u == [1, 1, 1, 1] {
+            c.touching += 1;
+        } else {
+            c.non_manifold += 1;
+        }
+    }
+    c
 }
 
 /// A self-union's output ([`self_union_points`]).

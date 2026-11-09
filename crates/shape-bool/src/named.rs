@@ -458,7 +458,7 @@ fn boolean_once(
     }
     // Never return open output (`docs/design.md` §6): every directed edge,
     // after welding by exact position, needs a twin the other way.
-    let boundary = open_edges(&out.points, &out.tris);
+    let boundary = out.unmatched;
     if boundary > 0 {
         if !touching {
             return Err(BoolError::OpenResult { boundary });
@@ -488,10 +488,12 @@ fn boolean_once(
     // (two coincident faces kept, a pinch): only an edge where the operands
     // touch, two faces of each, one each way, is a correct non-manifold
     // result.
-    let (bad, touching_edges) = non_manifold(&out.points, &out.tris, &out.origins);
-    if bad > 0 {
-        return Err(BoolError::NotManifold { edges: bad });
+    if out.non_manifold > 0 {
+        return Err(BoolError::NotManifold {
+            edges: out.non_manifold,
+        });
     }
+    let touching_edges = out.touching_edges;
     let s = named_result(
         out.points,
         &out.tris,
@@ -500,10 +502,7 @@ fn boolean_once(
         d,
         |_, ms| ms.contains(&0) && ms.contains(&1),
     )?;
-    let voids = components(&s)
-        .iter()
-        .filter(|c| c.measure().volume < 0.0)
-        .count();
+    let voids = void_shells(&s);
     Ok((
         s,
         BoolReport {
@@ -514,40 +513,31 @@ fn boolean_once(
     ))
 }
 
-/// Edges, after welding by exact position, used other than once each way:
-/// those not where the operands touch, and those where they do (four
-/// faces, two of each operand, one each way).
-fn non_manifold(points: &[DVec3], tris: &[[u32; 3]], origins: &[(u8, u32)]) -> (usize, usize) {
-    let (w, _) = weld(points);
-    // Per edge: (operand, forward) of each face using it.
-    let mut by: BTreeMap<(u32, u32), Vec<(u8, bool)>> = BTreeMap::new();
-    for (t, &(m, _)) in tris.iter().zip(origins) {
-        let t = t.map(|v| w[v as usize]);
-        if t[0] == t[1] || t[1] == t[2] || t[0] == t[2] {
-            continue;
+/// Shells (pieces sharing a vertex) whose signed volume is negative: they
+/// face in, voids inside another shell.
+fn void_shells(s: &Solid) -> usize {
+    let mut parent: Vec<u32> = (0..s.positions.len() as u32).collect();
+    fn find(p: &mut [u32], mut i: u32) -> u32 {
+        while p[i as usize] != i {
+            p[i as usize] = p[p[i as usize] as usize];
+            i = p[i as usize];
         }
-        for k in 0..3 {
-            let (a, b) = (t[k], t[(k + 1) % 3]);
-            by.entry((a.min(b), a.max(b))).or_default().push((m, a < b));
+        i
+    }
+    for t in &s.triangles {
+        for k in 1..3 {
+            let (a, b) = (find(&mut parent, t[0]), find(&mut parent, t[k]));
+            if a != b {
+                parent[a.max(b) as usize] = a.min(b);
+            }
         }
     }
-    let (mut bad, mut touching) = (0, 0);
-    for uses in by.values() {
-        if uses.len() == 2 && uses[0].1 != uses[1].1 {
-            continue;
-        }
-        let count = |m: u8, f: bool| uses.iter().filter(|&&u| u == (m, f)).count();
-        if uses.len() == 4
-            && [(0, true), (0, false), (1, true), (1, false)]
-                .iter()
-                .all(|&(m, f)| count(m, f) == 1)
-        {
-            touching += 1;
-        } else {
-            bad += 1;
-        }
+    let mut volume: BTreeMap<u32, f64> = BTreeMap::new();
+    for t in &s.triangles {
+        let [a, b, c] = t.map(|v| s.positions[v as usize]);
+        *volume.entry(find(&mut parent, t[0])).or_default() += a.dot(b.cross(c)) / 6.0;
     }
-    (bad, touching)
+    volume.values().filter(|&&v| v < 0.0).count()
 }
 
 /// The output of a boolean (or self-union) as a solid with names:

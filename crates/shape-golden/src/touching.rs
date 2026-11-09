@@ -38,6 +38,13 @@ pub fn cases() -> Vec<Case> {
             },
         },
         Case {
+            name: "touching.lofts.hexagon",
+            run: |h| {
+                let (a, b) = polygon_lofts(6);
+                both(h, &a, &b, BoolOp::Join)
+            },
+        },
+        Case {
             name: "touching.torus.ring",
             run: |h| {
                 let t = torus(351.0, 127.0).map_err(fail)?;
@@ -131,6 +138,23 @@ fn lofts() -> (Solid, Solid) {
     (a, moved(b, DVec3::new(0.0, 0.0, 20.0)))
 }
 
+/// Hexagonal (or other) lofts stacked on a shared face: on main, a join
+/// with edges used four times and no error.
+fn polygon_lofts(sides: u32) -> (Solid, Solid) {
+    let p = |r: f64| shape_2d::polygon(&shape_2d::Polygon { sides, radius: r }).expect("polygon");
+    let a = loft(&Loft {
+        sections: vec![(p(10.0), 0.0), (p(8.0), 20.0)],
+        ..Default::default()
+    })
+    .expect("loft");
+    let b = loft(&Loft {
+        sections: vec![(p(8.0), 0.0), (p(5.0), 15.0)],
+        ..Default::default()
+    })
+    .expect("loft");
+    (a, moved(b, DVec3::new(0.0, 0.0, 20.0)))
+}
+
 /// Phase 6's hinged strap (run `A`'s first build): a plate whose top edges
 /// lie on a tube's vertex columns, the tube's ends flush with the plate's.
 fn strap() -> Result<(Solid, Solid), HashError> {
@@ -181,10 +205,10 @@ mod tests {
 
     #[test]
     fn elbows_turned_are_refused_naming_the_faces_that_touch() {
-        let e = program::run(ELBOWS_TURNED)
-            .err()
-            .expect("refused")
-            .to_string();
+        let Err(e) = program::run(ELBOWS_TURNED) else {
+            panic!("the turned elbows joined");
+        };
+        let e = e.to_string();
         assert!(e.contains("where the operands touch"), "{e}");
         assert!(e.contains("qa.bottom") && e.contains("qb.top"), "{e}");
     }

@@ -20,9 +20,11 @@ version = "0.0.0"
 dependencies = [
  "glam",
  "manifold-rust",
+ "shape-2d",
  "shape-bool",
  "shape-core",
  "shape-gen",
+ "shape-mesh",
 ]
 
 [[package]]
