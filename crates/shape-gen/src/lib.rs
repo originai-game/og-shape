@@ -21,12 +21,14 @@ pub mod earcut;
 pub mod extrude;
 pub mod frames;
 pub mod lathe;
+pub mod loft;
 pub mod merge;
 pub mod path2;
 pub mod paths;
 pub mod polyhedron;
 pub mod shape;
 pub mod solids;
+pub mod spline;
 pub mod sweep;
 pub mod trig;
 
