@@ -39,7 +39,8 @@ Design: `docs/design.md`. Plan and status: `docs/plan.md`. Verified research:
   - The determinism gate (`docs/plan.md` §Gate) proves all of this on all
     three targets. A claim that a crate is deterministic is checked by the
     gate, never assumed.
-- **Permissive licences only:** MIT, Apache-2.0, BSD, zlib, ISC. Never use
+- **Permissive licences only:** MIT, Apache-2.0, BSD, zlib, ISC, and
+  Unicode-3.0 (Unicode data tables). Never use
   GPL, LGPL or MPL code, and never read GPL source to port it. Blender's
   published design notes are fine; its source files are not. Vendored code
   keeps its licence under `third_party/<name>/`.

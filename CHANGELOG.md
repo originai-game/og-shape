@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Licence list: Unicode-3.0 allowed (Unicode data tables; reached through
+  `gltf` in tests), in `AGENTS.md` and `deny.toml`.
 - Repository created: design, plan and verified research.
 - Cargo workspace and `shape-core`: `DVec3` and `Frame`, `trig` (libm),
   exact predicates (`orient2d`, `orient3d`, `incircle`, `insphere`),
