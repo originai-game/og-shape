@@ -1,0 +1,21 @@
+[package]
+name = "bench-meshtools"
+description = "Phase 5 acceptance: the platform chain import → repair → decimate → unwrap → measure → preview → export on Thingi10K and synthetic AI-mesh defects (docs/plan.md)."
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+# Its own workspace, like bench/booleans: it only measures.
+[workspace]
+
+[dependencies]
+shape-core = { path = "../../crates/shape-core" }
+shape-gen = { path = "../../crates/shape-gen" }
+shape-mesh = { path = "../../crates/shape-mesh" }
+shape-bool = { path = "../../crates/shape-bool" }
+shape-tools = { path = "../../crates/shape-tools" }
+glam = { version = "0.34", default-features = false, features = ["std", "f64", "i64", "u32", "libm", "scalar-math"] }
+
+[profile.release]
+debug = false

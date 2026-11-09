@@ -414,6 +414,7 @@ dependencies = [
 name = "shape-golden"
 version = "0.0.0"
 dependencies = [
+ "miniz_oxide",
  "shape-2d",
  "shape-bevel",
  "shape-bool",
@@ -471,6 +472,7 @@ dependencies = [
  "gltf",
  "miniz_oxide",
  "shape-2d",
+ "shape-bool",
  "shape-core",
  "shape-gen",
  "shape-mesh",

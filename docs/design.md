@@ -121,7 +121,7 @@ A Cargo workspace. Each crate has one job and a small public surface.
 | `shape-bool` | mesh booleans and split | og-geom's exact-predicate CSG, or manifold-rust; chosen in phase 0 |
 | `shape-bevel` | fillet, chamfer, soften | written here, clean-room, from Blender's published Bevel V2 design |
 | `shape-edit` | shell, dent, hole, pocket, seat, merge | the crates above |
-| `shape-tools` | import, repair, decimate and LODs, UV unwrap, preview, export | gltf, ufbx (if Rust-only allows; else fbx stays in og cook), meshoptimizer-rs, xatlas port or own unwrap, own CPU rasterizer |
+| `shape-tools` | import, repair, decimate and LODs, UV unwrap, measure, preview, export | own glTF, OBJ and FBX readers, own QEM decimator, own unwrap, own CPU rasterizer, miniz_oxide (`docs/research.md` §9) |
 | `shape-model` | parts, groups, joints, materials, the program API in Rust | all |
 | `shape-wasm` | wasm32 build and the TypeScript binding | wasm-bindgen |
 | `shape-cli` | `shape build / export / measure / preview / repair / decimate / unwrap`, for tests and for the platform before the merge | all |

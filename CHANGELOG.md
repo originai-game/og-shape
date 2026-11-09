@@ -210,3 +210,49 @@
 - `boolean` never returns open output: a result whose edges do not all
   pair up is `BoolError::OpenResult`. A closed, oriented operand that
   passes through itself used to give open output with no error.
+- `shape-tools` mesh tools (phase 5) for meshes from outside the kernel
+  (`docs/research.md` §9):
+  - `import`, `import_gltf`, `import_obj`, `import_fbx`: glTF 2.0 (GLB,
+    and `.gltf` with embedded or external buffers through a `Resolve`
+    callback), OBJ (with MTL texture maps) and FBX 7.x binary and ASCII,
+    into `ImportedPart`s (a solid each, its `Affine` transform, per-corner
+    UVs, material name) and the textures' sizes (`ImageInfo`). Polygons
+    are triangulated on the way in; faces carry their part's name.
+    Draco and meshopt compression, and FBX 6, are `Unsupported` errors.
+  - Skinned inputs fill `shape_mesh::Skin` completely (`docs/research.md`
+    §11.4): glTF skin joints as bones, parents first, with world rest
+    frames and the file's inverse bind matrices, `JOINTS_0`/`WEIGHTS_0`
+    through `Weights::from_raw`; FBX skin deformers the same from their
+    clusters' `Transform`/`TransformLink`, `Indexes` and `Weights`. A bone
+    that is scaled or sheared (including through a scaled armature), or a
+    skin that does not check, is refused at import. `measure` reports
+    the skin. Repair's steps, `join`, `apply_transform` (now a `Result`),
+    `decimate`, `lods`, `collapse_short_edges` and `glb_plain` refuse a
+    skinned solid with an error value until part 2 carries skins through
+    them; `glb` writes the skin, and `unwrap`, `measure` and `preview`
+    take it.
+  - `repair` with `Repair`: `weld` (closes cracks, or all vertices with
+    `weld_all`), `remove_degenerate` (exact zero area, duplicates),
+    `remove_floaters` (`Floaters` by size or fraction), `orient`
+    (consistent winding, closed pieces facing out), `close_holes` (least
+    area fill, pinched rims split, fills named `fill`), `fuse` of
+    interpenetrating shells (taken only when the union is closed), and
+    `collapse_short_edges` (`min_edge`, keeping the mesh manifold);
+    `RepairReport` says what each step did.
+    `apply_transform` and `join` place and merge imported parts.
+  - `decimate` and `lods` with `Decimate` (ratio or triangle target, error
+    limit, locked borders): quadric error metrics in f64 with the link
+    condition, so closed meshes stay closed; features and names kept.
+  - `unwrap` with `Unwrap`: charts grown within an angle with an exact
+    no-overlap test, planar projection, smallest-box turn, skyline packing
+    at one texel density, padding in texels; `Uvs` per triangle corner.
+  - `measure` with `Measure`, `MeshMeasures::to_json`: counts, bounds,
+    pivot, area, volume, closed, boundary loops, non-manifold and
+    inconsistent edges, shortest edge, degenerate and duplicate triangles,
+    pieces and floaters, exact self-intersections, the skin, UV coverage
+    and overlap, texture memory once decoded (with mips). No thresholds.
+  - `glb_plain` with `PlainGlb`: one node, one mesh, one primitive with
+    positions, normals and `TEXCOORD_0`, what texturing tools take.
+  - Golden cases `meshtools.*` added; no existing hash moved. The
+    acceptance chain is `bench/meshtools` (`--glb` runs other tools'
+    files); `guides/meshtools.md` says what the measures mean.

@@ -5,6 +5,8 @@
 /// A JSON value. Objects keep their keys in the order given.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Json {
+    Null,
+    Bool(bool),
     Num(f64),
     Int(u64),
     Str(String),
@@ -17,6 +19,8 @@ impl Json {
     /// is written `0`.
     pub(crate) fn write(&self, out: &mut String) {
         match self {
+            Json::Null => out.push_str("null"),
+            Json::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
             Json::Num(v) => {
                 let v = if *v == 0.0 { 0.0 } else { *v };
                 debug_assert!(v.is_finite());
