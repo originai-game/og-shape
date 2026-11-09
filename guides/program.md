@@ -43,8 +43,9 @@ generated models.
 - **Fields:** an operation, profile, section or frame takes only the
   fields listed; any other is an error that names it and lists the
   ones taken. `null` is the same as leaving a field out.
-- **Round generators** take `segments` (a turn; 0 or missing sizes it by
-  the radius, 24 to 64). Turned solids take `axis`: `"+Y"` (the default,
+- **Round generators** (`cylinder`, `cone`, `tube`, `sphere`, `dome`,
+  `torus`, `revolve`, `wire`) take `segments` (a turn, 3 to 1024; 0 or
+  missing sizes it by the radius, 24 to 64). Turned solids take `axis`: `"+Y"` (the default,
   about +y) or `"+Z"` (about +z, the profile's y up; a sphere, dome or
   torus then rests on z = 0).
 - **Readers are not recorded.** `face`, `bbox`, `edge`, `grid`, `ring`
@@ -85,7 +86,7 @@ an arc that far, outward if positive), `{"gear": {"teeth", "module",
 | `sweep` | `name`, `profile`, `path` (points), `up`?, `twist`?, `scaleEnd`?, `on`? | along a polyline |
 | `loft` | `name`, `sections`: `[{"profile", "z"}]`, `samples`?, `steps`?, `curve`? (`"auto"`, `"straight"`, `"catmullRom"`, `"spline"`), `on`? | through sections |
 | `thread` | `name`, `radius`, `pitch`, `length`, `depth`, `on`? | |
-| `wire` | `name`, `path` (points), `diameter`, `fillet`?, `fillets`? (one a point), `closed`?, `on`? | a round rod; corners bent round `fillet`, else mitred |
+| `wire` | `name`, `path` (points), `diameter`, `fillet`?, `fillets`? (one a point), `closed`?, `segments`?, `on`? | a round rod; corners bent round `fillet`, else mitred |
 | `body` | `name`, `plan`, `top`, `bottom`, `n`?, `on`? | along +y from views: a number, `[[y, v], …]`, or `{"points", "smooth"}` |
 | `knurl` | `name`, `diameter`, `height`, `pitch`?, `straight`?, `on`? | a grip about +z |
 | `gear` | `name`, `teeth`, `module`, `width`, `pressureAngle`?, `bore`?, `hub`?, `hubHeight`?, `on`? | a spur gear about +z; `bore`, `hub` diameters |

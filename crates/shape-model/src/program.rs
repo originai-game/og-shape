@@ -37,7 +37,7 @@
 //! | `sweep` | `name`, `profile`, `path` (points), `up`?, `twist`?, `scaleEnd`?, `on`? | `id` |
 //! | `loft` | `name`, `sections`: `[{profile, z}]`, `samples`?, `steps`?, `curve`? (`"auto"`, `"straight"`, `"catmullRom"`, `"spline"`), `on`? | `id` |
 //! | `thread` | `name`, `radius`, `pitch`, `length`, `depth`, `on`? | `id` |
-//! | `wire` | `name`, `path` (points), `diameter`, `closed`?, `fillet`?, `fillets`?, `on`? | `id` |
+//! | `wire` | `name`, `path` (points), `diameter`, `closed`?, `fillet`?, `fillets`?, `segments`?, `on`? | `id` |
 //! | `body` | `name`, `plan`, `top`, `bottom`, `n`? (views: a number, `[[y, v]…]`, or `{points, smooth}`), `on`? | `id` |
 //! | `knurl` | `name`, `diameter`, `height`, `pitch`?, `straight`?, `on`? | `id` |
 //! | `gear` | `name`, `teeth`, `module`, `width`, `pressureAngle`?, `bore`?, `hub`?, `hubHeight`?, `on`? | `id` |
@@ -664,7 +664,7 @@ const OPS: &[(&str, &[&str])] = &[
     (
         "wire",
         &[
-            "name", "path", "diameter", "closed", "fillet", "fillets", "on",
+            "name", "path", "diameter", "closed", "fillet", "fillets", "segments", "on",
         ],
     ),
     ("body", &["name", "plan", "top", "bottom", "n", "on"]),
@@ -919,6 +919,7 @@ fn generate(a: &Args) -> Result<shape_mesh::Solid, ModelError> {
                 Some(_) => a.nums("fillets")?,
                 None => Vec::new(),
             },
+            segments: segments()?,
         })?,
         "body" => shape_gen::body::body(&Body {
             plan: a.view("plan")?,

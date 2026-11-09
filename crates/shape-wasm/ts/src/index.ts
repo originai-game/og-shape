@@ -291,7 +291,14 @@ export class Shape {
   }
   /** A round rod along a polyline; corners bent round `fillet` (or `fillets[i]`) on the centre line, else mitred. */
   wire(
-    d: Placed & { path: Vec3[]; diameter: number; closed?: boolean; fillet?: number; fillets?: number[] },
+    d: Placed & {
+      path: Vec3[];
+      diameter: number;
+      closed?: boolean;
+      fillet?: number;
+      fillets?: number[];
+      segments?: number;
+    },
   ): Part {
     return this.part("wire", d);
   }

@@ -150,7 +150,7 @@ before joining: after a join, `edges: "top"` takes every operand's.
 - **Triangles**: the task's budget; without one, a few thousand for a
   prop and under about 20 000 for a large object. Round things cost most
   (24 to 64 segments a turn by size); give small or many round parts
-  `segments` (12 to 16).
+  `segments` (12 to 16; the generators `guides/typescript.md` lists).
 
 ## 8. Review: build → preview → measure → fix
 

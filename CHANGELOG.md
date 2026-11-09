@@ -379,8 +379,8 @@
   The binding adds the generators, `Shape.scale`, and `og.translate`,
   `og.rotate`, `og.offset`, `og.scale`.
 - `segments` (a turn; 0 keeps the chord rule) on `cylinder`, `cone`,
-  `tube`, `sphere`, `dome`, `torus` and `revolve`. In `shape-gen`:
-  `segments` on `CylinderDesc`, `SphereDesc`, `DomeDesc`, `Revolve`;
+  `tube`, `sphere`, `dome`, `torus`, `revolve` and `wire`. In `shape-gen`:
+  `segments` on `CylinderDesc`, `SphereDesc`, `DomeDesc`, `Revolve`, `Wire`;
   `angle`, `segments`, `tube_segments` on `TorusDesc`; new `ConeDesc`,
   `TubeDesc` (`cone_desc`, `tube_desc`). In `shape-2d`: `Polygon::flats`,
   `PolyPoint::bulge`, `ProfileError::ArcCorner` and `Conflict`. Zero
@@ -399,3 +399,8 @@
   part, so the model changed on an error and a replay diverged.
 - Golden cases `surface.program.glb` and `surface.program.measure`; no
   existing hash moved.
+- Guides: `typescript.md` and `program.md` cover the above;
+  `shape.md` points bends at `wire`, hulls at `body`, outline arcs at
+  `bulge`, budgets at `segments`. The pair is about 6 600 tokens.
+  Run `M` (`eval/phase6/M/`, `docs/research.md` §14.4): five objects
+  re-built with them.

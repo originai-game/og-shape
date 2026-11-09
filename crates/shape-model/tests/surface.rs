@@ -155,6 +155,14 @@ fn segments_set_the_count_and_zero_keeps_the_chord_rule() {
         ),
         256
     );
+    // A straight wire 8 round: 8 walls of 2 and two caps of 6.
+    assert_eq!(
+        tris(
+            json!({"op": "wire", "name": "w", "diameter": 2, "segments": 8,
+                    "path": [[0, 0, 0], [0, 0, 10]]})
+        ),
+        28
+    );
     assert_eq!(
         tris(json!({"op": "sphere", "name": "s", "radius": 4, "segments": 0})),
         tris(json!({"op": "sphere", "name": "s", "radius": 4}))
