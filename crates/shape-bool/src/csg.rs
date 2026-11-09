@@ -74,6 +74,9 @@ enum Origin {
     EdgeTri(EdgeKey, u8, u32),
     /// Two edges through each other (A's first).
     EdgeEdge(EdgeKey, EdgeKey),
+    /// Three triangles of one mesh through one point (a self-union), in
+    /// increasing order.
+    Triple(u32, u32, u32),
 }
 
 /// Where a point lies in a triangle.
@@ -88,6 +91,9 @@ enum Loc {
 struct Cut {
     points: Vec<u32>,
     segments: Vec<[u32; 2]>,
+    /// The triangle (of the other mesh, or of this one in a self-union)
+    /// whose crossing made each segment.
+    src: Vec<u32>,
 }
 
 struct Csg {
@@ -304,12 +310,14 @@ impl Csg {
         }
     }
 
-    fn add_segment(&mut self, m: u8, tri: u32, a: u32, b: u32) {
+    fn add_segment(&mut self, m: u8, tri: u32, a: u32, b: u32, src: u32) {
         if a == b {
             return;
         }
         self.add_points(m, tri, &[a, b]);
-        self.cut(m, tri).segments.push([a, b]);
+        let c = self.cut(m, tri);
+        c.segments.push([a, b]);
+        c.src.push(src);
         self.crossings.insert((a.min(b), a.max(b)));
     }
 
@@ -383,8 +391,8 @@ impl Csg {
         self.add_points(ma, ia, &uniq);
         self.add_points(mb, ib, &uniq);
         for w in uniq.windows(2) {
-            self.add_segment(ma, ia, w[0], w[1]);
-            self.add_segment(mb, ib, w[0], w[1]);
+            self.add_segment(ma, ia, w[0], w[1], ib);
+            self.add_segment(mb, ib, w[0], w[1], ia);
         }
     }
 
@@ -435,7 +443,9 @@ impl Csg {
             }
         }
         // Each edge's pieces inside the other triangle become its cuts.
-        for (slot, m, t, ot, om, oi) in [(0, ma, ta, tb, mb, ib), (1, mb, tb, ta, ma, ia)] {
+        for (slot, m, t, ot, om, oi, ti) in
+            [(0, ma, ta, tb, mb, ib, ia), (1, mb, tb, ta, ma, ia, ib)]
+        {
             for k in 0..3 {
                 let e = edge_key(m, t[k], t[(k + 1) % 3]);
                 let (p0, p1) = (self.p(e.1), self.p(e.2));
@@ -463,12 +473,105 @@ impl Csg {
                     let v = ot.map(|i| project(self.p(i), axis));
                     let o = [o2(v[0], v[1], q), o2(v[1], v[2], q), o2(v[2], v[0], q)];
                     if !(o.iter().any(|&s| s > 0) && o.iter().any(|&s| s < 0)) {
-                        self.add_segment(om, oi, w[0], w[1]);
+                        self.add_segment(om, oi, w[0], w[1], ti);
                         self.crossings.insert((w[0].min(w[1]), w[0].max(w[1])));
                     }
                 }
             }
         }
+    }
+
+    /// The point where the planes of three triangles of mesh 0 meet
+    /// (Cramer's rule, in a fixed order); None if two are parallel.
+    fn three_planes(&self, t: [u32; 3]) -> Option<DVec3> {
+        let plane = |i: u32| {
+            let [a, b, c] = self.solids[0].tris[i as usize].map(|v| self.p(v));
+            let n = (b - a).cross(c - a);
+            (n, n.dot(a))
+        };
+        let [(n1, d1), (n2, d2), (n3, d3)] = t.map(plane);
+        let det = n1.dot(n2.cross(n3));
+        if det == 0.0 || !det.is_finite() {
+            return None;
+        }
+        let p = (n2.cross(n3) * d1 + n3.cross(n1) * d2 + n1.cross(n2) * d3) / det;
+        p.is_finite().then_some(p)
+    }
+
+    /// A self-union's triple points. Where two crossing segments inside one
+    /// triangle, made by two other triangles, cross each other, the three
+    /// triangles meet in a point. It is made once, named by the three, and
+    /// each of them splits its two segments there, so all three are cut
+    /// alike whichever of them saw the crossing (two meshes never need
+    /// this: neither crosses itself).
+    fn triples(&mut self) {
+        let mut found: BTreeSet<[u32; 3]> = BTreeSet::new();
+        for (&t, cut) in &self.cuts[0] {
+            let axis = drop_axis(self.tri_normal(self.solids[0].tris[t as usize]));
+            let pr = |k: u32| project(self.p(k), axis);
+            for i in 0..cut.segments.len() {
+                for j in i + 1..cut.segments.len() {
+                    let (u, v) = (cut.src[i], cut.src[j]);
+                    let ([a, b], [p, q]) = (cut.segments[i], cut.segments[j]);
+                    if u == v || a == p || a == q || b == p || b == q {
+                        continue;
+                    }
+                    let (s1, s2) = (o2(pr(a), pr(b), pr(p)), o2(pr(a), pr(b), pr(q)));
+                    let (s3, s4) = (o2(pr(p), pr(q), pr(a)), o2(pr(p), pr(q), pr(b)));
+                    if s1 * s2 < 0 && s3 * s4 < 0 {
+                        let mut k = [t, u, v];
+                        k.sort_unstable();
+                        found.insert(k);
+                    }
+                }
+            }
+        }
+        for k in found {
+            let Some(pos) = self.three_planes(k) else {
+                continue;
+            };
+            let id = self.add_point(Origin::Triple(k[0], k[1], k[2]), |_| pos, &[]);
+            for (x, y, z) in [(k[0], k[1], k[2]), (k[1], k[0], k[2]), (k[2], k[0], k[1])] {
+                self.split(x, y, id);
+                self.split(x, z, id);
+            }
+        }
+    }
+
+    /// Splits at point `id` the segment of triangle `tri` (mesh 0) made by
+    /// triangle `src`: of several, the one `id` lies nearest.
+    fn split(&mut self, tri: u32, src: u32, id: u32) {
+        let Some(cut) = self.cuts[0].get(&tri) else {
+            return;
+        };
+        let p = self.p(id);
+        let detour = |s: [u32; 2]| {
+            let (a, b) = (self.p(s[0]), self.p(s[1]));
+            (a - p).length() + (p - b).length() - (a - b).length()
+        };
+        let mut best: Option<(usize, f64)> = None;
+        for (i, (&s, &from)) in cut.segments.iter().zip(&cut.src).enumerate() {
+            if from != src || s.contains(&id) {
+                continue;
+            }
+            let d = detour(s);
+            if best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((i, d));
+            }
+        }
+        let Some((i, _)) = best else {
+            return;
+        };
+        let cut = self.cuts[0].get_mut(&tri).expect("cut");
+        let [a, b] = cut.segments[i];
+        cut.segments[i] = [a, id];
+        cut.segments.push([id, b]);
+        cut.src.push(src);
+        if !cut.points.contains(&id) {
+            cut.points.push(id);
+        }
+        self.crossings.insert((a.min(id), a.max(id)));
+        self.crossings.insert((id.min(b), id.max(b)));
     }
 
     /// Triangle `tri` of mesh `m` cut into pieces (global ids, the
@@ -654,6 +757,24 @@ fn strictly_inside(poly: &[DVec2], q: DVec2) -> bool {
 pub(crate) fn winding(points: &[DVec3], tris: &[[u32; 3]], p: DVec3) -> f64 {
     let mut sum = 0.0;
     for t in tris {
+        let a = points[t[0] as usize] - p;
+        let b = points[t[1] as usize] - p;
+        let c = points[t[2] as usize] - p;
+        let (la, lb, lc) = (a.length(), b.length(), c.length());
+        let det = a.dot(b.cross(c));
+        let den = la * lb * lc + a.dot(b) * lc + a.dot(c) * lb + b.dot(c) * la;
+        sum += 2.0 * trig::atan2(det, den);
+    }
+    sum / (4.0 * trig::PI)
+}
+
+/// [`winding`] without triangle `skip`.
+fn winding_except(points: &[DVec3], tris: &[[u32; 3]], skip: usize, p: DVec3) -> f64 {
+    let mut sum = 0.0;
+    for (i, t) in tris.iter().enumerate() {
+        if i == skip {
+            continue;
+        }
         let a = points[t[0] as usize] - p;
         let b = points[t[1] as usize] - p;
         let c = points[t[2] as usize] - p;
@@ -1041,22 +1162,37 @@ fn arrange_self(points: Vec<DVec3>, s: Solid) -> (Csg, Vec<Kept>) {
         }
         c.pair((0, i), (0, j));
     }
+    c.triples();
     // 2. The pieces.
     let pieces = c.all_pieces(1);
     // 3. Regions, each classified by the mesh's own winding number.
     let regions = c.regions(&pieces);
     let scale = c.scale();
-    let mut sides: BTreeMap<usize, (bool, bool)> = BTreeMap::new();
-    for (&r, &b) in &regions.best {
-        let (front, back) = c.probes(&pieces[b], scale);
-        let inside = |q: DVec3| winding(&c.points, &tris, q) > 0.5;
-        sides.insert(r, (inside(front), inside(back)));
-    }
     // Where triangles lie on one another, the lowest-numbered one answers.
     let mut partners: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
     for &((_, a), (_, b)) in &c.coplanar_pairs {
         partners.entry(a).or_default().push(b);
         partners.entry(b).or_default().push(a);
+    }
+    // The winding number just in front of a piece and just behind it differ
+    // by one, its own surface. At the piece's centre, the winding number of
+    // every other triangle is halfway between: it needs no step off the
+    // surface, so a sliver is classified as surely as a large piece. Where
+    // another face lies on the piece, that does not hold; points a small
+    // step in front and behind decide there.
+    let mut sides: BTreeMap<usize, (bool, bool)> = BTreeMap::new();
+    for (&r, &b) in &regions.best {
+        let p = &pieces[b];
+        let side = if partners.contains_key(&p.tri) {
+            let (front, back) = c.probes(p, scale);
+            let inside = |q: DVec3| winding(&c.points, &tris, q) > 0.5;
+            (inside(front), inside(back))
+        } else {
+            let [a, bb, cc] = p.ids.map(|i| c.p(i));
+            let rest = winding_except(&c.points, &tris, p.tri as usize, (a + bb + cc) / 3.0);
+            (rest - 0.5 > 0.5, rest + 0.5 > 0.5)
+        };
+        sides.insert(r, side);
     }
     let covered_by_lower = |p: &Piece| {
         let Some(list) = partners.get(&p.tri) else {

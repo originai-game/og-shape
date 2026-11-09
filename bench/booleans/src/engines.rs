@@ -2,9 +2,10 @@
 
 use std::time::Instant;
 
+use glam::DVec3;
 use manifold_rust::manifold::Manifold;
 use manifold_rust::types::{BooleanEngine, Error, MeshGL, OpType};
-use shape_bool::{CsgOp, csg};
+use shape_bool::{CsgOp, csg, csg_points, self_union_points, selfcheck};
 use shape_gen::Placement;
 
 use crate::mesh::Tri;
@@ -17,13 +18,22 @@ pub enum Engine {
     ManifoldExact,
     /// manifold-rust's robust engine (exact rationals, accepts soup).
     ManifoldRobust,
+    /// The kernel's f64 entry (`csg_points`) with the exact operand check
+    /// up front: an operand with a shell crossing itself is refused,
+    /// separate shells are joined by self-union, an open result is refused.
+    OgShapeChecked,
+    /// The kernel's f64 entry after untangling each operand by self-union
+    /// (`self_union_points`); an open result is refused.
+    OgShapeUntangled,
 }
 
 impl Engine {
-    pub const ALL: [Engine; 3] = [
+    pub const ALL: [Engine; 5] = [
         Engine::OgGeom,
         Engine::ManifoldExact,
         Engine::ManifoldRobust,
+        Engine::OgShapeChecked,
+        Engine::OgShapeUntangled,
     ];
 
     pub fn name(self) -> &'static str {
@@ -31,6 +41,8 @@ impl Engine {
             Engine::OgGeom => "og-geom",
             Engine::ManifoldExact => "manifold-exact",
             Engine::ManifoldRobust => "manifold-robust",
+            Engine::OgShapeChecked => "og-shape-checked",
+            Engine::OgShapeUntangled => "og-shape-untangled",
         }
     }
 }
@@ -50,6 +62,139 @@ impl Op {
 pub struct Run {
     pub result: Result<Tri, String>,
     pub ms: f64,
+    /// Of `ms`, the time spent checking or untangling operands.
+    pub prep_ms: f64,
+    /// The volumes of the operands the engine used, where it changed them
+    /// (untangled): the identities hold for these.
+    pub used: Option<(f64, f64)>,
+}
+
+/// A mesh welded by exact position, in f64.
+struct Welded {
+    pos: Vec<DVec3>,
+    tris: Vec<[u32; 3]>,
+}
+
+fn welded(t: &Tri) -> Welded {
+    let mut id: std::collections::BTreeMap<[u32; 3], u32> = Default::default();
+    let mut pos = Vec::new();
+    let w: Vec<u32> = t
+        .pos
+        .iter()
+        .map(|p| {
+            *id.entry(p.map(|x| (x + 0.0).to_bits())).or_insert_with(|| {
+                pos.push(DVec3::from(p.map(f64::from)));
+                pos.len() as u32 - 1
+            })
+        })
+        .collect();
+    let tris = t
+        .idx
+        .chunks_exact(3)
+        .map(|c| [w[c[0] as usize], w[c[1] as usize], w[c[2] as usize]])
+        .filter(|t| t[0] != t[1] && t[1] != t[2] && t[0] != t[2])
+        .collect();
+    Welded { pos, tris }
+}
+
+/// Crossing pairs within one shell, and the number of shells.
+fn shell_crossings(m: &Welded) -> (usize, usize) {
+    let mut parent: Vec<u32> = (0..m.pos.len() as u32).collect();
+    fn find(p: &mut [u32], mut i: u32) -> u32 {
+        while p[i as usize] != i {
+            p[i as usize] = p[p[i as usize] as usize];
+            i = p[i as usize];
+        }
+        i
+    }
+    for t in &m.tris {
+        for k in 1..3 {
+            let (a, b) = (find(&mut parent, t[0]), find(&mut parent, t[k]));
+            if a != b {
+                parent[a.max(b) as usize] = a.min(b);
+            }
+        }
+    }
+    let shell: Vec<u32> = m.tris.iter().map(|t| find(&mut parent, t[0])).collect();
+    let mut shells = shell.clone();
+    shells.sort_unstable();
+    shells.dedup();
+    let n = selfcheck::self_crossings(&m.pos, &m.tris)
+        .into_iter()
+        .filter(|&(i, j)| shell[i as usize] == shell[j as usize])
+        .count();
+    (n, shells.len())
+}
+
+fn from_points(points: &[DVec3], tris: &[[u32; 3]]) -> Tri {
+    Tri {
+        pos: points.iter().map(|p| p.as_vec3().to_array()).collect(),
+        idx: tris.iter().flatten().copied().collect(),
+    }
+}
+
+/// The two og-shape engines: operands prepared (checked or untangled),
+/// then `csg_points`, then the result's closure.
+#[allow(clippy::type_complexity)]
+fn og_shape(
+    a: &Tri,
+    b: &Tri,
+    op: CsgOp,
+    untangle: bool,
+) -> (Result<Tri, String>, f64, Option<(f64, f64)>) {
+    let start = Instant::now();
+    let mut ops = Vec::new();
+    for (name, t) in [("A", a), ("B", b)] {
+        let m = welded(t);
+        let prepared = if untangle {
+            self_union_points((&m.pos, &m.tris))
+                .map(|u| Welded {
+                    pos: u.points,
+                    tris: u.tris,
+                })
+                .map_err(|e| format!("{name}: {e:?}"))
+        } else {
+            let (n, shells) = shell_crossings(&m);
+            if n > 0 {
+                Err(format!("{name} crosses itself ({n} pairs)"))
+            } else if shells > 1 {
+                self_union_points((&m.pos, &m.tris))
+                    .map(|u| Welded {
+                        pos: u.points,
+                        tris: u.tris,
+                    })
+                    .map_err(|e| format!("{name}: {e:?}"))
+            } else {
+                Ok(m)
+            }
+        };
+        match prepared {
+            Ok(m) => ops.push(m),
+            Err(e) => return (Err(e), start.elapsed().as_secs_f64() * 1000.0, None),
+        }
+    }
+    let prep = start.elapsed().as_secs_f64() * 1000.0;
+    let vol = |m: &Welded| {
+        m.tris
+            .iter()
+            .map(|t| {
+                let [p, q, r] = t.map(|v| m.pos[v as usize]);
+                p.dot(q.cross(r)) / 6.0
+            })
+            .sum::<f64>()
+    };
+    let used = Some((vol(&ops[0]), vol(&ops[1])));
+    let r = csg_points((&ops[0].pos, &ops[0].tris), (&ops[1].pos, &ops[1].tris), op)
+        .map_err(|e| format!("{e:?}"))
+        .and_then(|(p, t, _)| {
+            let out = from_points(&p, &t);
+            if t.is_empty() || out.closed() {
+                Ok(out)
+            } else {
+                Err("open result".to_string())
+            }
+        });
+    (r, prep, used)
 }
 
 fn to_manifold(t: &Tri, robust: bool) -> Result<Manifold, String> {
@@ -91,7 +236,20 @@ fn from_manifold(m: &Manifold) -> Result<Tri, String> {
 
 pub fn run(engine: Engine, a: &Tri, b: &Tri, op: Op) -> Run {
     let start = Instant::now();
+    let mut prep_ms = 0.0;
+    let mut used = None;
+    let csg_op = match op {
+        Op::Union => CsgOp::Union,
+        Op::Intersect => CsgOp::Intersect,
+        Op::Subtract => CsgOp::Subtract,
+    };
     let result = match engine {
+        Engine::OgShapeChecked | Engine::OgShapeUntangled => {
+            let (r, prep, u) = og_shape(a, b, csg_op, engine == Engine::OgShapeUntangled);
+            prep_ms = prep;
+            used = u;
+            r
+        }
         Engine::OgGeom => {
             let op = match op {
                 Op::Union => CsgOp::Union,
@@ -127,5 +285,7 @@ pub fn run(engine: Engine, a: &Tri, b: &Tri, op: Op) -> Run {
     Run {
         result,
         ms: start.elapsed().as_secs_f64() * 1000.0,
+        prep_ms,
+        used,
     }
 }

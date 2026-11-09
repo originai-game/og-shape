@@ -721,7 +721,7 @@ mod tests {
         assert_eq!(crossing_pairs(&u), 0);
         // The space the folded surface winds round at least once: less
         // than the ball's, and the sampled volume to the grid's error.
-        let want = sampled_volume(&ball, 40);
+        let want = sampled_volume(&ball, 24);
         assert!((m.volume - want).abs() / want < 0.02, "{} {want}", m.volume);
         // Every face keeps its names.
         assert!(u.face_tags.iter().all(|t| !t.is_empty()));

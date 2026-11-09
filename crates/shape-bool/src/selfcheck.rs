@@ -200,11 +200,17 @@ fn shared_corner_cross(s: DVec3, a: [DVec3; 2], b: [DVec3; 2]) -> bool {
 /// position), cross where the surface does not join them (see the
 /// module's list).
 pub fn crossing(ia: [u32; 3], a: [DVec3; 3], ib: [u32; 3], b: [DVec3; 3]) -> bool {
-    let shared: Vec<(usize, usize)> = (0..3)
-        .flat_map(|i| (0..3).map(move |j| (i, j)))
-        .filter(|&(i, j)| ia[i] == ib[j])
-        .collect();
-    match shared.as_slice() {
+    let mut shared = [(0, 0); 3];
+    let mut n = 0;
+    for (i, x) in ia.iter().enumerate() {
+        for (j, y) in ib.iter().enumerate() {
+            if x == y && n < 3 {
+                shared[n] = (i, j);
+                n += 1;
+            }
+        }
+    }
+    match &shared[..n] {
         [] => tris_meet(a, b),
         &[(i, j)] => shared_corner_cross(
             a[i],
@@ -227,8 +233,12 @@ pub fn crossing(ia: [u32; 3], a: [DVec3; 3], ib: [u32; 3], b: [DVec3; 3]) -> boo
 }
 
 /// Pairs `(i, j)`, `i < j`, of non-degenerate triangles whose boxes
-/// overlap, sorted: a sweep along x over the boxes sorted by their low x.
-pub(crate) fn box_pairs(positions: &[DVec3], triangles: &[[u32; 3]]) -> Vec<(u32, u32)> {
+/// overlap, sorted. A uniform grid of cells about a triangle's size: each
+/// triangle is listed in the cells its box covers, and a pair is taken in
+/// one cell only, the one holding the low corner of the two boxes'
+/// overlap. A triangle covering very many cells is tested against every
+/// other instead.
+pub fn box_pairs(positions: &[DVec3], triangles: &[[u32; 3]]) -> Vec<(u32, u32)> {
     let boxes: Vec<(DVec3, DVec3)> = triangles
         .iter()
         .map(|t| {
@@ -236,28 +246,99 @@ pub(crate) fn box_pairs(positions: &[DVec3], triangles: &[[u32; 3]]) -> Vec<(u32
             (p[0].min(p[1]).min(p[2]), p[0].max(p[1]).max(p[2]))
         })
         .collect();
-    let mut order: Vec<u32> = (0..triangles.len() as u32)
+    let live: Vec<u32> = (0..triangles.len() as u32)
         .filter(|&i| !degenerate(triangles[i as usize].map(|v| positions[v as usize])))
         .collect();
-    order.sort_by(|&i, &j| {
-        shape_core::order::cmp_f64(boxes[i as usize].0.x, boxes[j as usize].0.x).then(i.cmp(&j))
-    });
-    let mut out = Vec::new();
-    let mut active: Vec<u32> = Vec::new();
-    for &i in &order {
-        let (lo, hi) = boxes[i as usize];
-        active.retain(|&j| boxes[j as usize].1.x >= lo.x);
-        for &j in &active {
-            let (lo2, hi2) = boxes[j as usize];
-            if lo2.y > hi.y || hi2.y < lo.y || lo2.z > hi.z || hi2.z < lo.z {
-                continue;
-            }
-            out.push((i.min(j), i.max(j)));
+    if live.is_empty() {
+        return Vec::new();
+    }
+    let (mut lo, mut hi) = (DVec3::INFINITY, DVec3::NEG_INFINITY);
+    let mut extent = 0.0;
+    for &i in &live {
+        let (a, b) = boxes[i as usize];
+        lo = lo.min(a);
+        hi = hi.max(b);
+        extent += (b - a).max_element();
+    }
+    // Cells a mean triangle across, at most 2^20 a side.
+    const SIDE: f64 = (1u64 << 20) as f64;
+    let span = (hi - lo).max_element();
+    let mut h = extent / live.len() as f64 * 2.0;
+    if h <= 0.0 || !h.is_finite() || span / h > SIDE - 2.0 {
+        h = (span / (SIDE - 2.0)).max(f64::MIN_POSITIVE);
+    }
+    // Truncation is the floor here: every coordinate is at least `lo`.
+    let cell = |p: DVec3| {
+        let c = (p - lo) / h;
+        [c.x as u64, c.y as u64, c.z as u64].map(|x| x.min(SIDE as u64 - 1))
+    };
+    let key = |c: [u64; 3]| (c[0] << 40) | (c[1] << 20) | c[2];
+    const MAX_CELLS: u64 = 1 << 12;
+    let mut entries: Vec<(u64, u32)> = Vec::new();
+    let mut big: Vec<u32> = Vec::new();
+    // Each triangle's lowest cell: the cell of a pair's overlap corner is
+    // the larger of theirs on each axis (`cell` is monotone).
+    let mut low = vec![[0u64; 3]; triangles.len()];
+    for &i in &live {
+        let (a, b) = boxes[i as usize];
+        let (ca, cb) = (cell(a), cell(b));
+        low[i as usize] = ca;
+        let count = (0..3).map(|k| cb[k] - ca[k] + 1).product::<u64>();
+        if count > MAX_CELLS {
+            big.push(i);
+            continue;
         }
-        active.push(i);
+        for x in ca[0]..=cb[0] {
+            for y in ca[1]..=cb[1] {
+                for z in ca[2]..=cb[2] {
+                    entries.push((key([x, y, z]), i));
+                }
+            }
+        }
+    }
+    entries.sort_unstable();
+    let overlap = |i: u32, j: u32| {
+        let ((a0, a1), (b0, b1)) = (boxes[i as usize], boxes[j as usize]);
+        a0.cmple(b1).all() && b0.cmple(a1).all()
+    };
+    let mut out = Vec::new();
+    let mut start = 0;
+    while start < entries.len() {
+        let k = entries[start].0;
+        let mut end = start;
+        while end < entries.len() && entries[end].0 == k {
+            end += 1;
+        }
+        for x in start..end {
+            for y in x + 1..end {
+                let (i, j) = (entries[x].1, entries[y].1);
+                let (li, lj) = (low[i as usize], low[j as usize]);
+                let corner = [li[0].max(lj[0]), li[1].max(lj[1]), li[2].max(lj[2])];
+                if key(corner) == k && overlap(i, j) {
+                    out.push(pack(i, j));
+                }
+            }
+        }
+        start = end;
+    }
+    // Large triangles against every other (each pair once).
+    let is_big = |i: u32| big.binary_search(&i).is_ok();
+    for &i in &big {
+        for &j in &live {
+            if j != i && (!is_big(j) || j > i) && overlap(i, j) {
+                out.push(pack(i, j));
+            }
+        }
     }
     out.sort_unstable();
-    out
+    out.into_iter()
+        .map(|p| ((p >> 32) as u32, p as u32))
+        .collect()
+}
+
+/// A pair `(min, max)` as one sortable number.
+fn pack(i: u32, j: u32) -> u64 {
+    (u64::from(i.min(j)) << 32) | u64::from(i.max(j))
 }
 
 /// Pairs `(i, j)`, `i < j`, of triangles that share no vertex index and

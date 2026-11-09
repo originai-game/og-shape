@@ -3,7 +3,8 @@
 //! synthetic AI-mesh defects, plus a scaling sweep.
 //!
 //! ```text
-//! cargo run --release -- [--thingi DIR] [--suite NAME]... [--grid N]
+//! cargo run --release -- [--thingi DIR] [--suite NAME]... [--engine NAME]...
+//!                        [--grid N]
 //!                        [--timeout SECS] [--out FILE] [--hashes FILE]
 //! ```
 //!
@@ -34,6 +35,7 @@ use suites::Case;
 struct Args {
     thingi: Option<PathBuf>,
     suites: Vec<String>,
+    engines: Vec<String>,
     grid: usize,
     timeout: u64,
     out: Option<PathBuf>,
@@ -45,6 +47,7 @@ fn args() -> Args {
     let mut a = Args {
         thingi: None,
         suites: Vec::new(),
+        engines: Vec::new(),
         grid: 32,
         timeout: 60,
         out: None,
@@ -57,6 +60,7 @@ fn args() -> Args {
         match k.as_str() {
             "--thingi" => a.thingi = Some(v().into()),
             "--suite" => a.suites.push(v()),
+            "--engine" => a.engines.push(v()),
             "--grid" => a.grid = v().parse().expect("--grid N"),
             "--timeout" => a.timeout = v().parse().expect("--timeout SECS"),
             "--out" => a.out = Some(v().into()),
@@ -87,6 +91,8 @@ struct Row {
 
 fn evaluate(case: &Case, engine: Engine) -> Row {
     let mut ms = 0.0;
+    let mut prep_ms = 0.0;
+    let mut used = None;
     let mut vols = Vec::new();
     let mut detail = String::new();
     let mut tris = 0;
@@ -95,6 +101,8 @@ fn evaluate(case: &Case, engine: Engine) -> Row {
     for op in Op::ALL {
         let r = run(engine, &case.a, &case.b, op);
         ms += r.ms;
+        prep_ms += r.prep_ms;
+        used = used.or(r.used);
         match r.result {
             Err(e) => {
                 hashes.push((op, "error".to_string()));
@@ -121,7 +129,16 @@ fn evaluate(case: &Case, engine: Engine) -> Row {
             }
         }
     }
-    if let (Some(va), Some(vb)) = (case.vol_a, case.vol_b) {
+    if prep_ms > 0.0 {
+        let _ = write!(detail, "operands {prep_ms:.1} ms; ");
+    }
+    // An engine that changed its operands (untangled them) is held to the
+    // identities on the operands it used, where the inputs have a volume.
+    let (vol_a, vol_b) = match used {
+        Some((ua, ub)) if case.vol_a.is_some() && case.vol_b.is_some() => (Some(ua), Some(ub)),
+        _ => (case.vol_a, case.vol_b),
+    };
+    if let (Some(va), Some(vb)) = (vol_a, vol_b) {
         let (u, i, s) = (vols[0], vols[1], vols[2]);
         let scale = va.abs().max(vb.abs()).max(1e-30);
         let e1 = (u + i - va - vb).abs() / scale;
@@ -245,6 +262,9 @@ fn main() {
         Default::default();
     for case in &cases {
         for engine in Engine::ALL {
+            if !a.engines.is_empty() && !a.engines.iter().any(|e| e == engine.name()) {
+                continue;
+            }
             let row = guarded(case, engine, a.timeout);
             eprintln!(
                 "{:<10} {:<34} {:<16} {:?} {:.1} ms {}",
