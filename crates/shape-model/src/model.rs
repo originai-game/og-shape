@@ -8,7 +8,7 @@ use shape_bool::{BoolOp, Boolean};
 use shape_core::{DVec3, Frame};
 use shape_edit::{Dent, Hole, Keep, Pocket, Shell};
 use shape_mesh::{Measures, Solid};
-use shape_tools::{Image, JointKind, Material, Mimic, Part, Preview, Scene};
+use shape_tools::{Image, Interfering, JointKind, Material, Mimic, Part, Preview, Scene};
 
 use crate::error::ModelError;
 use crate::place::{self, Path};
@@ -1020,6 +1020,32 @@ impl Model {
                 })
             })
             .collect()
+    }
+
+    /// Pairs of parts that pass through each other, touch, or hold one
+    /// wholly inside the other (`shape_tools::interference`), with the
+    /// joints in `pose` at their values and every other joint at rest
+    /// (an empty pose is the rest). Bounds are in the model's unit.
+    ///
+    /// The model is not changed. Errors as [`Model::pose`] on a joint that
+    /// does not exist, follows another, or is posed out of its range.
+    pub fn interference(&self, pose: &[(String, f64)]) -> Result<Vec<Interfering>, ModelError> {
+        let mut m = self.clone();
+        for j in &mut m.joints {
+            j.value = 0.0;
+        }
+        for (name, value) in pose {
+            m.pose(name, *value)?;
+        }
+        let k = self.unit.millimetres();
+        let mut out = shape_tools::interference(&m.build()?.scene())?;
+        if k != 1.0 {
+            for x in &mut out {
+                x.bounds_min /= k;
+                x.bounds_max /= k;
+            }
+        }
+        Ok(out)
     }
 
     /// The scene part a joint hanging on node `p` hangs on: a part's own,
