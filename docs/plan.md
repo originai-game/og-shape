@@ -158,4 +158,5 @@ drop Blender from the asset image.
 | 2 | Done (2026-11-09): named `boolean`, operand validation, broad phase, `fuse`, the CSG rounding fixes; split, hole (counterbore, countersink), pocket, seat, shell, dent, merge in `shape-edit`; sand3d's edit cases rebuilt as tests, shell walls exact. A single surface folded through itself is refused; repairing it is phase 5's |
 | 3 | Done (2026-11-09): `shape-bevel` fillet, chamfer, soften; sand3d's bracket, washer and enclosure corners closed with all-quad patches. Left: UVs (Solid has none yet), arc and patch mitres, pipe joints, loop slide (`docs/research.md` §7) |
 | 4 | In progress: export (GLB, OBJ, STL) and CPU preview done. Left: parts, groups, assemblies, joints, materials API, shape-cli, wasm build and TypeScript binding, the washing-machine acceptance |
+| 5 | In progress: stream D, `claude/mesh-tools` |
 | 5b | Not started |
