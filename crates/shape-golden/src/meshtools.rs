@@ -301,7 +301,24 @@ fn decimate_case(h: &mut OutputHash) -> Result<(), HashError> {
     )
     .map_err(fail)?;
     h.u64(r.triangles as u64);
-    low.hash_into(h)
+    low.hash_into(h)?;
+    // Edges shorter than 1 µm collapse; the torus stays closed.
+    let mut fine = repaired()?;
+    let t = fine.triangles[0];
+    let p = fine.positions[t[0] as usize] * (1.0 - 1e-7)
+        + (fine.positions[t[1] as usize] + fine.positions[t[2] as usize]) * 5e-8;
+    let v = fine.push_vertex(p);
+    let (surface, tags) = (fine.surfaces[0], fine.face_tags[0].clone());
+    fine.triangles[0] = [t[0], t[1], v];
+    for tri in [[t[1], t[2], v], [t[2], t[0], v]] {
+        fine.triangles.push(tri);
+        fine.surfaces.push(surface);
+        fine.face_tags.push(tags.clone());
+    }
+    fine.canonicalize()?;
+    let (out, gone) = shape_tools::collapse_short_edges(&fine, 1e-3).map_err(fail)?;
+    h.u64(gone as u64);
+    out.hash_into(h)
 }
 
 fn hash_unwrap(h: &mut OutputHash, uv: &Uvs) -> Result<(), HashError> {

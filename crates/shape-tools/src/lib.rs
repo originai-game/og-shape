@@ -51,7 +51,7 @@ mod repair;
 mod surface;
 mod unwrap;
 
-pub use decimate::{Decimate, DecimateError, DecimateReport, decimate, lods};
+pub use decimate::{Decimate, DecimateError, DecimateReport, collapse_short_edges, decimate, lods};
 pub use export::{ExportError, Joint, JointKind, Material, Mimic, Part, Scene, glb, obj, stl};
 pub use fbx::import_fbx;
 pub use image::ImageInfo;

@@ -106,6 +106,10 @@ pub struct MeshMeasures {
     pub non_manifold_edges: usize,
     /// Edges with two triangles running it the same way (faces disagree).
     pub inconsistent_edges: usize,
+    /// The shortest edge between distinct positions, mm (0 if none).
+    /// Positions closer than f32 can tell apart in metres (about 10⁻⁵ mm
+    /// at 0.1 m) merge on export.
+    pub shortest_edge: f64,
     /// Triangles with no area (three corners in a line, exactly).
     pub degenerate_triangles: usize,
     /// Triangles that repeat another's corners.
@@ -168,6 +172,12 @@ pub fn measure(s: &Solid, d: &Measure) -> MeshMeasures {
         m.volume += a.dot(b.cross(c)) / 6.0;
         if degenerate([a, b, c]) {
             m.degenerate_triangles += 1;
+        }
+        for (p, q) in [(a, b), (b, c), (c, a)] {
+            let l = (q - p).length();
+            if l > 0.0 && (m.shortest_edge == 0.0 || l < m.shortest_edge) {
+                m.shortest_edge = l;
+            }
         }
         let mut key = *t;
         key.sort_unstable();
@@ -478,6 +488,7 @@ impl MeshMeasures {
             ("boundary_loops", count(self.boundary_loops)),
             ("non_manifold_edges", count(self.non_manifold_edges)),
             ("inconsistent_edges", count(self.inconsistent_edges)),
+            ("shortest_edge", num(self.shortest_edge)),
             ("degenerate_triangles", count(self.degenerate_triangles)),
             ("duplicate_triangles", count(self.duplicate_triangles)),
             ("pieces", count(self.pieces.len())),

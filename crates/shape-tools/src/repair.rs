@@ -57,6 +57,10 @@ pub struct Repair {
     /// closed (shells touching along an edge) is not taken: the shells are
     /// kept, and the report says why.
     pub fuse: bool,
+    /// Collapses edges shorter than this, in mm, where that keeps the mesh
+    /// manifold (0: none): the slivers a self-union leaves, whose vertices
+    /// f32 export would merge.
+    pub min_edge: f64,
     /// Counts self-intersecting triangle pairs at the end (exact; costs a
     /// sweep over the triangles).
     pub check_intersections: bool,
@@ -90,6 +94,8 @@ pub struct RepairReport {
     /// The outcome of fusing, if asked: `Some(Ok(pieces before))`, or why
     /// it was not done.
     pub fused: Option<Result<usize, String>>,
+    /// Vertices removed by collapsing short edges.
+    pub short_edges: usize,
     /// Self-intersecting triangle pairs at the end, if asked.
     pub self_intersections: Option<usize>,
 }
@@ -669,8 +675,8 @@ fn fill(s: &Solid, rim: &[u32], edges: &BTreeMap<(u32, u32), u32>) -> Option<Vec
 }
 
 /// Runs the repair steps in order (weld, degenerate and duplicate
-/// triangles, floaters, orientation, holes, fuse) and reports what each
-/// changed. The result is in canonical order.
+/// triangles, floaters, orientation, holes, fuse, short edges) and reports
+/// what each changed. The result is in canonical order.
 pub fn repair(s: &Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairError> {
     let mut r = RepairReport::default();
     let (s, welded) = weld(
@@ -726,6 +732,14 @@ pub fn repair(s: &Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairErro
                 }
             }
         }
+    } else {
+        s
+    };
+    let s = if d.min_edge > 0.0 {
+        let (s, gone) = crate::decimate::collapse_short_edges(&s, d.min_edge)
+            .map_err(|_| RepairError::BadDistance)?;
+        r.short_edges = gone;
+        s
     } else {
         s
     };

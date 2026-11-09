@@ -7,7 +7,8 @@
 //!   different face names, named edges) add a heavy quadric of the plane
 //!   through the edge square to its face, so they stay in place.
 //! - Vertices are interior, on one border or feature line, or corners
-//!   (where lines meet or end, or on a non-manifold edge). A line vertex
+//!   (where lines meet or end, on a non-manifold edge, or where two fans
+//!   of triangles meet at a point). A line vertex
 //!   only slides along its line into the next vertex on it; a corner never
 //!   goes. `lock_border` makes every open-border vertex a corner.
 //! - A collapse goes to the kept vertex's position, or for two interior
@@ -212,6 +213,8 @@ struct Mesh {
     stamp: Vec<u32>,
     /// The vertex each removed one went into.
     into: Vec<u32>,
+    /// Only edges shorter than this collapse (0: any).
+    max_len: f64,
 }
 
 impl Mesh {
@@ -271,6 +274,11 @@ impl Mesh {
 
     /// The best allowed collapse of edge `a b`, if any.
     fn plan(&self, a: u32, b: u32) -> Option<Entry> {
+        if self.max_len > 0.0
+            && (self.pos[a as usize] - self.pos[b as usize]).length() >= self.max_len
+        {
+            return None;
+        }
         let edge = edge_key(a, b);
         let on_line = self.lines[a as usize].contains(&b);
         let mut best: Option<Entry> = None;
@@ -370,10 +378,39 @@ pub fn decimate(s: &Solid, d: &Decimate) -> Result<(Solid, DecimateReport), Deci
     decimate_to(s, target, d)
 }
 
+/// Collapses every edge shorter than `length` mm that can go without
+/// breaking the mesh (the same rules as [`decimate`]: the link condition,
+/// no turned-over triangles, features slide only along themselves). For
+/// the slivers a boolean leaves, whose vertices f32 export would merge
+/// into non-manifold edges. Returns the solid and how many vertices went.
+pub fn collapse_short_edges(s: &Solid, length: f64) -> Result<(Solid, usize), DecimateError> {
+    if !(length >= 0.0 && length.is_finite()) {
+        return Err(DecimateError::BadDesc(
+            "an edge length must be finite and >= 0".into(),
+        ));
+    }
+    if length == 0.0 || s.triangles.is_empty() {
+        return Ok((s.clone(), 0));
+    }
+    let before = drop_unused(s).positions.len();
+    let (out, _) = collapse(s, 0, &Decimate::default(), length)?;
+    let gone = before - out.positions.len();
+    Ok((out, gone))
+}
+
 fn decimate_to(
     s: &Solid,
     target: usize,
     d: &Decimate,
+) -> Result<(Solid, DecimateReport), DecimateError> {
+    collapse(s, target, d, 0.0)
+}
+
+fn collapse(
+    s: &Solid,
+    target: usize,
+    d: &Decimate,
+    max_len: f64,
 ) -> Result<(Solid, DecimateReport), DecimateError> {
     if s.positions.iter().any(|p| !p.is_finite()) {
         return Err(DecimateError::NotFinite);
@@ -385,7 +422,7 @@ fn decimate_to(
         target,
         error: 0.0,
     };
-    if n <= target {
+    if n <= target && max_len == 0.0 {
         return Ok((s.clone(), report));
     }
     let nv = s.positions.len();
@@ -400,6 +437,7 @@ fn decimate_to(
         lines: vec![Vec::new(); nv],
         stamp: vec![0; nv],
         into: (0..nv as u32).collect(),
+        max_len,
     };
     let mut users: BTreeMap<EdgeKey, Vec<u32>> = BTreeMap::new();
     let mut total_area = 0.0;
@@ -459,6 +497,45 @@ fn decimate_to(
                 m.quadric[a as usize].add(&q);
                 m.quadric[b as usize].add(&q);
             }
+        }
+    }
+    // A vertex whose triangles make more than one fan (two sheets meeting
+    // at a point) is pinned: the link condition assumes one.
+    for v in 0..nv {
+        let tris = &m.around[v];
+        if tris.len() < 2 {
+            continue;
+        }
+        // Triangles around v joined across the edges from v they share.
+        let mut parent: Vec<usize> = (0..tris.len()).collect();
+        fn root(p: &mut [usize], mut i: usize) -> usize {
+            while p[i] != i {
+                p[i] = p[p[i]];
+                i = p[i];
+            }
+            i
+        }
+        let mut by_other: Vec<(u32, usize)> = tris
+            .iter()
+            .enumerate()
+            .flat_map(|(k, &t)| {
+                s.triangles[t as usize]
+                    .into_iter()
+                    .filter(move |&o| o as usize != v)
+                    .map(move |o| (o, k))
+            })
+            .collect();
+        by_other.sort_unstable();
+        for w in by_other.windows(2) {
+            if w[0].0 == w[1].0 {
+                let (a, b) = (root(&mut parent, w[0].1), root(&mut parent, w[1].1));
+                if a != b {
+                    parent[a.max(b)] = a.min(b);
+                }
+            }
+        }
+        if (0..tris.len()).any(|i| root(&mut parent, i) != 0) {
+            pinned[v] = true;
         }
     }
     for v in 0..nv {
@@ -599,5 +676,39 @@ mod tests {
         )
         .unwrap();
         assert!((low.measure().volume - 1000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn short_edges_collapse_and_the_box_stays_closed() {
+        let b = cuboid(&BoxDesc {
+            width: 10.0,
+            depth: 10.0,
+            height: 10.0,
+        })
+        .unwrap();
+        let (s, gone) = collapse_short_edges(&sliver_box(&b), 1e-3).unwrap();
+        assert_eq!(gone, 1);
+        let m = s.measure();
+        assert!(m.closed && m.triangles == b.triangles.len(), "{m:?}");
+    }
+
+    /// The box with its top's first triangle split at a point 1e-5 mm
+    /// from one of its corners: three slivers, one short edge.
+    fn sliver_box(b: &Solid) -> Solid {
+        let mut s = b.clone();
+        let top = s.faces(&["top"]).unwrap()[0] as usize;
+        let t = s.triangles[top];
+        let p = s.positions[t[0] as usize] * (1.0 - 1e-6)
+            + (s.positions[t[1] as usize] + s.positions[t[2] as usize]) * 5e-7;
+        let v = s.push_vertex(p);
+        let (surface, tags) = (s.surfaces[top], s.face_tags[top].clone());
+        s.triangles[top] = [t[0], t[1], v];
+        for tri in [[t[1], t[2], v], [t[2], t[0], v]] {
+            s.triangles.push(tri);
+            s.surfaces.push(surface);
+            s.face_tags.push(tags.clone());
+        }
+        s.canonicalize().unwrap();
+        s
     }
 }

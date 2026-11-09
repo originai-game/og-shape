@@ -131,8 +131,10 @@
     `weld_all`), `remove_degenerate` (exact zero area, duplicates),
     `remove_floaters` (`Floaters` by size or fraction), `orient`
     (consistent winding, closed pieces facing out), `close_holes` (least
-    area fill, pinched rims split, fills named `fill`), and `fuse` of
-    interpenetrating shells; `RepairReport` says what each step did.
+    area fill, pinched rims split, fills named `fill`), `fuse` of
+    interpenetrating shells (taken only when the union is closed), and
+    `collapse_short_edges` (`min_edge`, keeping the mesh manifold);
+    `RepairReport` says what each step did.
     `apply_transform` and `join` place and merge imported parts.
   - `decimate` and `lods` with `Decimate` (ratio or triangle target, error
     limit, locked borders): quadric error metrics in f64 with the link
@@ -142,7 +144,7 @@
     at one texel density, padding in texels; `Uvs` per triangle corner.
   - `measure` with `Measure`, `MeshMeasures::to_json`: counts, bounds,
     pivot, area, volume, closed, boundary loops, non-manifold and
-    inconsistent edges, degenerate and duplicate triangles, pieces and
+    inconsistent edges, shortest edge, degenerate and duplicate triangles, pieces and
     floaters, exact self-intersections, UV coverage and overlap, texture
     memory once decoded (with mips). No thresholds.
   - `glb_plain` with `PlainGlb`: one node, one mesh, one primitive with
