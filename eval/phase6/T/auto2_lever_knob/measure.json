@@ -1,0 +1,60 @@
+{
+ "triangles": 388,
+ "boundsMin": [
+  -25.29,
+  -28.93,
+  -0.05
+ ],
+ "boundsMax": [
+  25.25,
+  28.83,
+  98.89
+ ],
+ "size": [
+  50.54,
+  57.76,
+  98.94
+ ],
+ "joints": [
+  "knob_slide",
+  "knob_spin"
+ ],
+ "parts": [
+  {
+   "name": "support_block",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 244,
+   "boundsMin": [
+    -25.29,
+    -28.91,
+    -0.05
+   ],
+   "boundsMax": [
+    25.25,
+    28.81,
+    29.95
+   ]
+  },
+  {
+   "name": "knob_body",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 144,
+   "boundsMin": [
+    -25.03,
+    -28.93,
+    19.02
+   ],
+   "boundsMax": [
+    24.99,
+    28.83,
+    98.89
+   ]
+  }
+ ]
+}

@@ -1,0 +1,6 @@
+2026-11-09T16:30:15.218Z ok parts 2 open 1 joints 0 triangles 3401
+2026-11-09T16:30:23.426Z ok parts 2 open 0 joints 0 triangles 2376
+2026-11-09T16:30:51.034Z ok parts 4 open 0 joints 1 triangles 2926
+2026-11-09T16:31:01.497Z error the bevel is larger than the faces allow at [-9.569915501999295, 8.496220762378513, 38]
+2026-11-09T16:31:04.843Z error the bevel is larger than the faces allow at [-9.569915501999295, 8.496220762378513, 38]
+2026-11-09T16:31:09.434Z ok parts 4 open 0 joints 1 triangles 2926

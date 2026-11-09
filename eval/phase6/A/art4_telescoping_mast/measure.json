@@ -1,0 +1,97 @@
+{
+ "triangles": 1934,
+ "boundsMin": [
+  -140,
+  -110,
+  0
+ ],
+ "boundsMax": [
+  140,
+  110,
+  1546
+ ],
+ "size": [
+  280,
+  220,
+  1546
+ ],
+ "joints": [
+  "mid_slide",
+  "top_slide",
+  "stage_turn"
+ ],
+ "parts": [
+  {
+   "name": "base_plate",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 1278,
+   "boundsMin": [
+    -140,
+    -110,
+    0
+   ],
+   "boundsMax": [
+    140,
+    110,
+    1214.5
+   ]
+  },
+  {
+   "name": "mid_mast",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 32,
+   "boundsMin": [
+    -25,
+    -25,
+    15
+   ],
+   "boundsMax": [
+    25,
+    25,
+    1100
+   ]
+  },
+  {
+   "name": "top_mast",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -18,
+    -18,
+    500
+   ],
+   "boundsMax": [
+    18,
+    18,
+    1500
+   ]
+  },
+  {
+   "name": "stage_collar",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 612,
+   "boundsMin": [
+    -45,
+    -45,
+    1500
+   ],
+   "boundsMax": [
+    45,
+    45,
+    1546
+   ]
+  }
+ ]
+}

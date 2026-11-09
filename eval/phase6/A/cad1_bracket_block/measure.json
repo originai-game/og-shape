@@ -1,0 +1,39 @@
+{
+ "triangles": 500,
+ "boundsMin": [
+  -40,
+  -30,
+  0
+ ],
+ "boundsMax": [
+  40,
+  30,
+  20
+ ],
+ "size": [
+  80,
+  60,
+  20
+ ],
+ "joints": [],
+ "parts": [
+  {
+   "name": "bracket",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 500,
+   "boundsMin": [
+    -40,
+    -30,
+    0
+   ],
+   "boundsMax": [
+    40,
+    30,
+    20
+   ]
+  }
+ ]
+}

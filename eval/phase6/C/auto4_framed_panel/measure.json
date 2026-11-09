@@ -1,0 +1,59 @@
+{
+ "triangles": 44,
+ "boundsMin": [
+  -508,
+  -10.56,
+  0
+ ],
+ "boundsMax": [
+  508,
+  25,
+  685.8
+ ],
+ "size": [
+  1016,
+  35.56,
+  685.8
+ ],
+ "joints": [
+  "frame_spin"
+ ],
+ "parts": [
+  {
+   "name": "panel",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -508,
+    0,
+    0
+   ],
+   "boundsMax": [
+    508,
+    25,
+    685.8
+   ]
+  },
+  {
+   "name": "frame_border",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 32,
+   "boundsMin": [
+    -508,
+    -10.56,
+    0
+   ],
+   "boundsMax": [
+    508,
+    0,
+    685.8
+   ]
+  }
+ ]
+}

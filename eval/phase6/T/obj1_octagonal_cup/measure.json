@@ -1,0 +1,57 @@
+{
+ "triangles": 326,
+ "boundsMin": [
+  -96.5,
+  -255.7,
+  0
+ ],
+ "boundsMax": [
+  96.5,
+  96.5,
+  137
+ ],
+ "size": [
+  193,
+  352.2,
+  137
+ ],
+ "joints": [],
+ "parts": [
+  {
+   "name": "cup",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 3,
+   "triangles": 314,
+   "boundsMin": [
+    -96.5,
+    -96.5,
+    0
+   ],
+   "boundsMax": [
+    96.5,
+    96.5,
+    137
+   ]
+  },
+  {
+   "name": "handle",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -25.5,
+    -255.7,
+    117
+   ],
+   "boundsMax": [
+    21.5,
+    -81.1,
+    133
+   ]
+  }
+ ]
+}

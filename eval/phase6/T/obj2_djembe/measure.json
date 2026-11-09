@@ -1,0 +1,147 @@
+{
+ "triangles": 7224,
+ "boundsMin": [
+  -203.96,
+  -203.96,
+  0
+ ],
+ "boundsMax": [
+  203.96,
+  203.96,
+  600
+ ],
+ "size": [
+  407.91,
+  407.91,
+  600
+ ],
+ "joints": [],
+ "parts": [
+  {
+   "name": "pedestal",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 252,
+   "boundsMin": [
+    -115,
+    -115,
+    0
+   ],
+   "boundsMax": [
+    115,
+    115,
+    360
+   ]
+  },
+  {
+   "name": "bowl",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 896,
+   "boundsMin": [
+    -197,
+    -197,
+    360
+   ],
+   "boundsMax": [
+    197,
+    197,
+    580
+   ]
+  },
+  {
+   "name": "tension_strips",
+   "closed": true,
+   "components": 16,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 1728,
+   "boundsMin": [
+    -203.96,
+    -203.96,
+    356.78
+   ],
+   "boundsMax": [
+    203.96,
+    203.96,
+    580.55
+   ]
+  },
+  {
+   "name": "lower_band",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 3072,
+   "boundsMin": [
+    -125,
+    -125,
+    376
+   ],
+   "boundsMax": [
+    125,
+    125,
+    383
+   ]
+  },
+  {
+   "name": "neck_binding",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 252,
+   "boundsMin": [
+    -70,
+    -70,
+    327
+   ],
+   "boundsMax": [
+    70,
+    70,
+    367
+   ]
+  },
+  {
+   "name": "skin",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 384,
+   "boundsMin": [
+    -190,
+    -190,
+    570
+   ],
+   "boundsMax": [
+    190,
+    190,
+    600
+   ]
+  },
+  {
+   "name": "hoop",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 640,
+   "boundsMin": [
+    -202,
+    -202,
+    570
+   ],
+   "boundsMax": [
+    202,
+    202,
+    582
+   ]
+  }
+ ]
+}

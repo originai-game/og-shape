@@ -1,0 +1,114 @@
+{
+ "triangles": 884,
+ "boundsMin": [
+  -630,
+  -420,
+  0
+ ],
+ "boundsMax": [
+  630,
+  420,
+  48
+ ],
+ "size": [
+  1260,
+  840,
+  48
+ ],
+ "joints": [
+  "front_slide",
+  "rear_slide"
+ ],
+ "parts": [
+  {
+   "name": "frame",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 340,
+   "boundsMin": [
+    -630,
+    -420,
+    0
+   ],
+   "boundsMax": [
+    630,
+    420,
+    30
+   ]
+  },
+  {
+   "name": "front_carrier",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 212,
+   "boundsMin": [
+    -595,
+    -385,
+    12
+   ],
+   "boundsMax": [
+    -15,
+    385,
+    42
+   ]
+  },
+  {
+   "name": "front_glass",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 60,
+   "boundsMin": [
+    -590,
+    -380,
+    42
+   ],
+   "boundsMax": [
+    -20,
+    380,
+    48
+   ]
+  },
+  {
+   "name": "rear_carrier",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 212,
+   "boundsMin": [
+    15,
+    -385,
+    12
+   ],
+   "boundsMax": [
+    595,
+    385,
+    42
+   ]
+  },
+  {
+   "name": "rear_glass",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 60,
+   "boundsMin": [
+    20,
+    -380,
+    42
+   ],
+   "boundsMax": [
+    590,
+    380,
+    48
+   ]
+  }
+ ]
+}

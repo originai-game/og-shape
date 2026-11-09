@@ -1,0 +1,619 @@
+{
+ "triangles": 19880,
+ "boundsMin": [
+  -77,
+  -140,
+  0
+ ],
+ "boundsMax": [
+  77,
+  166,
+  179
+ ],
+ "size": [
+  154,
+  306,
+  179
+ ],
+ "joints": [
+  "dial_spin",
+  "cancel_button_push",
+  "lever_slide"
+ ],
+ "parts": [
+  {
+   "name": "housing",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 1488,
+   "boundsMin": [
+    -77,
+    -140,
+    8
+   ],
+   "boundsMax": [
+    77,
+    140,
+    179
+   ]
+  },
+  {
+   "name": "base_floor",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -51.5,
+    -138,
+    20
+   ],
+   "boundsMax": [
+    51.5,
+    138,
+    24
+   ]
+  },
+  {
+   "name": "bottom_tray",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 15800,
+   "boundsMin": [
+    -34,
+    -97,
+    8
+   ],
+   "boundsMax": [
+    34,
+    97,
+    22
+   ]
+  },
+  {
+   "name": "lever_guide",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -3,
+    79,
+    69
+   ],
+   "boundsMax": [
+    3,
+    140,
+    162
+   ]
+  },
+  {
+   "name": "slot_liner_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 184,
+   "boundsMin": [
+    -49,
+    -87,
+    30
+   ],
+   "boundsMax": [
+    -3,
+    71,
+    179
+   ]
+  },
+  {
+   "name": "bread_support_0_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    -42,
+    -61,
+    30
+   ],
+   "boundsMax": [
+    -36.17,
+    -59,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_0_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    -12,
+    -61,
+    30
+   ],
+   "boundsMax": [
+    -6.17,
+    -59,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_0_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    -42,
+    -35,
+    30
+   ],
+   "boundsMax": [
+    -36.17,
+    -33,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_0_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    -12,
+    -35,
+    30
+   ],
+   "boundsMax": [
+    -6.17,
+    -33,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_0_4",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    -42,
+    -9,
+    30
+   ],
+   "boundsMax": [
+    -36.17,
+    -7,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_0_5",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    -12,
+    -9,
+    30
+   ],
+   "boundsMax": [
+    -6.17,
+    -7,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_0_6",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    -42,
+    17,
+    30
+   ],
+   "boundsMax": [
+    -36.17,
+    19,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_0_7",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    -12,
+    17,
+    30
+   ],
+   "boundsMax": [
+    -6.17,
+    19,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_0_8",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    -42,
+    43,
+    30
+   ],
+   "boundsMax": [
+    -36.17,
+    45,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_0_9",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    -12,
+    43,
+    30
+   ],
+   "boundsMax": [
+    -6.17,
+    45,
+    169.55
+   ]
+  },
+  {
+   "name": "slot_liner_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 184,
+   "boundsMin": [
+    3,
+    -87,
+    30
+   ],
+   "boundsMax": [
+    49,
+    71,
+    179
+   ]
+  },
+  {
+   "name": "bread_support_1_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    10,
+    -61,
+    30
+   ],
+   "boundsMax": [
+    15.83,
+    -59,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_1_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    40,
+    -61,
+    30
+   ],
+   "boundsMax": [
+    45.83,
+    -59,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_1_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    10,
+    -35,
+    30
+   ],
+   "boundsMax": [
+    15.83,
+    -33,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_1_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    40,
+    -35,
+    30
+   ],
+   "boundsMax": [
+    45.83,
+    -33,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_1_4",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    10,
+    -9,
+    30
+   ],
+   "boundsMax": [
+    15.83,
+    -7,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_1_5",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    40,
+    -9,
+    30
+   ],
+   "boundsMax": [
+    45.83,
+    -7,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_1_6",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    10,
+    17,
+    30
+   ],
+   "boundsMax": [
+    15.83,
+    19,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_1_7",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    40,
+    17,
+    30
+   ],
+   "boundsMax": [
+    45.83,
+    19,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_1_8",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    10,
+    43,
+    30
+   ],
+   "boundsMax": [
+    15.83,
+    45,
+    169.55
+   ]
+  },
+  {
+   "name": "bread_support_1_9",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 44,
+   "boundsMin": [
+    40,
+    43,
+    30
+   ],
+   "boundsMax": [
+    45.83,
+    45,
+    169.55
+   ]
+  },
+  {
+   "name": "foot_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 104,
+   "boundsMin": [
+    -64.95,
+    -116.49,
+    0
+   ],
+   "boundsMax": [
+    -51,
+    -102.51,
+    10
+   ]
+  },
+  {
+   "name": "foot_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 104,
+   "boundsMin": [
+    51.05,
+    -116.49,
+    0
+   ],
+   "boundsMax": [
+    65,
+    -102.51,
+    10
+   ]
+  },
+  {
+   "name": "foot_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 104,
+   "boundsMin": [
+    -64.95,
+    102.51,
+    0
+   ],
+   "boundsMax": [
+    -51,
+    116.49,
+    10
+   ]
+  },
+  {
+   "name": "foot_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 104,
+   "boundsMin": [
+    51.05,
+    102.51,
+    0
+   ],
+   "boundsMax": [
+    65,
+    116.49,
+    10
+   ]
+  },
+  {
+   "name": "dial_rim",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 340,
+   "boundsMin": [
+    -15.5,
+    130,
+    33
+   ],
+   "boundsMax": [
+    15.5,
+    156,
+    64
+   ]
+  },
+  {
+   "name": "cancel_button",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 108,
+   "boundsMin": [
+    -40,
+    129,
+    39
+   ],
+   "boundsMax": [
+    -23,
+    142,
+    45
+   ]
+  },
+  {
+   "name": "lever_tab",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 456,
+   "boundsMin": [
+    -22,
+    105,
+    140
+   ],
+   "boundsMax": [
+    22,
+    166,
+    152
+   ]
+  }
+ ]
+}

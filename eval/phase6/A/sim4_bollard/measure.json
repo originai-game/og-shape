@@ -1,0 +1,39 @@
+{
+ "triangles": 3840,
+ "boundsMin": [
+  -157,
+  -157,
+  0
+ ],
+ "boundsMax": [
+  157,
+  157,
+  960
+ ],
+ "size": [
+  314,
+  314,
+  960
+ ],
+ "joints": [],
+ "parts": [
+  {
+   "name": "body",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 3840,
+   "boundsMin": [
+    -157,
+    -157,
+    0
+   ],
+   "boundsMax": [
+    157,
+    157,
+    960
+   ]
+  }
+ ]
+}

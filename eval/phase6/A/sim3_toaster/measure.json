@@ -1,0 +1,187 @@
+{
+ "triangles": 5338,
+ "boundsMin": [
+  -77.5,
+  -166.5,
+  0
+ ],
+ "boundsMax": [
+  77.5,
+  142.5,
+  179
+ ],
+ "size": [
+  155,
+  309,
+  179
+ ],
+ "joints": [
+  "lever_slide",
+  "dial_turn",
+  "cancel_push"
+ ],
+ "parts": [
+  {
+   "name": "housing",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 2388,
+   "boundsMin": [
+    -77.5,
+    -142.5,
+    4
+   ],
+   "boundsMax": [
+    77.5,
+    142.5,
+    179
+   ]
+  },
+  {
+   "name": "foot_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 112,
+   "boundsMin": [
+    -60.45,
+    -120.49,
+    0
+   ],
+   "boundsMax": [
+    -44.5,
+    -104.51,
+    4.5
+   ]
+  },
+  {
+   "name": "foot_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 112,
+   "boundsMin": [
+    44.55,
+    -120.49,
+    0
+   ],
+   "boundsMax": [
+    60.5,
+    -104.51,
+    4.5
+   ]
+  },
+  {
+   "name": "foot_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 112,
+   "boundsMin": [
+    -60.45,
+    104.51,
+    0
+   ],
+   "boundsMax": [
+    -44.5,
+    120.49,
+    4.5
+   ]
+  },
+  {
+   "name": "foot_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 112,
+   "boundsMin": [
+    44.55,
+    104.51,
+    0
+   ],
+   "boundsMax": [
+    60.5,
+    120.49,
+    4.5
+   ]
+  },
+  {
+   "name": "rod_0",
+   "closed": true,
+   "components": 24,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 2208,
+   "boundsMin": [
+    -39.2,
+    -91.2,
+    39
+   ],
+   "boundsMax": [
+    39.2,
+    91.2,
+    159
+   ]
+  },
+  {
+   "name": "lever",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 40,
+   "boundsMin": [
+    -21,
+    -166.5,
+    134
+   ],
+   "boundsMax": [
+    21,
+    -133.5,
+    146
+   ]
+  },
+  {
+   "name": "dial",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 242,
+   "boundsMin": [
+    -14.95,
+    -159,
+    25
+   ],
+   "boundsMax": [
+    15,
+    -139.5,
+    55
+   ]
+  },
+  {
+   "name": "cancel_button",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    33,
+    -147.5,
+    35
+   ],
+   "boundsMax": [
+    51,
+    -139.5,
+    45
+   ]
+  }
+ ]
+}

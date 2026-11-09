@@ -1,0 +1,150 @@
+{
+ "triangles": 1662,
+ "boundsMin": [
+  -70,
+  -0.3,
+  0
+ ],
+ "boundsMax": [
+  70,
+  12.2,
+  26.77
+ ],
+ "size": [
+  140,
+  12.5,
+  26.77
+ ],
+ "joints": [
+  "right_hinge",
+  "left_hinge"
+ ],
+ "parts": [
+  {
+   "name": "lens_right",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 372,
+   "boundsMin": [
+    9,
+    0,
+    0
+   ],
+   "boundsMax": [
+    65,
+    6.11,
+    24
+   ]
+  },
+  {
+   "name": "lens_left",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 372,
+   "boundsMin": [
+    -65,
+    0,
+    0
+   ],
+   "boundsMax": [
+    -9,
+    6.11,
+    24
+   ]
+  },
+  {
+   "name": "frame",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 488,
+   "boundsMin": [
+    -70,
+    -0.3,
+    22
+   ],
+   "boundsMax": [
+    70,
+    10.6,
+    26.77
+   ]
+  },
+  {
+   "name": "nose_pad_right",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 186,
+   "boundsMin": [
+    9.11,
+    4.63,
+    7
+   ],
+   "boundsMax": [
+    12.39,
+    11.01,
+    25.12
+   ]
+  },
+  {
+   "name": "nose_pad_left",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 188,
+   "boundsMin": [
+    -12.39,
+    4.63,
+    7
+   ],
+   "boundsMax": [
+    -9.11,
+    11.01,
+    25.12
+   ]
+  },
+  {
+   "name": "temple_right_bar",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 28,
+   "boundsMin": [
+    -62.06,
+    9,
+    14.61
+   ],
+   "boundsMax": [
+    66.52,
+    10.6,
+    25.5
+   ]
+  },
+  {
+   "name": "temple_left_bar",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 28,
+   "boundsMin": [
+    -66.52,
+    10.6,
+    14.61
+   ],
+   "boundsMax": [
+    62.06,
+    12.2,
+    25.5
+   ]
+  }
+ ]
+}

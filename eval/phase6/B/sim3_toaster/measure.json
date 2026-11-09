@@ -1,0 +1,169 @@
+{
+ "triangles": 6654,
+ "boundsMin": [
+  -77.5,
+  -165.5,
+  0
+ ],
+ "boundsMax": [
+  77.5,
+  141,
+  179
+ ],
+ "size": [
+  155,
+  306.5,
+  179
+ ],
+ "joints": [
+  "dial_turn",
+  "button_push",
+  "lever_slide"
+ ],
+ "parts": [
+  {
+   "name": "housing",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 5838,
+   "boundsMin": [
+    -77.5,
+    -141,
+    4
+   ],
+   "boundsMax": [
+    77.5,
+    141,
+    179
+   ]
+  },
+  {
+   "name": "foot_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 116,
+   "boundsMin": [
+    -61.5,
+    -114.95,
+    0
+   ],
+   "boundsMax": [
+    -43.5,
+    -97.05,
+    5
+   ]
+  },
+  {
+   "name": "foot_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 116,
+   "boundsMin": [
+    43.5,
+    -114.95,
+    0
+   ],
+   "boundsMax": [
+    61.5,
+    -97.05,
+    5
+   ]
+  },
+  {
+   "name": "foot_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 116,
+   "boundsMin": [
+    -61.5,
+    97.05,
+    0
+   ],
+   "boundsMax": [
+    -43.5,
+    114.95,
+    5
+   ]
+  },
+  {
+   "name": "foot_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 116,
+   "boundsMin": [
+    43.5,
+    97.05,
+    0
+   ],
+   "boundsMax": [
+    61.5,
+    114.95,
+    5
+   ]
+  },
+  {
+   "name": "dial",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 204,
+   "boundsMin": [
+    -36,
+    -156,
+    26.05
+   ],
+   "boundsMax": [
+    -8,
+    -140,
+    53.95
+   ]
+  },
+  {
+   "name": "cancel_button",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 60,
+   "boundsMin": [
+    23,
+    -149,
+    35.5
+   ],
+   "boundsMax": [
+    37,
+    -140,
+    44.5
+   ]
+  },
+  {
+   "name": "lever",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 88,
+   "boundsMin": [
+    -20,
+    -165.5,
+    133
+   ],
+   "boundsMax": [
+    20,
+    -135,
+    147
+   ]
+  }
+ ]
+}

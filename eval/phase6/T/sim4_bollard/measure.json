@@ -1,0 +1,57 @@
+{
+ "triangles": 2176,
+ "boundsMin": [
+  -157,
+  -157,
+  0
+ ],
+ "boundsMax": [
+  157,
+  157,
+  960
+ ],
+ "size": [
+  314,
+  314,
+  960
+ ],
+ "joints": [],
+ "parts": [
+  {
+   "name": "foot",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 896,
+   "boundsMin": [
+    -157,
+    -157,
+    0
+   ],
+   "boundsMax": [
+    157,
+    157,
+    48
+   ]
+  },
+  {
+   "name": "shaft",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 1280,
+   "boundsMin": [
+    -120,
+    -120,
+    47
+   ],
+   "boundsMax": [
+    120,
+    120,
+    960
+   ]
+  }
+ ]
+}

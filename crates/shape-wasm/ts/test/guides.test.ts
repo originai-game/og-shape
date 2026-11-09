@@ -2,8 +2,9 @@
  * Every code sample in `guides/` builds: each ```ts block is a whole
  * program (`export default function (og) { …; return shape; }`) run
  * through the binding, and each ```json block a program replayed. Every
- * part they make must be closed. The phase 6 evaluation's committed
- * programs (`eval/phase6/<run>/<object>/program.json`) must replay too.
+ * part they make must be closed. The phase 6 evaluation's programs
+ * written with the current guide (`eval/phase6/B/<object>/program.json`)
+ * must replay too; the other runs' programs are kept as records.
  *
  * Run by the gate's `binding` step (it needs bun and the built binding;
  * without them the step says `binding: NOT RUN`).
@@ -63,12 +64,10 @@ describe("the phase 6 evaluation's programs replay", () => {
   const evalDir = join(root, "eval/phase6");
   const programs: string[] = [];
   if (existsSync(evalDir)) {
-    for (const run of readdirSync(evalDir, { withFileTypes: true })) {
-      if (!run.isDirectory()) continue;
-      for (const obj of readdirSync(join(evalDir, run.name), { withFileTypes: true })) {
-        const p = join(evalDir, run.name, obj.name, "program.json");
-        if (obj.isDirectory() && existsSync(p)) programs.push(p);
-      }
+    const run = join(evalDir, "B");
+    for (const obj of existsSync(run) ? readdirSync(run, { withFileTypes: true }) : []) {
+      const p = join(run, obj.name, "program.json");
+      if (obj.isDirectory() && existsSync(p)) programs.push(p);
     }
   }
   for (const p of programs) {

@@ -2,14 +2,16 @@
  * The phase 6 evaluation's runner: builds one og-shape TypeScript program
  * through the binding and writes what an author reviews.
  *
- *   bun eval/phase6/run.ts <program.ts> <out dir> [--pose joint=value joint=value ...]
+ *   bun eval/phase6/run.ts <program.ts> <out dir> [--pose joint=value ...]
+ *       [--azimuth radians] [--elevation radians] [--width pixels]
  *
  * Writes `<out>/program.json` (the recorded program), `<out>/preview.png`
  * (four views, at rest) and, with `--pose`, `<out>/posed.png` (the same
  * model with those joints posed: radians or millimetres). Prints the
  * measures an author checks: bounds, triangles, and per part closed,
  * components, non-manifold edges, degenerate triangles and triangles. Every run is appended to `<out>/runs.log`, so
- * the review iterations can be counted. Needs the binding built
+ * the review iterations can be counted. The view flags were added after
+ * the runs of `docs/research.md` §13, which had only `--pose`. Needs the binding built
  * (`crates/shape-wasm/build.sh`).
  */
 
@@ -23,8 +25,14 @@ if (!programPath || !outDir) {
   process.exit(2);
 }
 const poses: [string, number][] = [];
-for (const arg of rest) {
+const view: { azimuth?: number; elevation?: number; width?: number } = {};
+for (let i = 0; i < rest.length; i++) {
+  const arg = rest[i];
   if (arg === "--pose") continue;
+  if (arg === "--azimuth" || arg === "--elevation" || arg === "--width") {
+    view[arg.slice(2) as "azimuth"] = Number(rest[++i]);
+    continue;
+  }
   const [j, v] = arg.split("=");
   if (!j || v === undefined || !Number.isFinite(Number(v))) {
     console.error(`not a joint=value pose: ${arg}`);
@@ -50,7 +58,7 @@ try {
 }
 
 writeFileSync(`${outDir}/program.json`, shape.program());
-writeFileSync(`${outDir}/preview.png`, shape.preview({ width: 320, views: 4, columns: 2 }));
+writeFileSync(`${outDir}/preview.png`, shape.preview({ width: view.width ?? 320, views: 4, columns: 2, azimuth: view.azimuth, elevation: view.elevation }));
 const m = shape.measure();
 const size = m.boundsMax.map((v: number, k: number) => +(v - m.boundsMin[k]).toFixed(2));
 const parts = m.parts.map((p: any) => ({
@@ -74,7 +82,7 @@ const report = {
 if (poses.length) {
   try {
     for (const [j, v] of poses) shape.pose(j, v);
-    writeFileSync(`${outDir}/posed.png`, shape.preview({ width: 320, views: 4, columns: 2 }));
+    writeFileSync(`${outDir}/posed.png`, shape.preview({ width: view.width ?? 320, views: 4, columns: 2, azimuth: view.azimuth, elevation: view.elevation }));
   } catch (e) {
     console.error(`pose error: ${(e as Error).message}`);
   }

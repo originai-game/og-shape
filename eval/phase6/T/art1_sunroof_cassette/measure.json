@@ -1,0 +1,312 @@
+{
+ "triangles": 518,
+ "boundsMin": [
+  -630,
+  -420,
+  0
+ ],
+ "boundsMax": [
+  630,
+  420,
+  48
+ ],
+ "size": [
+  1260,
+  840,
+  48
+ ],
+ "joints": [
+  "front_panel_slide",
+  "rear_panel_slide"
+ ],
+ "parts": [
+  {
+   "name": "cassette_frame",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 338,
+   "boundsMin": [
+    -630,
+    -420,
+    0
+   ],
+   "boundsMax": [
+    630,
+    420,
+    34
+   ]
+  },
+  {
+   "name": "center_crossmember",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -30,
+    -340,
+    0
+   ],
+   "boundsMax": [
+    30,
+    340,
+    30
+   ]
+  },
+  {
+   "name": "front_panel_carrier",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    80,
+    -370,
+    38
+   ],
+   "boundsMax": [
+    540,
+    370,
+    42
+   ]
+  },
+  {
+   "name": "front_panel_glass",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    90,
+    -350,
+    42
+   ],
+   "boundsMax": [
+    530,
+    350,
+    48
+   ]
+  },
+  {
+   "name": "front_panel_cable_anchor",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    450,
+    -60,
+    32
+   ],
+   "boundsMax": [
+    530,
+    60,
+    40
+   ]
+  },
+  {
+   "name": "front_panel_front_left_shoe",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    455,
+    333,
+    34
+   ],
+   "boundsMax": [
+    505,
+    359,
+    38
+   ]
+  },
+  {
+   "name": "front_panel_front_right_shoe",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    455,
+    -359,
+    34
+   ],
+   "boundsMax": [
+    505,
+    -333,
+    38
+   ]
+  },
+  {
+   "name": "front_panel_rear_left_shoe",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    115,
+    333,
+    34
+   ],
+   "boundsMax": [
+    165,
+    359,
+    38
+   ]
+  },
+  {
+   "name": "front_panel_rear_right_shoe",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    115,
+    -359,
+    34
+   ],
+   "boundsMax": [
+    165,
+    -333,
+    38
+   ]
+  },
+  {
+   "name": "rear_panel_carrier",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -540,
+    -370,
+    38
+   ],
+   "boundsMax": [
+    -80,
+    370,
+    42
+   ]
+  },
+  {
+   "name": "rear_panel_glass",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -530,
+    -350,
+    42
+   ],
+   "boundsMax": [
+    -90,
+    350,
+    48
+   ]
+  },
+  {
+   "name": "rear_panel_cable_anchor",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -170,
+    -60,
+    32
+   ],
+   "boundsMax": [
+    -90,
+    60,
+    40
+   ]
+  },
+  {
+   "name": "rear_panel_front_left_shoe",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -165,
+    333,
+    34
+   ],
+   "boundsMax": [
+    -115,
+    359,
+    38
+   ]
+  },
+  {
+   "name": "rear_panel_front_right_shoe",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -165,
+    -359,
+    34
+   ],
+   "boundsMax": [
+    -115,
+    -333,
+    38
+   ]
+  },
+  {
+   "name": "rear_panel_rear_left_shoe",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -505,
+    333,
+    34
+   ],
+   "boundsMax": [
+    -455,
+    359,
+    38
+   ]
+  },
+  {
+   "name": "rear_panel_rear_right_shoe",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -505,
+    -359,
+    34
+   ],
+   "boundsMax": [
+    -455,
+    -333,
+    38
+   ]
+  }
+ ]
+}

@@ -1,0 +1,59 @@
+{
+ "triangles": 3296,
+ "boundsMin": [
+  -457.2,
+  -2.86,
+  0
+ ],
+ "boundsMax": [
+  457.2,
+  2.86,
+  76.2
+ ],
+ "size": [
+  914.4,
+  5.72,
+  76.2
+ ],
+ "joints": [
+  "pivoting_strap_spin"
+ ],
+ "parts": [
+  {
+   "name": "fixed_strap",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 1648,
+   "boundsMin": [
+    -457.2,
+    -2.86,
+    0
+   ],
+   "boundsMax": [
+    457.2,
+    2.86,
+    40.96
+   ]
+  },
+  {
+   "name": "pivoting_strap",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 1648,
+   "boundsMin": [
+    -457.2,
+    -2.86,
+    35.24
+   ],
+   "boundsMax": [
+    457.2,
+    2.86,
+    76.2
+   ]
+  }
+ ]
+}

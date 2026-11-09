@@ -1,0 +1,97 @@
+{
+ "triangles": 1558,
+ "boundsMin": [
+  -180,
+  -130,
+  0
+ ],
+ "boundsMax": [
+  100,
+  90,
+  1546
+ ],
+ "size": [
+  280,
+  220,
+  1546
+ ],
+ "joints": [
+  "support_to_mid",
+  "mid_to_top",
+  "top_to_stage"
+ ],
+ "parts": [
+  {
+   "name": "support_frame_body",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 452,
+   "boundsMin": [
+    -180,
+    -130,
+    0
+   ],
+   "boundsMax": [
+    100,
+    90,
+    1180
+   ]
+  },
+  {
+   "name": "mid_mast_body",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 252,
+   "boundsMin": [
+    -36,
+    -36,
+    160
+   ],
+   "boundsMax": [
+    36,
+    8,
+    1280
+   ]
+  },
+  {
+   "name": "top_mast_body",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 388,
+   "boundsMin": [
+    -45,
+    -44.99,
+    440
+   ],
+   "boundsMax": [
+    45,
+    34.99,
+    1470
+   ]
+  },
+  {
+   "name": "rotary_stage_body",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 466,
+   "boundsMin": [
+    -87,
+    -75,
+    1470
+   ],
+   "boundsMax": [
+    90,
+    75,
+    1546
+   ]
+  }
+ ]
+}

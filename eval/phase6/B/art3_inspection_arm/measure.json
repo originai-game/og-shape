@@ -1,0 +1,368 @@
+{
+ "triangles": 1578,
+ "boundsMin": [
+  -2300,
+  -150,
+  0
+ ],
+ "boundsMax": [
+  306,
+  150,
+  487.5
+ ],
+ "size": [
+  2606,
+  300,
+  487.5
+ ],
+ "joints": [
+  "hinge_1",
+  "hinge_2",
+  "hinge_3",
+  "hinge_4"
+ ],
+ "parts": [
+  {
+   "name": "base",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 870,
+   "boundsMin": [
+    -150,
+    -150,
+    0
+   ],
+   "boundsMax": [
+    306,
+    150,
+    410
+   ]
+  },
+  {
+   "name": "fork_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -55,
+    -55,
+    410
+   ],
+   "boundsMax": [
+    55,
+    55,
+    480
+   ]
+  },
+  {
+   "name": "cap_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -40,
+    -40,
+    479.5
+   ],
+   "boundsMax": [
+    40,
+    40,
+    487.5
+   ]
+  },
+  {
+   "name": "bar_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -700,
+    -20,
+    440
+   ],
+   "boundsMax": [
+    0,
+    20,
+    452
+   ]
+  },
+  {
+   "name": "fork_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -755,
+    -55,
+    410
+   ],
+   "boundsMax": [
+    -645,
+    55,
+    480
+   ]
+  },
+  {
+   "name": "cap_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -740,
+    -40,
+    479.5
+   ],
+   "boundsMax": [
+    -660,
+    40,
+    487.5
+   ]
+  },
+  {
+   "name": "bar_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -1280,
+    -20,
+    440
+   ],
+   "boundsMax": [
+    -700,
+    20,
+    452
+   ]
+  },
+  {
+   "name": "fork_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -1335,
+    -55,
+    410
+   ],
+   "boundsMax": [
+    -1225,
+    55,
+    480
+   ]
+  },
+  {
+   "name": "cap_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -1320,
+    -40,
+    479.5
+   ],
+   "boundsMax": [
+    -1240,
+    40,
+    487.5
+   ]
+  },
+  {
+   "name": "bar_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -1760,
+    -20,
+    440
+   ],
+   "boundsMax": [
+    -1280,
+    20,
+    452
+   ]
+  },
+  {
+   "name": "fork_4",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -1815,
+    -55,
+    410
+   ],
+   "boundsMax": [
+    -1705,
+    55,
+    480
+   ]
+  },
+  {
+   "name": "cap_4",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -1800,
+    -40,
+    479.5
+   ],
+   "boundsMax": [
+    -1720,
+    40,
+    487.5
+   ]
+  },
+  {
+   "name": "bar_4",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -2140,
+    -20,
+    440
+   ],
+   "boundsMax": [
+    -1760,
+    20,
+    452
+   ]
+  },
+  {
+   "name": "camera",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -2270,
+    -40,
+    411
+   ],
+   "boundsMax": [
+    -2120,
+    40,
+    481
+   ]
+  },
+  {
+   "name": "lens",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 168,
+   "boundsMin": [
+    -2300,
+    -18,
+    428.01
+   ],
+   "boundsMax": [
+    -2269,
+    17.95,
+    463.99
+   ]
+  },
+  {
+   "name": "led_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 96,
+   "boundsMin": [
+    -2275,
+    22,
+    418.01
+   ],
+   "boundsMax": [
+    -2269,
+    33.95,
+    429.99
+   ]
+  },
+  {
+   "name": "led_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 96,
+   "boundsMin": [
+    -2275,
+    -34,
+    418.01
+   ],
+   "boundsMax": [
+    -2269,
+    -22.05,
+    429.99
+   ]
+  },
+  {
+   "name": "led_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 96,
+   "boundsMin": [
+    -2275,
+    22,
+    462.01
+   ],
+   "boundsMax": [
+    -2269,
+    33.95,
+    473.99
+   ]
+  },
+  {
+   "name": "led_4",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 96,
+   "boundsMin": [
+    -2275,
+    -34,
+    462.01
+   ],
+   "boundsMax": [
+    -2269,
+    -22.05,
+    473.99
+   ]
+  }
+ ]
+}

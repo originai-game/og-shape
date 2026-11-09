@@ -1,0 +1,96 @@
+{
+ "triangles": 126,
+ "boundsMin": [
+  -297.5,
+  -111.5,
+  0
+ ],
+ "boundsMax": [
+  297.5,
+  111.5,
+  598.5
+ ],
+ "size": [
+  595,
+  223,
+  598.5
+ ],
+ "joints": [
+  "arm_swivel",
+  "frame_tilt"
+ ],
+ "parts": [
+  {
+   "name": "pedestal",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -256,
+    -70,
+    0
+   ],
+   "boundsMax": [
+    -116,
+    70,
+    110
+   ]
+  },
+  {
+   "name": "cap",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 36,
+   "boundsMin": [
+    -297.5,
+    -111.5,
+    110
+   ],
+   "boundsMax": [
+    -74.5,
+    111.5,
+    164.5
+   ]
+  },
+  {
+   "name": "arm",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 46,
+   "boundsMin": [
+    -198,
+    -12,
+    165
+   ],
+   "boundsMax": [
+    297.5,
+    12,
+    598.5
+   ]
+  },
+  {
+   "name": "frame",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 32,
+   "boundsMin": [
+    -172.5,
+    -91.92,
+    494.58
+   ],
+   "boundsMax": [
+    297.5,
+    7.07,
+    593.57
+   ]
+  }
+ ]
+}
