@@ -89,3 +89,20 @@
 - Plan: aarch64 macOS joins the gate later; phase 0 benchmarks booleans on
   synthetic AI-mesh defects instead of provider outputs, which re-check the
   decision in phase 5.
+- `shape-tools` (phase 4, export and preview): `Scene` of parts, each a
+  solid with a `Material` (three.js names: `color`, `metalness`,
+  `roughness`, `emissive`, `opacity`) and an optional `Joint`.
+  - `glb`: glTF 2.0 binary, metres, Y up; normals smooth within a surface
+    and split at real edges; one node, mesh and material per part; joints
+    as `s3d_joint` node extras (`docs/research.md` §1.5), posed at their
+    `value`.
+  - `obj` (Y up) and binary `stl` (Z up), metres, meshes only.
+  - `preview`: a turntable of views from a deterministic CPU rasterizer
+    (integer coverage, Lambert, real edges, ground shadow) as RGBA images;
+    `png` encodes one (miniz_oxide), `sheet` tiles them.
+  - Golden cases `tools.glb`, `tools.obj`, `tools.stl`, `tools.preview`
+    (framebuffer bytes) and `tools.preview.png`.
+- Phase 1 acceptance: ten sand3d programs (gallery A2–A7, A9, A10, A12, and
+  `docs/examples/gate.py`) rebuilt with existing generators, exported and
+  previewed; previews in `docs/previews/phase1/`, gaps in
+  `docs/research.md` §6.4.

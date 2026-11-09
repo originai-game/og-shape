@@ -379,3 +379,140 @@ aarch64 Linux.
    longer turned. A countersink's cone still runs on below the bore, so it
    crosses the bore wall rather than touching it along a ring: a ring of
    coincident edges is a different case and has not been tested unturned.
+
+## 6. Export and the CPU preview (phase 4, stream B; 2026-11-09)
+
+### 6.1 Decisions
+
+- **One crate, `shape-tools`.** Its entry is `Scene`: parts, each a
+  `(name, &Solid, Material, Option<Joint>)` plus the name of the part it
+  hangs on, parents first. Parts and assemblies come later (phase 4); the
+  scene is the small desc they will fill.
+- **Axes and units.** Programs are millimetres, Z up. GLB and OBJ are
+  metres, Y up (kernel Z → Y, Y → −Z, as sand3d's exporter does); STL is
+  metres, Z up (`meshfile.py` does the same).
+- **GLB, written by hand.** One node, one mesh, one material per part;
+  POSITION and NORMAL as f32, u32 indices, one buffer. Normals: one vertex
+  per (position, surface id), its normal the area-weighted sum of that
+  surface's triangle normals around it, so real edges split and a surface
+  stays smooth. JSON keys are in a fixed order with no whitespace; numbers
+  are Rust's shortest round-trip form (the same on every host); `-0` is
+  written `0`.
+- **Joints (§1.5's shape).** A jointed part's node hangs under a node named
+  after the joint, at its pivot, which hangs under the parent part's node.
+  The part's node undoes the pivot, so meshes stay in world coordinates at
+  rest. Extras: `{"s3d_joint": {name, type, value, axis, lower, upper,
+  mimic}}`, SI units, the axis in the joint node's frame (Y up). As in
+  sand3d, a revolute joint with no range is written `continuous`, and a
+  follower with no range takes its leader's × its multiplier. The joint
+  node carries the pivot *after* the joint's motion, so `value` poses the
+  part as sand3d's exporter does; the preview places parts by the same
+  forward kinematics. Kinds: revolute, continuous, prismatic, floating;
+  a part with no joint is welded (sand3d has no `fixed` kind either).
+- **Materials** take three.js `MeshStandardMaterial` names (`color`,
+  `metalness`, `roughness`, `emissive`, `opacity`). The zero value is
+  three.js's default (white, roughness 1, opaque). Colours are sRGB and
+  written linear (`baseColorFactor`); opacity below 1 writes
+  `alphaMode: BLEND`.
+- **The rasterizer.** Orthographic views at one scale for all azimuths
+  (the scene's bounding sphere fills 92 % of the short side). Vertices snap
+  to 1/256 pixel in i64; coverage is three integer edge functions with a
+  top-left rule (an antisymmetric tie-break, so a pixel on a shared edge
+  goes to one triangle only). Depth and light are interpolated in f64 from
+  the integer barycentrics. Lambert from one world light (ambient 0.38,
+  diffuse 0.62), lit from the side the camera sees, smooth per surface.
+  Real edges are one-pixel integer DDA lines, depth-tested with a bias of
+  0.6 % of the scene's radius. The ground is a square 1.15 radii across at
+  the scene's lowest z; the shadow is every triangle pressed onto it along
+  the light, marked only where the ground is the nearest thing. No GPU,
+  threads or SIMD; `sin`/`cos` come from `trig` (camera azimuths, joint
+  turns), `pow` from `trig` (sRGB to linear).
+- **PNG.** RGBA8, every row filtered `Up`, zlib from `miniz_oxide` at level
+  9, CRC-32 written here. The gate hashes PNG bytes as well as the
+  framebuffer (`tools.preview.png`), which checks `miniz_oxide` on every
+  target.
+
+### 6.2 Dependencies
+
+| crate | version | licence | where |
+|---|---|---|---|
+| miniz_oxide | 0.9.1, `default-features = false`, `with-alloc` | MIT OR Zlib OR Apache-2.0 | kernel |
+| adler2 (via miniz_oxide) | 2.0.1 | 0BSD OR MIT OR Apache-2.0 | kernel |
+| gltf | 1.4.1, `default-features = false`, `utils`, `names`, `extras` | MIT OR Apache-2.0 | dev only: reads the GLB back in a test |
+
+`gltf` brings serde, serde_json, gltf-json, gltf-derive, syn and their
+helpers (MIT and/or Apache-2.0, two Unlicense OR MIT), and
+**unicode-ident** 1.0.27, `(MIT OR Apache-2.0) AND Unicode-3.0`.
+Unicode-3.0 is not on the licence list. It never ships (dev-dependency,
+build-time proc macro), and the gate does not see it: `cargo deny check`
+as configured leaves dev-dependencies out (`cargo deny list` shows none of
+`gltf`'s tree). Whether the licence gate should cover dev-dependencies,
+and whether Unicode-3.0 may be allowed there, is the owner's call.
+
+### 6.3 Measurements (x86-64, release)
+
+- Golden cases `tools.glb`, `tools.obj`, `tools.stl`, `tools.preview`
+  (four 256² views) and `tools.preview.png`: identical natively and as
+  wasm32-wasip1 under wasmtime. The whole golden run takes 0.24 s.
+- The ten phase 1 rebuilds, four 320² views each plus PNG encoding:
+  0.36–0.42 s for all ten. Two runs give identical PNG bytes.
+
+| program | parts | joints | triangles | GLB bytes | PNG bytes |
+|---|---|---|---|---|---|
+| xyz_cartesian_stage (A7) | 29 | 3 | 348 | 46 700 | 31 950 |
+| floor_task_lamp (A6) | 18 | 3 | 3 228 | 135 920 | 26 319 |
+| double_leaf_garden_gate (A2) | 37 | 3 | 928 | 76 552 | 22 320 |
+| compact_apartment_refrigerator (A3) | 34 | 3 | 1 472 | 91 628 | 13 558 |
+| skateboard (A5) | 11 | 6 | 1 332 | 61 412 | 24 646 |
+| compact_theatre_binocular (A9) | 30 | 4 | 4 528 | 191 572 | 63 523 |
+| compact_pickup_tailgate (A10) | 43 | 4 | 1 492 | 103 012 | 27 734 |
+| compact_trackpoint_keyboard (A4) | 59 | 43 | 13 596 | 456 940 | 51 181 |
+| bevel_to_spur_transfer (A12) | 30 | 3 | 11 240 | 443 056 | 54 184 |
+| gate (`docs/examples/gate.py`) | 6 | 2 | 296 | 17 384 | 11 486 |
+
+Each program's joint count is the one sand3d's gallery lists.
+
+### 6.4 Phase 1 acceptance: the ten rebuilds
+
+Read at sand3d `84c980a`: the gallery's twelve articulated programs
+(`site/gallery.html`) and `docs/examples`. Eight gallery programs need no
+boolean and no bevel: A2, A3, A4, A5, A6, A7, A9, A10. A12 needs `cut` only
+for its two bevel gears' bores; it is rebuilt without them (they sit inside
+a hub). The tenth is `docs/examples/gate.py`. Left out: the washing
+machine (`pocket`, `cut`, `join`, `seat`, `fillet`), A8 (`cut`, `hole`,
+`fillet`), A11 (`cut`, `join`), and the other examples (`fillet`, `hole`,
+`shell`, `chamfer`).
+
+The programs are in `crates/shape-tools/tests/phase1/programs.rs`, line
+for line, over a test-side subset of sand3d's vocabulary
+(`tests/phase1/sand3d.rs`): sand3d's primitives' conventions, `at` with
+Blender's XYZ Euler, frames with `offset`, `move`, `turn`, `bbox` and
+`face` frames, mirror, materials from sand3d's presets, joints read on a
+frame. In `gate.py`, sand3d's `copy` of the jointed leaf also copies its
+hinge; the rebuild declares the image's hinge by hand (`hinge.001`, on the
+other post, about −Z, so it also opens toward +Y). The previews are in
+`docs/previews/phase1/`.
+
+Gaps found (none worked around in the generators):
+- **`loft` takes single-contour sections.** A section with a hole (A12's
+  bevel gear with its bore) cannot be lofted; sand3d lofts the outline and
+  cuts the bore.
+- **`revolve`, `sphere` and `torus` are about +Y**, while `extrude`,
+  `cylinder` and sand3d's revolve are about +Z, and sand3d's sphere and
+  torus rest on z = 0. Every rebuild turns them a quarter turn and lifts
+  them.
+- **No placement layer yet:** `Frame` has no `offset`, `move` or `turn`;
+  there is no `at`, `bbox`, `face(name)` frame, `copy` or `mirror` of a
+  part. Phase 4's parts need them; the rebuilds carry their own.
+- **No solid gear:** sand3d's `gear(teeth, module, width, bore)` is
+  `extrude(gear − circle)` here.
+- **`loft` interpolates straight or by Catmull-Rom**, sand3d's by a natural
+  cubic spline: the binocular shell (four sections) differs slightly.
+- **One joint per part** in the export desc. sand3d composes several on one
+  child (A11's cap turns and lifts); not needed by the ten.
+- Still missing from phase 1, not needed by these ten: `body`, `wire`,
+  `knurl`.
+
+What remains unchecked: the GLB has been read by the `gltf` crate only,
+not by three.js (phase 4's acceptance); the joint extras' meaning is
+checked by unit tests, not by posing in a viewer.
