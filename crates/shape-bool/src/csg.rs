@@ -11,7 +11,8 @@
 //!    `orient3d` and `orient2d`), so two hosts make the same decisions.
 //!    A crossing point is computed once, from inputs in a fixed order, and
 //!    named by what made it (an edge and a triangle, or two edges), so the
-//!    triangles that share it share the same point, bit for bit.
+//!    triangles that share it share the same point, bit for bit. Two that
+//!    round to one position are one point.
 //! 2. Each triangle crossed is cut along its intersection segments by a
 //!    constrained Delaunay triangulation (spade) in its own plane, with its
 //!    edges, and the points on them, as the outline.
@@ -92,6 +93,8 @@ struct Csg {
     /// The edges each point lies on (beyond its own mesh's corners).
     on: Vec<Vec<EdgeKey>>,
     made: BTreeMap<Origin, u32>,
+    /// Each made point by its exact position.
+    made_at: BTreeMap<[u64; 3], u32>,
     solids: [Solid; 2],
     cuts: [BTreeMap<u32, Cut>; 2],
     crossings: BTreeSet<(u32, u32)>,
@@ -149,8 +152,20 @@ impl Csg {
         self.points[i as usize]
     }
 
+    /// The triangle's normal, each component the triangle's signed area
+    /// in one axis plane by `orient2d`: its sign is exact, so a sliver
+    /// whose cross product cancels to zero in f64 still has a normal.
     fn tri_normal(&self, t: [u32; 3]) -> DVec3 {
-        (self.p(t[1]) - self.p(t[0])).cross(self.p(t[2]) - self.p(t[0]))
+        let [a, b, c] = t.map(|i| self.p(i));
+        let area = |axis: usize| {
+            let [a, b, c] = [a, b, c].map(|p| project(p, axis));
+            orient2d(
+                Coord { x: a.x, y: a.y },
+                Coord { x: b.x, y: b.y },
+                Coord { x: c.x, y: c.y },
+            )
+        };
+        DVec3::new(area(0), area(1), area(2))
     }
 
     fn add_point(&mut self, origin: Origin, p: impl FnOnce(&Self) -> DVec3, on: &[EdgeKey]) -> u32 {
@@ -158,10 +173,22 @@ impl Csg {
             return id;
         }
         let pos = p(self);
+        // Two crossings a rounding error apart can round to one position.
+        // They are made one point, on the edges of both, so the triangles
+        // of both meshes cut at it agree on it.
+        let key = pos.to_array().map(|x| (x + 0.0).to_bits());
+        if let Some(&id) = self.made_at.get(&key) {
+            for &e in on {
+                self.note_on(id, e);
+            }
+            self.made.insert(origin, id);
+            return id;
+        }
         let id = self.points.len() as u32;
         self.points.push(pos);
         self.on.push(on.to_vec());
         self.made.insert(origin, id);
+        self.made_at.insert(key, id);
         id
     }
 
@@ -468,6 +495,39 @@ impl Csg {
             chain.push(a);
             chain.extend(along);
         }
+        // A point made inside the triangle (an edge through it) can round to
+        // a position on or past its outline, as seen in the projection: past
+        // a corner's edge, or past a point rounded off an edge. Its segments
+        // would then run along the outline or through an outline point, and
+        // spade would merge or drop them, so regions would leak or pieces be
+        // lost. It is placed in the triangulation just inside the outline
+        // instead; its own position (shared with the other mesh) is
+        // unchanged, as are which segments end at it (`docs/research.md`
+        // §5.4, follow-up 4).
+        let outline: Vec<DVec2> = chain.iter().map(|&i| project(self.p(i), axis)).collect();
+        let v = t.map(|i| project(self.p(i), axis));
+        let turn = o2(v[0], v[1], v[2]);
+        let centre = (v[0] + v[1] + v[2]) / 3.0;
+        let at = |i: u32| {
+            let q = project(self.p(i), axis);
+            // A point of the other mesh's at one of ours keeps its place, so
+            // spade merges the two.
+            let shared = chain.iter().any(|&j| self.p(j) == self.p(i));
+            if turn == 0 || shared || chain.contains(&i) || strictly_inside(&outline, q) {
+                return q;
+            }
+            // The smallest step towards the centre, by powers of two, that
+            // puts it strictly inside.
+            let mut step = f64::EPSILON;
+            while step < 0.5 {
+                let r = q + (centre - q) * step;
+                if strictly_inside(&outline, r) {
+                    return r;
+                }
+                step *= 2.0;
+            }
+            centre
+        };
         let mut cdt: ConstrainedDelaunayTriangulation<Point2<f64>> =
             ConstrainedDelaunayTriangulation::new();
         let mut id_of: BTreeMap<usize, u32> = BTreeMap::new();
@@ -476,7 +536,7 @@ impl Csg {
             if handle_of.contains_key(&i) {
                 continue;
             }
-            let q = project(self.p(i), axis);
+            let q = at(i);
             let Ok(h) = cdt.insert(Point2::new(q.x, q.y)) else {
                 continue;
             };
@@ -546,10 +606,7 @@ impl Csg {
         }
         // spade's faces turn counter-clockwise in the projection; the
         // triangle's own winding there decides whether they turn back.
-        let flip = {
-            let v = t.map(|i| project(self.p(i), axis));
-            o2(v[0], v[1], v[2]) < 0
-        };
+        let flip = turn < 0;
         let mut out = Vec::new();
         for (fi, f) in faces.iter().enumerate() {
             if outside[fi] {
@@ -563,6 +620,27 @@ impl Csg {
         }
         out
     }
+}
+
+/// Whether `q` lies inside the closed polygon and on none of its edges,
+/// decided by exact predicates (a winding number, Sunday's crossing rule).
+fn strictly_inside(poly: &[DVec2], q: DVec2) -> bool {
+    let mut wn = 0i32;
+    for k in 0..poly.len() {
+        let (a, b) = (poly[k], poly[(k + 1) % poly.len()]);
+        let o = o2(a, b, q);
+        if o == 0 && q.cmpge(a.min(b)).all() && q.cmple(a.max(b)).all() {
+            return false;
+        }
+        if a.y <= q.y {
+            if b.y > q.y && o > 0 {
+                wn += 1;
+            }
+        } else if b.y <= q.y && o < 0 {
+            wn -= 1;
+        }
+    }
+    wn != 0
 }
 
 /// The winding number of a closed mesh round `p` (solid angles, Van
@@ -759,6 +837,7 @@ fn arrange(points: Vec<DVec3>, sa: Solid, sb: Solid, op: CsgOp) -> (Csg, Vec<Kep
         points,
         on,
         made: BTreeMap::new(),
+        made_at: BTreeMap::new(),
         solids: [sa, sb],
         cuts: [BTreeMap::new(), BTreeMap::new()],
         crossings: BTreeSet::new(),

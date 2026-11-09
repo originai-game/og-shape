@@ -75,9 +75,17 @@
   including the wall thickness.
 - `shape-bool::fuse` and `components`: a solid of several shells is fused
   before a boolean.
-- Known CSG defect, with a minimal case: edges crossing exactly on edges
-  (`docs/research.md` §5.4, item 4). Round edit tools are turned to avoid
-  it.
+- CSG fix: a plate minus a pin whose vertex columns lie on the plate
+  caps' 45° diagonal is now closed (it had open or non-manifold edges
+  around the bore; `docs/research.md` §5.4, item 4). Crossing points that
+  round onto or past a triangle's outline are placed just inside it for
+  that triangle's triangulation, and crossings that round to one position
+  are one point. Triangle normals take their components from `orient2d`.
+  Every output hash is unchanged.
+- `hole`'s tools are no longer turned half a segment (a countersink's cone
+  a quarter segment) off the frame's axes: a hole's polygon now starts on
+  its frame's x axis. The `edit.holes.pocket` golden hash moves for that
+  reason alone.
 - Plan: aarch64 macOS joins the gate later; phase 0 benchmarks booleans on
   synthetic AI-mesh defects instead of provider outputs, which re-check the
   decision in phase 5.

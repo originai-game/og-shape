@@ -191,12 +191,6 @@ pub fn above(x: f64, y: f64) -> Frame {
 }
 
 /// A tool along a frame's −z: from `over` above the entry to `depth` below.
-/// Its circle starts `turn` half segments off the frame's x axis (1 for
-/// bores), so its vertex
-/// columns miss the 45° diagonals of axis-aligned faces: og-geom's CSG
-/// mishandles an edge crossing another edge exactly (`docs/research.md`
-/// §5.4, follow-up 4).
-#[allow(clippy::too_many_arguments)]
 fn bore(
     entry: DVec3,
     axis: &Frame,
@@ -205,14 +199,12 @@ fn bore(
     depth: f64,
     over: f64,
     n: u32,
-    turn: f64,
 ) -> Result<Solid, EditError> {
     let circle = shape_2d::circle(&shape_2d::Circle {
         radius: r_bottom,
         segments: n,
     })
-    .map_err(GenError::from)?
-    .rotate(shape_core::trig::PI * turn / n as f64);
+    .map_err(GenError::from)?;
     let c = extrude(
         &circle,
         &Extrude {
@@ -247,25 +239,15 @@ pub fn hole(s: &Solid, d: &Hole) -> Result<Solid, EditError> {
         // narrow end is the bore's own polygon.
         let widest = r.max(d.counterbore.0 / 2.0).max(d.countersink.0 / 2.0);
         let n = shape_2d::curve::segments(widest, shape_core::trig::TAU);
-        let mut tools = vec![bore(e, &axis, r, r, depth, over, n, 1.0)?];
+        let mut tools = vec![bore(e, &axis, r, r, depth, over, n)?];
         let (cb_d, cb_depth) = d.counterbore;
         if cb_d > 0.0 && cb_depth > 0.0 {
-            tools.push(bore(
-                e,
-                &axis,
-                cb_d / 2.0,
-                cb_d / 2.0,
-                cb_depth,
-                over,
-                n,
-                1.0,
-            )?);
+            tools.push(bore(e, &axis, cb_d / 2.0, cb_d / 2.0, cb_depth, over, n)?);
         }
         let (cs_d, cs_angle) = d.countersink;
         if cs_d > 2.0 * r && cs_angle > 0.0 {
             // The cone runs on below the bore's radius (to 0.9 r), so it
-            // crosses the bore wall instead of touching it along a ring, its
-            // corners a quarter segment off the bore's so no edges meet.
+            // crosses the bore wall instead of touching it along a ring.
             let slope = shape_core::trig::tan(cs_angle / 2.0);
             let h = (cs_d / 2.0 - 0.9 * r) / slope;
             tools.push(bore(
@@ -276,7 +258,6 @@ pub fn hole(s: &Solid, d: &Hole) -> Result<Solid, EditError> {
                 h,
                 over,
                 n,
-                0.5,
             )?);
         }
         for t in tools {

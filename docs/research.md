@@ -344,26 +344,38 @@ aarch64 Linux.
    **Partly done:** `fuse` joins the separate shells of a solid (`merge`
    output, interpenetrating provider parts) before any boolean. A single
    surface that folds through itself is still refused.
-4. **Exact edge-on-edge crossings (found in phase 2).** The minimal case
-   is reproducible: `cuboid(40, 40, 10)` minus a centred
-   `cylinder(r = 2, 24 segments)` through it gives an open result with 100
-   boundary edges. A blind one (z from 4) gives 46 non-manifold edges. With
-   r = 3, also 24 segments, the result is closed. The plate's top-cap
-   diagonal runs through the cylinder's vertex columns. The crossing
-   points are made, but the pieces around them are classified wrongly.
-   The root cause is not isolated yet. What is known:
-   - The cracks are all on the plate's bottom face, around the bore.
-   - The bore wall's pieces next to z = 0 are dropped: their region
-     leaks into the region outside.
-   - The leak is at the vertex column on the diagonal. There the crossing
-     is an edge-on-edge point, computed by the closest-point formula
-     (`edge_edge`), so it lies off both edges by rounding.
-   
-   The first suspect is the region split in `arrange` step 3. A crossing
-   segment that ends at such a point may not close the band. Until it is fixed in `csg.rs`:
-   - `shape-edit` turns its round tools half a segment off the axes, which
-     clears the case for holes;
-   - a countersink's cone runs on below the bore, a quarter segment off
-     it, so it crosses the bore wall rather than touching it.
-   
-   The fix must make the minimal case closed with the tools unturned.
+4. **Exact edge-on-edge crossings (found in phase 2).** The minimal case:
+   `cuboid(40, 40, 10)` minus a centred `cylinder(r = 2, 24 segments)`
+   through it gave an open result with 100 boundary edges; a blind one
+   (z from 4) gave 46 non-manifold edges; r = 3 was closed. The plate's cap
+   diagonal runs within rounding of the cylinder's vertex columns.
+   **Done.** The diagnosis did not hold up as recorded: in the minimal case
+   no crossing is edge-on-edge. The diagonal misses the column by an ulp, so
+   the exact predicates see two `EdgeTri` crossings 4·10⁻¹⁶ apart: the
+   column through a cap triangle, and the diagonal through a wall triangle.
+   Three faults in `csg.rs` turned that into cracks, all in rounding of
+   constructed points, not in the predicates:
+   - A point made inside a triangle (an edge through it) can round to a
+     position past its outline in the projection: past a corner's edge, or
+     past a point on an edge that itself rounded inward. Its segments then
+     run through an outline point, spade merges them into an edge that no
+     crossing names, and the region of step 3 leaks across it (the bore
+     wall joined the region below the plate). `pieces` now places such a
+     point, for that triangle's triangulation only, at the smallest step
+     towards the centroid that an exact winding test (`orient2d`) puts
+     strictly inside the outline. Its shared position, and the segments
+     that end at it, are unchanged.
+   - Two crossings a rounding error apart can round to the same position
+     (a countersink edge passing a bore column). spade merged them, a
+     segment was lost, and a region leaked. `add_point` now makes them one
+     point, on the edges of both.
+   - A legitimate sliver from an earlier cut (6·10⁻¹⁴ in area) has an f64
+     cross product that cancels to zero, so `drop_axis` chose a degenerate
+     projection. `tri_normal` now takes its components from `orient2d`.
+
+   Every golden hash and og-geom's contract tests are unchanged. The test is
+   `crates/shape-bool/tests/edge_on_edge.rs` (through and blind, both
+   closed and of the analytic volume). `shape-edit`'s round tools are no
+   longer turned. A countersink's cone still runs on below the bore, so it
+   crosses the bore wall rather than touching it along a ring: a ring of
+   coincident edges is a different case and has not been tested unturned.
