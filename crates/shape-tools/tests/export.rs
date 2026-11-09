@@ -202,3 +202,34 @@ fn obj_and_stl_layouts() {
     assert_eq!(count, faces);
     assert_eq!(bin.len(), 84 + 50 * count);
 }
+
+#[test]
+fn a_posed_joint_turns_its_node_and_its_followers() {
+    let (base, wheel) = solids();
+    let mut s = scene(&base, &wheel);
+    s.parts[1].joint.as_mut().unwrap().value = core::f64::consts::FRAC_PI_2;
+    let bytes = glb(&s).unwrap();
+    let doc = gltf::Gltf::from_slice(&bytes).unwrap();
+    // The pivot looks +Z (glTF +Y): a quarter turn about glTF's Y.
+    let (t, r, _) = doc.nodes().nth(1).unwrap().transform().decomposed();
+    assert_eq!(t, [0.03, 0.02, 0.0]);
+    let h = core::f32::consts::FRAC_1_SQRT_2;
+    assert!((r[1] - h).abs() < 1e-7 && (r[3] - h).abs() < 1e-7 && r[0] == 0.0 && r[2] == 0.0);
+    // The part under it is unchanged: the pivot's inverse.
+    let (t, r, _) = doc.nodes().nth(2).unwrap().transform().decomposed();
+    assert_eq!((t, r), ([-0.03, -0.02, 0.0], [0.0, 0.0, 0.0, 1.0]));
+    // The follower slides 10 mm per radian: π/2 × 10 mm, in metres.
+    let extras = doc
+        .nodes()
+        .nth(3)
+        .unwrap()
+        .extras()
+        .as_ref()
+        .unwrap()
+        .get()
+        .to_string();
+    assert!(extras.contains(&format!(
+        "\"value\":{}",
+        core::f64::consts::FRAC_PI_2 * 10.0 * 0.001
+    )));
+}

@@ -171,8 +171,8 @@ fn scale(rgb: [u8; 3], k: u32, d: u32) -> [u8; 3] {
 ///
 /// Errors as [`crate::glb`] does on an invalid scene.
 pub fn preview(scene: &Scene, d: &Preview) -> Result<Vec<Image>, ExportError> {
-    // The same checks as export: names, parents, finite values.
-    crate::export::check(scene)?;
+    // The same checks as export, and each part's pose.
+    let placed = crate::export::check(scene)?;
     let width = if d.width == 0 { 256 } else { d.width };
     let height = if d.height == 0 { width } else { d.height };
     let views = if d.views == 0 { 4 } else { d.views };
@@ -180,18 +180,36 @@ pub fn preview(scene: &Scene, d: &Preview) -> Result<Vec<Image>, ExportError> {
     if !(elevation > 0.0 && elevation <= trig::PI / 2.0) || !d.azimuth.is_finite() {
         return Err(ExportError::NotFinite("the preview's elevation".into()));
     }
-    let parts: Vec<_> = scene
+    let parts: Vec<Drawn> = scene
         .parts
         .iter()
-        .map(|p| {
-            let s = split(p.solid);
+        .zip(&placed)
+        .map(|(p, m)| {
+            let mut s = split(p.solid);
+            for v in &mut s.positions {
+                *v = m.apply(*v);
+            }
+            for n in &mut s.normals {
+                *n = m.rotate(*n);
+            }
+            let edges = p
+                .solid
+                .real_edges()
+                .into_iter()
+                .map(|(a, b)| {
+                    (
+                        m.apply(p.solid.positions[a as usize]),
+                        m.apply(p.solid.positions[b as usize]),
+                    )
+                })
+                .collect();
             let rgb = p.material.color.unwrap_or([1.0; 3]);
-            (p, s, rgb)
+            (s, edges, rgb)
         })
         .collect();
     let mut lo = DVec3::splat(f64::INFINITY);
     let mut hi = DVec3::splat(f64::NEG_INFINITY);
-    for (_, s, _) in &parts {
+    for (s, _, _) in &parts {
         for &p in &s.positions {
             lo = lo.min(p);
             hi = hi.max(p);
@@ -245,12 +263,12 @@ pub fn preview(scene: &Scene, d: &Preview) -> Result<Vec<Image>, ExportError> {
         if !d.no_ground {
             draw_ground(&mut t, &cam, &ground, &parts, light, ground_z);
         }
-        for (_, s, rgb) in &parts {
+        for (s, _, rgb) in &parts {
             draw_solid(&mut t, &cam, s, *rgb, light, toward);
         }
         if !d.no_edges {
-            for (p, _, _) in &parts {
-                draw_edges(&mut t, &cam, p.solid, radius);
+            for (_, edges, _) in &parts {
+                draw_edges(&mut t, &cam, edges, radius);
             }
         }
         let mut rgba = Vec::with_capacity(n * 4);
@@ -267,7 +285,8 @@ pub fn preview(scene: &Scene, d: &Preview) -> Result<Vec<Image>, ExportError> {
     Ok(out)
 }
 
-type Drawn<'a> = (&'a crate::export::Part<'a>, crate::surface::Split, [f64; 3]);
+/// A part as drawn: its posed vertices, its posed real edges, its colour.
+type Drawn = (crate::surface::Split, Vec<(DVec3, DVec3)>, [f64; 3]);
 
 fn draw_ground(
     t: &mut Target,
@@ -301,7 +320,7 @@ fn draw_ground(
     // The shadow: every triangle pressed onto the ground along the light.
     let mut shade = vec![false; t.rgb.len()];
     let dims = (t.width, t.height);
-    for (_, s, _) in parts {
+    for (s, _, _) in parts {
         for tri in s.indices.as_chunks::<3>().0 {
             let c = [0, 1, 2].map(|k| {
                 let p = s.positions[tri[k] as usize];
@@ -361,13 +380,13 @@ fn draw_solid(
 }
 
 /// Real edges, one pixel wide, where nothing nearer hides them.
-fn draw_edges(t: &mut Target, cam: &Camera, s: &shape_mesh::Solid, radius: f64) {
+fn draw_edges(t: &mut Target, cam: &Camera, edges: &[(DVec3, DVec3)], radius: f64) {
     // A line on a face is as near as the face: allow a little depth.
     let bias = radius * 0.006;
     let (w, h) = (i64::from(t.width), i64::from(t.height));
-    for (a, b) in s.real_edges() {
-        let (ax, ay, az) = cam.project(s.positions[a as usize]);
-        let (bx, by, bz) = cam.project(s.positions[b as usize]);
+    for &(a, b) in edges {
+        let (ax, ay, az) = cam.project(a);
+        let (bx, by, bz) = cam.project(b);
         let (dx, dy) = (bx - ax, by - ay);
         let steps = (dx.abs().max(dy.abs()) / SUB).max(1);
         for i in 0..=steps {

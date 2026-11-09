@@ -68,7 +68,9 @@ pub struct Joint {
     pub pivot: Frame,
     /// The axis in the pivot's own coordinates; zero is the pivot's +Z.
     pub axis: DVec3,
-    /// The pose the part is written at, from rest (0).
+    /// The joint's pose, from rest (0): the part is written moved by it
+    /// from where it was built. A follower ignores it and takes its
+    /// leader's value × its multiplier.
     pub value: f64,
     /// `(lower, upper)`, containing 0. A follower with none takes its
     /// leader's range × its multiplier.
@@ -82,7 +84,8 @@ pub struct Joint {
 pub struct Part<'a> {
     /// Unique among the scene's parts: the node's and the mesh's name.
     pub name: String,
-    /// Its geometry, already placed in the world (millimetres, Z up).
+    /// Its geometry in the world at rest, every joint at 0 (millimetres,
+    /// Z up).
     pub solid: &'a Solid,
     /// What it is made of.
     pub material: Material,
@@ -189,12 +192,10 @@ fn finite(v: f64, what: impl Fn() -> String) -> Result<f64, ExportError> {
 struct Checked {
     name: String,
     kind: &'static str,
-    /// Pivot in glTF space: translation (metres) and rotation (x, y, z, w).
-    translation: DVec3,
-    rotation: [f64; 4],
-    /// Inverse of the pivot.
-    inv_translation: DVec3,
-    inv_rotation: [f64; 4],
+    /// The joint's node: the pivot after the joint's motion.
+    node: Rigid,
+    /// The part's node under it: the pivot's inverse.
+    inverse: Rigid,
     axis: Option<DVec3>,
     value: f64,
     span: Option<(f64, f64)>,
@@ -208,6 +209,85 @@ fn si(kind: JointKind) -> f64 {
         METRES
     } else {
         1.0
+    }
+}
+
+/// A rigid motion in kernel space: `p ↦ x·p.x + y·p.y + z·p.z + t`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Rigid {
+    pub x: DVec3,
+    pub y: DVec3,
+    pub z: DVec3,
+    pub t: DVec3,
+}
+
+impl Rigid {
+    pub(crate) const IDENTITY: Rigid = Rigid {
+        x: DVec3::X,
+        y: DVec3::Y,
+        z: DVec3::Z,
+        t: DVec3::ZERO,
+    };
+
+    fn of(f: &Frame) -> Rigid {
+        Rigid {
+            x: f.x,
+            y: f.y,
+            z: f.z,
+            t: f.origin,
+        }
+    }
+
+    pub(crate) fn rotate(&self, v: DVec3) -> DVec3 {
+        self.x * v.x + self.y * v.y + self.z * v.z
+    }
+
+    pub(crate) fn apply(&self, p: DVec3) -> DVec3 {
+        self.rotate(p) + self.t
+    }
+
+    /// `self ∘ other`: `other` first.
+    fn then(&self, other: &Rigid) -> Rigid {
+        Rigid {
+            x: self.rotate(other.x),
+            y: self.rotate(other.y),
+            z: self.rotate(other.z),
+            t: self.apply(other.t),
+        }
+    }
+
+    fn inverse(&self) -> Rigid {
+        // (R, t)⁻¹ = (Rᵀ, −Rᵀ t).
+        let tr = |v: DVec3| DVec3::new(self.x.dot(v), self.y.dot(v), self.z.dot(v));
+        Rigid {
+            x: tr(DVec3::X),
+            y: tr(DVec3::Y),
+            z: tr(DVec3::Z),
+            t: -tr(self.t),
+        }
+    }
+
+    /// Turn by `angle` radians about the unit axis `k` through the origin.
+    fn turn(k: DVec3, angle: f64) -> Rigid {
+        let (sn, cs) = trig::sin_cos(angle);
+        let r = |v: DVec3| v * cs + k.cross(v) * sn + k * (k.dot(v) * (1.0 - cs));
+        Rigid {
+            x: r(DVec3::X),
+            y: r(DVec3::Y),
+            z: r(DVec3::Z),
+            t: DVec3::ZERO,
+        }
+    }
+
+    /// The same motion in glTF space (metres, Y up): translation and
+    /// rotation (x, y, z, w).
+    fn gltf(&self) -> (DVec3, [f64; 4]) {
+        let down = |v: DVec3| DVec3::new(v.x, -v.z, v.y);
+        let col = |e: DVec3| y_up(self.rotate(down(e)));
+        (
+            y_up(self.t) * METRES,
+            quaternion(col(DVec3::X), col(DVec3::Y), col(DVec3::Z)),
+        )
     }
 }
 
@@ -235,14 +315,18 @@ fn quaternion(x: DVec3, y: DVec3, z: DVec3) -> [f64; 4] {
     q.map(|c| c / len)
 }
 
-/// Checks a scene as every tool does before using it.
-pub(crate) fn check(scene: &Scene) -> Result<(), ExportError> {
-    check_joints(scene).map(|_| ())
+/// Checks a scene as every tool does before using it, and places each
+/// part: its joints' motions, composed from the root, in kernel space.
+pub(crate) fn check(scene: &Scene) -> Result<Vec<Rigid>, ExportError> {
+    Ok(check_joints(scene)?.into_iter().map(|(_, w)| w).collect())
 }
 
-fn check_joints(scene: &Scene) -> Result<Vec<Option<Checked>>, ExportError> {
-    let mut parts: BTreeMap<&str, ()> = BTreeMap::new();
-    let mut joints: BTreeMap<String, (JointKind, Option<(f64, f64)>)> = BTreeMap::new();
+type Leader = (JointKind, Option<(f64, f64)>, f64);
+
+fn check_joints(scene: &Scene) -> Result<Vec<(Option<Checked>, Rigid)>, ExportError> {
+    // Each part's placement so far, by name.
+    let mut parts: BTreeMap<&str, Rigid> = BTreeMap::new();
+    let mut joints: BTreeMap<String, Leader> = BTreeMap::new();
     let mut out = Vec::with_capacity(scene.parts.len());
     for p in &scene.parts {
         if !p.parent.is_empty() && !parts.contains_key(p.parent.as_str()) {
@@ -251,16 +335,22 @@ fn check_joints(scene: &Scene) -> Result<Vec<Option<Checked>>, ExportError> {
                 parent: p.parent.clone(),
             });
         }
-        if parts.insert(p.name.as_str(), ()).is_some() {
+        if parts.contains_key(p.name.as_str()) {
             return Err(ExportError::DuplicatePart(p.name.clone()));
         }
+        let above = if p.parent.is_empty() {
+            Rigid::IDENTITY
+        } else {
+            parts[p.parent.as_str()]
+        };
         for v in &p.solid.positions {
             for c in [v.x, v.y, v.z] {
                 finite(c, || format!("a position of part {:?}", p.name))?;
             }
         }
         let Some(j) = &p.joint else {
-            out.push(None);
+            parts.insert(p.name.as_str(), above);
+            out.push((None, above));
             continue;
         };
         let jn = || j.name.clone();
@@ -285,10 +375,12 @@ fn check_joints(scene: &Scene) -> Result<Vec<Option<Checked>>, ExportError> {
             return Err(ExportError::BadAxis(jn()));
         }
         let floating = j.kind == JointKind::Floating;
-        if floating && (j.axis != DVec3::ZERO || j.range.is_some() || j.mimic.is_some()) {
+        if floating
+            && (j.axis != DVec3::ZERO || j.range.is_some() || j.mimic.is_some() || j.value != 0.0)
+        {
             return Err(ExportError::FloatingConstrained(jn()));
         }
-        let axis = if floating {
+        let local = if floating {
             None
         } else {
             let a = if j.axis == DVec3::ZERO {
@@ -300,8 +392,9 @@ fn check_joints(scene: &Scene) -> Result<Vec<Option<Checked>>, ExportError> {
             if len == 0.0 || !len.is_finite() {
                 return Err(ExportError::BadAxis(jn()));
             }
-            Some(y_up(a / len))
+            Some(a / len)
         };
+        let axis = local.map(y_up);
         if let Some((lo, hi)) = j.range {
             finite(lo, || format!("joint {:?}'s range", j.name))?;
             finite(hi, || format!("joint {:?}'s range", j.name))?;
@@ -310,10 +403,11 @@ fn check_joints(scene: &Scene) -> Result<Vec<Option<Checked>>, ExportError> {
             }
         }
         let mut span = j.range;
+        let mut value = j.value;
         let mut mimic = None;
         if let Some(m) = &j.mimic {
             finite(m.multiplier, || format!("joint {:?}'s multiplier", j.name))?;
-            let Some(&(lead_kind, lead_span)) = joints.get(&m.joint) else {
+            let Some(&(lead_kind, lead_span, lead_value)) = joints.get(&m.joint) else {
                 return Err(ExportError::UnknownLeader {
                     joint: j.name.clone(),
                     leader: m.joint.clone(),
@@ -325,9 +419,10 @@ fn check_joints(scene: &Scene) -> Result<Vec<Option<Checked>>, ExportError> {
                     if a <= b { (a, b) } else { (b, a) }
                 });
             }
+            value = lead_value * m.multiplier;
             mimic = Some((m.joint.clone(), m.multiplier * si(j.kind) / si(lead_kind)));
         }
-        joints.insert(j.name.clone(), (j.kind, span));
+        joints.insert(j.name.clone(), (j.kind, span, value));
         let kind = match j.kind {
             JointKind::Revolute if span.is_none() => "continuous",
             JointKind::Revolute => "revolute",
@@ -337,25 +432,34 @@ fn check_joints(scene: &Scene) -> Result<Vec<Option<Checked>>, ExportError> {
         };
         // A continuous joint has no bounds.
         let span = if kind == "continuous" { None } else { span };
-        let (gx, gy, gz) = (y_up(f.x), y_up(f.y), y_up(f.z));
-        let t = y_up(f.origin) * METRES;
-        let rotation = quaternion(gx, gy, gz);
-        let inv_rotation = [-rotation[0], -rotation[1], -rotation[2], rotation[3]];
-        // The inverse of (R, t) is (Rᵀ, −Rᵀ t).
-        let inv_translation = -DVec3::new(gx.dot(t), gy.dot(t), gz.dot(t));
+        // The motion, in the pivot's own coordinates.
+        let motion = match (j.kind, local) {
+            (JointKind::Prismatic, Some(a)) => Rigid {
+                t: a * value,
+                ..Rigid::IDENTITY
+            },
+            (_, Some(a)) => Rigid::turn(a, value),
+            (_, None) => Rigid::IDENTITY,
+        };
+        let pivot = Rigid::of(f);
+        let node = pivot.then(&motion);
+        let inverse = pivot.inverse();
+        let world = above.then(&node).then(&inverse);
+        parts.insert(p.name.as_str(), world);
         let k = si(j.kind);
-        out.push(Some(Checked {
-            name: j.name.clone(),
-            kind,
-            translation: t,
-            rotation,
-            inv_translation,
-            inv_rotation,
-            axis,
-            value: j.value * k,
-            span: span.map(|(lo, hi)| (lo * k, hi * k)),
-            mimic,
-        }));
+        out.push((
+            Some(Checked {
+                name: j.name.clone(),
+                kind,
+                node,
+                inverse,
+                axis,
+                value: value * k,
+                span: span.map(|(lo, hi)| (lo * k, hi * k)),
+                mimic,
+            }),
+            world,
+        ));
     }
     Ok(out)
 }
@@ -477,7 +581,7 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
         ]));
         (views.len() - 1) as u64
     };
-    for (part, joint) in scene.parts.iter().zip(&checked) {
+    for (part, (joint, _)) in scene.parts.iter().zip(&checked) {
         let s = split(part.solid);
         // Positions and normals in glTF space, f32.
         let pos: Vec<[f32; 3]> = s
@@ -572,16 +676,18 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
                 // The joint's node at the pivot; the part's node undoes the
                 // pivot, so its mesh stays where it was built.
                 let jn = nodes.len();
+                let (t, r) = j.node.gltf();
                 nodes.push(Json::Obj(vec![
                     ("name", Json::Str(j.name.clone())),
-                    ("translation", vec3(j.translation)),
-                    ("rotation", nums(&j.rotation)),
+                    ("translation", vec3(t)),
+                    ("rotation", nums(&r)),
                     ("extras", joint_extras(j)),
                 ]));
                 children.push(Vec::new());
                 attach(jn, &mut children);
-                node.push(("translation", vec3(j.inv_translation)));
-                node.push(("rotation", nums(&j.inv_rotation)));
+                let (t, r) = j.inverse.gltf();
+                node.push(("translation", vec3(t)));
+                node.push(("rotation", nums(&r)));
                 let pn = nodes.len();
                 nodes.push(Json::Obj(node));
                 children.push(Vec::new());
