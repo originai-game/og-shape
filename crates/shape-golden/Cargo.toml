@@ -18,6 +18,7 @@ shape-tools.workspace = true
 shape-bevel.workspace = true
 shape-model.workspace = true
 shape-skin.workspace = true
+shape-cli = { path = "../shape-cli" }
 # Compresses the arrays of the hand-written binary FBX case.
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 

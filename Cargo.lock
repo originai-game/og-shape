@@ -420,6 +420,7 @@ dependencies = [
  "shape-2d",
  "shape-bevel",
  "shape-bool",
+ "shape-cli",
  "shape-core",
  "shape-edit",
  "shape-gen",
