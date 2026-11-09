@@ -1,0 +1,95 @@
+{
+ "triangles": 8238,
+ "boundsMin": [
+  -127,
+  -95.5,
+  0
+ ],
+ "boundsMax": [
+  127,
+  95.5,
+  41.03
+ ],
+ "size": [
+  254,
+  191,
+  41.03
+ ],
+ "joints": [
+  "wheel_spin"
+ ],
+ "parts": [
+  {
+   "name": "pad",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 172,
+   "boundsMin": [
+    -127,
+    -95.5,
+    0
+   ],
+   "boundsMax": [
+    127,
+    95.5,
+    3
+   ]
+  },
+  {
+   "name": "shell",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 6762,
+   "boundsMin": [
+    -51.17,
+    -40,
+    3
+   ],
+   "boundsMax": [
+    11.17,
+    70,
+    41.03
+   ]
+  },
+  {
+   "name": "button",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 412,
+   "boundsMin": [
+    -24.5,
+    -1.45,
+    34
+   ],
+   "boundsMax": [
+    -15.5,
+    11.45,
+    36.5
+   ]
+  },
+  {
+   "name": "wheel_tyre",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 892,
+   "boundsMin": [
+    -23.5,
+    -24,
+    15
+   ],
+   "boundsMax": [
+    -16.5,
+    -6,
+    33
+   ]
+  }
+ ]
+}
