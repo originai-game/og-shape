@@ -17,12 +17,14 @@
 //! uvs follow og-render's convention: v runs down the image (glTF's), so
 //! where three.js writes `v` this crate writes `1 - v`.
 
+pub mod body;
 pub mod earcut;
 pub mod extrude;
 pub mod frames;
 pub mod lathe;
 pub mod loft;
 pub mod merge;
+pub mod parts;
 pub mod path2;
 pub mod paths;
 pub mod polyhedron;
@@ -31,6 +33,7 @@ pub mod solids;
 pub mod spline;
 pub mod sweep;
 pub mod trig;
+pub mod wire;
 
 pub use extrude::{Extrude, extrude};
 pub use frames::{Frame, frenet_frames};
