@@ -72,7 +72,7 @@ by the rest), `{"offset": {"profile", "distance"}}`,
 | `extrude` | `name`, `profile`, `height`, `twist`?, `taper`?, `bothSides`?, `on`? | along +z |
 | `revolve` | `name`, `profile`, `angle`?, `on`? | profile x is the radius (x ≥ 0), turned about +y |
 | `sweep` | `name`, `profile`, `path` (points), `up`?, `twist`?, `scaleEnd`? | along a polyline |
-| `loft` | `name`, `sections`: `[{"profile", "z"}]`, `samples`?, `steps`?, `on`? | through sections |
+| `loft` | `name`, `sections`: `[{"profile", "z"}]`, `samples`?, `steps`?, `on`? | through sections; corners kept; refused if it folds through itself |
 | `thread` | `name`, `radius`, `pitch`, `length`, `depth`, `on`? | |
 | `at` | `id`, `frame` | puts the part's own space on `frame` |
 | `transform` | `id`, `frame` | moves it by a rigid motion of the world |

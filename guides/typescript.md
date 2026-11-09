@@ -56,7 +56,7 @@ part's x, y.
 | `box({ width, depth, height })` | x, y, z sizes; centred in x and y, from z = 0 up |
 | `cylinder({ radius, height, radiusTop? })`, `cone({ radius, height })`, `tube({ outer, inner, height })` | radii; about +z from z = 0 |
 | `extrude({ profile, height, twist?, taper?, bothSides? })` | along +z; the top is scaled by 1 − `taper` (negative widens); `bothSides` centres it |
-| `loft({ sections: [{ profile, z }], samples?, steps? })` | `z` in its own space; straight between sections; `steps` > 1 curves, and can overshoot |
+| `loft({ sections: [{ profile, z }], samples?, steps? })` | `z` in its own space; straight between sections; `steps` > 1 curves, and can overshoot: a surface that passes through itself is refused, naming the sections. Polygon corners stay samples and run corner to corner |
 | `sphere({ radius })` | centred |
 | `revolve({ profile, angle? })`, `dome({ radius })`, `torus({ radius, tube })` | about **+y**; profile x is the radius (≥ 0); a part `angle` turns from +x toward −z |
 | `sweep({ profile, path, up?, twist?, scaleEnd? })` | the profile (its y toward `up`) along a polyline of `[x, y, z]` in the part's space; corners are mitred |
