@@ -814,3 +814,39 @@ contract is checked on the GLB bytes, read back: one node, one mesh, one
 triangle primitive, at most 40 000 triangles, closed, with UVs. After
 that, a boolean cut by phase 0's tilted cylinder re-checks §5.3's finding
 that AI meshes are a repair problem.
+
+### 9.6 A surface folded through itself (§5.4, item 3)
+
+What repair can do:
+- **Separate shells that pass through each other** (a provider's model
+  made of interpenetrating parts): `fuse` joins them by self-union, and
+  the result is taken only if it is closed. With `min_edge`, the slivers
+  the union leaves along its seams are collapsed, so f32 export does not
+  merge their vertices into non-manifold edges (Thingi10K #128482 doubled:
+  2 such edges without it, none with it).
+- **Report it, exactly.** `measure` (and `Repair::check_intersections`)
+  count pairs of triangles sharing no vertex that meet, decided with
+  `orient3d`; nothing is hidden.
+
+What it cannot do:
+- **A single closed, oriented surface that folds through itself** has no
+  inside to keep. It is one piece, so `fuse` returns it unchanged, and no
+  step here untangles it: that needs a self-union over one operand (the
+  arrangement CSG builds for two), which does not exist yet. Repair
+  leaves it and reports the pairs. Measured: a 20 mm sphere with one
+  vertex pulled through the far side is closed, oriented, one piece, with
+  8 intersecting pairs; repair changes nothing and says 8.
+- **Finding: shape-bool does not refuse it.** Phase 2's status says such a
+  surface is refused; it is not. It passes `csg_points`' check (closed and
+  oriented after welding), and `boolean` then returns `Ok` with open
+  output: on the sphere above, a cut and a join by a 10 × 10 × 60 box are
+  open, and an intersection is open with 16 intersecting pairs. That is a
+  silent best effort, against `docs/design.md` §6. The fix is an exact
+  self-intersection check in operand validation (the one in
+  `shape-tools/src/intersect.rs` would do, moved where both crates can
+  use it). It is outside this stream's modules and is left as a separate
+  task.
+- Self-intersections the input already has stay: on Thingi10K #62593,
+  the bench's own 1-to-4 subdivision in f32 creates 14 (the raw mesh has
+  none; its shortest edge is 0.4 µm at this scale), and the f32 GLB round
+  trip 24. Repair does not add any.
