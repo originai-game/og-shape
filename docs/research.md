@@ -2082,3 +2082,297 @@ Apache-2.0).
   importer, which §9 tested on them.
 - Mesh tool outputs lose face names other than the part's (plain GLB),
   as §9.8's chain does.
+
+## 13. Phase 6: the authoring guide and its evaluation (stream I, 2026-11-09)
+
+Stream I wrote `guides/shape.md`, rewrote `guides/typescript.md` against
+the binding, and evaluated both: agents with only the two guides and a
+runner rebuilt 20 objects from sand3d's datasets.
+
+### 13.1 Method
+
+- **Sources.** sand3d (Apache-2.0, `84c980a`), `docs/guidelines.md` (the
+  eight assembly rules) and `docs/api.md`, read for rules only; no text
+  copied. The datasets `Sandflow/sand3d-{cad,articraft,simready,automate,
+  objaverse}` on Hugging Face (CC BY 4.0), read through their Parquet
+  files (validation splits; one Objaverse object from the train split,
+  the validation split has no articulated object). Attribution:
+  `eval/phase6/README.md` and `references.json`.
+- **Objects.** Four per dataset, 20 in all, 12 articulated (24 joints):
+  CAD parts (4, rigid), Articraft (4: slides, a four-hinge chain, a mast
+  with slides and a turn), SimReady (3 articulated, 1 rigid), AutoMate
+  (4: spins, a slide plus a spin on one part), Objaverse (3 rigid,
+  spectacles with 2 hinges). `f_score` above 0.85, programs under
+  4 500 characters.
+- **Reference.** The joint count from the dataset row; the bounding box
+  from each object's OpenUSD file (every mesh's points through its
+  translate, orient and scale ops; a script in the stream's scratch, not
+  committed).
+- **What an agent got.** The two guides (frozen per run), the runner
+  (`eval/phase6/run.ts`: bun and the binding; it prints measures, writes
+  a four-view preview and, with `--pose`, a posed one), a brief written
+  here (a few sentences, the overall size per axis, the stated motions)
+  and the dataset's render. Run `T` also got the sand3d program. Each
+  agent was a subagent with the same model as the stream, told to read
+  nothing else, to use at most 8 builds, and to report what in the
+  guides was missing, wrong or misleading.
+- **Measured per object:** built (the final program runs), closed parts,
+  joints against the reference, the largest per-axis deviation of the
+  bounding box, review iterations (builds in `runs.log`; failed builds in
+  brackets), tokens, and the guide problems the agent reported. Tokens
+  are the subagent totals the Agent tool reports (input and output
+  together; it gives no split). A subagent that only runs `cat` on an
+  empty file costs 62 668, the fixed context of the agent; the work on
+  the object is the rest. Builds of throw-away probe programs into other
+  directories, which some agents ran, are not counted.
+- **Tools.** bun 1.4.4 was already installed (`/root/.bun/bin/bun`).
+  wasm-bindgen-cli 0.2.130, cargo-deny and wasmtime-cli were installed
+  with `cargo install --locked` (wasm-bindgen with `--version 0.2.130`),
+  then `crates/shape-wasm/build.sh` built the binding.
+
+### 13.2 The guide's size
+
+Measured with the same tool as the runs: a subagent runs `cat` on the
+two guides concatenated, and the empty-file subagent's count is
+subtracted. For v1, `cat` twice minus `cat` once gave 5 898, within 2 %
+of the subtraction (6 004).
+
+| version | bytes | tokens | note |
+|---|---|---|---|
+| v1 (runs `A`, `T`) | 14 314 | 6 004 | the first draft |
+| v2 (run `B`) | 18 824 | 7 524 | v1 plus the fixes from `A` |
+| v3 (run `C`, committed) | 15 126 | 6 229 | v2 tightened, plus the fixes from `B` |
+
+`typescript.md` is about 2 600 tokens of v3, `shape.md` about 3 600.
+
+### 13.3 Results
+
+All runs: 20 objects each (`C`: 5). "Errors" are builds that threw;
+"first-run builds" are objects whose first build ran.
+
+| | A: description, guide v1 | T: translation, guide v1 | B: description, guide v2 |
+|---|---|---|---|
+| built | 20 / 20 | 20 / 20 | 20 / 20 |
+| every part closed | 20 / 20 | 20 / 20 | 20 / 20 (one part with 2 degenerate triangles) |
+| joints as the reference | 19 / 20 (all 24 declared; 2 invented on a rigid lamp) | 20 / 20 | 20 / 20 |
+| bounding box within 2 % per axis | 19 / 20 | 20 / 20 | 20 / 20 |
+| review iterations, mean | 2.55 | 2.55 | 2.30 |
+| failed builds, total | 9 | 11 | 3 |
+| first-run builds | 15 / 20 | 12 / 20 | 19 / 20 |
+| guide problems reported, mean | 4.85 | 5.20 | 3.70 |
+| tokens a subagent, mean | 76 606 | 78 891 | 79 013 |
+| tokens on the object (less 62 668) | 13 938 | 16 223 | 16 345 |
+| tokens, total | 1 532 127 | 1 577 813 | 1 580 254 |
+
+Success, as built with every part closed, is 100 % in every run: the
+kernel never refused a finished program, and agents recovered from every
+error within the 8 builds. What the guide changed is how they got there:
+fewer failed builds (9 → 3), more first-run builds (15 → 19), fewer
+guide problems (4.85 → 3.70 a run), the invented joints gone. Run `B`'s
+tokens rose by 2 400 a run, of which 1 520 is the longer guide. The
+translation baseline was not easier by these measures: it hit more
+kernel errors (it reproduces sand3d's coplanar joins and quarter-torus
+intersections faithfully) and reported more problems, mostly about
+mapping sand3d's conventions (centred extrudes, fixed-axis Euler turns,
+`d` as diameter, `station` offsets).
+
+Run `C` (guide v3, the five objects with the most trouble in `A` and
+`B`): mean iterations 3.6 (`A`) / 3.8 (`B`) / 2.6 (`C`), failed builds
+5 / 3 / 2, guide problems 5.0 / 4.2 / 3.6, tokens 76 889 / 80 642 /
+77 924, joints and sizes as before. Five objects are too few to call
+`C` better than `B`; they show v3's cuts lost nothing.
+
+| object | A: iterations (errors), problems | B | C |
+|---|---|---|---|
+| auto2_lever_knob | 6 (2), 5 | 7 (1), 5 | 3 (0), 4 |
+| cad2_mounting_block | 2 (0), 5 | 4 (2), 4 | 1 (0), 3 |
+| sim2_mouse_and_pad | 5 (2), 6 | 3 (0), 5 | 6 (2), 5 |
+| auto4_framed_panel | 1 (0), 3 | 3 (0), 4 | 1 (0), 2 |
+| auto1_curved_tubes | 4 (1), 6 | 2 (0), 3 | 2 (0), 4 |
+
+What these numbers do not show: shape fidelity beyond the bounding box.
+The briefs give the overall size, so the bounding box mostly measures
+whether the agent kept to it; no F-score against the reference mesh was
+computed. One brief was wrong (`art1`: it says the front panel slides
+forward, the source slides both panels toward the centre); the agents
+followed the brief.
+
+### 13.4 Per object
+
+#### run A
+
+| object | built | closed parts | joints (ref) | size, mm (ref) | max size dev. | iterations (errors) | triangles | tokens | guide problems |
+|---|---|---|---|---|---|---|---|---|---|
+| cad1_bracket_block | yes | 1/1 | 0 (0) | 80 × 60 × 20 (80 × 60 × 20) | 0.0 % | 1 (0) | 500 | 72 854 | 4 |
+| cad2_mounting_block | yes | 1/1 | 0 (0) | 99.5 × 80 × 109.5 (99.5 × 80 × 109.5) | 0.0 % | 2 (0) | 1062 | 73 175 | 5 |
+| cad3_stepped_bracket | yes | 1/1 | 0 (0) | 76 × 53 × 30 (76 × 53 × 30) | 0.0 % | 2 (1) | 808 | 77 136 | 5 |
+| cad4_curved_plate | yes | 1/1 | 0 (0) | 304.8 × 914.4 × 17.53 (304.8 × 914.4 × 17.53) | 0.0 % | 1 (0) | 428 | 72 983 | 4 |
+| art1_sunroof_cassette | yes | 5/5 | 2 (2) | 1260 × 840 × 48 (1260 × 840 × 48) | 0.0 % | 1 (0) | 596 | 75 200 | 4 |
+| art2_telescoping_slide | yes | 5/5 | 2 (2) | 1100 × 240 × 300 (1100 × 240 × 300) | 0.0 % | 4 (0) | 504 | 82 298 | 6 |
+| art3_inspection_arm | yes | 20/20 | 4 (4) | 2604.5 × 300 × 487.5 (2606 × 300 × 488) | 0.1 % | 2 (0) | 1334 | 76 452 | 4 |
+| art4_telescoping_mast | yes | 4/4 | 3 (3) | 280 × 220 × 1546 (280 × 220 × 1546) | 0.0 % | 2 (0) | 1934 | 78 138 | 6 |
+| sim1_closet | yes | 3/3 | 2 (2) | 622.2 × 914.6 × 2023 (622.2 × 914.6 × 2023) | 0.0 % | 1 (0) | 64 | 73 607 | 4 |
+| sim2_mouse_and_pad | yes | 4/4 | 1 (1) | 254 × 191 × 41 (254 × 191 × 41) | 0.0 % | 5 (2) | 1630 | 79 023 | 6 |
+| sim3_toaster | yes | 9/9 | 3 (3) | 155 × 309 × 179 (155.11 × 306.55 × 179) | 0.8 % | 4 (1) | 5338 | 79 465 | 5 |
+| sim4_bollard | yes | 1/1 | 0 (0) | 314 × 314 × 960 (314 × 314 × 960) | 0.0 % | 1 (0) | 3840 | 72 076 | 4 |
+| auto1_curved_tubes | yes | 3/3 | 1 (1) | 702 × 494.95 × 1658.4 (702.17 × 495.47 × 1658.35) | 0.1 % | 4 (1) | 10368 | 78 897 | 6 |
+| auto2_lever_knob | yes | 9/9 | 2 (2) | 50.02 × 57.76 × 98.94 (50.54 × 57.76 × 98.94) | 1.0 % | 6 (2) | 482 | 80 565 | 5 |
+| auto3_hinged_straps | yes | 2/2 | 1 (1) | 914.4 × 5.72 × 76.2 (914.4 × 5.72 × 76.2) | 0.0 % | 2 (1) | 3336 | 75 174 | 4 |
+| auto4_framed_panel | yes | 2/2 | 1 (1) | 1016 × 35.56 × 685.8 (1016 × 35.56 × 685.8) | 0.0 % | 1 (0) | 68 | 72 784 | 3 |
+| obj1_octagonal_cup | yes | 1/1 | 0 (0) | 193 × 352.2 × 137 (193 × 352.2 × 137) | 0.0 % | 2 (0) | 152 | 74 417 | 3 |
+| obj2_djembe | yes | 69/69 | 0 (0) | 408 × 408 × 600 (407.91 × 407.91 × 600) | 0.0 % | 4 (1) | 12924 | 78 514 | 6 |
+| obj3_lamp | yes | 4/4 | 2 (0) | 595 × 223 × 598.5 (595 × 223 × 598.5) | 0.0 % | 3 (0) | 126 | 77 688 | 6 |
+| obj4_spectacles | yes | 9/9 | 2 (2) | 140 × 11.3 × 26.5 (140 × 12.48 × 26.77) | 9.5 % | 3 (0) | 4334 | 81 681 | 7 |
+
+
+#### run T
+
+| object | built | closed parts | joints (ref) | size, mm (ref) | max size dev. | iterations (errors) | triangles | tokens | guide problems |
+|---|---|---|---|---|---|---|---|---|---|
+| cad1_bracket_block | yes | 1/1 | 0 (0) | 80 × 60 × 20 (80 × 60 × 20) | 0.0 % | 1 (0) | 572 | 72 262 | 4 |
+| cad2_mounting_block | yes | 1/1 | 0 (0) | 99.5 × 80 × 109.5 (99.5 × 80 × 109.5) | 0.0 % | 2 (0) | 3778 | 76 362 | 6 |
+| cad3_stepped_bracket | yes | 1/1 | 0 (0) | 76 × 53 × 30 (76 × 53 × 30) | 0.0 % | 2 (1) | 830 | 74 958 | 4 |
+| cad4_curved_plate | yes | 1/1 | 0 (0) | 304.8 × 914.4 × 17.53 (304.8 × 914.4 × 17.53) | 0.0 % | 3 (0) | 88 | 76 441 | 4 |
+| art1_sunroof_cassette | yes | 16/16 | 2 (2) | 1260 × 840 × 48 (1260 × 840 × 48) | 0.0 % | 2 (0) | 518 | 77 684 | 6 |
+| art2_telescoping_slide | yes | 8/8 | 2 (2) | 1100 × 240 × 300 (1100 × 240 × 300) | 0.0 % | 2 (1) | 894 | 78 375 | 4 |
+| art3_inspection_arm | yes | 29/29 | 4 (4) | 2606 × 300 × 488 (2606 × 300 × 488) | 0.0 % | 3 (0) | 5998 | 80 756 | 5 |
+| art4_telescoping_mast | yes | 4/4 | 3 (3) | 280 × 220 × 1546 (280 × 220 × 1546) | 0.0 % | 3 (0) | 1558 | 83 397 | 5 |
+| sim1_closet | yes | 3/3 | 2 (2) | 622.2 × 914.6 × 2023 (622.2 × 914.6 × 2023) | 0.0 % | 1 (0) | 98 | 75 825 | 3 |
+| sim2_mouse_and_pad | yes | 4/4 | 1 (1) | 254 × 191 × 41 (254 × 191 × 41) | 0.0 % | 3 (0) | 1140 | 78 229 | 6 |
+| sim3_toaster | yes | 33/33 | 3 (3) | 154 × 306 × 179 (155.11 × 306.55 × 179) | 0.7 % | 4 (0) | 19880 | 87 440 | 7 |
+| sim4_bollard | yes | 2/2 | 0 (0) | 314 × 314 × 960 (314 × 314 × 960) | 0.0 % | 1 (0) | 2176 | 72 331 | 4 |
+| auto1_curved_tubes | yes | 6/6 | 1 (1) | 702.17 × 495.47 × 1657.2 (702.17 × 495.47 × 1658.35) | 0.1 % | 4 (3) | 15384 | 90 220 | 10 |
+| auto2_lever_knob | yes | 2/2 | 2 (2) | 50.54 × 57.76 × 98.94 (50.54 × 57.76 × 98.94) | 0.0 % | 3 (1) | 388 | 82 169 | 5 |
+| auto3_hinged_straps | yes | 2/2 | 1 (1) | 914.4 × 5.72 × 76.2 (914.4 × 5.72 × 76.2) | 0.0 % | 3 (1) | 3296 | 79 150 | 5 |
+| auto4_framed_panel | yes | 2/2 | 1 (1) | 1016 × 35.56 × 685.8 (1016 × 35.56 × 685.8) | 0.0 % | 1 (0) | 68 | 73 698 | 4 |
+| obj1_octagonal_cup | yes | 2/2 | 0 (0) | 193 × 352.2 × 137 (193 × 352.2 × 137) | 0.0 % | 4 (2) | 326 | 80 683 | 4 |
+| obj2_djembe | yes | 7/7 | 0 (0) | 407.91 × 407.91 × 600 (407.91 × 407.91 × 600) | 0.0 % | 2 (0) | 7224 | 76 038 | 6 |
+| obj3_lamp | yes | 4/4 | 0 (0) | 595 × 223 × 598.5 (595 × 223 × 598.5) | 0.0 % | 4 (1) | 614 | 81 379 | 5 |
+| obj4_spectacles | yes | 11/11 | 2 (2) | 140 × 12.4 × 26.5 (140 × 12.48 × 26.77) | 1.0 % | 3 (1) | 996 | 80 416 | 7 |
+
+
+#### run B
+
+| object | built | closed parts | joints (ref) | size, mm (ref) | max size dev. | iterations (errors) | triangles | tokens | guide problems |
+|---|---|---|---|---|---|---|---|---|---|
+| cad1_bracket_block | yes | 1/1 | 0 (0) | 80 × 60 × 20 (80 × 60 × 20) | 0.0 % | 1 (0) | 518 | 75 644 | 4 |
+| cad2_mounting_block | yes | 1/1 | 0 (0) | 99.5 × 80 × 109.5 (99.5 × 80 × 109.5) | 0.0 % | 4 (2) | 1062 | 78 389 | 4 |
+| cad3_stepped_bracket | yes | 1/1 | 0 (0) | 76 × 53 × 30 (76 × 53 × 30) | 0.0 % | 1 (0) | 808 | 75 583 | 3 |
+| cad4_curved_plate | yes | 1/1 | 0 (0) | 304.8 × 914.4 × 17.53 (304.8 × 914.4 × 17.53) | 0.0 % | 1 (0) | 284 | 76 322 | 3 |
+| art1_sunroof_cassette | yes | 5/5 | 2 (2) | 1260 × 840 × 48 (1260 × 840 × 48) | 0.0 % | 2 (0) | 884 | 78 987 | 4 |
+| art2_telescoping_slide | yes | 4/4 | 2 (2) | 1100 × 240 × 300 (1100 × 240 × 300) | 0.0 % | 2 (0) | 640 | 79 921 | 4 |
+| art3_inspection_arm | yes | 19/19 | 4 (4) | 2606 × 300 × 487.5 (2606 × 300 × 488) | 0.1 % | 2 (0) | 1578 | 81 377 | 4 |
+| art4_telescoping_mast | yes | 4/4 | 3 (3) | 280 × 220 × 1546 (280 × 220 × 1546) | 0.0 % | 2 (0) | 1170 | 79 157 | 3 |
+| sim1_closet | yes | 3/3 | 2 (2) | 622.2 × 914.6 × 2023 (622.2 × 914.6 × 2023) | 0.0 % | 1 (0) | 64 | 76 800 | 2 |
+| sim2_mouse_and_pad | yes | 4/4 | 1 (1) | 254 × 191 × 41 (254 × 191 × 41) | 0.0 % | 3 (0) | 3694 | 82 222 | 5 |
+| sim3_toaster | yes | 8/8 | 3 (3) | 155 × 306.5 × 179 (155.11 × 306.55 × 179) | 0.1 % | 3 (0) | 6654 | 82 462 | 5 |
+| sim4_bollard | yes | 1/1 | 0 (0) | 314 × 314 × 960 (314 × 314 × 960) | 0.0 % | 1 (0) | 4992 | 75 068 | 2 |
+| auto1_curved_tubes | yes | 3/3 | 1 (1) | 702 × 494.68 × 1658.4 (702.17 × 495.47 × 1658.35) | 0.2 % | 2 (0) | 10368 | 80 103 | 3 |
+| auto2_lever_knob | yes | 2/2 | 2 (2) | 50.02 × 57.76 × 98.94 (50.54 × 57.76 × 98.94) | 1.0 % | 7 (1) | 716 | 84 747 | 5 |
+| auto3_hinged_straps | yes | 2/2 | 1 (1) | 914.4 × 5.72 × 76.2 (914.4 × 5.72 × 76.2) | 0.0 % | 2 (0) | 4340 | 78 397 | 4 |
+| auto4_framed_panel | yes | 2/2 | 1 (1) | 1016 × 35.56 × 685.8 (1016 × 35.56 × 685.8) | 0.0 % | 3 (0) | 68 | 77 751 | 4 |
+| obj1_octagonal_cup | yes | 1/1 | 0 (0) | 193 × 352.2 × 137 (193 × 352.2 × 137) | 0.0 % | 3 (0) | 152 | 78 407 | 3 |
+| obj2_djembe | yes | 5/5 | 0 (0) | 407.91 × 407.91 × 599.99 (407.91 × 407.91 × 600) | 0.0 % | 2 (0) | 7700 | 78 153 | 3 |
+| obj3_lamp | yes | 3/3 | 0 (0) | 595 × 223 × 598.5 (595 × 223 × 598.5) | 0.0 % | 1 (0) | 272 | 77 377 | 4 |
+| obj4_spectacles | yes | 7/7 | 2 (2) | 140 × 12.5 × 26.77 (140 × 12.48 × 26.77) | 0.2 % | 3 (0) | 1662 | 83 387 | 5 |
+
+
+The guide-problem counts are the items each agent listed under "guide
+problems", counted by hand from its report; agents also listed brief
+ambiguities there, which no guide change can remove.
+
+### 13.5 Failure modes, and what the guide changed
+
+Counted over objects (an object counts once per mode). `A` and `T` used
+v1; `B` v2. Guide problems fixed in v2 and v3 are in `guides/shape.md`
+and `guides/typescript.md`; kernel causes are in §13.6.
+
+| failure mode | A | T | B | cause | fix |
+|---|---|---|---|---|---|
+| frame axes not stated (face frames, `og.frame` with `up`, `ring`, `grid`, `bbox`, turn sign): guessed, probed with `console.log`, or placed by world coordinates | 12 | 11 | 3 | guide | the facing rule, `ring`/`grid`/`bbox` frames, `up` → +y (typescript.md) |
+| a later `at` silently replaced a part's offset `on` (parts off by half their size, hinged at their centre): one or more lost builds each | 4 | 2 | 0 | guide (the API's semantics) | the rule in bold, the group pattern, a joined detail gets `on` only, a symptom row (shape.md §4, §8) |
+| operation details not stated: `hole` depth and counterbore/countersink format, `pocket` frame, `shell` open, `poly`/`polygon` radius, `taper` meaning, `sweep` path, loft interpolation, `mirror` plane, `tube`/`torus` radii | 11 | 14 | 4 | guide | the generator table and edit notes (typescript.md) |
+| a join of faces that only touch (coplanar, or flat on round) left the result open or threw | 3 | 5 | 0 | kernel; the guide said "overlap or share a face" | "overlap 0.5 mm" and a symptom row; the kernel gap stays (§13.6) |
+| errors do not name the call: builds spent bisecting | 5 | 4 | 0 | kernel | "build after each part" (shape.md §8); the gap stays |
+| the guide asked for measures the runner did not print (`nonManifoldEdges`, `degenerateTriangles`); several poses after one `--pose` ignored | 5 | 6 | 0 | the eval runner | the runner prints them and takes several poses |
+| the preview's views not described | 5 | 7 | 0 | guide | view order and elevation stated |
+| no way to view a side, zoom or show one part | 2 | 2 | 7 | the eval runner | `--azimuth`, `--elevation`, `--width` added after the runs |
+| joints invented for motions the brief did not state | 1 | 0 | 0 | guide | §1.3: only stated motions |
+| an axis sign guessed wrong for a case the guide's examples did not cover | 1 | 1 | 1 | guide | the right-hand rule spelled out, flap and lid examples (v2, v3) |
+| a `const` read before its declaration (part functions below `return`) | 1 | 0 | 0 | guide | §2: declare shared numbers first |
+| bends and arcs: no arc in a profile, no bend in a sweep path, no part torus; points computed with `Math.sin` | 2 | 3 | 2 | kernel; guide silent | v3: bends from `ring` origins; arcs by cutting a large circle; the gaps stay |
+| segment counts: `segments` on `cylinder`, `sphere` or `torus` silently ignored; small spheres and tori cost hundreds to thousands of triangles | 2 | 4 | 1 | kernel | only `og.circle` takes `segments` (stated); the gap stays |
+| loft looked twisted or banded wrongly; a curved loft came out open | 2 | 2 | 1 (+1 in `C`) | kernel | v3 states the loft is straight unless `steps` > 1; the gaps stay |
+
+Summed over the modes a guide or runner change can address (all rows
+but the touching joins, the view flags, bends, segments and lofts): 45
+object-hits in `A`, 45 in `T`, 8 in `B`.
+
+### 13.6 Kernel gaps for the integrator
+
+Found by the agents; each reproduced here with a short program unless
+marked. None was fixed in this stream.
+
+1. **Booleans on operands that only touch leave the result open.** Two
+   lofts stacked on a shared face join to `closed: false` with no error
+   (reproduced); a box face tangent to a tube's outside throws "the
+   result is open (26 unmatched edges)" (reproduced); a rim coplanar with
+   a shelled wall gives 81 or 115 unmatched edges, a box through a
+   torus's ring of vertices 268, two elbows sharing a ring face 128
+   (reported). The hint "an operand most likely passes through itself"
+   points the author away from the cause. Boxes sharing a face join
+   cleanly, so it is the general coplanar and tangent case that fails.
+2. **`join` can return an open solid without an error**, against
+   `docs/design.md` §6 ("never a best effort silently").
+3. **A curved loft (`steps` > 1) with a small end section folds through
+   itself**: open, 2 non-manifold edges, no error (reported in runs `A`
+   and `C`, not reproduced with the sections tried here).
+4. **Loft resampling ignores corners**: sections are resampled evenly by
+   length from their largest-x point, so polygon corners fall between
+   samples and a hexagon loft looks twisted (reported; §10.3 already
+   notes the missing corner correspondence).
+5. **A `cut` whose tool lies wholly inside the target changes nothing,
+   silently** (an enclosed void; reported).
+6. **Unknown desc fields are ignored**, so `cylinder({ segments })`,
+   `sphere({ segments })` silently do nothing (reproduced). The program
+   parser could refuse fields it does not know, as the MCP tools do.
+7. **Errors from a live session do not name the operation or call**;
+   replayed programs say `op N`, the binding does not.
+8. **No segment control** on `cylinder`, `cone`, `sphere`, `dome`,
+   `torus` and `revolve`: an 8 mm sphere is 812 triangles, a drum hoop
+   torus 3 712.
+9. **Missing from the program and the binding** though the generators
+   exist: `wire` (bent rods with bend radii), `body`, `knurl`, the gear
+   solid, the dome's height, the loft's `curve` choice, `scale`; and in
+   the binding, `og.translate`, `og.rotate`, `og.offset` (the JSON forms
+   work). Missing in the kernel: an arc segment in `poly`, a part torus,
+   an across-flats size for `polygon`, a non-uniform profile scale.
+10. **No interference measure**: nothing reports parts passing through
+    each other, at rest or posed; measures are at rest only.
+11. **Bevels after a join**: `fillet(edges: "top")` takes every
+    operand's top edges and throws "the bevel is larger than the faces
+    allow" (reproduced); `soften` on a loft's top edge throws at any
+    radius tried (reported).
+12. **Joining overlapping tapered extrudes leaves 2 degenerate
+    triangles** (reported).
+13. **A through hole on a boss over a bottom pocket** threw "the axis from
+    [≈0, ≈0, 0] does not meet the solid", naming a point that is not the
+    frame given (reported, not reproduced).
+14. **The preview** ignores `opacity` and shades smoothly across a loft's
+    facets.
+15. **`shape-mcp` does not serve `guides/shape.md`** as a resource (it
+    serves `program.md`, `typescript.md`, `meshtools.md`); an agent on
+    MCP does not see the authoring guide.
+
+### 13.7 What is untested
+
+- One agent per object and run: no repeats, so differences of one or two
+  builds between runs are within noise. Run `C` covers five objects.
+- The agents were the same model as the stream; other models were not
+  tried. Agents were told to read nothing else, which was not enforced.
+- Shape fidelity was judged by bounding box and by the agents' own look
+  at previews, not by a distance to the reference mesh.
+- Agents ran the binding through `eval/phase6/run.ts`, not the MCP
+  server or the `shape` CLI.
+- Token counts are totals from the Agent tool, with no input and output
+  split; the fixed context (62 668) is the same for every agent.

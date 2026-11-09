@@ -1,0 +1,2 @@
+2026-11-09T16:14:33.508Z error the result is open (13 unmatched edges): an operand most likely passes through itself; repair or fuse its parts first
+2026-11-09T16:14:43.588Z ok parts 2 open 0 joints 1 triangles 3336

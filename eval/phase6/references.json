@@ -1,0 +1,242 @@
+{
+ "cad1_bracket_block": {
+  "dataset": "Sandflow/sand3d-cad",
+  "id": "zero-to-cad-7ea48a34-5125-a426-7983-2732742ecdd0",
+  "n_joints": 0,
+  "reference_size_mm": [
+   80.0,
+   60.0,
+   20.0
+  ],
+  "attribution": "Zero-To-CAD (ADSKAILab/Zero-To-CAD-1m), sample 7ea48a34-5125-a426-7983-2732742ecdd0, Apache-2.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "cad2_mounting_block": {
+  "dataset": "Sandflow/sand3d-cad",
+  "id": "zero-to-cad-4faa97dd-3352-2868-f8df-d11a55259f25",
+  "n_joints": 0,
+  "reference_size_mm": [
+   99.5,
+   80.0,
+   109.5
+  ],
+  "attribution": "Zero-To-CAD (ADSKAILab/Zero-To-CAD-1m), sample 4faa97dd-3352-2868-f8df-d11a55259f25, Apache-2.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "cad3_stepped_bracket": {
+  "dataset": "Sandflow/sand3d-cad",
+  "id": "cadfs-00174349",
+  "n_joints": 0,
+  "reference_size_mm": [
+   76.0,
+   53.0,
+   30.0
+  ],
+  "attribution": "CADFS (VladPyatov/CADFS), sample 00174349, CC BY 4.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "cad4_curved_plate": {
+  "dataset": "Sandflow/sand3d-cad",
+  "id": "cadfs-00827874",
+  "n_joints": 0,
+  "reference_size_mm": [
+   304.8,
+   914.4,
+   17.53
+  ],
+  "attribution": "CADFS (VladPyatov/CADFS), sample 00827874, CC BY 4.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "art1_sunroof_cassette": {
+  "dataset": "Sandflow/sand3d-articraft",
+  "id": "articraft-rec_car_sunroof_cassette_0003",
+  "n_joints": 2,
+  "reference_size_mm": [
+   1260.0,
+   840.0,
+   48.0
+  ],
+  "attribution": "Articraft Data, Matt Zhou et al., record rec_car_sunroof_cassette_0003, CC BY 4.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "art2_telescoping_slide": {
+  "dataset": "Sandflow/sand3d-articraft",
+  "id": "articraft-rec_threestage_telescoping_slide_9edf0ba74f334631b45b54f422c8227a",
+  "n_joints": 2,
+  "reference_size_mm": [
+   1100.0,
+   240.0,
+   300.0
+  ],
+  "attribution": "Articraft Data, Matt Zhou et al., record rec_threestage_telescoping_slide_9edf0ba74f334631b45b54f422c8227a, CC BY 4.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "art3_inspection_arm": {
+  "dataset": "Sandflow/sand3d-articraft",
+  "id": "articraft-rec_fourjoint_revolute_chain_fc1c103fc24442088d2e292a3068b64b",
+  "n_joints": 4,
+  "reference_size_mm": [
+   2606.0,
+   300.0,
+   488.0
+  ],
+  "attribution": "Articraft Data, Matt Zhou et al., record rec_fourjoint_revolute_chain_fc1c103fc24442088d2e292a3068b64b, CC BY 4.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "art4_telescoping_mast": {
+  "dataset": "Sandflow/sand3d-articraft",
+  "id": "articraft-rec_telescoping_mast_with_pan_head_a298d025d0d5404285b334d8ed08fbc5",
+  "n_joints": 3,
+  "reference_size_mm": [
+   280.0,
+   220.0,
+   1546.0
+  ],
+  "attribution": "Articraft Data, Matt Zhou et al., record rec_telescoping_mast_with_pan_head_a298d025d0d5404285b334d8ed08fbc5, CC BY 4.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "sim1_closet": {
+  "dataset": "Sandflow/sand3d-simready",
+  "id": "simready-furniture_workbench_modular_b01",
+  "n_joints": 2,
+  "reference_size_mm": [
+   622.2,
+   914.6,
+   2023.0
+  ],
+  "attribution": "NVIDIA SimReady assets: \"furniture_workbench_modular_b01\" by NVIDIA, https://huggingface.co/datasets/nvidia/simready-assets/tree/653d91e182011f357cf1644013cc94ddf194d349/furniture_workbench_modular_b01, CC BY 4.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "sim2_mouse_and_pad": {
+  "dataset": "Sandflow/sand3d-simready",
+  "id": "simready-computer_mouse_office_b01",
+  "n_joints": 1,
+  "reference_size_mm": [
+   254.0,
+   191.0,
+   41.0
+  ],
+  "attribution": "NVIDIA SimReady assets: \"computer_mouse_office_b01\" by NVIDIA, https://huggingface.co/datasets/nvidia/simready-assets/tree/653d91e182011f357cf1644013cc94ddf194d349/computer_mouse_office_b01, CC BY 4.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "sim3_toaster": {
+  "dataset": "Sandflow/sand3d-simready",
+  "id": "simready-appliance_toaster_a01",
+  "n_joints": 3,
+  "reference_size_mm": [
+   155.11,
+   306.55,
+   179.0
+  ],
+  "attribution": "NVIDIA SimReady assets: \"appliance_toaster_a01\" by NVIDIA, https://huggingface.co/datasets/nvidia/simready-assets/tree/19512d4dd4b7c0868530efd3ec62277fa2dc1cde/appliance_toaster_a01, CC BY 4.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "sim4_bollard": {
+  "dataset": "Sandflow/sand3d-simready",
+  "id": "simready-humidifier_a01",
+  "n_joints": 0,
+  "reference_size_mm": [
+   314.0,
+   314.0,
+   960.0
+  ],
+  "attribution": "NVIDIA SimReady assets: \"humidifier_a01\" by NVIDIA, https://huggingface.co/datasets/nvidia/simready-assets/tree/653d91e182011f357cf1644013cc94ddf194d349/humidifier_a01, CC BY 4.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "auto1_curved_tubes": {
+  "dataset": "Sandflow/sand3d-automate",
+  "id": "automate-6bc689174532fecaa2b28b12_7cb2d117ea00c67d83babed6_72e5351190d9af7bffe5f23b_default",
+  "n_joints": 1,
+  "reference_size_mm": [
+   702.17,
+   495.47,
+   1658.35
+  ],
+  "attribution": "AutoMate (Jones et al., 2021; Dryad doi:10.5061/dryad.2547d7wvw), assembly 6bc689174532fecaa2b28b12_7cb2d117ea00c67d83babed6_72e5351190d9af7bffe5f23b_default, CC0-1.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "auto2_lever_knob": {
+  "dataset": "Sandflow/sand3d-automate",
+  "id": "automate-4d1eec05efee6f9ab257c4df_8b4065dffe9bf49a2d66406f_6026b970b863bc8f8ff2eb52_default",
+  "n_joints": 2,
+  "reference_size_mm": [
+   50.54,
+   57.76,
+   98.94
+  ],
+  "attribution": "AutoMate (Jones et al., 2021; Dryad doi:10.5061/dryad.2547d7wvw), assembly 4d1eec05efee6f9ab257c4df_8b4065dffe9bf49a2d66406f_6026b970b863bc8f8ff2eb52_default, CC0-1.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "auto3_hinged_straps": {
+  "dataset": "Sandflow/sand3d-automate",
+  "id": "automate-8fd04c0b0322e56308dce2bc_6e1a228bf1fe52b921238422_6ed1f3643ed4c17041b2f5ac_default",
+  "n_joints": 1,
+  "reference_size_mm": [
+   914.4,
+   5.72,
+   76.2
+  ],
+  "attribution": "AutoMate (Jones et al., 2021; Dryad doi:10.5061/dryad.2547d7wvw), assembly 8fd04c0b0322e56308dce2bc_6e1a228bf1fe52b921238422_6ed1f3643ed4c17041b2f5ac_default, CC0-1.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "auto4_framed_panel": {
+  "dataset": "Sandflow/sand3d-automate",
+  "id": "automate-e19d87178d21e21cf53041ae_aa70e420f10f5f9261b6aa9e_9e90cfe2224909a9fba71422_default",
+  "n_joints": 1,
+  "reference_size_mm": [
+   1016.0,
+   35.56,
+   685.8
+  ],
+  "attribution": "AutoMate (Jones et al., 2021; Dryad doi:10.5061/dryad.2547d7wvw), assembly e19d87178d21e21cf53041ae_aa70e420f10f5f9261b6aa9e_9e90cfe2224909a9fba71422_default, CC0-1.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "obj1_octagonal_cup": {
+  "dataset": "Sandflow/sand3d-objaverse",
+  "id": "objaverse-1642ad1b51a049e8a5f23466cd8593ed",
+  "n_joints": 0,
+  "reference_size_mm": [
+   193.0,
+   352.2,
+   137.0
+  ],
+  "attribution": "\"KITCHEN INVENTORY 7\" by multilisaveta, https://sketchfab.com/3d-models/1642ad1b51a049e8a5f23466cd8593ed, CC-BY-4.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "obj2_djembe": {
+  "dataset": "Sandflow/sand3d-objaverse",
+  "id": "objaverse-21d6429205314cf3ab594889b7496a7b",
+  "n_joints": 0,
+  "reference_size_mm": [
+   407.91,
+   407.91,
+   600.0
+  ],
+  "attribution": "\"African Drum V1 (WIP)\" by Avinay_Rama, https://sketchfab.com/3d-models/21d6429205314cf3ab594889b7496a7b, CC-BY-4.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "obj3_lamp": {
+  "dataset": "Sandflow/sand3d-objaverse",
+  "id": "objaverse-4ecb65019cd94e6eac1b639a23ab29e4",
+  "n_joints": 0,
+  "reference_size_mm": [
+   595.0,
+   223.0,
+   598.5
+  ],
+  "attribution": "\"Lamp Spiralrope\" by georgiynomerovskiy, https://sketchfab.com/3d-models/4ecb65019cd94e6eac1b639a23ab29e4, CC-BY-4.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ },
+ "obj4_spectacles": {
+  "dataset": "Sandflow/sand3d-objaverse",
+  "id": "objaverse-e0fcb1520c164ec5a1888394f19dc251",
+  "n_joints": 2,
+  "reference_size_mm": [
+   140.0,
+   12.48,
+   26.77
+  ],
+  "attribution": "\"Glasses Ray Ban\" by miha.pop12, https://sketchfab.com/3d-models/e0fcb1520c164ec5a1888394f19dc251, CC-BY-4.0; modified: rewritten as a sand3d program",
+  "license": "CC-BY-4.0"
+ }
+}

@@ -1,0 +1,1 @@
+{"name":"bollard","ops":[{"name":"body","on":{"origin":[0,0,0],"x":[1,0,0],"y":[0,0,1],"z":[0,-1,0]},"op":"revolve","profile":{"poly":{"points":[[0,0],{"radius":4,"x":157,"y":0},{"radius":4,"x":157,"y":20},[128,20],[128,35],[122,35],{"radius":4,"x":122,"y":960},{"radius":3,"x":100,"y":960},[88,948],[0,948]]}}},{"color":"#2b2d2f","ids":[0],"op":"material","roughness":0.6}]}

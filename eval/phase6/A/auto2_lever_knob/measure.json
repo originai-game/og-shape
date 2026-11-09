@@ -1,0 +1,186 @@
+{
+ "triangles": 482,
+ "boundsMin": [
+  -25.01,
+  -28.88,
+  0
+ ],
+ "boundsMax": [
+  25.01,
+  28.88,
+  98.94
+ ],
+ "size": [
+  50.02,
+  57.76,
+  98.94
+ ],
+ "joints": [
+  "knob_slide",
+  "knob_spin"
+ ],
+ "parts": [
+  {
+   "name": "block",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 294,
+   "boundsMin": [
+    -25.01,
+    -28.88,
+    0
+   ],
+   "boundsMax": [
+    25.01,
+    28.88,
+    30
+   ]
+  },
+  {
+   "name": "knob",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 48,
+   "boundsMin": [
+    -24.76,
+    -28.59,
+    12
+   ],
+   "boundsMax": [
+    24.76,
+    28.59,
+    40.34
+   ]
+  },
+  {
+   "name": "band_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 20,
+   "boundsMin": [
+    -24.76,
+    -28.59,
+    40.34
+   ],
+   "boundsMax": [
+    24.76,
+    28.59,
+    50.68
+   ]
+  },
+  {
+   "name": "band_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 20,
+   "boundsMin": [
+    -23.26,
+    -26.86,
+    50.68
+   ],
+   "boundsMax": [
+    23.26,
+    26.86,
+    61.02
+   ]
+  },
+  {
+   "name": "band_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 20,
+   "boundsMin": [
+    -20.51,
+    -23.68,
+    61.02
+   ],
+   "boundsMax": [
+    20.51,
+    23.68,
+    71.36
+   ]
+  },
+  {
+   "name": "band_4",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 20,
+   "boundsMin": [
+    -16.51,
+    -19.06,
+    71.36
+   ],
+   "boundsMax": [
+    16.51,
+    19.06,
+    79.64
+   ]
+  },
+  {
+   "name": "band_5",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 20,
+   "boundsMin": [
+    -12.51,
+    -14.44,
+    79.64
+   ],
+   "boundsMax": [
+    12.51,
+    14.44,
+    88.6
+   ]
+  },
+  {
+   "name": "band_6",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 20,
+   "boundsMin": [
+    -9,
+    -10.4,
+    88.6
+   ],
+   "boundsMax": [
+    9,
+    10.4,
+    95.49
+   ]
+  },
+  {
+   "name": "band_7",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 20,
+   "boundsMin": [
+    -6.5,
+    -7.51,
+    95.49
+   ],
+   "boundsMax": [
+    6.5,
+    7.51,
+    98.94
+   ]
+  }
+ ]
+}

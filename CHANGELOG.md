@@ -355,3 +355,16 @@
 - Golden cases `bevel.gaps`, `bevel.miters`, `bevel.pipe`,
   `bevel.slide` and `bevel.slivers`; no existing hash moved. Previews in
   `docs/previews/phase3/` (`cargo run -p shape-bevel --example phase3`).
+- Guides: `guides/shape.md`, the authoring guide (plan parts first, names,
+  placement with frames, joints, budgets, the review loop and a table of
+  symptoms and fixes), and `guides/typescript.md` rewritten against the
+  binding: each generator's own space, the facing rule for frame axes,
+  `ring`/`grid`/`bbox` frames, profile transforms, hole, pocket and shell
+  details, `taper` as a scale. Together about 6 200 tokens.
+- Every ```ts and ```json sample in `guides/` is built by the binding's
+  tests (`crates/shape-wasm/ts/test/guides.test.ts`); the gate's binding
+  step runs it, or says `binding: NOT RUN` without bun.
+- Phase 6 evaluation (`eval/phase6/`, `docs/research.md` §13): 20 sand3d
+  dataset objects rebuilt by agents from a description and a picture,
+  and again by translating the sand3d program; programs, previews and the
+  runner (`eval/phase6/run.ts`) committed, datasets attributed.

@@ -1,0 +1,59 @@
+{
+ "triangles": 68,
+ "boundsMin": [
+  -508,
+  -17.79,
+  0
+ ],
+ "boundsMax": [
+  508,
+  17.77,
+  685.8
+ ],
+ "size": [
+  1016,
+  35.56,
+  685.8
+ ],
+ "joints": [
+  "frame_spin"
+ ],
+ "parts": [
+  {
+   "name": "backing_panel",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -508,
+    -17.79,
+    0
+   ],
+   "boundsMax": [
+    508,
+    7.61,
+    685.8
+   ]
+  },
+  {
+   "name": "frame_piece",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 56,
+   "boundsMin": [
+    -508,
+    7.61,
+    0
+   ],
+   "boundsMax": [
+    508,
+    17.77,
+    685.8
+   ]
+  }
+ ]
+}

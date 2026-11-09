@@ -1,0 +1,4 @@
+2026-11-09T16:14:35.255Z ok parts 1 open 0 joints 0 triangles 896
+2026-11-09T16:14:55.632Z error the result is open (14 unmatched edges): an operand most likely passes through itself; repair or fuse its parts first
+2026-11-09T16:15:03.539Z ok parts 53 open 0 joints 0 triangles 11324
+2026-11-09T16:15:14.789Z ok parts 69 open 0 joints 0 triangles 12924

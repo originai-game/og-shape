@@ -1,0 +1,131 @@
+{
+ "triangles": 15384,
+ "boundsMin": [
+  -351.09,
+  -277.7,
+  39.92
+ ],
+ "boundsMax": [
+  351.09,
+  217.77,
+  1697.11
+ ],
+ "size": [
+  702.17,
+  495.47,
+  1657.2
+ ],
+ "joints": [
+  "rotating_tubes_spin"
+ ],
+ "parts": [
+  {
+   "name": "curved_tube_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 2564,
+   "boundsMin": [
+    -126.91,
+    -277.7,
+    742.09
+   ],
+   "boundsMax": [
+    189.47,
+    217.2,
+    1219.6
+   ]
+  },
+  {
+   "name": "curved_tube_3_lower",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 2564,
+   "boundsMin": [
+    -126.91,
+    -277.7,
+    517.42
+   ],
+   "boundsMax": [
+    189.47,
+    217.2,
+    994.93
+   ]
+  },
+  {
+   "name": "rotating_tubes_curved_tube_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 2564,
+   "boundsMin": [
+    -126.42,
+    -36.23,
+    39.92
+   ],
+   "boundsMax": [
+    351.09,
+    217.77,
+    517.42
+   ]
+  },
+  {
+   "name": "rotating_tubes_curved_tube_1_lower",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 2564,
+   "boundsMin": [
+    -351.09,
+    -36.23,
+    39.92
+   ],
+   "boundsMax": [
+    126.42,
+    217.77,
+    517.42
+   ]
+  },
+  {
+   "name": "rotating_tubes_curved_tube_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 2564,
+   "boundsMin": [
+    -351.09,
+    -36.23,
+    1219.61
+   ],
+   "boundsMax": [
+    126.42,
+    217.77,
+    1697.11
+   ]
+  },
+  {
+   "name": "rotating_tubes_curved_tube_2_lower",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 2564,
+   "boundsMin": [
+    -126.42,
+    -36.23,
+    1219.61
+   ],
+   "boundsMax": [
+    351.09,
+    217.77,
+    1697.11
+   ]
+  }
+ ]
+}

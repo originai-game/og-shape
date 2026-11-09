@@ -1,0 +1,548 @@
+{
+ "triangles": 5998,
+ "boundsMin": [
+  -285,
+  -150,
+  0
+ ],
+ "boundsMax": [
+  2321,
+  150,
+  488
+ ],
+ "size": [
+  2606,
+  300,
+  488
+ ],
+ "joints": [
+  "hinge_0",
+  "hinge_1",
+  "hinge_2",
+  "hinge_3"
+ ],
+ "parts": [
+  {
+   "name": "floor_plate",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 400,
+   "boundsMin": [
+    -285,
+    -150,
+    0
+   ],
+   "boundsMax": [
+    135,
+    150,
+    405
+   ]
+  },
+  {
+   "name": "turntable_collar",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 510,
+   "boundsMin": [
+    -94.5,
+    -82,
+    367.5
+   ],
+   "boundsMax": [
+    82,
+    82,
+    480
+   ]
+  },
+  {
+   "name": "base_hinge_cap",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -55,
+    -40,
+    478
+   ],
+   "boundsMax": [
+    55,
+    40,
+    485
+   ]
+  },
+  {
+   "name": "seg0_proximal_boss",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 240,
+   "boundsMin": [
+    -36.95,
+    -36.99,
+    441
+   ],
+   "boundsMax": [
+    37,
+    36.99,
+    459
+   ]
+  },
+  {
+   "name": "seg0_beam",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    15,
+    -23,
+    437
+   ],
+   "boundsMax": [
+    625,
+    23,
+    463
+   ]
+  },
+  {
+   "name": "seg0_cable_strip",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    30,
+    -7,
+    461
+   ],
+   "boundsMax": [
+    566.8,
+    7,
+    469
+   ]
+  },
+  {
+   "name": "seg0_distal_lower_plate",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 96,
+   "boundsMin": [
+    605.5,
+    -65,
+    420
+   ],
+   "boundsMax": [
+    780,
+    65,
+    480
+   ]
+  },
+  {
+   "name": "seg0_distal_hinge_cap",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    645,
+    -40,
+    478
+   ],
+   "boundsMax": [
+    755,
+    40,
+    485
+   ]
+  },
+  {
+   "name": "seg1_proximal_boss",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 240,
+   "boundsMin": [
+    663.05,
+    -36.99,
+    441
+   ],
+   "boundsMax": [
+    737,
+    36.99,
+    459
+   ]
+  },
+  {
+   "name": "seg1_beam",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    715,
+    -23,
+    437
+   ],
+   "boundsMax": [
+    1205,
+    23,
+    463
+   ]
+  },
+  {
+   "name": "seg1_cable_strip",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    730,
+    -7,
+    461
+   ],
+   "boundsMax": [
+    1161.2,
+    7,
+    469
+   ]
+  },
+  {
+   "name": "seg1_distal_lower_plate",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 96,
+   "boundsMin": [
+    1185.5,
+    -65,
+    420
+   ],
+   "boundsMax": [
+    1360,
+    65,
+    480
+   ]
+  },
+  {
+   "name": "seg1_distal_hinge_cap",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    1225,
+    -40,
+    478
+   ],
+   "boundsMax": [
+    1335,
+    40,
+    485
+   ]
+  },
+  {
+   "name": "seg2_proximal_boss",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 240,
+   "boundsMin": [
+    1243.05,
+    -36.99,
+    441
+   ],
+   "boundsMax": [
+    1317,
+    36.99,
+    459
+   ]
+  },
+  {
+   "name": "seg2_beam",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    1295,
+    -23,
+    437
+   ],
+   "boundsMax": [
+    1685,
+    23,
+    463
+   ]
+  },
+  {
+   "name": "seg2_cable_strip",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    1310,
+    -7,
+    461
+   ],
+   "boundsMax": [
+    1653.2,
+    7,
+    469
+   ]
+  },
+  {
+   "name": "seg2_distal_lower_plate",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 96,
+   "boundsMin": [
+    1665.5,
+    -65,
+    420
+   ],
+   "boundsMax": [
+    1840,
+    65,
+    480
+   ]
+  },
+  {
+   "name": "seg2_distal_hinge_cap",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    1705,
+    -40,
+    478
+   ],
+   "boundsMax": [
+    1815,
+    40,
+    485
+   ]
+  },
+  {
+   "name": "seg3_proximal_boss",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 240,
+   "boundsMin": [
+    1723.05,
+    -36.99,
+    441
+   ],
+   "boundsMax": [
+    1797,
+    36.99,
+    459
+   ]
+  },
+  {
+   "name": "seg3_beam",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    1775,
+    -23,
+    437
+   ],
+   "boundsMax": [
+    2105,
+    23,
+    463
+   ]
+  },
+  {
+   "name": "seg3_cable_strip",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    1790,
+    -7,
+    461
+   ],
+   "boundsMax": [
+    2080.4,
+    7,
+    469
+   ]
+  },
+  {
+   "name": "seg3_sensor_neck",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    2073,
+    -32,
+    432
+   ],
+   "boundsMax": [
+    2183,
+    32,
+    468
+   ]
+  },
+  {
+   "name": "seg3_camera_body",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    2132.5,
+    -46,
+    412
+   ],
+   "boundsMax": [
+    2277.5,
+    46,
+    488
+   ]
+  },
+  {
+   "name": "seg3_lens_barrel",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 228,
+   "boundsMin": [
+    2273,
+    -34,
+    416.05
+   ],
+   "boundsMax": [
+    2313,
+    34,
+    483.95
+   ]
+  },
+  {
+   "name": "seg3_glass_face",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 196,
+   "boundsMin": [
+    2311,
+    -25,
+    425.05
+   ],
+   "boundsMax": [
+    2321,
+    25,
+    474.95
+   ]
+  },
+  {
+   "name": "seg3_led_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 812,
+   "boundsMin": [
+    2270.09,
+    -40,
+    459.06
+   ],
+   "boundsMax": [
+    2285.96,
+    -24,
+    474.94
+   ]
+  },
+  {
+   "name": "seg3_led_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 812,
+   "boundsMin": [
+    2270.09,
+    24,
+    459.06
+   ],
+   "boundsMax": [
+    2285.96,
+    40,
+    474.94
+   ]
+  },
+  {
+   "name": "seg3_led_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 812,
+   "boundsMin": [
+    2270.09,
+    -40,
+    409.06
+   ],
+   "boundsMax": [
+    2285.96,
+    -24,
+    424.94
+   ]
+  },
+  {
+   "name": "seg3_led_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 812,
+   "boundsMin": [
+    2270.09,
+    24,
+    409.06
+   ],
+   "boundsMax": [
+    2285.96,
+    40,
+    424.94
+   ]
+  }
+ ]
+}

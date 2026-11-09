@@ -1,0 +1,96 @@
+{
+ "triangles": 640,
+ "boundsMin": [
+  -550,
+  -120,
+  0
+ ],
+ "boundsMax": [
+  550,
+  120,
+  300
+ ],
+ "size": [
+  1100,
+  240,
+  300
+ ],
+ "joints": [
+  "middle_slide",
+  "blade_slide"
+ ],
+ "parts": [
+  {
+   "name": "wall_plate",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 448,
+   "boundsMin": [
+    514,
+    -120,
+    0
+   ],
+   "boundsMax": [
+    550,
+    120,
+    300
+   ]
+  },
+  {
+   "name": "outer_sleeve",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 120,
+   "boundsMin": [
+    -110,
+    -40,
+    100
+   ],
+   "boundsMax": [
+    520,
+    40,
+    200
+   ]
+  },
+  {
+   "name": "middle_section",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 32,
+   "boundsMin": [
+    -220,
+    -30,
+    110
+   ],
+   "boundsMax": [
+    280,
+    30,
+    190
+   ]
+  },
+  {
+   "name": "inner_blade",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 40,
+   "boundsMin": [
+    -550,
+    -20,
+    130
+   ],
+   "boundsMax": [
+    80,
+    20,
+    170
+   ]
+  }
+ ]
+}

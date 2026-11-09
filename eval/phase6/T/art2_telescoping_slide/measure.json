@@ -1,0 +1,168 @@
+{
+ "triangles": 894,
+ "boundsMin": [
+  -40,
+  -120,
+  -150
+ ],
+ "boundsMax": [
+  1060,
+  120,
+  150
+ ],
+ "size": [
+  1100,
+  240,
+  300
+ ],
+ "joints": [
+  "outer_to_middle",
+  "middle_to_inner"
+ ],
+ "parts": [
+  {
+   "name": "wall_plate",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -40,
+    -120,
+    -150
+   ],
+   "boundsMax": [
+    0,
+    120,
+    150
+   ]
+  },
+  {
+   "name": "outer_channel",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 330,
+   "boundsMin": [
+    0,
+    -47.5,
+    -42.5
+   ],
+   "boundsMax": [
+    560,
+    47.5,
+    42.5
+   ]
+  },
+  {
+   "name": "upper_standoff",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    0,
+    -68,
+    60
+   ],
+   "boundsMax": [
+    80,
+    -42,
+    90
+   ]
+  },
+  {
+   "name": "lower_standoff",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    0,
+    -68,
+    -90
+   ],
+   "boundsMax": [
+    80,
+    -42,
+    -60
+   ]
+  },
+  {
+   "name": "wall_screw_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 152,
+   "boundsMin": [
+    0,
+    -14.95,
+    90.01
+   ],
+   "boundsMax": [
+    8,
+    15,
+    119.99
+   ]
+  },
+  {
+   "name": "wall_screw_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 152,
+   "boundsMin": [
+    0,
+    -14.95,
+    -119.99
+   ],
+   "boundsMax": [
+    8,
+    15,
+    -90.01
+   ]
+  },
+  {
+   "name": "middle_section_body",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 194,
+   "boundsMin": [
+    151,
+    -25,
+    -29
+   ],
+   "boundsMax": [
+    780,
+    29,
+    29
+   ]
+  },
+  {
+   "name": "inner_blade",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 30,
+   "boundsMin": [
+    450,
+    15,
+    -20
+   ],
+   "boundsMax": [
+    1060,
+    55,
+    20
+   ]
+  }
+ ]
+}

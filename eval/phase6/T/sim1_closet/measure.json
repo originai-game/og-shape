@@ -1,0 +1,78 @@
+{
+ "triangles": 98,
+ "boundsMin": [
+  0,
+  0,
+  0
+ ],
+ "boundsMax": [
+  622.2,
+  914.6,
+  2023
+ ],
+ "size": [
+  622.2,
+  914.6,
+  2023
+ ],
+ "joints": [
+  "door_02_hinge",
+  "door_01_hinge"
+ ],
+ "parts": [
+  {
+   "name": "case",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 74,
+   "boundsMin": [
+    0,
+    0,
+    0
+   ],
+   "boundsMax": [
+    622.2,
+    914.6,
+    2023
+   ]
+  },
+  {
+   "name": "door_02_panel",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    595,
+    458,
+    59
+   ],
+   "boundsMax": [
+    616,
+    878,
+    1986
+   ]
+  },
+  {
+   "name": "door_01_panel",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    595,
+    37,
+    59
+   ],
+   "boundsMax": [
+    618,
+    457,
+    1986
+   ]
+  }
+ ]
+}

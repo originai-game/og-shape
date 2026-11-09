@@ -1,0 +1,4 @@
+2026-11-09T16:19:09.672Z error the result is open (81 unmatched edges): an operand most likely passes through itself; repair or fuse its parts first
+2026-11-09T16:19:26.670Z error the result is open (115 unmatched edges): an operand most likely passes through itself; repair or fuse its parts first
+2026-11-09T16:19:45.503Z ok parts 2 open 0 joints 0 triangles 108
+2026-11-09T16:20:10.389Z ok parts 2 open 0 joints 0 triangles 326

@@ -1,0 +1,1263 @@
+{
+ "triangles": 12924,
+ "boundsMin": [
+  -204,
+  -204,
+  0
+ ],
+ "boundsMax": [
+  204,
+  204,
+  600
+ ],
+ "size": [
+  408,
+  408,
+  600
+ ],
+ "joints": [],
+ "parts": [
+  {
+   "name": "body",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 1024,
+   "boundsMin": [
+    -195,
+    -195,
+    0
+   ],
+   "boundsMax": [
+    195,
+    195,
+    570
+   ]
+  },
+  {
+   "name": "strip_0_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    110.9,
+    -2.5,
+    338.08
+   ],
+   "boundsMax": [
+    176.02,
+    2.5,
+    393.52
+   ]
+  },
+  {
+   "name": "strip_0_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    170.15,
+    -2.5,
+    389.15
+   ],
+   "boundsMax": [
+    193.7,
+    2.5,
+    443.2
+   ]
+  },
+  {
+   "name": "strip_0_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    188.02,
+    -2.5,
+    439.71
+   ],
+   "boundsMax": [
+    200.27,
+    2.5,
+    502.77
+   ]
+  },
+  {
+   "name": "strip_0_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    195,
+    -2.5,
+    500
+   ],
+   "boundsMax": [
+    200,
+    2.5,
+    552.5
+   ]
+  },
+  {
+   "name": "strip_1_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    102.18,
+    40.66,
+    338.08
+   ],
+   "boundsMax": [
+    162.9,
+    69.14,
+    393.52
+   ]
+  },
+  {
+   "name": "strip_1_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    157.01,
+    63.55,
+    389.15
+   ],
+   "boundsMax": [
+    179.14,
+    75.69,
+    443.2
+   ]
+  },
+  {
+   "name": "strip_1_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    173.53,
+    70.42,
+    439.71
+   ],
+   "boundsMax": [
+    185.2,
+    78.17,
+    502.77
+   ]
+  },
+  {
+   "name": "strip_1_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    179.99,
+    73.1,
+    500
+   ],
+   "boundsMax": [
+    184.94,
+    78.06,
+    552.5
+   ]
+  },
+  {
+   "name": "strip_2_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    77.45,
+    77.45,
+    338.08
+   ],
+   "boundsMax": [
+    125.43,
+    125.43,
+    393.52
+   ]
+  },
+  {
+   "name": "strip_2_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    119.55,
+    119.55,
+    389.15
+   ],
+   "boundsMax": [
+    137.73,
+    137.73,
+    443.2
+   ]
+  },
+  {
+   "name": "strip_2_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    132.21,
+    132.21,
+    439.71
+   ],
+   "boundsMax": [
+    142.35,
+    142.35,
+    502.77
+   ]
+  },
+  {
+   "name": "strip_2_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    137.15,
+    137.15,
+    500
+   ],
+   "boundsMax": [
+    142.15,
+    142.15,
+    552.5
+   ]
+  },
+  {
+   "name": "strip_3_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    40.66,
+    102.18,
+    338.08
+   ],
+   "boundsMax": [
+    69.14,
+    162.9,
+    393.52
+   ]
+  },
+  {
+   "name": "strip_3_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    63.55,
+    157.01,
+    389.15
+   ],
+   "boundsMax": [
+    75.69,
+    179.14,
+    443.2
+   ]
+  },
+  {
+   "name": "strip_3_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    70.42,
+    173.53,
+    439.71
+   ],
+   "boundsMax": [
+    78.17,
+    185.2,
+    502.77
+   ]
+  },
+  {
+   "name": "strip_3_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    73.1,
+    179.99,
+    500
+   ],
+   "boundsMax": [
+    78.06,
+    184.94,
+    552.5
+   ]
+  },
+  {
+   "name": "strip_4_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -2.5,
+    110.9,
+    338.08
+   ],
+   "boundsMax": [
+    2.5,
+    176.02,
+    393.52
+   ]
+  },
+  {
+   "name": "strip_4_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -2.5,
+    170.15,
+    389.15
+   ],
+   "boundsMax": [
+    2.5,
+    193.7,
+    443.2
+   ]
+  },
+  {
+   "name": "strip_4_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -2.5,
+    188.02,
+    439.71
+   ],
+   "boundsMax": [
+    2.5,
+    200.27,
+    502.77
+   ]
+  },
+  {
+   "name": "strip_4_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -2.5,
+    195,
+    500
+   ],
+   "boundsMax": [
+    2.5,
+    200,
+    552.5
+   ]
+  },
+  {
+   "name": "strip_5_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -69.14,
+    102.18,
+    338.08
+   ],
+   "boundsMax": [
+    -40.66,
+    162.9,
+    393.52
+   ]
+  },
+  {
+   "name": "strip_5_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -75.69,
+    157.01,
+    389.15
+   ],
+   "boundsMax": [
+    -63.55,
+    179.14,
+    443.2
+   ]
+  },
+  {
+   "name": "strip_5_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -78.17,
+    173.53,
+    439.71
+   ],
+   "boundsMax": [
+    -70.42,
+    185.2,
+    502.77
+   ]
+  },
+  {
+   "name": "strip_5_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -78.06,
+    179.99,
+    500
+   ],
+   "boundsMax": [
+    -73.1,
+    184.94,
+    552.5
+   ]
+  },
+  {
+   "name": "strip_6_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -125.43,
+    77.45,
+    338.08
+   ],
+   "boundsMax": [
+    -77.45,
+    125.43,
+    393.52
+   ]
+  },
+  {
+   "name": "strip_6_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -137.73,
+    119.55,
+    389.15
+   ],
+   "boundsMax": [
+    -119.55,
+    137.73,
+    443.2
+   ]
+  },
+  {
+   "name": "strip_6_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -142.35,
+    132.21,
+    439.71
+   ],
+   "boundsMax": [
+    -132.21,
+    142.35,
+    502.77
+   ]
+  },
+  {
+   "name": "strip_6_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -142.15,
+    137.15,
+    500
+   ],
+   "boundsMax": [
+    -137.15,
+    142.15,
+    552.5
+   ]
+  },
+  {
+   "name": "strip_7_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -162.9,
+    40.66,
+    338.08
+   ],
+   "boundsMax": [
+    -102.18,
+    69.14,
+    393.52
+   ]
+  },
+  {
+   "name": "strip_7_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -179.14,
+    63.55,
+    389.15
+   ],
+   "boundsMax": [
+    -157.01,
+    75.69,
+    443.2
+   ]
+  },
+  {
+   "name": "strip_7_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -185.2,
+    70.42,
+    439.71
+   ],
+   "boundsMax": [
+    -173.53,
+    78.17,
+    502.77
+   ]
+  },
+  {
+   "name": "strip_7_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -184.94,
+    73.1,
+    500
+   ],
+   "boundsMax": [
+    -179.99,
+    78.06,
+    552.5
+   ]
+  },
+  {
+   "name": "strip_8_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -176.02,
+    -2.5,
+    338.08
+   ],
+   "boundsMax": [
+    -110.9,
+    2.5,
+    393.52
+   ]
+  },
+  {
+   "name": "strip_8_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -193.7,
+    -2.5,
+    389.15
+   ],
+   "boundsMax": [
+    -170.15,
+    2.5,
+    443.2
+   ]
+  },
+  {
+   "name": "strip_8_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -200.27,
+    -2.5,
+    439.71
+   ],
+   "boundsMax": [
+    -188.02,
+    2.5,
+    502.77
+   ]
+  },
+  {
+   "name": "strip_8_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -200,
+    -2.5,
+    500
+   ],
+   "boundsMax": [
+    -195,
+    2.5,
+    552.5
+   ]
+  },
+  {
+   "name": "strip_9_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -162.9,
+    -69.14,
+    338.08
+   ],
+   "boundsMax": [
+    -102.18,
+    -40.66,
+    393.52
+   ]
+  },
+  {
+   "name": "strip_9_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -179.14,
+    -75.69,
+    389.15
+   ],
+   "boundsMax": [
+    -157.01,
+    -63.55,
+    443.2
+   ]
+  },
+  {
+   "name": "strip_9_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -185.2,
+    -78.17,
+    439.71
+   ],
+   "boundsMax": [
+    -173.53,
+    -70.42,
+    502.77
+   ]
+  },
+  {
+   "name": "strip_9_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -184.94,
+    -78.06,
+    500
+   ],
+   "boundsMax": [
+    -179.99,
+    -73.1,
+    552.5
+   ]
+  },
+  {
+   "name": "strip_10_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -125.43,
+    -125.43,
+    338.08
+   ],
+   "boundsMax": [
+    -77.45,
+    -77.45,
+    393.52
+   ]
+  },
+  {
+   "name": "strip_10_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -137.73,
+    -137.73,
+    389.15
+   ],
+   "boundsMax": [
+    -119.55,
+    -119.55,
+    443.2
+   ]
+  },
+  {
+   "name": "strip_10_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -142.35,
+    -142.35,
+    439.71
+   ],
+   "boundsMax": [
+    -132.21,
+    -132.21,
+    502.77
+   ]
+  },
+  {
+   "name": "strip_10_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -142.15,
+    -142.15,
+    500
+   ],
+   "boundsMax": [
+    -137.15,
+    -137.15,
+    552.5
+   ]
+  },
+  {
+   "name": "strip_11_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -69.14,
+    -162.9,
+    338.08
+   ],
+   "boundsMax": [
+    -40.66,
+    -102.18,
+    393.52
+   ]
+  },
+  {
+   "name": "strip_11_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -75.69,
+    -179.14,
+    389.15
+   ],
+   "boundsMax": [
+    -63.55,
+    -157.01,
+    443.2
+   ]
+  },
+  {
+   "name": "strip_11_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -78.17,
+    -185.2,
+    439.71
+   ],
+   "boundsMax": [
+    -70.42,
+    -173.53,
+    502.77
+   ]
+  },
+  {
+   "name": "strip_11_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -78.06,
+    -184.94,
+    500
+   ],
+   "boundsMax": [
+    -73.1,
+    -179.99,
+    552.5
+   ]
+  },
+  {
+   "name": "strip_12_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -2.5,
+    -176.02,
+    338.08
+   ],
+   "boundsMax": [
+    2.5,
+    -110.9,
+    393.52
+   ]
+  },
+  {
+   "name": "strip_12_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -2.5,
+    -193.7,
+    389.15
+   ],
+   "boundsMax": [
+    2.5,
+    -170.15,
+    443.2
+   ]
+  },
+  {
+   "name": "strip_12_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -2.5,
+    -200.27,
+    439.71
+   ],
+   "boundsMax": [
+    2.5,
+    -188.02,
+    502.77
+   ]
+  },
+  {
+   "name": "strip_12_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -2.5,
+    -200,
+    500
+   ],
+   "boundsMax": [
+    2.5,
+    -195,
+    552.5
+   ]
+  },
+  {
+   "name": "strip_13_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    40.66,
+    -162.9,
+    338.08
+   ],
+   "boundsMax": [
+    69.14,
+    -102.18,
+    393.52
+   ]
+  },
+  {
+   "name": "strip_13_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    63.55,
+    -179.14,
+    389.15
+   ],
+   "boundsMax": [
+    75.69,
+    -157.01,
+    443.2
+   ]
+  },
+  {
+   "name": "strip_13_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    70.42,
+    -185.2,
+    439.71
+   ],
+   "boundsMax": [
+    78.17,
+    -173.53,
+    502.77
+   ]
+  },
+  {
+   "name": "strip_13_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    73.1,
+    -184.94,
+    500
+   ],
+   "boundsMax": [
+    78.06,
+    -179.99,
+    552.5
+   ]
+  },
+  {
+   "name": "strip_14_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    77.45,
+    -125.43,
+    338.08
+   ],
+   "boundsMax": [
+    125.43,
+    -77.45,
+    393.52
+   ]
+  },
+  {
+   "name": "strip_14_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    119.55,
+    -137.73,
+    389.15
+   ],
+   "boundsMax": [
+    137.73,
+    -119.55,
+    443.2
+   ]
+  },
+  {
+   "name": "strip_14_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    132.21,
+    -142.35,
+    439.71
+   ],
+   "boundsMax": [
+    142.35,
+    -132.21,
+    502.77
+   ]
+  },
+  {
+   "name": "strip_14_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    137.15,
+    -142.15,
+    500
+   ],
+   "boundsMax": [
+    142.15,
+    -137.15,
+    552.5
+   ]
+  },
+  {
+   "name": "strip_15_0",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    102.18,
+    -69.14,
+    338.08
+   ],
+   "boundsMax": [
+    162.9,
+    -40.66,
+    393.52
+   ]
+  },
+  {
+   "name": "strip_15_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    157.01,
+    -75.69,
+    389.15
+   ],
+   "boundsMax": [
+    179.14,
+    -63.55,
+    443.2
+   ]
+  },
+  {
+   "name": "strip_15_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    173.53,
+    -78.17,
+    439.71
+   ],
+   "boundsMax": [
+    185.2,
+    -70.42,
+    502.77
+   ]
+  },
+  {
+   "name": "strip_15_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    179.99,
+    -78.06,
+    500
+   ],
+   "boundsMax": [
+    184.94,
+    -73.1,
+    552.5
+   ]
+  },
+  {
+   "name": "band",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 512,
+   "boundsMin": [
+    -198,
+    -198,
+    540
+   ],
+   "boundsMax": [
+    198,
+    198,
+    554
+   ]
+  },
+  {
+   "name": "neck_binding",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 512,
+   "boundsMin": [
+    -64,
+    -64,
+    288
+   ],
+   "boundsMax": [
+    64,
+    64,
+    310
+   ]
+  },
+  {
+   "name": "head",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 1276,
+   "boundsMin": [
+    -194,
+    -194,
+    570
+   ],
+   "boundsMax": [
+    194,
+    194,
+    600
+   ]
+  },
+  {
+   "name": "hoop",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 3712,
+   "boundsMin": [
+    -204,
+    -204,
+    574.01
+   ],
+   "boundsMax": [
+    204,
+    204,
+    589.99
+   ]
+  }
+ ]
+}
