@@ -693,7 +693,7 @@ impl Doc<'_> {
                 return Err(fmt_err(format!("{name}: an index is out of range")));
             }
             let tris: Vec<[u32; 3]> = match mode {
-                4 => index.chunks_exact(3).map(|t| [t[0], t[1], t[2]]).collect(),
+                4 => index.as_chunks::<3>().0.to_vec(),
                 5 => (2..index.len())
                     .map(|k| {
                         if k % 2 == 0 {
@@ -719,7 +719,7 @@ impl Doc<'_> {
                     .map_or_else(|| format!("material{mi}"), str::to_string);
             }
             let base = solid.positions.len() as u32;
-            for v in pos.chunks_exact(3) {
+            for v in pos.as_chunks::<3>().0 {
                 let p = from_y_up(DVec3::new(v[0], v[1], v[2])) * 1000.0;
                 if !p.is_finite() {
                     return Err(ImportError::NotFinite(name.to_string()));

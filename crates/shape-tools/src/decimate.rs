@@ -169,7 +169,7 @@ fn decimate_to(
         edge_tags: s.edge_tags.clone(),
         ..Default::default()
     };
-    for t in out.indices.chunks_exact(3) {
+    for t in out.indices.as_chunks::<3>().0 {
         // A triangle takes its first corner's surface and names.
         let (_, from) = split_of[t[0] as usize];
         result
