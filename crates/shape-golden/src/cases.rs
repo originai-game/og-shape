@@ -42,6 +42,7 @@ pub fn all() -> Vec<Case> {
     cases.extend(crate::model::cases());
     cases.extend(crate::meshtools::cases());
     cases.extend(crate::skin::cases());
+    cases.extend(crate::selfunion::cases());
     cases
 }
 
