@@ -103,6 +103,7 @@ fn cases() -> Result<Vec<Case>, Error> {
         radius: 15.0,
         radius_top: 0.0,
         height: 20.0,
+        ..Default::default()
     })?;
     let arc = tag(&c, "arc", |p| p.z == 20.0 && p.x > 0.0 && p.y > 0.0);
     // The arc's end nearest +y, where it tapers to a tip.
@@ -248,6 +249,7 @@ fn cases() -> Result<Vec<Case>, Error> {
         &Revolve {
             angle: 2.0,
             axis: Axis::Z,
+            ..Default::default()
         },
     )?;
     out.push(Case {

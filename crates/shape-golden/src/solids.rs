@@ -76,6 +76,7 @@ pub fn cases() -> Vec<Case> {
                         radius: 5.0,
                         radius_top: 3.0,
                         height: 8.0,
+                        ..Default::default()
                     }),
                 )?;
                 solid(h, cone(4.0, 9.0))
@@ -239,6 +240,7 @@ pub fn cases() -> Vec<Case> {
                     radius: 3.3,
                     radius_top: 0.0,
                     height: 8.0,
+                    ..Default::default()
                 })
                 .unwrap();
                 pin.map_positions(|p| p + shape_core::DVec3::new(10.0, 5.0, -1.0), false);
@@ -426,7 +428,12 @@ fn profile(h: &mut OutputHash, p: &Profile) -> Result<(), HashError> {
 }
 
 fn profiles(h: &mut OutputHash) -> Result<(), HashError> {
-    let pp = |x, y, radius| PolyPoint { x, y, radius };
+    let pp = |x, y, radius| PolyPoint {
+        x,
+        y,
+        radius,
+        ..Default::default()
+    };
     let all = [
         rect(&Rect {
             width: 30.0,

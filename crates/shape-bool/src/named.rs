@@ -555,6 +555,7 @@ mod tests {
             radius: 3.3,
             radius_top: 0.0,
             height: h,
+            ..Default::default()
         })
         .unwrap();
         c.map_positions(|p| p + DVec3::new(0.0, 0.0, z0), false);

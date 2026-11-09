@@ -86,6 +86,36 @@ pub enum ModelError {
     Export(ExportError),
     /// A program could not be read (where, and what was wrong).
     Program(String),
+    /// A field of an operation is missing or holds the wrong kind of value
+    /// (the field, and what it should hold).
+    BadField(String, String),
+    /// An operation, or an object inside one, has a field it does not
+    /// take.
+    UnknownField {
+        /// What has the field: the operation's verb, or `profile rect`,
+        /// `sections[2]` and the like.
+        within: String,
+        /// The field given.
+        field: String,
+        /// The fields it takes.
+        accepted: Vec<String>,
+    },
+    /// An operation of a program or of a live session failed: where, and
+    /// why.
+    At {
+        /// Its index in the program: where it stands in a replayed
+        /// program, or the index it would be recorded at in a live
+        /// session.
+        index: usize,
+        /// The operation's verb (empty if it had none).
+        op: String,
+        /// Whether it is a reader, which is not recorded.
+        reader: bool,
+        /// The part or group it made or worked on, if any.
+        part: Option<String>,
+        /// Why it failed.
+        error: Box<ModelError>,
+    },
 }
 
 impl fmt::Display for ModelError {
@@ -150,6 +180,35 @@ impl fmt::Display for ModelError {
             ModelError::Bevel(e) => write!(f, "{e}"),
             ModelError::Export(e) => write!(f, "{e}"),
             ModelError::Program(w) => write!(f, "program: {w}"),
+            ModelError::BadField(field, want) => write!(f, "{field}: {want}"),
+            ModelError::UnknownField {
+                within,
+                field,
+                accepted,
+            } => {
+                write!(f, "{within} has no field {field:?}; ")?;
+                if accepted.is_empty() {
+                    f.write_str("it takes none")
+                } else {
+                    write!(f, "it takes: {}", accepted.join(", "))
+                }
+            }
+            ModelError::At {
+                index,
+                op,
+                reader,
+                part,
+                error,
+            } => {
+                let on = part.as_ref().map(|p| format!(" {p:?}")).unwrap_or_default();
+                match (*reader, op.is_empty()) {
+                    (_, true) => write!(f, "op {index}: {error}"),
+                    (false, false) => write!(f, "op {index} {op}{on}: {error}"),
+                    (true, false) => {
+                        write!(f, "{op}{on} (a reader, before op {index}): {error}")
+                    }
+                }
+            }
         }
     }
 }
