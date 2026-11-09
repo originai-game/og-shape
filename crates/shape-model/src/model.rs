@@ -502,7 +502,7 @@ impl Model {
     /// The face and edge names part `id` carries, sorted.
     pub fn names(&self, id: Id) -> Result<(Vec<String>, Vec<String>), ModelError> {
         let s = self.solid_of(id)?;
-        let mut faces: Vec<String> = s
+        let faces: Vec<String> = s
             .face_tags
             .iter()
             .flatten()
@@ -510,7 +510,6 @@ impl Model {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        faces.sort();
         let edges: Vec<String> = s
             .edge_tags
             .values()
