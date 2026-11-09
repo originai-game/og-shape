@@ -222,3 +222,116 @@ retargeting, retopology, high-to-low baking, atlas packing.
 - **Generated mesh → texturing:** provider output → repair → decimate →
   unwrap → GLB is the Hunyuan contract (§3.1); today it runs in Blender by
   hand or in `asset_process`.
+
+## 5. Phase 0: the boolean decision (2026-11-09)
+
+**Decision: keep og-geom's exact-predicate CSG (`shape-bool`).** Drop
+manifold-rust. Three follow-ups are part of phase 2 (below).
+
+### 5.1 How it was measured
+
+`bench/booleans` (outside the kernel workspace) runs union, intersect and
+subtract per case with og-geom's CSG, manifold-rust 0.19.2's exact engine
+and its robust engine (sequential, no `parallel` feature). Per case and
+engine there is one verdict:
+- **ok**: every output is closed and oriented (each edge used as often one
+  way as the other, after exact welding) and, where the inputs have a
+  volume, V(A∪B) + V(A∩B) = V(A) + V(B) and V(A−B) = V(A) − V(A∩B) to
+  1e-6 of the operands' size;
+- **refused**: an error value;
+- **wrong**: an output that is open or breaks an identity;
+- **panic**, **timeout** (120 s): none occurred.
+
+Suites:
+- **sand3d**: 17 cases rebuilt by hand from sand3d's edit verbs (hole,
+  counterbore, pocket, seat, join, split, shell, slot, washer), including
+  flush and touching coplanar faces, a shared edge, tangent tubes and a
+  rotated tool.
+- **Thingi10K**: 40 closed, manifold, single-component meshes of 1k–20k
+  faces with CC BY, CC BY-SA or public-domain licences
+  (`bench/booleans/thingi10k.txt`, downloaded by `fetch-thingi10k.sh`,
+  never committed). A = the mesh, B = the mesh rotated (30, 45, 60)° and
+  moved 0.3 (manifold-rust's own pairing).
+- **synthetic AI defects**: five shapes (sphere, rounded box, torus,
+  blob, mug) polygonised by marching tetrahedra (32³), then each defect
+  alone: clean, degenerate (vertices rounded onto grid corners), noise
+  (0.3 cell), floaters, holes (1 % of triangles), flipped (2 %), triangle
+  soup, self-intersecting (two overlapping copies). Cut by a tilted
+  cylinder.
+- **scaling**: two dense spheres, 256 to 65 536 triangles each.
+
+### 5.2 Results
+
+| suite | og-geom | manifold exact | manifold robust |
+|---|---|---|---|
+| sand3d (17) | 17 ok | 16 ok, 1 wrong | 16 ok, 1 wrong |
+| Thingi10K (40) | 40 ok | 40 ok | 40 ok |
+| synthetic (40) | 19 ok, 21 wrong | 27 ok, 10 refused, 3 wrong | 25 ok, 10 refused, 5 wrong |
+
+The one sand3d failure of manifold-rust is the tangent case (two tubes of
+one radius crossing): the identities are off by 2.5e-4 (exact) and 2.0
+(robust). og-geom gets it right, with a non-manifold union where the
+surfaces touch.
+
+Synthetic, by defect (five shapes each):
+
+| defect | og-geom | manifold exact | manifold robust |
+|---|---|---|---|
+| clean, floaters, soup | ok | ok | ok |
+| degenerate | 4 ok, 1 wrong | ok | ok |
+| noise | wrong | 2 ok, 3 wrong | wrong |
+| holes, flipped | **wrong** (open output, no error) | refused | refused |
+| self-intersecting | wrong (open) | closed | closed |
+
+Speed (mean of the three operations per case):
+
+| | og-geom | manifold exact | manifold robust |
+|---|---|---|---|
+| sand3d, mean | 4.6 ms | 3.3 ms | 36 ms |
+| Thingi10K, total / max | 9.1 s / 1.2 s | 8.4 s / 1.0 s | 43.6 s / 4.8 s |
+| spheres 4 096² | 82 ms | 52 ms | 313 ms |
+| spheres 16 384² | 554 ms | 182 ms | 1 184 ms |
+| spheres 65 536² | 9 018 ms | 1 040 ms | 4 464 ms |
+
+Hash identity: every output hash of both engines on the sand3d and
+synthetic suites is the same natively (x86-64) and as wasm32-wasip1 under
+wasmtime. og-geom's outputs are also in the gate on x86-64 Windows and
+aarch64 Linux.
+
+### 5.3 Why og-geom
+
+- **Licence.** manifold-rust depends unconditionally on clipper2-rust,
+  which is BSL-1.0. BSL-1.0 is not on this repository's licence list.
+  Using manifold-rust would need an exception or a fork without its
+  cross-section code.
+- **Determinism is already proven.** og-geom's output is in the gate on
+  four targets, and its own recorded hashes match the engine's. In
+  manifold-rust, the following would have to be audited and gated:
+  - std `sin` in `interp_tri.rs`;
+  - `std` and rustc-hash maps in about 20 files;
+  - a process-global default engine (hidden state).
+  
+  It is 34.5k lines with one maintainer.
+- **Robustness on the inputs the kernel builds.** og-geom passes all of
+  sand3d, including the tangent case manifold-rust gets wrong, and all of
+  Thingi10K.
+- **Speed is close up to about 16k triangles a side.** Beyond that,
+  og-geom's quadratic pair loop dominates. Its algorithm is not the cause,
+  so this is fixable (below).
+- **AI meshes are a repair problem, not a choice between these engines.**
+  Neither engine repairs noise, holes, flips or self-intersections.
+  manifold-rust refuses the cases it cannot do, which is the right
+  behaviour. og-geom returns open output instead.
+
+### 5.4 Follow-ups (phase 2)
+
+1. **Validate operands.** `csg` returns an error value for an operand that
+   is open or not oriented, after welding. It never returns open output
+   silently (`docs/design.md` §6).
+2. **A broad phase.** Replace the all-pairs loop with a sort-and-sweep or a
+   BVH over triangle boxes, with a deterministic visiting order. Target:
+   within 2× of manifold-exact at 65 536².
+3. **Self-intersecting operands.** These need a self-union, the same
+   arrangement as CSG with one operand. Until it exists, `repair`
+   (phase 5) runs before booleans on imported meshes. Phase 5 re-checks
+   this decision on real provider outputs (`docs/plan.md`).

@@ -62,6 +62,8 @@ A change that moves a hash says why in its commit and changelog.
 
 - cut, join, intersect, split, hole, pocket, seat, shell, dent, merge, with
   names carried through.
+- The CSG follow-ups of `docs/research.md` §5.4: operand validation, a
+  broad phase, self-union.
 - **Acceptance:** sand3d's edit examples rebuild with the same names on the
   same edges. Shell walls measure the requested thickness within
   tolerance.
@@ -128,4 +130,5 @@ drop Blender from the asset image.
 | Phase | State |
 |---|---|
 | Research | Done (2026-11-09): `docs/research.md` |
-| 0 | In progress: workspace, `shape-core`, determinism lint, gate |
+| 0 | Done (2026-11-09): gate on four targets; booleans: og-geom's CSG (`docs/research.md` §5) |
+| 1 | In progress: `shape-mesh` |

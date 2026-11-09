@@ -1,0 +1,21 @@
+[package]
+name = "bench-booleans"
+description = "Phase 0: og-geom's CSG against manifold-rust on three suites (docs/plan.md)."
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+# Its own workspace: manifold-rust depends on clipper2-rust (BSL-1.0), which
+# the kernel's licence gate does not allow. This crate only measures.
+[workspace]
+
+[dependencies]
+shape-core = { path = "../../crates/shape-core" }
+shape-gen = { path = "../../crates/shape-gen" }
+shape-bool = { path = "../../crates/shape-bool" }
+glam = { version = "0.34", default-features = false, features = ["std", "f64", "i64", "u32", "libm", "scalar-math"] }
+manifold-rust = { version = "=0.19.2", default-features = false }
+
+[profile.release]
+debug = false

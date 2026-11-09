@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# Measurement tools with their own dependencies (manifold-rust pulls in
+# BSL-1.0 code); never part of the kernel or its licence gate.
+exclude = ["bench"]
 
 [workspace.package]
 version = "0.0.0"
@@ -18,6 +21,7 @@ sha2 = "0.11"
 spade = "2.15.1"
 shape-gen = { path = "crates/shape-gen" }
 shape-bool = { path = "crates/shape-bool" }
+shape-mesh = { path = "crates/shape-mesh" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

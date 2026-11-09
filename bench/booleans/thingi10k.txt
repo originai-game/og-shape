@@ -1,0 +1,44 @@
+# Thingi10K file ids used by the benchmark: id, faces, licence.
+# Closed, edge- and vertex-manifold, oriented, one component, no
+# self-intersections, 1000-20000 faces, CC BY / CC BY-SA / public domain.
+# The meshes are downloaded by fetch-thingi10k.sh and never committed.
+34785 11652 Creative Commons - Attribution - Share Alike
+39353 1306 Creative Commons - Attribution - Share Alike
+42545 3450 Public Domain
+45514 13004 Creative Commons - Attribution
+49546 7164 Creative Commons - Attribution - Share Alike
+56955 5656 Creative Commons - Attribution - Share Alike
+62593 4874 Creative Commons - Attribution
+69404 8532 Creative Commons - Attribution
+71990 1608 Creative Commons - Attribution
+75269 2084 Creative Commons - Attribution - Share Alike
+77919 1068 Creative Commons - Attribution - Share Alike
+80603 7994 Creative Commons - Attribution
+87429 1648 Creative Commons - Attribution - Share Alike
+91611 5348 Creative Commons - Attribution - Share Alike
+96074 1270 Creative Commons - Attribution - Share Alike
+98535 3600 Creative Commons - Attribution - Share Alike
+103141 16778 Creative Commons - Attribution - Share Alike
+106782 1844 Creative Commons - Attribution - Share Alike
+110205 2408 Creative Commons - Attribution - Share Alike
+118882 4928 Creative Commons - Attribution - Share Alike
+128482 1888 Creative Commons - Attribution - Share Alike
+130046 9372 Creative Commons - Attribution - Share Alike
+135215 3484 Creative Commons - Attribution - Share Alike
+178226 2178 Creative Commons - Attribution
+225950 1044 Creative Commons - Attribution
+240292 1996 Creative Commons - Attribution
+269127 2600 Creative Commons - Attribution - Share Alike
+343533 1170 Creative Commons - Attribution - Share Alike
+387872 2486 Creative Commons - Attribution
+462535 2672 Creative Commons - Attribution - Share Alike
+472050 2452 Creative Commons - Attribution
+472126 8582 Creative Commons - Attribution
+472199 1130 Creative Commons - Attribution
+500114 6070 Creative Commons - Attribution
+591227 6240 Creative Commons - Attribution - Share Alike
+636811 3084 Creative Commons - Attribution - Share Alike
+702390 3424 Creative Commons - Attribution - Share Alike
+919984 1918 Creative Commons - Attribution - Share Alike
+1207650 1728 Creative Commons - Attribution - Share Alike
+1341744 14384 Creative Commons - Attribution
