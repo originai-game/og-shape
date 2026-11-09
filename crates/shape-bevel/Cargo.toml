@@ -1,0 +1,21 @@
+[package]
+name = "shape-bevel"
+description = "og-shape fillet, chamfer and soften on named edges, clean-room from Blender's published Bevel design."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+shape-core.workspace = true
+shape-2d.workspace = true
+shape-mesh.workspace = true
+
+[dev-dependencies]
+shape-gen.workspace = true
+shape-edit.workspace = true
+shape-2d.workspace = true
+
+[lints]
+workspace = true

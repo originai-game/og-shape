@@ -379,3 +379,113 @@ aarch64 Linux.
    longer turned. A countersink's cone still runs on below the bore, so it
    crosses the bore wall rather than touching it along a ring: a ring of
    coincident edges is a different case and has not been tested unturned.
+
+## 7. Phase 3: fillet and chamfer (`shape-bevel`, 2026-11-09)
+
+### 7.1 Sources (clean-room)
+
+Only Blender's published design was read, never its source or the Mesh
+Bevel node PR (#158151):
+- Trickey's notes, http://archive.blender.org/wiki/2024/wiki/User:Howardt/Bevel.html:
+  offset kinds, boundary points where offset lines meet, the superellipse
+  profile (parameter about a quarter of the exponent) at even chords, the
+  ADJ vertex mesh by Catmull-Clark after Levin with the boundary
+  resampled, generalized barycentric UVs.
+- The Bevel V2 design issue, https://projects.blender.org/blender/blender/issues/98674
+  (read through `projects.blender.org/api/v1/…/issues/98674`; the web page
+  answers 403): four offsets per edge, the profile defined in the unit
+  square and mapped into the skewed square of each corner, terminal
+  edges ending on their end face, two bevelled edges joining their
+  profiles, the ADJ pattern from one centre vertex with "fullness",
+  Cutoff, miters.
+- Levin, *Filling N-sided holes by combined subdivision schemes* (2000),
+  for the idea of subdividing with the boundary held on given curves.
+- sand3d (Apache-2.0, `84c980a`) for the cases only: `docs/examples/bracket.py`,
+  `tests/cases.py` (`edge_treatments`, `fillet_on_a_chamfer`, the shell
+  case's `fillet(box, 4, edges="bottom side")`).
+
+### 7.2 What was built and the decisions taken
+
+- **Model.** Every triangle corner at a bevelled vertex is replaced by
+  the boundary point of its gap (the run of faces between two bevelled
+  edges). Faces are not re-meshed: a replaced triangle is re-triangulated
+  only where a corner became a profile (the end face of a terminal edge),
+  by ear clipping. This keeps every unbevelled vertex and edge, so the
+  cut-up faces stay welded to their unbevelled neighbours.
+- **Offsets.** `fillet` uses the offset along each face (Blender's default
+  and what sand3d passes), so `radius` is the true radius only where the
+  faces meet square. `chamfer` takes `distance` on the cap face (the face
+  carrying the edge's name) and `distance2` or `angle` on the other;
+  `angle` gives `d2 = d·sin θ / sin(α + θ)` per edge end (α between the
+  faces), which is where the four offsets per edge differ.
+- **Boundary points.** On a planar face: where the two offset lines meet
+  (an unbevelled edge is an offset line at 0, so the point slides along
+  it). On a curved face (a cylinder wall, a bore): slide along the inner
+  edge most across the rim, by `d / sin`. Collinear rims on a plane step
+  straight in. A gap with one unbevelled edge between two faces takes the
+  mean of the two faces' points on it (Blender's compromise, without
+  loop slide).
+- **Profiles.** Superellipse exponent `4 × profile`; equal chords in the
+  unit square by a 2048-step table, made exactly symmetric. Each chain is
+  `O + (A − O)x + (B − O)y` with `O = A + B − C`; `C` is the vertex for one
+  or two bevelled edges (the two profiles then coincide, which is the
+  mitre), `A + B − O` with `O = v + ½Σ(B_j − v)` at three, and the
+  perpendicular cut at four or more.
+- **Corners by valence.** One edge: the profile lies on the end face.
+  Two: shared profile. Three: the octant patch, the affine image of the
+  superellipsoid octant on `B_1, B_2, B_3` around `O`, gridded like a cube
+  corner's three faces projected onto it (on a box it is a sphere
+  octant). Four or more: the ADJ pattern by Catmull-Clark from one centre
+  vertex at `2·mean(M_j) − mean(B_j)` (Blender's "fullness" stand-in),
+  boundary re-sampled from the profiles at every level, to the next power
+  of two, then bilinearly resampled. One segment: a flat fan. Odd counts
+  above one at a corner: the cutoff fallback, a fan from the hole's
+  centroid (not Blender's Cutoff, which cuts each profile flat).
+- **Segments.** `shape_2d::curve::segments(max offset, max turn)`, rounded
+  up to even for fillets so every corner is quads; chamfers take one.
+- **Clamp.** Every rebuilt triangle must turn counter-clockwise by
+  `orient2d` in the projection of its old normal, and the result must be
+  closed with no degenerate triangle. Anything else is
+  `BevelError::TooLarge(at)`: two opposite fillets that meet exactly are
+  refused too. No loop slide and no global clamp.
+- **Names.** New faces carry only `fillet` or `chamfer`. Strips joined
+  through a smooth two-edge vertex share one surface, and fillet patches
+  join their strips. An edge between a new and an old face turning more
+  than 10° is named by the kind plus the old face's cap names; between
+  new faces of different surfaces, more than 10° (fillet) or 40°
+  (chamfer), by the kind. So sand3d's `fillet(…, edges="chamfer")` after
+  a chamfer finds both chamfer rims.
+- **Not done:** UVs (a `Solid` carries none yet; mean-value interpolation
+  waits for them), arc and patch miters, pipe joints, gaps with two or
+  more unbevelled edges between bevelled ones, and a bevelled edge that
+  ends among smooth faces. These are `BevelError::Unsupported`.
+
+### 7.3 Measurements
+
+All closed and oriented, no degenerate triangles. `quad_pairs` pairs
+triangles of one surface across a shared edge into convex quads, the most
+rectangular first; "quads" below is paired / new triangles.
+
+| case | volume | analytic | quads | worst fold |
+|---|---|---|---|---|
+| box 40×30×20, `fillet(3, top)`, 32 seg | 23 739.583 | 23 739.956 (gap = 32-gon deficit 0.37) | 256/256 | 0° |
+| same, `chamfer(2, d2 = 4, top)` | 23 461.333 | 23 461.333 exact | 8/8 | 0° |
+| same, `soften(3)`, 32 seg | 23 339.920 | 23 340.849 (deficit) | 13 056/13 056 | 1.5° |
+| same, `fillet(4, bottom side)` (enclosure corners), 6 seg | 23 259.14 | | 312/312 | 6.1° |
+| one box edge, `fillet(3)`, 32 seg | 23 922.630 | 23 922.743 (deficit) | 64/64 | 0° |
+| L-prism, `fillet(2, side)`, concave edge included | within the deficit of the analytic | | all | |
+| cylinder r 15, `fillet(2, top)` | 13 994.49 | | 468/468 | 0° |
+| washer plate 60×40×8, hole 10, `chamfer(1, hole)` | loses 33.51 | Pappus on the 24-gon rims 33.51 | 200/200 | 0° |
+| bracket (rect 80×40 r 4, two 6.6 holes), `fillet(1, top)` | loses 60.59 | (1 − π/4)r²·length 58.9, ±3 % | 1 984/1 984 | 0° |
+| square pyramid apex (4 edges), 4 and 6 seg | | | apex patch all quads | ~20° |
+
+On the pyramid, the strips of the side edges twist from the flat end
+profile on the base to the apex and one quad per strip is not convex, so
+8 strip triangles of 120 stay unpaired; the apex patch pairs fully.
+sand3d's `fillet_on_a_chamfer` (`chamfer(9, d2 = 3)` on a disc 6 thick,
+then `fillet(4, chamfer)`) is refused: 4 mm down a wall 3 mm tall does not
+fit. Blender clamps it silently. `fillet(2)` there succeeds.
+
+Every output hash is the same natively (x86-64) and as wasm32-wasip1
+under wasmtime (golden cases `bevel.box`, `bevel.curved`, `bevel.sand3d`,
+`bevel.adj`).
