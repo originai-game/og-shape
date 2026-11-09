@@ -796,6 +796,9 @@ fn bevel_once(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
         miters: spec.miters,
     };
     let verts: BTreeSet<u32> = b.edges.keys().flat_map(|&(x, y)| [x, y]).collect();
+    if spec.loop_slide {
+        b.slide(&verts)?;
+    }
     for &v in &verts {
         b.vertex(v)?;
     }

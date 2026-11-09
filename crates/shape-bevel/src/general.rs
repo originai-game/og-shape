@@ -32,6 +32,8 @@
 //!   edge's profile at the vertex swept along it) from the profile's
 //!   centre, so the joint does not bulge (the design's "snapped to the
 //!   pipe profile").
+//! - **Loop slide** ([`Build::slide`]), an optional pass over the
+//!   offsets before any vertex is built.
 //! - **Miters** on a planar gap with no unbevelled edge, at a vertex of
 //!   two or more bevelled edges. The gap is **outer** when its angle at
 //!   the vertex, summed over its faces, is more than 180°, **inner** when
@@ -44,8 +46,10 @@
 //!   and the hole gains two sides. Unbevelled edges cannot be in such a
 //!   gap; the face's diagonals take the arc points nearest them.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use shape_core::{DVec3, trig};
-use shape_mesh::edge_key;
+use shape_mesh::{EdgeKey, edge_key};
 
 use super::{Build, Fan, PLANAR_DOT, fan, tri_normal};
 use crate::patch::{self, Corner};
@@ -160,6 +164,75 @@ impl Build<'_> {
         } else {
             Miter::Sharp
         }
+    }
+
+    /// Loop slide: where a bevel's end slides along an unbevelled edge
+    /// between two bevelled ones, the two faces' offset lines meet that
+    /// edge at different points, and the classic layout takes their mean.
+    /// This pass instead moves each bevel side's width, at both its ends,
+    /// toward the width that puts its line through that mean, so the
+    /// strips keep an even width along their edges; it repeats until the
+    /// widths settle (at most 32 times). Whatever mismatch is left (a loop
+    /// of such corners whose angles do not close) is still averaged.
+    pub(super) fn slide(&mut self, verts: &BTreeSet<u32>) -> Result<(), BevelError> {
+        let scale = self
+            .edges
+            .values()
+            .flat_map(|e| e.off)
+            .fold(0.0f64, f64::max);
+        for _ in 0..32 {
+            // (edge, side a?) → targets.
+            let mut targets: BTreeMap<(EdgeKey, bool), Vec<f64>> = BTreeMap::new();
+            for &v in verts {
+                let Layout { f, real, bidx } = self.layout(v)?;
+                let (k, m) = (f.spokes.len(), bidx.len());
+                if m < 2 {
+                    continue;
+                }
+                let p = self.s.positions[v as usize];
+                for g in 0..m {
+                    let (lo, hi) = (bidx[g], if g + 1 < m { bidx[g + 1] } else { k });
+                    let inner: Vec<usize> = (lo + 1..hi).filter(|&i| real[i]).collect();
+                    let [u] = inner[..] else {
+                        continue;
+                    };
+                    let (el, er) = (edge_key(v, f.spokes[lo]), edge_key(v, f.spokes[hi % k]));
+                    let dl = self.edges[&el].after(el, v);
+                    let dr = self.edges[&er].before(er, v);
+                    let tl = (self.wedge_point(v, &f, lo, u, dl, 0.0)? - p).length();
+                    let tr = (self.wedge_point(v, &f, u, hi, 0.0, dr)? - p).length();
+                    if !(tl > 0.0 && tr > 0.0) {
+                        continue;
+                    }
+                    let t = (tl + tr) / 2.0;
+                    // After `el` at v is side a at its low end; before
+                    // `er` at v is side b at its low end.
+                    targets
+                        .entry((el, v == el.0))
+                        .or_default()
+                        .push(dl * t / tl);
+                    targets
+                        .entry((er, v != er.0))
+                        .or_default()
+                        .push(dr * t / tr);
+                }
+            }
+            let mut moved = 0.0f64;
+            for ((key, side_a), ws) in targets {
+                let w = ws.iter().sum::<f64>() / ws.len() as f64;
+                let info = self.edges.get_mut(&key).ok_or(BevelError::NotClosed)?;
+                let (i, j) = if side_a { (0, 2) } else { (1, 3) };
+                moved = moved
+                    .max((info.off[i] - w).abs())
+                    .max((info.off[j] - w).abs());
+                info.off[i] = w;
+                info.off[j] = w;
+            }
+            if moved <= 1e-12 * scale {
+                break;
+            }
+        }
+        Ok(())
     }
 
     /// A pipe joint at `v`: two bevelled edges in line, among three or

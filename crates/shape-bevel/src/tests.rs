@@ -857,3 +857,68 @@ fn a_pipe_joint_stays_on_the_pipe() {
     let (v0, v1) = (plain.measure().volume, s.measure().volume);
     assert!((v0 - v1).abs() < 1e-6 * v0, "{v0} {v1}");
 }
+
+#[test]
+fn loop_slide_keeps_each_bevel_s_width_even_along_its_edge() {
+    // A tapered, uneven quadrilateral: at each top corner the two walls
+    // meet the slanted edge at different angles, so their offset lines
+    // meet it at different points.
+    let quad = [(0.0, 0.0), (30.0, 0.0), (24.0, 20.0), (-6.0, 14.0)];
+    let p = extrude(
+        &shape_2d::Profile::from_contour(shape_2d::Contour::corners(
+            quad.iter().map(|&(x, y)| DVec2::new(x, y)).collect(),
+        )),
+        &Extrude {
+            height: 10.0,
+            taper: 0.3,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let d = Chamfer {
+        distance: 2.0,
+        edges: names(&["top"]),
+        ..Default::default()
+    };
+    // The width of the front wall's bevel at each end: the distance from
+    // the wall's top edge of the points the chamfer leaves on the wall.
+    let wall = (0..p.triangles.len())
+        .find(|&t| bevel::tri_normal(&p, t).y < -0.5)
+        .unwrap();
+    let n = bevel::tri_normal(&p, wall);
+    let on = |q: shape_core::DVec3, a: shape_core::DVec3| n.dot(q - a).abs() < 1e-9;
+    let a = p.positions[p.triangles[wall][0] as usize];
+    let top: Vec<_> = p
+        .positions
+        .iter()
+        .filter(|q| q.z == 10.0 && on(**q, a))
+        .copied()
+        .collect();
+    let (a, line) = (top[0], (top[1] - top[0]).normalize());
+    let front = |s: &Solid| -> Vec<f64> {
+        let mut out: Vec<f64> = s
+            .positions
+            .iter()
+            .filter(|q| q.z < 10.0 && q.z > 5.0 && on(**q, a))
+            .map(|&q| ((q - a) - line * (q - a).dot(line)).length())
+            .collect();
+        out.sort_by(f64::total_cmp);
+        out
+    };
+    let plain = chamfer(&p, &d).unwrap();
+    let w = front(&plain);
+    assert_eq!(w.len(), 2, "{w:?}");
+    assert!((w[0] - w[1]).abs() > 1e-3, "{w:?}");
+    let slid = chamfer(
+        &p,
+        &Chamfer {
+            loop_slide: true,
+            ..d.clone()
+        },
+    )
+    .unwrap();
+    check(&slid, "chamfer");
+    let w = front(&slid);
+    assert_eq!(w.len(), 2, "{w:?}");
+    assert!((w[0] - w[1]).abs() < 1e-6, "{w:?}");
+}
