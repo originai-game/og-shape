@@ -283,6 +283,49 @@ Synthetic, by defect (five shapes each):
 | holes, flipped | **wrong** (open output, no error) | refused | refused |
 | self-intersecting | wrong (open) | closed | closed |
 
+After §5.4 item 3 (stream J), two engines over the kernel's f64 entry
+`csg_points` were added to the bench:
+- **og-shape-checked**: it refuses an operand with a shell that crosses
+  itself (`check_operands`), joins separate shells by self-union, and
+  refuses an open result;
+- **og-shape-untangled**: it self-unions each operand first.
+
+An engine that changed its operands is held to the identities on the
+volumes of the operands it used. og-geom's own verdicts are unchanged.
+
+| synthetic (40) | ok | refused | wrong |
+|---|---|---|---|
+| og-geom (before) | 19 | 0 | 21 |
+| og-shape-checked | 24 | 16 | 0 |
+| og-shape-untangled | 29 | 11 | 0 |
+
+| defect | og-geom | og-shape-checked | og-shape-untangled |
+|---|---|---|---|
+| clean, floaters, soup | ok | ok | ok |
+| degenerate | 4 ok, 1 wrong | 4 ok, 1 refused | 4 ok, 1 refused |
+| noise | wrong | refused (3 700–7 400 pairs) | **ok** |
+| holes, flipped | wrong | refused (open) | refused (open) |
+| self-intersecting | wrong | **ok** | **ok** |
+
+Cost of the check (og-shape-checked on the scaling spheres, both
+operands checked for each of the three operations; `operands` includes
+the bench's exact weld; two runs, x86-64, release):
+
+| spheres | og-geom, 3 ops | og-shape-checked, 3 ops | of which operands | check / rest |
+|---|---|---|---|---|
+| 4 096² | 42 ms | 90 ms | 25 ms | 38 % |
+| 16 384² | 177–220 ms | 361–405 ms | 104–110 ms | 35–40 % |
+| 65 536² | 749–833 ms | 1 322–1 497 ms | 404–419 ms | 37–44 % |
+
+A timing of the check on its own, a 16 128-triangle sphere, gives about
+9 ms of broad phase plus 9 ms of pair tests per operand, against 55–65 ms
+for the union. That is about 55 % for both operands, over the 25 % the
+task allowed, so the check stays opt-in (`check_operands`). It also has
+to stay opt-in for the ulp finding above.
+
+The refused degenerate case is blob, whose rounded vertices make it cross
+itself (10 pairs) and leave it non-manifold after welding.
+
 Speed (mean of the three operations per case):
 
 | | og-geom | manifold exact | manifold robust |
@@ -341,14 +384,99 @@ aarch64 Linux.
    arrangement as CSG with one operand. Until it exists, `repair`
    (phase 5) runs before booleans on imported meshes. Phase 5 re-checks
    this decision on real provider outputs (`docs/plan.md`).
-   **Partly done:** `fuse` joins the separate shells of a solid (`merge`
-   output, interpenetrating parts) before any boolean.
-   - A single closed surface that folds through itself passes the operand
-     check and used to give open output with no error (found by stream D).
-   - `boolean` now checks its result and returns `BoolError::OpenResult`
-     instead.
-   - Still to do: an exact self-intersection check on the operands, to
-     refuse up front, and a self-union to untangle such a surface.
+   **Done** (stream J), except that the up-front refusal is not on by
+   default in `boolean` (below).
+   - **One exact check** (`shape_bool::selfcheck`, moved from
+     `shape-tools/src/intersect.rs`, which now calls it). Two triangles
+     cross improperly when they share no vertex and meet, share one vertex
+     and meet anywhere else, share an edge and fold flat onto each other,
+     or share all three corners. Every side is `orient3d`/`orient2d`.
+     `crossing_pairs(&Solid)` counts such pairs within one shell, after
+     exact welding (separate shells crossing each other are `fuse`'s
+     job). The broad phase is a uniform grid of cells a mean triangle
+     across, each pair found in one cell only.
+   - **Refusal.** `BoolError::SelfIntersecting { operand, pairs }`.
+     `check_operands(target, tool)` returns it before any work.
+     `boolean` returns it instead of `OpenResult` when the result comes
+     out open and an operand crosses itself. The folded sphere of §9.6 is
+     refused either way.
+   - **Finding: the kernel's own outputs cross themselves by an ulp.**
+     With the check on by default, `edit.holes.pocket` moved: after the
+     countersink hole, the plate has 9 crossing pairs, all along the
+     countersink's rim, where crossing points rounded to z =
+     7.999999999999998, 7.999999999999999 and 8.0. These are real
+     crossings by the exact predicates. The pocket's boolean on that plate
+     comes out closed. Refusing it would break the edit tools' own chains,
+     so the up-front check is opt-in (`check_operands`) and every golden
+     hash is unchanged. Whether to turn it on for imported meshes only
+     (the CLI, MCP) is left to the integrator.
+   - **Another implementation, reviewed and not merged.** Branch
+     `claude/stoic-brown-bhuout` (e3b7189, on an older main) refused such
+     operands inside `csg_points`, always on. Its check lived in
+     `shape_mesh::self_intersections`, and pairs with vertices within
+     1e-9 of the operand's size counted as sharing a vertex, which kept
+     `edit.holes.pocket` unchanged. Stream J keeps one implementation,
+     this one, for four reasons:
+     - it also catches improper crossings between triangles that share a
+       vertex or an edge;
+     - it needs no distance threshold;
+     - `self_union` uses it too;
+     - it does not add the check's cost to every boolean.
+     
+     Taken from that branch: its regression case, a sphere's pole pulled
+     through, refused as either operand
+     (`a_pole_pulled_through_is_refused_as_either_operand`).
+     
+     Measured on this branch: with that 1e-9 rule added to
+     `crossing_pairs` and `check_operands` called first in `boolean`, no
+     pre-existing golden hash moves. Refusing by default is therefore
+     possible. It would cost 35–55 % of each boolean and need an opt-out
+     field on `Boolean`, whose struct literals sit in other crates; the
+     integrator decides.
+   - **Self-union** (`self_union(&Solid)`, `csg::self_union_points`): the
+     arrangement CSG builds for two operands, built for one. Pairs whose
+     boxes overlap are intersected: those sharing no vertex, and those
+     sharing a vertex or an edge that cross improperly. Pieces are cut,
+     grouped into regions, and each region is classified by the mesh's own
+     winding number. What bounds the space of winding ≥ 1 is kept, facing
+     out of it.
+     - **Triple points.** Two operands never need them, but one surface
+       can be crossed by two triangles that also cross each other. Their
+       two seams inside a third triangle then cross at a point the
+       pairwise step does not make. spade dropped one constraint and
+       regions leaked: the bench's noise defect untangled open. Each such
+       point is now made once, named by its three triangles and placed by
+       their three planes (Cramer's rule, fixed order), and all three
+       triangles split their seams there.
+     - **Classification.** A region not lying on another face is decided
+       by the winding number of every *other* triangle at its largest
+       piece's centre, a half-integer, so a sliver needs no step off its
+       surface. Faces lying on one another use the two-probe test, and
+       the piece of the lowest-numbered triangle stands for them (two
+       copies of a plate give one plate).
+     - Operands may use a directed edge more than once if its reverse is
+       used as often (coincident copies).
+     - Names are carried as `fuse` carries them: faces keep their names
+       and surfaces, and seams are named `cut`.
+   - **`fuse`** first untangles each shell that crosses itself; if that
+     fails, it joins the shell as before. **`repair`'s fuse step**
+     untangles a single closed shell that crosses itself. One condition in
+     `repair.rs`; open shells are left alone, as before.
+   - **Cost of the check:** 35–55 % of a boolean at 16k triangles a side
+     (table in §5.2). It is opt-in.
+   - **Findings left open:**
+     - The untangled folded sphere is closed, manifold and crossing-free,
+       but booleans on it with the centred 10 × 10 × 60 bar come out open
+       (140 edges, refused as `OpenResult`). They come out closed with the
+       bar moved by 0.3 mm. The open edges lie where the bar's faces meet
+       the fold's cut pieces, slivers down to 7·10⁻¹⁶ mm². This is the
+       two-operand CSG on sliver-laden input (follow-up 4's kind), not the
+       self-union.
+     - Untangling is slow on heavy noise: about 1.7 s per 31k-triangle
+       operand with 6 000 crossing pairs. Each region's winding number is
+       a sum over every triangle, and the noise makes thousands of
+       regions. A hierarchical winding number would fix this.
+
 4. **Exact edge-on-edge crossings (found in phase 2).** The minimal case:
    `cuboid(40, 40, 10)` minus a centred `cylinder(r = 2, 24 segments)`
    through it gave an open result with 100 boundary edges; a blind one
@@ -1042,6 +1170,10 @@ What repair can do:
   `orient3d`; nothing is hidden.
 
 What it cannot do:
+- *Since stream J (§5.4, item 3): `fuse` and repair's fuse step
+  untangle such a surface by `self_union`, keeping the space it winds
+  round at least once. Booleans refuse it as `SelfIntersecting`. The
+  measurements below are from before.*
 - **A single closed, oriented surface that folds through itself** has no
   inside to keep. It is one piece, so `fuse` returns it unchanged, and no
   step here untangles it: that needs a self-union over one operand (the

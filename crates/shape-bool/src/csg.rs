@@ -33,6 +33,8 @@ use shape_gen::{Mesh, Placement, normalize, place, trig};
 use spade::{ConstrainedDelaunayTriangulation, Point2, Triangulation};
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::selfcheck;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CsgOp {
     Union,
@@ -72,6 +74,9 @@ enum Origin {
     EdgeTri(EdgeKey, u8, u32),
     /// Two edges through each other (A's first).
     EdgeEdge(EdgeKey, EdgeKey),
+    /// Three triangles of one mesh through one point (a self-union), in
+    /// increasing order.
+    Triple(u32, u32, u32),
 }
 
 /// Where a point lies in a triangle.
@@ -86,6 +91,9 @@ enum Loc {
 struct Cut {
     points: Vec<u32>,
     segments: Vec<[u32; 2]>,
+    /// The triangle (of the other mesh, or of this one in a self-union)
+    /// whose crossing made each segment.
+    src: Vec<u32>,
 }
 
 struct Csg {
@@ -98,6 +106,9 @@ struct Csg {
     solids: [Solid; 2],
     cuts: [BTreeMap<u32, Cut>; 2],
     crossings: BTreeSet<(u32, u32)>,
+    /// Pairs of triangles cut in one plane (`coplanar`), each as
+    /// `((mesh, tri), (mesh, tri))`: where one surface lies on another.
+    coplanar_pairs: Vec<((u8, u32), (u8, u32))>,
 }
 
 fn c3(p: DVec3) -> Coord3D<f64> {
@@ -218,9 +229,8 @@ impl Csg {
     }
 
     /// The point where edge `(p, q)` of mesh `m` crosses triangle `tri` of
-    /// the other mesh, whose plane it crosses strictly. None when it misses.
-    fn edge_cross(&mut self, m: u8, p: u32, q: u32, tri: u32) -> Option<u32> {
-        let other = 1 - m;
+    /// mesh `other`, whose plane it crosses strictly. None when it misses.
+    fn edge_cross(&mut self, m: u8, p: u32, q: u32, other: u8, tri: u32) -> Option<u32> {
         let t = self.solids[other as usize].tris[tri as usize];
         let e = edge_key(m, p, q);
         let (p, q) = (e.1, e.2);
@@ -265,9 +275,9 @@ impl Csg {
         }
     }
 
-    /// The point where two edges (one of each mesh) cross.
+    /// The point where two edges cross (between meshes: A's first).
     fn edge_edge(&mut self, e: EdgeKey, f: EdgeKey) -> u32 {
-        let (e, f) = if e.0 == 0 { (e, f) } else { (f, e) };
+        let (e, f) = if e <= f { (e, f) } else { (f, e) };
         self.add_point(
             Origin::EdgeEdge(e, f),
             |c| {
@@ -300,19 +310,22 @@ impl Csg {
         }
     }
 
-    fn add_segment(&mut self, m: u8, tri: u32, a: u32, b: u32) {
+    fn add_segment(&mut self, m: u8, tri: u32, a: u32, b: u32, src: u32) {
         if a == b {
             return;
         }
         self.add_points(m, tri, &[a, b]);
-        self.cut(m, tri).segments.push([a, b]);
+        let c = self.cut(m, tri);
+        c.segments.push([a, b]);
+        c.src.push(src);
         self.crossings.insert((a.min(b), a.max(b)));
     }
 
-    /// Intersects triangle `ia` of A with triangle `ib` of B.
-    fn pair(&mut self, ia: u32, ib: u32) {
-        let ta = self.solids[0].tris[ia as usize];
-        let tb = self.solids[1].tris[ib as usize];
+    /// Intersects triangle `ia` of mesh `ma` with triangle `ib` of mesh
+    /// `mb` (A with B, or two of one mesh's for a self-union).
+    fn pair(&mut self, (ma, ia): (u8, u32), (mb, ib): (u8, u32)) {
+        let ta = self.solids[ma as usize].tris[ia as usize];
+        let tb = self.solids[mb as usize].tris[ib as usize];
         let side = |c: &Self, plane: [u32; 3], v: u32| {
             sgn(orient3d(
                 c3(c.p(plane[0])),
@@ -328,12 +341,12 @@ impl Csg {
             return;
         }
         if oa == [0; 3] {
-            self.coplanar(ia, ib);
+            self.coplanar((ma, ia), (mb, ib));
             return;
         }
         let mut found: Vec<u32> = Vec::new();
         // Vertices of one triangle in the other's plane and inside it.
-        for (m, t, o, ot) in [(0u8, ta, oa, tb), (1u8, tb, ob, ta)] {
+        for (t, o, ot, om) in [(ta, oa, tb, mb), (tb, ob, ta, ma)] {
             for k in 0..3 {
                 if o[k] != 0 {
                     continue;
@@ -342,7 +355,7 @@ impl Csg {
                 match self.locate(ot, self.p(v)) {
                     None => {}
                     Some(Loc::Edge(j)) => {
-                        self.note_on(v, edge_key(1 - m, ot[j], ot[(j + 1) % 3]));
+                        self.note_on(v, edge_key(om, ot[j], ot[(j + 1) % 3]));
                         found.push(v);
                     }
                     // At the other's vertex (two meshes' vertices at one
@@ -352,11 +365,11 @@ impl Csg {
             }
         }
         // Edges of one triangle through the other.
-        for (m, t, o, other) in [(0u8, ta, oa, ib), (1u8, tb, ob, ia)] {
+        for (m, t, o, om, other) in [(ma, ta, oa, mb, ib), (mb, tb, ob, ma, ia)] {
             for k in 0..3 {
                 let (i, j) = (k, (k + 1) % 3);
                 if o[i] * o[j] < 0
-                    && let Some(id) = self.edge_cross(m, t[i], t[j], other)
+                    && let Some(id) = self.edge_cross(m, t[i], t[j], om, other)
                 {
                     found.push(id);
                 }
@@ -375,22 +388,23 @@ impl Csg {
                 .total_cmp(&self.p(b).dot(dir))
                 .then(a.cmp(&b))
         });
-        self.add_points(0, ia, &uniq);
-        self.add_points(1, ib, &uniq);
+        self.add_points(ma, ia, &uniq);
+        self.add_points(mb, ib, &uniq);
         for w in uniq.windows(2) {
-            self.add_segment(0, ia, w[0], w[1]);
-            self.add_segment(1, ib, w[0], w[1]);
+            self.add_segment(ma, ia, w[0], w[1], ib);
+            self.add_segment(mb, ib, w[0], w[1], ia);
         }
     }
 
     /// Two triangles in one plane: each one's edges inside the other are
     /// cut into it, and the points where their edges cross.
-    fn coplanar(&mut self, ia: u32, ib: u32) {
-        let ta = self.solids[0].tris[ia as usize];
-        let tb = self.solids[1].tris[ib as usize];
+    fn coplanar(&mut self, (ma, ia): (u8, u32), (mb, ib): (u8, u32)) {
+        self.coplanar_pairs.push(((ma, ia), (mb, ib)));
+        let ta = self.solids[ma as usize].tris[ia as usize];
+        let tb = self.solids[mb as usize].tris[ib as usize];
         let axis = drop_axis(self.tri_normal(ta));
         let pr = |c: &Self, i: u32| project(c.p(i), axis);
-        // Edge crossings.
+        // Edge crossings, for each triangle (slot 0: `ta`, 1: `tb`).
         let mut on_edge: [Vec<(u32, EdgeKey)>; 2] = [Vec::new(), Vec::new()];
         for i in 0..3 {
             let (a0, a1) = (ta[i], ta[(i + 1) % 3]);
@@ -401,39 +415,41 @@ impl Csg {
                 let s3 = o2(pr(self, b0), pr(self, b1), pr(self, a0));
                 let s4 = o2(pr(self, b0), pr(self, b1), pr(self, a1));
                 if s1 * s2 < 0 && s3 * s4 < 0 {
-                    let (e, f) = (edge_key(0, a0, a1), edge_key(1, b0, b1));
+                    let (e, f) = (edge_key(ma, a0, a1), edge_key(mb, b0, b1));
                     let id = self.edge_edge(e, f);
-                    self.add_points(0, ia, &[id]);
-                    self.add_points(1, ib, &[id]);
+                    self.add_points(ma, ia, &[id]);
+                    self.add_points(mb, ib, &[id]);
                     on_edge[0].push((id, e));
                     on_edge[1].push((id, f));
                 }
             }
         }
         // Vertices of each inside the other.
-        for (m, t, ot, oi) in [(0u8, ta, tb, ib), (1u8, tb, ta, ia)] {
+        for (slot, m, t, ot, om, oi) in [(0, ma, ta, tb, mb, ib), (1, mb, tb, ta, ma, ia)] {
             for &v in &t {
                 if let Some(loc) = self.locate(ot, self.p(v)) {
                     if let Loc::Edge(j) = loc {
-                        self.note_on(v, edge_key(1 - m, ot[j], ot[(j + 1) % 3]));
+                        self.note_on(v, edge_key(om, ot[j], ot[(j + 1) % 3]));
                     }
-                    self.add_points(1 - m, oi, &[v]);
+                    self.add_points(om, oi, &[v]);
                     // The vertex lies on its own triangle's two edges.
                     for k in 0..3 {
                         if t[k] == v {
-                            on_edge[m as usize].push((v, edge_key(m, t[k], t[(k + 1) % 3])));
-                            on_edge[m as usize].push((v, edge_key(m, t[(k + 2) % 3], t[k])));
+                            on_edge[slot].push((v, edge_key(m, t[k], t[(k + 1) % 3])));
+                            on_edge[slot].push((v, edge_key(m, t[(k + 2) % 3], t[k])));
                         }
                     }
                 }
             }
         }
         // Each edge's pieces inside the other triangle become its cuts.
-        for (m, t, ot, oi) in [(0u8, ta, tb, ib), (1u8, tb, ta, ia)] {
+        for (slot, m, t, ot, om, oi, ti) in
+            [(0, ma, ta, tb, mb, ib, ia), (1, mb, tb, ta, ma, ia, ib)]
+        {
             for k in 0..3 {
                 let e = edge_key(m, t[k], t[(k + 1) % 3]);
                 let (p0, p1) = (self.p(e.1), self.p(e.2));
-                let mut along: Vec<u32> = on_edge[m as usize]
+                let mut along: Vec<u32> = on_edge[slot]
                     .iter()
                     .filter(|x| x.1 == e)
                     .map(|x| x.0)
@@ -457,12 +473,105 @@ impl Csg {
                     let v = ot.map(|i| project(self.p(i), axis));
                     let o = [o2(v[0], v[1], q), o2(v[1], v[2], q), o2(v[2], v[0], q)];
                     if !(o.iter().any(|&s| s > 0) && o.iter().any(|&s| s < 0)) {
-                        self.add_segment(1 - m, oi, w[0], w[1]);
+                        self.add_segment(om, oi, w[0], w[1], ti);
                         self.crossings.insert((w[0].min(w[1]), w[0].max(w[1])));
                     }
                 }
             }
         }
+    }
+
+    /// The point where the planes of three triangles of mesh 0 meet
+    /// (Cramer's rule, in a fixed order); None if two are parallel.
+    fn three_planes(&self, t: [u32; 3]) -> Option<DVec3> {
+        let plane = |i: u32| {
+            let [a, b, c] = self.solids[0].tris[i as usize].map(|v| self.p(v));
+            let n = (b - a).cross(c - a);
+            (n, n.dot(a))
+        };
+        let [(n1, d1), (n2, d2), (n3, d3)] = t.map(plane);
+        let det = n1.dot(n2.cross(n3));
+        if det == 0.0 || !det.is_finite() {
+            return None;
+        }
+        let p = (n2.cross(n3) * d1 + n3.cross(n1) * d2 + n1.cross(n2) * d3) / det;
+        p.is_finite().then_some(p)
+    }
+
+    /// A self-union's triple points. Where two crossing segments inside one
+    /// triangle, made by two other triangles, cross each other, the three
+    /// triangles meet in a point. It is made once, named by the three, and
+    /// each of them splits its two segments there, so all three are cut
+    /// alike whichever of them saw the crossing (two meshes never need
+    /// this: neither crosses itself).
+    fn triples(&mut self) {
+        let mut found: BTreeSet<[u32; 3]> = BTreeSet::new();
+        for (&t, cut) in &self.cuts[0] {
+            let axis = drop_axis(self.tri_normal(self.solids[0].tris[t as usize]));
+            let pr = |k: u32| project(self.p(k), axis);
+            for i in 0..cut.segments.len() {
+                for j in i + 1..cut.segments.len() {
+                    let (u, v) = (cut.src[i], cut.src[j]);
+                    let ([a, b], [p, q]) = (cut.segments[i], cut.segments[j]);
+                    if u == v || a == p || a == q || b == p || b == q {
+                        continue;
+                    }
+                    let (s1, s2) = (o2(pr(a), pr(b), pr(p)), o2(pr(a), pr(b), pr(q)));
+                    let (s3, s4) = (o2(pr(p), pr(q), pr(a)), o2(pr(p), pr(q), pr(b)));
+                    if s1 * s2 < 0 && s3 * s4 < 0 {
+                        let mut k = [t, u, v];
+                        k.sort_unstable();
+                        found.insert(k);
+                    }
+                }
+            }
+        }
+        for k in found {
+            let Some(pos) = self.three_planes(k) else {
+                continue;
+            };
+            let id = self.add_point(Origin::Triple(k[0], k[1], k[2]), |_| pos, &[]);
+            for (x, y, z) in [(k[0], k[1], k[2]), (k[1], k[0], k[2]), (k[2], k[0], k[1])] {
+                self.split(x, y, id);
+                self.split(x, z, id);
+            }
+        }
+    }
+
+    /// Splits at point `id` the segment of triangle `tri` (mesh 0) made by
+    /// triangle `src`: of several, the one `id` lies nearest.
+    fn split(&mut self, tri: u32, src: u32, id: u32) {
+        let Some(cut) = self.cuts[0].get(&tri) else {
+            return;
+        };
+        let p = self.p(id);
+        let detour = |s: [u32; 2]| {
+            let (a, b) = (self.p(s[0]), self.p(s[1]));
+            (a - p).length() + (p - b).length() - (a - b).length()
+        };
+        let mut best: Option<(usize, f64)> = None;
+        for (i, (&s, &from)) in cut.segments.iter().zip(&cut.src).enumerate() {
+            if from != src || s.contains(&id) {
+                continue;
+            }
+            let d = detour(s);
+            if best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((i, d));
+            }
+        }
+        let Some((i, _)) = best else {
+            return;
+        };
+        let cut = self.cuts[0].get_mut(&tri).expect("cut");
+        let [a, b] = cut.segments[i];
+        cut.segments[i] = [a, id];
+        cut.segments.push([id, b]);
+        cut.src.push(src);
+        if !cut.points.contains(&id) {
+            cut.points.push(id);
+        }
+        self.crossings.insert((a.min(id), a.max(id)));
+        self.crossings.insert((id.min(b), id.max(b)));
     }
 
     /// Triangle `tri` of mesh `m` cut into pieces (global ids, the
@@ -659,6 +768,24 @@ pub(crate) fn winding(points: &[DVec3], tris: &[[u32; 3]], p: DVec3) -> f64 {
     sum / (4.0 * trig::PI)
 }
 
+/// [`winding`] without triangle `skip`.
+fn winding_except(points: &[DVec3], tris: &[[u32; 3]], skip: usize, p: DVec3) -> f64 {
+    let mut sum = 0.0;
+    for (i, t) in tris.iter().enumerate() {
+        if i == skip {
+            continue;
+        }
+        let a = points[t[0] as usize] - p;
+        let b = points[t[1] as usize] - p;
+        let c = points[t[2] as usize] - p;
+        let (la, lb, lc) = (a.length(), b.length(), c.length());
+        let det = a.dot(b.cross(c));
+        let den = la * lb * lc + a.dot(b) * lc + a.dot(c) * lb + b.dot(c) * la;
+        sum += 2.0 * trig::atan2(det, den);
+    }
+    sum / (4.0 * trig::PI)
+}
+
 fn weld(
     mesh: &Mesh,
     placement: Placement,
@@ -830,18 +957,124 @@ struct Kept {
     flip: bool,
 }
 
+/// A piece of a cut triangle: of mesh `mesh`, from its welded triangle
+/// `tri`, with point ids in the triangle's winding.
+struct Piece {
+    mesh: u8,
+    tri: u32,
+    ids: [u32; 3],
+}
+
+/// The pieces' regions: each piece's root, and each root's largest piece.
+struct Regions {
+    root: Vec<usize>,
+    best: BTreeMap<usize, usize>,
+}
+
+impl Csg {
+    fn new(points: Vec<DVec3>, solids: [Solid; 2]) -> Csg {
+        let on = vec![Vec::new(); points.len()];
+        Csg {
+            points,
+            on,
+            made: BTreeMap::new(),
+            made_at: BTreeMap::new(),
+            solids,
+            cuts: [BTreeMap::new(), BTreeMap::new()],
+            crossings: BTreeSet::new(),
+            coplanar_pairs: Vec::new(),
+        }
+    }
+
+    /// Step 2: every triangle of meshes `0..meshes`, cut into pieces.
+    fn all_pieces(&self, meshes: u8) -> Vec<Piece> {
+        let mut pieces = Vec::new();
+        for m in 0..meshes {
+            for tri in 0..self.solids[m as usize].tris.len() as u32 {
+                for ids in self.pieces(m, tri) {
+                    pieces.push(Piece { mesh: m, tri, ids });
+                }
+            }
+        }
+        pieces
+    }
+
+    /// Step 3's regions: pieces of one mesh joined across edges no
+    /// crossing runs along.
+    fn regions(&self, pieces: &[Piece]) -> Regions {
+        let mut parent: Vec<usize> = (0..pieces.len()).collect();
+        fn find(parent: &mut [usize], mut i: usize) -> usize {
+            while parent[i] != i {
+                parent[i] = parent[parent[i]];
+                i = parent[i];
+            }
+            i
+        }
+        let mut first: BTreeMap<(u8, u32, u32), usize> = BTreeMap::new();
+        for (pi, p) in pieces.iter().enumerate() {
+            for k in 0..3 {
+                let (x, y) = (p.ids[k], p.ids[(k + 1) % 3]);
+                let e = (x.min(y), x.max(y));
+                if self.crossings.contains(&e) {
+                    continue;
+                }
+                match first.get(&(p.mesh, e.0, e.1)) {
+                    Some(&q) => {
+                        let (r1, r2) = (find(&mut parent, pi), find(&mut parent, q));
+                        if r1 != r2 {
+                            parent[r1.max(r2)] = r1.min(r2);
+                        }
+                    }
+                    None => {
+                        first.insert((p.mesh, e.0, e.1), pi);
+                    }
+                }
+            }
+        }
+        let area = |p: &Piece| {
+            let [a, b, cc] = p.ids.map(|i| self.points[i as usize]);
+            (b - a).cross(cc - a).length() * 0.5
+        };
+        // Each region's largest piece (the first of equals).
+        let mut best: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut root = Vec::with_capacity(pieces.len());
+        for pi in 0..pieces.len() {
+            let r = find(&mut parent, pi);
+            root.push(r);
+            match best.get(&r) {
+                Some(&q) if area(&pieces[q]) >= area(&pieces[pi]) => {}
+                _ => {
+                    best.insert(r, pi);
+                }
+            }
+        }
+        Regions { root, best }
+    }
+
+    /// Points just in front of and just behind a piece, at its centre: a
+    /// millionth of `scale`, or half its inradius if that is less.
+    fn probes(&self, p: &Piece, scale: f64) -> (DVec3, DVec3) {
+        let [a, b, cc] = p.ids.map(|i| self.points[i as usize]);
+        let n = (b - a).cross(cc - a);
+        let perimeter = (b - a).length() + (cc - b).length() + (a - cc).length();
+        let inradius = n.length() / perimeter.max(1e-300);
+        let eps = (scale * 1e-6).min(inradius * 0.5);
+        let n = normalize(n);
+        let centre = (a + b + cc) / 3.0;
+        (centre + n * eps, centre - n * eps)
+    }
+
+    /// The diagonal of both meshes' box.
+    fn scale(&self) -> f64 {
+        let lo = self.solids[0].min.min(self.solids[1].min);
+        let hi = self.solids[0].max.max(self.solids[1].max);
+        (hi - lo).length().max(1e-30)
+    }
+}
+
 /// Steps 1 to 3 and the choice of step 4: which pieces `op` keeps.
 fn arrange(points: Vec<DVec3>, sa: Solid, sb: Solid, op: CsgOp) -> (Csg, Vec<Kept>) {
-    let on = vec![Vec::new(); points.len()];
-    let mut c = Csg {
-        points,
-        on,
-        made: BTreeMap::new(),
-        made_at: BTreeMap::new(),
-        solids: [sa, sb],
-        cuts: [BTreeMap::new(), BTreeMap::new()],
-        crossings: BTreeSet::new(),
-    };
+    let mut c = Csg::new(points, [sa, sb]);
     // 1. Every pair of triangles whose boxes overlap.
     let box_a = (c.solids[0].min, c.solids[0].max);
     let box_b = (c.solids[1].min, c.solids[1].max);
@@ -857,91 +1090,25 @@ fn arrange(points: Vec<DVec3>, sa: Solid, sb: Solid, op: CsgOp) -> (Csg, Vec<Kep
     let near_a = near(&c, 0, box_b);
     let near_b = near(&c, 1, box_a);
     for (ia, ib) in candidate_pairs(&near_a, &near_b) {
-        c.pair(ia, ib);
+        c.pair((0, ia), (1, ib));
     }
     // 2. The pieces.
-    struct Piece {
-        mesh: u8,
-        tri: u32,
-        ids: [u32; 3],
-    }
-    let mut pieces: Vec<Piece> = Vec::new();
-    for m in 0..2u8 {
-        for tri in 0..c.solids[m as usize].tris.len() as u32 {
-            for ids in c.pieces(m, tri) {
-                pieces.push(Piece { mesh: m, tri, ids });
-            }
-        }
-    }
-    // 3. Regions: pieces of one mesh joined across edges no crossing runs along.
-    let mut parent: Vec<usize> = (0..pieces.len()).collect();
-    fn find(parent: &mut [usize], mut i: usize) -> usize {
-        while parent[i] != i {
-            parent[i] = parent[parent[i]];
-            i = parent[i];
-        }
-        i
-    }
-    let mut first: BTreeMap<(u8, u32, u32), usize> = BTreeMap::new();
-    for (pi, p) in pieces.iter().enumerate() {
-        for k in 0..3 {
-            let (x, y) = (p.ids[k], p.ids[(k + 1) % 3]);
-            let e = (x.min(y), x.max(y));
-            if c.crossings.contains(&e) {
-                continue;
-            }
-            match first.get(&(p.mesh, e.0, e.1)) {
-                Some(&q) => {
-                    let (r1, r2) = (find(&mut parent, pi), find(&mut parent, q));
-                    if r1 != r2 {
-                        parent[r1.max(r2)] = r1.min(r2);
-                    }
-                }
-                None => {
-                    first.insert((p.mesh, e.0, e.1), pi);
-                }
-            }
-        }
-    }
-    let area = |p: &Piece| {
-        let [a, b, cc] = p.ids.map(|i| c.points[i as usize]);
-        (b - a).cross(cc - a).length() * 0.5
-    };
-    // Each region's largest piece (the first of equals).
-    let mut best: BTreeMap<usize, usize> = BTreeMap::new();
-    for pi in 0..pieces.len() {
-        let r = find(&mut parent, pi);
-        match best.get(&r) {
-            Some(&q) if area(&pieces[q]) >= area(&pieces[pi]) => {}
-            _ => {
-                best.insert(r, pi);
-            }
-        }
-    }
-    let lo = c.solids[0].min.min(c.solids[1].min);
-    let hi = c.solids[0].max.max(c.solids[1].max);
-    let scale = (hi - lo).length().max(1e-30);
+    let pieces = c.all_pieces(2);
+    // 3. Regions, each classified by the other mesh's winding number.
+    let regions = c.regions(&pieces);
+    let scale = c.scale();
     // (inside the other mesh in front, behind).
     let mut sides: BTreeMap<usize, (bool, bool)> = BTreeMap::new();
-    let mut roots: Vec<usize> = best.keys().copied().collect();
-    roots.sort_unstable();
-    for r in roots {
-        let p = &pieces[best[&r]];
-        let [a, b, cc] = p.ids.map(|i| c.points[i as usize]);
-        let n = (b - a).cross(cc - a);
-        let perimeter = (b - a).length() + (cc - b).length() + (a - cc).length();
-        let inradius = n.length() / perimeter.max(1e-300);
-        let eps = (scale * 1e-6).min(inradius * 0.5);
-        let n = normalize(n);
-        let centre = (a + b + cc) / 3.0;
+    for (&r, &b) in &regions.best {
+        let p = &pieces[b];
+        let (front, back) = c.probes(p, scale);
         let other = &c.solids[1 - p.mesh as usize].tris;
         let inside = |q: DVec3| winding(&c.points, other, q) > 0.5;
-        sides.insert(r, (inside(centre + n * eps), inside(centre - n * eps)));
+        sides.insert(r, (inside(front), inside(back)));
     }
     let mut kept = Vec::new();
     for (pi, p) in pieces.iter().enumerate() {
-        let r = find(&mut parent, pi);
-        let (front, back) = sides[&r];
+        let (front, back) = sides[&regions.root[pi]];
         let (keep, flip) = if p.mesh == 0 {
             match op {
                 CsgOp::Union => (!front, false),
@@ -971,6 +1138,95 @@ fn arrange(points: Vec<DVec3>, sa: Solid, sb: Solid, op: CsgOp) -> (Csg, Vec<Kep
     (c, kept)
 }
 
+/// The self-union's steps: one mesh's arrangement with itself, keeping the
+/// pieces between winding number below 1 and at least 1.
+fn arrange_self(points: Vec<DVec3>, s: Solid) -> (Csg, Vec<Kept>) {
+    let empty = Solid {
+        tris: Vec::new(),
+        corners: Vec::new(),
+        source: Vec::new(),
+        min: DVec3::INFINITY,
+        max: DVec3::NEG_INFINITY,
+    };
+    let mut c = Csg::new(points, [s, empty]);
+    // 1. Pairs whose boxes overlap: those sharing no vertex, and those
+    // sharing one or an edge that cross improperly (a shared corner or
+    // edge alone is not a crossing).
+    let tris = c.solids[0].tris.clone();
+    for (i, j) in selfcheck::box_pairs(&c.points, &tris) {
+        let (ti, tj) = (tris[i as usize], tris[j as usize]);
+        if ti.iter().any(|v| tj.contains(v))
+            && !selfcheck::crossing(ti, ti.map(|v| c.p(v)), tj, tj.map(|v| c.p(v)))
+        {
+            continue;
+        }
+        c.pair((0, i), (0, j));
+    }
+    c.triples();
+    // 2. The pieces.
+    let pieces = c.all_pieces(1);
+    // 3. Regions, each classified by the mesh's own winding number.
+    let regions = c.regions(&pieces);
+    let scale = c.scale();
+    // Where triangles lie on one another, the lowest-numbered one answers.
+    let mut partners: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for &((_, a), (_, b)) in &c.coplanar_pairs {
+        partners.entry(a).or_default().push(b);
+        partners.entry(b).or_default().push(a);
+    }
+    // The winding number just in front of a piece and just behind it differ
+    // by one, its own surface. At the piece's centre, the winding number of
+    // every other triangle is halfway between: it needs no step off the
+    // surface, so a sliver is classified as surely as a large piece. Where
+    // another face lies on the piece, that does not hold; points a small
+    // step in front and behind decide there.
+    let mut sides: BTreeMap<usize, (bool, bool)> = BTreeMap::new();
+    for (&r, &b) in &regions.best {
+        let p = &pieces[b];
+        let side = if partners.contains_key(&p.tri) {
+            let (front, back) = c.probes(p, scale);
+            let inside = |q: DVec3| winding(&c.points, &tris, q) > 0.5;
+            (inside(front), inside(back))
+        } else {
+            let [a, bb, cc] = p.ids.map(|i| c.p(i));
+            let rest = winding_except(&c.points, &tris, p.tri as usize, (a + bb + cc) / 3.0);
+            (rest - 0.5 > 0.5, rest + 0.5 > 0.5)
+        };
+        sides.insert(r, side);
+    }
+    let covered_by_lower = |p: &Piece| {
+        let Some(list) = partners.get(&p.tri) else {
+            return false;
+        };
+        let axis = drop_axis(c.tri_normal(tris[p.tri as usize]));
+        let [a, b, cc] = p.ids.map(|i| c.p(i));
+        let q = project((a + b + cc) / 3.0, axis);
+        list.iter().any(|&u| {
+            u < p.tri && {
+                let poly: Vec<DVec2> = tris[u as usize]
+                    .iter()
+                    .map(|&v| project(c.p(v), axis))
+                    .collect();
+                strictly_inside(&poly, q)
+            }
+        })
+    };
+    let mut kept = Vec::new();
+    for (pi, p) in pieces.iter().enumerate() {
+        let (front, back) = sides[&regions.root[pi]];
+        if front == back || covered_by_lower(p) {
+            continue;
+        }
+        kept.push(Kept {
+            mesh: 0,
+            tri: p.tri,
+            ids: p.ids,
+            flip: front,
+        });
+    }
+    (c, kept)
+}
+
 /// Why [`csg_points`] refused its operands.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperandError {
@@ -981,89 +1237,97 @@ pub enum OperandError {
     NotClosed(u8),
 }
 
-/// The f64 core of [`csg`] on welded operands: points and triangles in,
-/// points, triangles and each output triangle's source `(operand,
-/// triangle)` out. Unlike [`csg`], an operand that is not closed and
-/// oriented after exact welding is refused (`docs/research.md` §5.4).
-#[allow(clippy::type_complexity)]
-pub fn csg_points(
-    a: (&[DVec3], &[[u32; 3]]),
-    b: (&[DVec3], &[[u32; 3]]),
-    op: CsgOp,
-) -> Result<(Vec<DVec3>, Vec<[u32; 3]>, Vec<(u8, u32)>), OperandError> {
-    let mut points = Vec::new();
-    let mut at = BTreeMap::new();
-    let mut weld64 = |m: u8, (pos, tris): (&[DVec3], &[[u32; 3]])| -> Result<Solid, OperandError> {
-        if pos.iter().any(|p| !p.is_finite()) {
-            return Err(OperandError::NotFinite(m));
-        }
-        let start = points.len() as u32;
-        let ids: Vec<u32> = pos
-            .iter()
-            .map(|p| {
-                let key = [
-                    (p.x + 0.0).to_bits(),
-                    (p.y + 0.0).to_bits(),
-                    (p.z + 0.0).to_bits(),
-                ];
-                match at.get(&key) {
-                    Some(&id) if id >= start => id,
-                    _ => {
-                        let id = points.len() as u32;
-                        points.push(*p + DVec3::ZERO);
-                        at.insert(key, id);
-                        id
-                    }
+/// Welds an f64 operand (`m`: 0 = A, 1 = B) by exact position into
+/// `points`, refusing it unless it is closed and oriented: every directed
+/// edge used once and its reverse once, or with `balanced`, as often as
+/// its reverse (faces lying on one another, as a self-union takes).
+fn weld64(
+    m: u8,
+    balanced: bool,
+    (pos, tris): (&[DVec3], &[[u32; 3]]),
+    points: &mut Vec<DVec3>,
+    at: &mut BTreeMap<[u64; 3], u32>,
+) -> Result<Solid, OperandError> {
+    if pos.iter().any(|p| !p.is_finite()) {
+        return Err(OperandError::NotFinite(m));
+    }
+    let start = points.len() as u32;
+    let ids: Vec<u32> = pos
+        .iter()
+        .map(|p| {
+            let key = [
+                (p.x + 0.0).to_bits(),
+                (p.y + 0.0).to_bits(),
+                (p.z + 0.0).to_bits(),
+            ];
+            match at.get(&key) {
+                Some(&id) if id >= start => id,
+                _ => {
+                    let id = points.len() as u32;
+                    points.push(*p + DVec3::ZERO);
+                    at.insert(key, id);
+                    id
                 }
-            })
-            .collect();
-        let mut s = Solid {
-            tris: Vec::new(),
-            corners: Vec::new(),
-            source: Vec::new(),
-            min: DVec3::INFINITY,
-            max: DVec3::NEG_INFINITY,
-        };
-        let mut directed: BTreeMap<(u32, u32), u32> = BTreeMap::new();
-        let flat = Corner {
-            normal: DVec3::Y,
-            uv: [0.0; 2],
-            color: [1.0; 4],
-        };
-        for (ti, t) in tris.iter().enumerate() {
-            let w = t.map(|i| ids[i as usize]);
-            if w[0] == w[1] || w[1] == w[2] || w[0] == w[2] {
-                continue;
             }
-            for k in 0..3 {
-                *directed.entry((w[k], w[(k + 1) % 3])).or_default() += 1;
-            }
-            s.tris.push(w);
-            s.source.push(ti as u32);
-            s.corners.push([flat; 3]);
-            for &i in &w {
-                s.min = s.min.min(points[i as usize]);
-                s.max = s.max.max(points[i as usize]);
-            }
-        }
-        let closed = !s.tris.is_empty()
-            && directed
-                .iter()
-                .all(|(&(x, y), &n)| n == 1 && directed.get(&(y, x)) == Some(&1));
-        if !closed {
-            return Err(OperandError::NotClosed(m));
-        }
-        Ok(s)
+        })
+        .collect();
+    let mut s = Solid {
+        tris: Vec::new(),
+        corners: Vec::new(),
+        source: Vec::new(),
+        min: DVec3::INFINITY,
+        max: DVec3::NEG_INFINITY,
     };
-    let sa = weld64(0, a)?;
-    let sb = weld64(1, b)?;
-    let (c, kept) = arrange(points, sa, sb, op);
-    // Only the points the kept pieces use, in first-use order.
+    let mut directed: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+    let flat = Corner {
+        normal: DVec3::Y,
+        uv: [0.0; 2],
+        color: [1.0; 4],
+    };
+    for (ti, t) in tris.iter().enumerate() {
+        let w = t.map(|i| ids[i as usize]);
+        if w[0] == w[1] || w[1] == w[2] || w[0] == w[2] {
+            continue;
+        }
+        for k in 0..3 {
+            *directed.entry((w[k], w[(k + 1) % 3])).or_default() += 1;
+        }
+        s.tris.push(w);
+        s.source.push(ti as u32);
+        s.corners.push([flat; 3]);
+        for &i in &w {
+            s.min = s.min.min(points[i as usize]);
+            s.max = s.max.max(points[i as usize]);
+        }
+    }
+    let closed = !s.tris.is_empty()
+        && directed
+            .iter()
+            .all(|(&(x, y), &n)| (balanced || n == 1) && directed.get(&(y, x)) == Some(&n));
+    if !closed {
+        return Err(OperandError::NotClosed(m));
+    }
+    Ok(s)
+}
+
+/// The kept pieces as points (only those used, in first-use order),
+/// triangles and each one's source `(operand, triangle)`, plus the map
+/// from arrangement point ids to output ids.
+#[allow(clippy::type_complexity)]
+fn emit(
+    c: &Csg,
+    kept: &[Kept],
+) -> (
+    Vec<DVec3>,
+    Vec<[u32; 3]>,
+    Vec<(u8, u32)>,
+    BTreeMap<u32, u32>,
+) {
     let mut remap: BTreeMap<u32, u32> = BTreeMap::new();
     let mut out_points = Vec::new();
     let mut out_tris = Vec::with_capacity(kept.len());
     let mut origins = Vec::with_capacity(kept.len());
-    for p in &kept {
+    for p in kept {
         let ids = if p.flip {
             [p.ids[0], p.ids[2], p.ids[1]]
         } else {
@@ -1079,7 +1343,75 @@ pub fn csg_points(
         let solid = &c.solids[p.mesh as usize];
         origins.push((p.mesh, solid.source[p.tri as usize]));
     }
-    Ok((out_points, out_tris, origins))
+    (out_points, out_tris, origins, remap)
+}
+
+/// The f64 core of [`csg`] on welded operands: points and triangles in,
+/// points, triangles and each output triangle's source `(operand,
+/// triangle)` out. Unlike [`csg`], an operand that is not closed and
+/// oriented after exact welding is refused (`docs/research.md` §5.4).
+#[allow(clippy::type_complexity)]
+pub fn csg_points(
+    a: (&[DVec3], &[[u32; 3]]),
+    b: (&[DVec3], &[[u32; 3]]),
+    op: CsgOp,
+) -> Result<(Vec<DVec3>, Vec<[u32; 3]>, Vec<(u8, u32)>), OperandError> {
+    let mut points = Vec::new();
+    let mut at = BTreeMap::new();
+    let sa = weld64(0, false, a, &mut points, &mut at)?;
+    let sb = weld64(1, false, b, &mut points, &mut at)?;
+    let (c, kept) = arrange(points, sa, sb, op);
+    let (points, tris, origins, _) = emit(&c, &kept);
+    Ok((points, tris, origins))
+}
+
+/// A self-union's output ([`self_union_points`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SelfUnion {
+    /// The points the triangles use.
+    pub points: Vec<DVec3>,
+    /// The triangles, facing out.
+    pub tris: Vec<[u32; 3]>,
+    /// Each triangle's source triangle in the input.
+    pub source: Vec<u32>,
+    /// Edges `[a, b]`, `a < b`, along which the surface crossed itself.
+    pub seams: Vec<[u32; 2]>,
+}
+
+/// The outside surface of a closed, oriented mesh that may pass through
+/// itself: the arrangement [`csg_points`] builds for two operands, built
+/// for one. Every pair of its triangles that crosses ([`selfcheck`]) is
+/// intersected and cut, and each region is classified by the mesh's own
+/// winding number. What is kept bounds the space of winding number at
+/// least 1, facing out of it; a surface where the winding goes from 1 to 2,
+/// or from -1 to 0, is dropped. Where faces lie on one another, the one
+/// from the lowest-numbered triangle stands for them.
+///
+/// The operand is refused as [`csg_points`] refuses one (operand 0),
+/// except that a directed edge may be used more than once if its reverse
+/// is used as often (two copies of a face).
+pub fn self_union_points(mesh: (&[DVec3], &[[u32; 3]])) -> Result<SelfUnion, OperandError> {
+    let mut points = Vec::new();
+    let mut at = BTreeMap::new();
+    let s = weld64(0, true, mesh, &mut points, &mut at)?;
+    let (c, kept) = arrange_self(points, s);
+    let (points, tris, origins, remap) = emit(&c, &kept);
+    let seams = c
+        .crossings
+        .iter()
+        .filter_map(|&(a, b)| {
+            let (x, y) = (*remap.get(&a)?, *remap.get(&b)?);
+            Some([x.min(y), x.max(y)])
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    Ok(SelfUnion {
+        points,
+        tris,
+        source: origins.into_iter().map(|o| o.1).collect(),
+        seams,
+    })
 }
 
 /// Every pair of triangles whose boxes overlap, in the order the

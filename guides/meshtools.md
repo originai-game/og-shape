@@ -83,7 +83,12 @@ triangle primitive with UVs). Every kernel solid is triangles, so
 
 ## What repair cannot do
 
-A single surface that folds through itself (one piece, closed, but with
-`self_intersections` above 0 after `fuse`) cannot be untangled here.
-Booleans on it are not reliable. Get another mesh, or remesh it outside
-the kernel.
+A single closed surface that folds through itself is untangled by
+`fuse`. It keeps the space the surface winds round at least once (a
+self-union), so `self_intersections` is 0 after it. An open surface that
+folds through itself (one piece, `closed` false, `self_intersections`
+above 0) cannot be untangled. Booleans refuse it. Close its holes first
+(`max_hole_edges`), or get another mesh.
+
+Untangling is slow on heavy noise: about 2 s for 30k triangles with
+thousands of folds.

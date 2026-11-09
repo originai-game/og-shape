@@ -23,10 +23,11 @@
 //! parts joined. The self-union of [`Repair::fuse`] refuses skins (the
 //! report says so).
 //!
-//! What repair cannot do: a single surface that folds through itself (a
-//! self-intersecting sheet, not two closed shells) has no inside to keep;
-//! [`repair`] reports its intersecting triangle pairs and leaves it, and
-//! booleans refuse it (`docs/research.md` §5.4, §9).
+//! A single closed surface that folds through itself is untangled by the
+//! fuse step too (`shape_bool::self_union`: the space it winds round at
+//! least once). An open one cannot be: [`repair`] reports its intersecting
+//! triangle pairs and leaves it, and booleans refuse it
+//! (`docs/research.md` §5.4, §9).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -65,9 +66,10 @@ pub struct Repair {
     /// Closes holes whose rim has at most this many edges (0: none).
     pub max_hole_edges: usize,
     /// Joins closed, interpenetrating shells into one by self-union
-    /// (`shape_bool::fuse`) once the rest is done. A union that is not
-    /// closed (shells touching along an edge) is not taken: the shells are
-    /// kept, and the report says why.
+    /// (`shape_bool::fuse`) once the rest is done, and untangles a shell
+    /// that passes through itself. A union that is not closed (shells
+    /// touching along an edge) is not taken: the shells are kept, and the
+    /// report says why.
     pub fuse: bool,
     /// Collapses edges shorter than this, in mm, where that keeps the mesh
     /// manifold (0: none): the slivers a self-union leaves, whose vertices
@@ -916,7 +918,10 @@ pub fn repair(s: &Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairErro
     };
     let s = if d.fuse {
         let n = pieces(&s).1;
-        if n <= 1 {
+        // One shell is left as it is unless it is closed and passes
+        // through itself: then fuse untangles it (`shape_bool::self_union`).
+        let tangled = n == 1 && s.measure().closed && shape_bool::crossing_pairs(&s) > 0;
+        if n <= 1 && !tangled {
             r.fused = Some(Ok(n));
             s
         } else {
@@ -1038,5 +1043,41 @@ mod tests {
         let m = s.measure();
         assert!(m.closed && m.components == 2);
         assert!((m.volume - 2.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn fuse_untangles_a_shell_folded_through_itself() {
+        // A sphere with one vertex pulled through the far side
+        // (`docs/research.md` §9.6): closed, one piece, crossing itself.
+        let mut ball = shape_gen::solids::sphere(10.0).unwrap();
+        let dir = DVec3::new(-0.51, -0.38, 0.77);
+        let v = (0..ball.positions.len())
+            .max_by(|&a, &b| {
+                ball.positions[a]
+                    .dot(dir)
+                    .total_cmp(&ball.positions[b].dot(dir))
+            })
+            .unwrap();
+        ball.positions[v] = -ball.positions[v] * 1.5;
+        let d = Repair {
+            fuse: true,
+            check_intersections: true,
+            ..Default::default()
+        };
+        let (out, r) = repair(&ball, &d).unwrap();
+        assert_eq!(r.fused, Some(Ok(1)));
+        assert_eq!(r.self_intersections, Some(0));
+        let m = out.measure();
+        assert!(m.closed && m.components == 1, "{m:?}");
+        // Without fuse it is left, and reported.
+        let (_, r) = repair(
+            &ball,
+            &Repair {
+                check_intersections: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(r.self_intersections.unwrap() > 0);
     }
 }

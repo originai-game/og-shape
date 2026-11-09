@@ -12,6 +12,7 @@ mod geom;
 mod mcp;
 mod meshtools;
 mod model;
+mod selfunion;
 mod skin;
 mod solids;
 mod tools;

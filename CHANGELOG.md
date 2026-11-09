@@ -312,3 +312,24 @@
     `meshtools.skin.join`; no existing hash moved. `bench/meshtools`
     gains `skin-decimate` (decimate to half, pose, compare); results in
     `docs/research.md` §11.5, previews in `docs/previews/phase5b/`.
+- `shape-bool`: an exact self-crossing check and a self-union
+  (`docs/research.md` §5.4, item 3).
+  - `selfcheck` holds the exact triangle-pair tests, now shared with
+    `shape-tools`' measure and repair.
+  - `crossing_pairs` counts a solid's triangle pairs that cross within one
+    shell.
+  - `check_operands` refuses a self-crossing operand before any work
+    (`BoolError::SelfIntersecting`). `boolean` reports that error instead
+    of `OpenResult` when its result is open for that reason. It does not
+    refuse up front by default: the kernel's own outputs can cross
+    themselves by an ulp and still give closed booleans.
+  - `self_union` untangles a closed surface that passes through itself,
+    and joins overlapping shells, carrying names like `fuse`.
+    `fuse` untangles self-crossing shells first.
+  - `repair`'s fuse step untangles a single closed shell that crosses
+    itself.
+- `bench/booleans`: engines `og-shape-checked` and `og-shape-untangled`,
+  and an `--engine` filter. Synthetic defects: 0 wrong, against og-geom's
+  21.
+- Golden cases `selfunion.*` (folded ball, noisy ball, overlapping
+  copies, the check, repair's fuse). No existing hash moved.
