@@ -47,6 +47,15 @@
   `side`); `helix`; `thread` (a 60° ridge swept on a helix, faces also
   `thread`); `loft` through stacked sections, straight or Catmull-Rom
   (`bottom`, `top`, `side`).
+- `shape-bool::boolean` (phase 2): join, cut and intersect on named solids
+  in f64. Faces keep their names, also as `<part>.<tag>`; a cutting
+  tool's faces get `cut`; edges where operands meet get `cut`,
+  `<target>.cut`, the tool's name and the cap names; pieces of named input
+  edges keep their names; named edges between coplanar faces lose them.
+  An operand that is not closed and oriented after welding is refused
+  with an error value (`docs/research.md` §5.4, follow-up 1).
+- `shape-bool::csg_points`: the f64 core of og-geom's CSG on welded
+  operands; `csg` and its output bytes are unchanged.
 - Plan: aarch64 macOS joins the gate later; phase 0 benchmarks booleans on
   synthetic AI-mesh defects instead of provider outputs, which re-check the
   decision in phase 5.

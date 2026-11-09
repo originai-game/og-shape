@@ -8,5 +8,7 @@
 
 pub mod csg;
 pub mod fracture;
+pub mod named;
 
-pub use csg::{CsgOp, csg, csg_traced};
+pub use csg::{CsgOp, OperandError, csg, csg_points, csg_traced};
+pub use named::{BoolError, BoolOp, Boolean, boolean};

@@ -11,6 +11,7 @@ publish.workspace = true
 glam.workspace = true
 shape-core.workspace = true
 shape-gen.workspace = true
+shape-mesh.workspace = true
 robust.workspace = true
 spade.workspace = true
 

@@ -673,6 +673,87 @@ pub fn csg_traced(
     let mut at = BTreeMap::new();
     let sa = weld(a, pa, &mut points, &mut at).map_err(|e| format!("a: {e}"))?;
     let sb = weld(b, pb, &mut points, &mut at).map_err(|e| format!("b: {e}"))?;
+    let (c, kept) = arrange(points, sa, sb, op);
+    // 4. What the operation keeps.
+    let colors = !a.colors.is_empty() || !b.colors.is_empty();
+    let mut out = Mesh::default();
+    let mut origins: Vec<(u8, u32)> = Vec::new();
+    let mut vertex_at: BTreeMap<Vec<u32>, u32> = BTreeMap::new();
+    for p in &kept {
+        let flip = p.flip;
+        let solid = &c.solids[p.mesh as usize];
+        origins.push((p.mesh, solid.source[p.tri as usize]));
+        let t = solid.tris[p.tri as usize];
+        let corners = &solid.corners[p.tri as usize];
+        let axis = drop_axis(c.tri_normal(t));
+        let tv = t.map(|i| project(c.points[i as usize], axis));
+        let den = (tv[1] - tv[0]).perp_dot(tv[2] - tv[0]);
+        let ids = if flip {
+            [p.ids[0], p.ids[2], p.ids[1]]
+        } else {
+            p.ids
+        };
+        for id in ids {
+            let pos = c.points[id as usize];
+            let q = project(pos, axis);
+            let (w1, w2) = if den != 0.0 {
+                (
+                    (q - tv[0]).perp_dot(tv[2] - tv[0]) / den,
+                    (tv[1] - tv[0]).perp_dot(q - tv[0]) / den,
+                )
+            } else {
+                (0.0, 0.0)
+            };
+            let w0 = 1.0 - w1 - w2;
+            let mut normal =
+                normalize(corners[0].normal * w0 + corners[1].normal * w1 + corners[2].normal * w2);
+            if flip {
+                normal = -normal;
+            }
+            let uv = [0, 1]
+                .map(|k| corners[0].uv[k] * w0 + corners[1].uv[k] * w1 + corners[2].uv[k] * w2);
+            let color = [0, 1, 2, 3].map(|k| {
+                corners[0].color[k] * w0 + corners[1].color[k] * w1 + corners[2].color[k] * w2
+            });
+            let pf = pos.as_vec3().to_array();
+            let nf = normal.as_vec3().to_array();
+            let uf = uv.map(|x| x as f32);
+            let cf = color.map(|x| x as f32);
+            let mut key: Vec<u32> = pf
+                .iter()
+                .chain(&nf)
+                .chain(&uf)
+                .map(|x| (x + 0.0).to_bits())
+                .collect();
+            if colors {
+                key.extend(cf.map(|x| x.to_bits()));
+            }
+            let index = *vertex_at.entry(key).or_insert_with(|| {
+                out.positions.push(pf);
+                out.normals.push(nf);
+                out.uvs.push(uf);
+                if colors {
+                    out.colors.push(cf);
+                }
+                (out.positions.len() - 1) as u32
+            });
+            out.indices.push(index);
+        }
+    }
+    Ok((out, origins))
+}
+
+/// A piece the operation keeps: of mesh 0 (A) or 1 (B), from its welded
+/// triangle `tri`, with point ids, turned inside out where `flip`.
+struct Kept {
+    mesh: u8,
+    tri: u32,
+    ids: [u32; 3],
+    flip: bool,
+}
+
+/// Steps 1 to 3 and the choice of step 4: which pieces `op` keeps.
+fn arrange(points: Vec<DVec3>, sa: Solid, sb: Solid, op: CsgOp) -> (Csg, Vec<Kept>) {
     let on = vec![Vec::new(); points.len()];
     let mut c = Csg {
         points,
@@ -782,11 +863,7 @@ pub fn csg_traced(
         let inside = |q: DVec3| winding(&c.points, other, q) > 0.5;
         sides.insert(r, (inside(centre + n * eps), inside(centre - n * eps)));
     }
-    // 4. What the operation keeps.
-    let colors = !a.colors.is_empty() || !b.colors.is_empty();
-    let mut out = Mesh::default();
-    let mut origins: Vec<(u8, u32)> = Vec::new();
-    let mut vertex_at: BTreeMap<Vec<u32>, u32> = BTreeMap::new();
+    let mut kept = Vec::new();
     for (pi, p) in pieces.iter().enumerate() {
         let r = find(&mut parent, pi);
         let (front, back) = sides[&r];
@@ -809,64 +886,123 @@ pub fn csg_traced(
         if !keep {
             continue;
         }
-        let solid = &c.solids[p.mesh as usize];
-        origins.push((p.mesh, solid.source[p.tri as usize]));
-        let t = solid.tris[p.tri as usize];
-        let corners = &solid.corners[p.tri as usize];
-        let axis = drop_axis(c.tri_normal(t));
-        let tv = t.map(|i| project(c.points[i as usize], axis));
-        let den = (tv[1] - tv[0]).perp_dot(tv[2] - tv[0]);
-        let ids = if flip {
+        kept.push(Kept {
+            mesh: p.mesh,
+            tri: p.tri,
+            ids: p.ids,
+            flip,
+        });
+    }
+    (c, kept)
+}
+
+/// Why [`csg_points`] refused its operands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OperandError {
+    /// A position was NaN or infinite (operand 0 = A, 1 = B).
+    NotFinite(u8),
+    /// After exact welding, an edge is used other than once each way:
+    /// the operand is open, not oriented, or not manifold.
+    NotClosed(u8),
+}
+
+/// The f64 core of [`csg`] on welded operands: points and triangles in,
+/// points, triangles and each output triangle's source `(operand,
+/// triangle)` out. Unlike [`csg`], an operand that is not closed and
+/// oriented after exact welding is refused (`docs/research.md` §5.4).
+#[allow(clippy::type_complexity)]
+pub fn csg_points(
+    a: (&[DVec3], &[[u32; 3]]),
+    b: (&[DVec3], &[[u32; 3]]),
+    op: CsgOp,
+) -> Result<(Vec<DVec3>, Vec<[u32; 3]>, Vec<(u8, u32)>), OperandError> {
+    let mut points = Vec::new();
+    let mut at = BTreeMap::new();
+    let mut weld64 = |m: u8, (pos, tris): (&[DVec3], &[[u32; 3]])| -> Result<Solid, OperandError> {
+        if pos.iter().any(|p| !p.is_finite()) {
+            return Err(OperandError::NotFinite(m));
+        }
+        let start = points.len() as u32;
+        let ids: Vec<u32> = pos
+            .iter()
+            .map(|p| {
+                let key = [
+                    (p.x + 0.0).to_bits(),
+                    (p.y + 0.0).to_bits(),
+                    (p.z + 0.0).to_bits(),
+                ];
+                match at.get(&key) {
+                    Some(&id) if id >= start => id,
+                    _ => {
+                        let id = points.len() as u32;
+                        points.push(*p + DVec3::ZERO);
+                        at.insert(key, id);
+                        id
+                    }
+                }
+            })
+            .collect();
+        let mut s = Solid {
+            tris: Vec::new(),
+            corners: Vec::new(),
+            source: Vec::new(),
+            min: DVec3::INFINITY,
+            max: DVec3::NEG_INFINITY,
+        };
+        let mut directed: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+        let flat = Corner {
+            normal: DVec3::Y,
+            uv: [0.0; 2],
+            color: [1.0; 4],
+        };
+        for (ti, t) in tris.iter().enumerate() {
+            let w = t.map(|i| ids[i as usize]);
+            if w[0] == w[1] || w[1] == w[2] || w[0] == w[2] {
+                continue;
+            }
+            for k in 0..3 {
+                *directed.entry((w[k], w[(k + 1) % 3])).or_default() += 1;
+            }
+            s.tris.push(w);
+            s.source.push(ti as u32);
+            s.corners.push([flat; 3]);
+            for &i in &w {
+                s.min = s.min.min(points[i as usize]);
+                s.max = s.max.max(points[i as usize]);
+            }
+        }
+        let closed = !s.tris.is_empty()
+            && directed
+                .iter()
+                .all(|(&(x, y), &n)| n == 1 && directed.get(&(y, x)) == Some(&1));
+        if !closed {
+            return Err(OperandError::NotClosed(m));
+        }
+        Ok(s)
+    };
+    let sa = weld64(0, a)?;
+    let sb = weld64(1, b)?;
+    let (c, kept) = arrange(points, sa, sb, op);
+    // Only the points the kept pieces use, in first-use order.
+    let mut remap: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut out_points = Vec::new();
+    let mut out_tris = Vec::with_capacity(kept.len());
+    let mut origins = Vec::with_capacity(kept.len());
+    for p in &kept {
+        let ids = if p.flip {
             [p.ids[0], p.ids[2], p.ids[1]]
         } else {
             p.ids
         };
-        for id in ids {
-            let pos = c.points[id as usize];
-            let q = project(pos, axis);
-            let (w1, w2) = if den != 0.0 {
-                (
-                    (q - tv[0]).perp_dot(tv[2] - tv[0]) / den,
-                    (tv[1] - tv[0]).perp_dot(q - tv[0]) / den,
-                )
-            } else {
-                (0.0, 0.0)
-            };
-            let w0 = 1.0 - w1 - w2;
-            let mut normal =
-                normalize(corners[0].normal * w0 + corners[1].normal * w1 + corners[2].normal * w2);
-            if flip {
-                normal = -normal;
-            }
-            let uv = [0, 1]
-                .map(|k| corners[0].uv[k] * w0 + corners[1].uv[k] * w1 + corners[2].uv[k] * w2);
-            let color = [0, 1, 2, 3].map(|k| {
-                corners[0].color[k] * w0 + corners[1].color[k] * w1 + corners[2].color[k] * w2
-            });
-            let pf = pos.as_vec3().to_array();
-            let nf = normal.as_vec3().to_array();
-            let uf = uv.map(|x| x as f32);
-            let cf = color.map(|x| x as f32);
-            let mut key: Vec<u32> = pf
-                .iter()
-                .chain(&nf)
-                .chain(&uf)
-                .map(|x| (x + 0.0).to_bits())
-                .collect();
-            if colors {
-                key.extend(cf.map(|x| x.to_bits()));
-            }
-            let index = *vertex_at.entry(key).or_insert_with(|| {
-                out.positions.push(pf);
-                out.normals.push(nf);
-                out.uvs.push(uf);
-                if colors {
-                    out.colors.push(cf);
-                }
-                (out.positions.len() - 1) as u32
-            });
-            out.indices.push(index);
-        }
+        let t = ids.map(|id| {
+            *remap.entry(id).or_insert_with(|| {
+                out_points.push(c.points[id as usize]);
+                out_points.len() as u32 - 1
+            })
+        });
+        out_tris.push(t);
+        let solid = &c.solids[p.mesh as usize];
+        origins.push((p.mesh, solid.source[p.tri as usize]));
     }
-    Ok((out, origins))
+    Ok((out_points, out_tris, origins))
 }

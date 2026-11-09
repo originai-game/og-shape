@@ -4,6 +4,7 @@ use shape_2d::{
     Circle, Gear, Join, Outline, Path, Poly, PolyPoint, Profile, Rect, Slot, StrokeDesc,
     Superellipse, circle, gear, outline_profile, poly, rect, slot, stroke, superellipse,
 };
+use shape_bool::{BoolOp, Boolean, boolean};
 use shape_core::{DVec2, HashError, OutputHash, trig};
 use shape_gen::paths::{Helix, Loft, Sweep, Thread, helix, loft, sweep, thread};
 use shape_gen::solids::{
@@ -219,6 +220,72 @@ pub fn cases() -> Vec<Case> {
                     Outline::Close,
                 ];
                 profile(h, &outline_profile(&cmds).unwrap_or_default())
+            },
+        },
+        Case {
+            name: "bool.named.hole",
+            run: |h| {
+                let plate = cuboid(&BoxDesc {
+                    width: 80.0,
+                    depth: 40.0,
+                    height: 6.0,
+                })
+                .unwrap();
+                let mut pin = cylinder(&CylinderDesc {
+                    radius: 3.3,
+                    radius_top: 0.0,
+                    height: 8.0,
+                })
+                .unwrap();
+                pin.map_positions(|p| p + shape_core::DVec3::new(10.0, 5.0, -1.0), false);
+                solid(
+                    h,
+                    boolean(
+                        &plate,
+                        &pin,
+                        &Boolean {
+                            op: BoolOp::Cut,
+                            target: "plate",
+                            tool: "hole",
+                        },
+                    ),
+                )
+            },
+        },
+        Case {
+            name: "bool.named.join.intersect",
+            run: |h| {
+                let a = sphere(10.0).unwrap();
+                let mut b = cuboid(&BoxDesc {
+                    width: 12.0,
+                    depth: 12.0,
+                    height: 12.0,
+                })
+                .unwrap();
+                b.map_positions(|p| p + shape_core::DVec3::new(3.0, 2.0, -4.0), false);
+                solid(
+                    h,
+                    boolean(
+                        &a,
+                        &b,
+                        &Boolean {
+                            op: BoolOp::Join,
+                            target: "ball",
+                            tool: "block",
+                        },
+                    ),
+                )?;
+                solid(
+                    h,
+                    boolean(
+                        &a,
+                        &b,
+                        &Boolean {
+                            op: BoolOp::Intersect,
+                            ..Default::default()
+                        },
+                    ),
+                )
             },
         },
     ]

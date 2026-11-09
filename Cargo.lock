@@ -203,6 +203,7 @@ dependencies = [
  "robust",
  "shape-core",
  "shape-gen",
+ "shape-mesh",
  "spade",
 ]
 
