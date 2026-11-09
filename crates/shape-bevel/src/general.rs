@@ -26,6 +26,12 @@
 //!   a faceted wall (a cylinder's) shaves a wedge off its whole height.
 //!   The strip's last profile is a single point, so its last row is
 //!   triangles.
+//! - **Pipe joints**: where two of three or more bevelled edges are in
+//!   line, the hole takes the ADJ pattern and its inner points, with
+//!   those of the two edges' profiles, are moved onto the pipe (the first
+//!   edge's profile at the vertex swept along it) from the profile's
+//!   centre, so the joint does not bulge (the design's "snapped to the
+//!   pipe profile").
 //! - **Miters** on a planar gap with no unbevelled edge, at a vertex of
 //!   two or more bevelled edges. The gap is **outer** when its angle at
 //!   the vertex, summed over its faces, is more than 180°, **inner** when
@@ -51,6 +57,47 @@ pub(super) struct Layout {
     pub f: Fan,
     pub real: Vec<bool>,
     pub bidx: Vec<usize>,
+}
+
+/// Two bevelled edges count as in line when their directions are this
+/// close to opposite (cos 179°).
+const PIPE_COS: f64 = 0.999_847_695_156_391_2;
+
+/// A pipe through a joint: the profile from `a` to `b` around `p`, swept
+/// along `axis`.
+struct Pipe {
+    p: DVec3,
+    axis: DVec3,
+    a: DVec3,
+    b: DVec3,
+    spokes: [u32; 2],
+}
+
+impl Pipe {
+    /// `x` moved onto the pipe, from the profile's centre within its
+    /// cross-section; points outside the profile's quarter stay.
+    fn snap(&self, x: DVec3, exponent: f64) -> DVec3 {
+        let t = (x - self.p).dot(self.axis);
+        let y = x - self.axis * t;
+        let o = self.a + self.b - self.p;
+        let (u, w, r) = (self.a - o, self.b - o, y - o);
+        let (uu, uw, ww) = (u.dot(u), u.dot(w), w.dot(w));
+        let det = uu * ww - uw * uw;
+        if det.abs() <= 1e-12 * uu * ww {
+            return x;
+        }
+        let (ur, wr) = (u.dot(r), w.dot(r));
+        let cx = (ur * ww - wr * uw) / det;
+        let cy = (wr * uu - ur * uw) / det;
+        if !(cx >= 0.0 && cy >= 0.0 && cx + cy > 0.0) {
+            return x;
+        }
+        let norm = trig::pow(
+            trig::pow(cx, exponent) + trig::pow(cy, exponent),
+            1.0 / exponent,
+        );
+        o + u * (cx / norm) + w * (cy / norm) + self.axis * t
+    }
 }
 
 /// A run of boundary points over the triangles `lo..hi` of the fan,
@@ -115,10 +162,47 @@ impl Build<'_> {
         }
     }
 
+    /// A pipe joint at `v`: two bevelled edges in line, among three or
+    /// more. The pipe is the first one's profile at `v`, swept along it.
+    fn pipe(&self, v: u32, f: &Fan, bidx: &[usize]) -> Option<Pipe> {
+        if bidx.len() < 3 {
+            return None;
+        }
+        let s = self.s;
+        let k = f.spokes.len();
+        let p = s.positions[v as usize];
+        let dir = |i: usize| (s.positions[f.spokes[i % k] as usize] - p).normalize_or_zero();
+        let (i, j) = bidx.iter().enumerate().find_map(|(x, &i)| {
+            bidx[x + 1..]
+                .iter()
+                .find(|&&j| dir(i).dot(dir(j)) < -PIPE_COS)
+                .map(|&j| (i, j))
+        })?;
+        let axis = dir(i);
+        let key = edge_key(v, f.spokes[i]);
+        let info = &self.edges[&key];
+        let (na, nb) = (
+            tri_normal(s, f.tris[i]),
+            tri_normal(s, f.tris[(i + k - 1) % k]),
+        );
+        let a = p + na.cross(axis).normalize_or_zero() * info.after(key, v);
+        let b = p + axis.cross(nb).normalize_or_zero() * info.before(key, v);
+        Some(Pipe {
+            p,
+            axis,
+            a,
+            b,
+            spokes: [f.spokes[i], f.spokes[j]],
+        })
+    }
+
     /// Whether the classic layout cannot bevel `v`.
     pub(super) fn needs_general(&self, v: u32) -> Result<bool, BevelError> {
         let Layout { f, real, bidx } = self.layout(v)?;
         let (k, m) = (f.spokes.len(), bidx.len());
+        if self.pipe(v, &f, &bidx).is_some() {
+            return Ok(true);
+        }
         for g in 0..m {
             let (lo, hi) = (bidx[g], if g + 1 < m { bidx[g + 1] } else { k });
             let inner = (lo + 1..hi).filter(|&i| real[i]).count();
@@ -344,7 +428,8 @@ impl Build<'_> {
         // The octant only where every side is a bevelled edge: a face
         // chain keeps its own corner, which the octant's centre does not
         // fit, so such holes take the ADJ pattern.
-        let octant = mm == 3 && sides.iter().all(|sd| sd.spoke.is_some());
+        let pipe = self.pipe(v, &f, &bidx);
+        let octant = mm == 3 && pipe.is_none() && sides.iter().all(|sd| sd.spoke.is_some());
         let o = if octant {
             p + sides
                 .iter()
@@ -355,6 +440,7 @@ impl Build<'_> {
         };
         let mut ends = Vec::with_capacity(mm);
         let mut keys = Vec::new();
+        let mut snap: Vec<u32> = Vec::new();
         for sd in &sides {
             let (a, b) = (self.pos[sd.a as usize], self.pos[sd.b as usize]);
             let (c, chain) = match sd.spoke {
@@ -367,6 +453,9 @@ impl Build<'_> {
                         p + l * (((a + b) / 2.0 - p).dot(l))
                     };
                     let chain = self.chain(sd.a, sd.b, c);
+                    if pipe.as_ref().is_some_and(|q| q.spokes.contains(&w)) {
+                        snap.extend_from_slice(&chain[1..chain.len() - 1]);
+                    }
                     self.chains.insert((v, w), chain.clone());
                     keys.push(edge_key(v, w));
                     (c, chain)
@@ -384,7 +473,15 @@ impl Build<'_> {
         };
         let exponent = self.exponent;
         let mut samples = |n: u32| crate::profile::samples(exponent, n);
+        let first = self.pos.len() as u32;
         let fill = patch::fill(&corner, exponent, &mut samples, &mut self.pos)?;
+        if let Some(q) = &pipe {
+            snap.extend(first..self.pos.len() as u32);
+            for id in snap {
+                let x = self.pos[id as usize];
+                self.pos[id as usize] = q.snap(x, exponent);
+            }
+        }
         for t in fill {
             self.new_tris.push((t, unit));
         }

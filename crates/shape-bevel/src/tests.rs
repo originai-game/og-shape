@@ -778,3 +778,82 @@ fn faces_cut_into_slivers_are_rebuilt_from_their_outline() {
     );
     assert!(matches!(e, Err(BevelError::TooLarge(_))), "{e:?}");
 }
+
+#[test]
+fn a_pipe_joint_stays_on_the_pipe() {
+    // A block whose front is two faces in one plane: the seam between
+    // them is a real edge under the top's front edge, which runs straight
+    // through it.
+    let corners = [
+        (-20.0, -15.0),
+        (0.0, -15.0),
+        (20.0, -15.0),
+        (20.0, 15.0),
+        (-20.0, 15.0),
+    ];
+    let mut b = extrude(
+        &shape_2d::Profile::from_contour(shape_2d::Contour::corners(
+            corners.iter().map(|&(x, y)| DVec2::new(x, y)).collect(),
+        )),
+        &Extrude {
+            height: 20.0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let seam = b
+        .real_edges()
+        .into_iter()
+        .find(|&(x, y)| {
+            [x, y].iter().all(|&v| {
+                let q = b.positions[v as usize];
+                q.x == 0.0 && q.y == -15.0
+            })
+        })
+        .unwrap();
+    b.tag_edge(seam.0, seam.1, &["seam"]);
+    let r = 3.0;
+    let plain = fillet(
+        &b,
+        &Fillet {
+            radius: r,
+            edges: names(&["top"]),
+            segments: 8,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let s = fillet(
+        &b,
+        &Fillet {
+            radius: r,
+            edges: names(&["top", "seam"]),
+            segments: 8,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    check_closed(&s);
+    let q = quad_pairs(&s, &s.faces(&["fillet"]).unwrap());
+    assert!(q.triangles - q.paired <= 2, "{q:?}");
+    // The seam's faces are one plane, so its bevel is flat and the joint
+    // is the top edge's round, unbroken: every new point near the joint
+    // lies on the cylinder of radius r about the round's axis.
+    let axis = |q: shape_core::DVec3| {
+        let (dy, dz) = (q.y - (-15.0 + r), q.z - (20.0 - r));
+        (dy * dy + dz * dz).sqrt()
+    };
+    let mut near = 0;
+    for t in s.faces(&["fillet"]).unwrap() {
+        for &v in &s.triangles[t as usize] {
+            let q = s.positions[v as usize];
+            if q.x.abs() < r && q.y < -15.0 + r && q.z > 20.0 - r {
+                near += 1;
+                assert!((axis(q) - r).abs() < 1e-9, "{q} at {}", axis(q));
+            }
+        }
+    }
+    assert!(near > 20);
+    let (v0, v1) = (plain.measure().volume, s.measure().volume);
+    assert!((v0 - v1).abs() < 1e-6 * v0, "{v0} {v1}");
+}
