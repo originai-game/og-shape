@@ -1,0 +1,21 @@
+[package]
+name = "shape-bool"
+description = "og-shape mesh booleans and split (og-geom's exact-predicate CSG)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+glam.workspace = true
+shape-core.workspace = true
+shape-gen.workspace = true
+robust.workspace = true
+spade.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+glam.workspace = true

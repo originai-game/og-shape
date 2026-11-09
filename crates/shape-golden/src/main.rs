@@ -6,6 +6,7 @@
 //! cases here.
 
 mod cases;
+mod geom;
 
 use std::process::ExitCode;
 

@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 shape-core.workspace = true
+shape-gen.workspace = true
+shape-bool.workspace = true
 
 [lints]
 workspace = true

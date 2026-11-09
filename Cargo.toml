@@ -11,10 +11,13 @@ publish = false
 
 [workspace.dependencies]
 shape-core = { path = "crates/shape-core" }
-glam = { version = "0.34", default-features = false, features = ["std", "f64", "libm", "scalar-math"] }
+glam = { version = "0.34", default-features = false, features = ["std", "f64", "i64", "u32", "libm", "scalar-math"] }
 libm = "0.2"
 robust = "1"
 sha2 = "0.11"
+spade = "2.15.1"
+shape-gen = { path = "crates/shape-gen" }
+shape-bool = { path = "crates/shape-bool" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

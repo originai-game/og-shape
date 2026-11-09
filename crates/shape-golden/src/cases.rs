@@ -15,7 +15,7 @@ pub struct Case {
 
 /// Every case, in any order; the caller sorts them.
 pub fn all() -> Vec<Case> {
-    vec![
+    let mut cases = vec![
         Case {
             name: "core.trig",
             run: core_trig,
@@ -32,7 +32,9 @@ pub fn all() -> Vec<Case> {
             name: "core.order",
             run: core_order,
         },
-    ]
+    ];
+    cases.extend(crate::geom::cases());
+    cases
 }
 
 /// SplitMix64: a fixed, portable stream of test inputs.

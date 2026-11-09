@@ -1,0 +1,15 @@
+[package]
+name = "shape-gen"
+description = "og-shape generators: extrude, lathe, sweep, polyhedra, merge (from og-geom), and the ones sand3d adds."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+glam.workspace = true
+shape-core.workspace = true
+
+[lints]
+workspace = true

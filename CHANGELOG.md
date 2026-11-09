@@ -12,6 +12,11 @@
   tests, golden hashes natively and as wasm32 under wasmtime), and GitHub
   Actions on x86-64 Linux, x86-64 Windows and aarch64 Linux. The first
   golden hashes cover `shape-core`.
+- `shape-gen` and `shape-bool`: origin-engine's og-geom copied at
+  `d4f4d4d` (`third_party/og-geom/SOURCE`): three.js's extrude, lathe,
+  sweep, polyhedra, merge, and exact-predicate CSG and fracture. og-geom's
+  own contract tests pass unchanged, including its recorded output hashes,
+  so the copy gives the engine's bytes. Golden cases added for each.
 - Plan: aarch64 macOS joins the gate later; phase 0 benchmarks booleans on
   synthetic AI-mesh defects instead of provider outputs, which re-check the
   decision in phase 5.

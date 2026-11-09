@@ -1,0 +1,22 @@
+origin-engine crates/og-geom (version 0.7.7), MIT, LICENSE in this folder.
+repository: https://github.com/originai-game/origin-engine
+commit:     d4f4d4d1da5156f972cae65cee47574b7f331944
+copied:     2026-11-09
+
+Where it went:
+  src/{earcut,extrude,frames,lathe,merge,path2,polyhedron,shape,sweep,trig}.rs
+                         -> crates/shape-gen/src/
+  src/lib.rs (Mesh, Placement, place, ...)  -> crates/shape-gen/src/lib.rs
+  src/lib.rs (mod geom_contracts)           -> crates/shape-bool/tests/og_geom_contracts.rs
+  src/{csg,fracture}.rs  -> crates/shape-bool/src/
+
+Changes from the source:
+  - og_core::sort -> shape_core::sort (std's stable sort: same order).
+  - csg.rs, fracture.rs: HashMap/HashSet -> BTreeMap/BTreeSet (lookups
+    only; keys are sorted before any iteration, so output is unchanged).
+    Origin derives Ord.
+  - finish, vertex_normals, normalize, Placed, place: pub(crate) -> pub
+    (#[doc(hidden)]), so shape-bool can use them.
+  - trig.rs tests check the series against libm (shape_core::trig), not
+    std. og-geom's series trig itself is kept, so generator output
+    matches the engine and its TypeScript twin bit for bit.
