@@ -182,3 +182,28 @@
 - Golden cases added (no existing hash moved): `model.frame`,
   `model.place`, `model.joints.glb`, `model.joints.preview`,
   `model.washing_machine.glb`, `.png` and `.measure`.
+- Skins in the data model (phase 5b, part 1): `Solid` has an optional
+  `skin` (`shape_mesh::Skin`): named bones with a parent, a rest frame and
+  an inverse bind matrix, and up to four normalized `(bone, weight)` pairs
+  per vertex (`Weights`, with `from_raw` and `blend` for interpolation).
+  `canonicalize` carries weights through sorting; welded vertices take the
+  mean of their weights. An unskinned solid hashes as before.
+- Booleans (`boolean`, `fuse`), the `shape-edit` edits and the bevels
+  refuse a skinned solid with a new `Skinned` error; they never drop a
+  skin. `append` and `merge` keep a skin when the skeletons match, and
+  otherwise leave vertices unweighted for `Skin::check` to report.
+- `shape-skin`: `skin(solid, &Rig)` makes a bone of each named face region
+  and blends weights across the seams between regions over `blend`
+  millimetres of surface distance, splitting long edges in the band
+  first; `pose` (linear blend skinning from bone turns), `skin_matrices`,
+  and `measure_pose` (closed, inverted triangles with their area and best
+  shape, area and volume ratios). `docs/research.md` §11.
+- `glb` writes a skinned part's glTF skin: bone nodes under the part's
+  node, inverse bind matrices, `JOINTS_0` and `WEIGHTS_0`. A skinned part
+  on a joint is `ExportError::BadSkin`. Unskinned scenes write the same
+  bytes as before.
+- Phase 5b part 1 acceptance: a stylised figure (torso, head, arms, legs)
+  built from loft, sweep, sphere, cuboid and boolean joins, skinned with
+  ten bones and posed with an elbow and a knee at 90°; previews in
+  `docs/previews/phase5b/`. Golden cases `skin.weld`, `skin.weights`,
+  `skin.pose` and `skin.glb` added; no existing hash moved.

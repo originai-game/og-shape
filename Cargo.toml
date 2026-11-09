@@ -30,6 +30,7 @@ shape-tools = { path = "crates/shape-tools" }
 shape-bevel = { path = "crates/shape-bevel" }
 shape-model = { path = "crates/shape-model" }
 serde_json = { version = "1.0.154", default-features = false, features = ["std"] }
+shape-skin = { path = "crates/shape-skin" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

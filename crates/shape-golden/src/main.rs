@@ -10,6 +10,7 @@ mod cases;
 mod gen2;
 mod geom;
 mod model;
+mod skin;
 mod solids;
 mod tools;
 

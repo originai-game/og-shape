@@ -40,6 +40,9 @@ pub enum EditError {
     NotFlat(String),
     /// The part shares no volume with the host.
     NoOverlap,
+    /// The solid is skinned: edits do not carry skins yet, and never drop
+    /// one silently.
+    Skinned,
 }
 
 impl From<BoolError> for EditError {
@@ -70,11 +73,22 @@ impl std::fmt::Display for EditError {
             ),
             EditError::NotFlat(n) => write!(f, "the faces {n} are not flat; cut them flat first"),
             EditError::NoOverlap => f.write_str("the part shares no volume with the host"),
+            EditError::Skinned => f.write_str(
+                "the solid is skinned; edits do not carry skins yet: edit first, then skin it",
+            ),
         }
     }
 }
 
 impl std::error::Error for EditError {}
+
+fn unskinned(solids: &[&Solid]) -> Result<(), EditError> {
+    if solids.iter().any(|s| s.skin.is_some()) {
+        Err(EditError::Skinned)
+    } else {
+        Ok(())
+    }
+}
 
 /// Finite and above zero (NaN fails).
 fn positive(v: f64) -> bool {
@@ -141,6 +155,7 @@ pub enum Keep {
 
 /// The solid cut by the plane through `frame.origin` normal to `frame.z`.
 pub fn split(s: &Solid, frame: &Frame, keep: Keep) -> Result<Solid, EditError> {
+    unskinned(&[s])?;
     let l = 4.0 * size(s)
         + 4.0 * (frame.origin - s.positions.first().copied().unwrap_or_default()).length();
     let half = shape_gen::solids::cuboid(&shape_gen::solids::BoxDesc {
@@ -223,6 +238,7 @@ fn bore(
 /// Holes of `d.diameter` into the solid. Mouth edges get `hole`; the bore
 /// `hole.side`, a blind floor `hole.bottom`.
 pub fn hole(s: &Solid, d: &Hole) -> Result<Solid, EditError> {
+    unskinned(&[s])?;
     if !positive(d.diameter) {
         return Err(EditError::NotPositive("diameter"));
     }
@@ -291,6 +307,7 @@ pub struct Pocket {
 /// The profile cut into the solid from where each frame's axis enters it.
 /// Floor and walls are named `pocket.bottom` and `pocket.side`.
 pub fn pocket(s: &Solid, d: &Pocket) -> Result<Solid, EditError> {
+    unskinned(&[s])?;
     let span = size(s);
     let over = span * 1e-3;
     let frames = if d.at.is_empty() {
@@ -333,6 +350,7 @@ pub fn pocket(s: &Solid, d: &Pocket) -> Result<Solid, EditError> {
 /// The host with the volume `part` fills taken out; `part` is untouched.
 /// Refused if they share no volume.
 pub fn seat(host: &Solid, part: &Solid, part_name: &str) -> Result<Solid, EditError> {
+    unskinned(&[host, part])?;
     let shared = boolean(
         host,
         part,
@@ -512,6 +530,7 @@ fn offset(planes: &[(DVec3, f64)]) -> DVec3 {
 /// the cut opens them); then the inner solid is cut away. Inner faces get
 /// `cut` and `shell.*`.
 pub fn shell(s: &Solid, d: &Shell) -> Result<Solid, EditError> {
+    unskinned(&[s])?;
     let t = d.thickness;
     if !positive(t) {
         return Err(EditError::NotPositive("thickness"));
@@ -565,6 +584,7 @@ pub struct Dent {
 /// reach are first split (shared edge midpoints, so no cracks) until no
 /// edge is longer than `radius / 4`. Moved faces get `dent`.
 pub fn dent(s: &Solid, d: &Dent) -> Result<Solid, EditError> {
+    unskinned(&[s])?;
     if !positive(d.radius) {
         return Err(EditError::NotPositive("radius"));
     }
@@ -683,7 +703,9 @@ fn split_triangle(t: [u32; 3], m: [Option<u32>; 3]) -> Vec<[u32; 3]> {
 // ── merge ───────────────────────────────────────────────────────────────────
 
 /// One solid holding all the given ones, untouched: no boolean. Shells
-/// that touch stay separate; a later boolean fuses them first.
+/// that touch stay separate; a later boolean fuses them first. Skins
+/// follow [`Solid::append`]: kept when every solid has the same skeleton,
+/// otherwise reported by [`shape_mesh::Skin::check`].
 pub fn merge(solids: &[&Solid]) -> Solid {
     let mut out = Solid::default();
     for s in solids {

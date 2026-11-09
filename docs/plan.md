@@ -159,4 +159,4 @@ drop Blender from the asset image.
 | 3 | Done (2026-11-09): `shape-bevel` fillet, chamfer, soften; sand3d's bracket, washer and enclosure corners closed with all-quad patches. Left: UVs (Solid has none yet), arc and patch mitres, pipe joints, loop slide (`docs/research.md` §7) |
 | 4 | Done (2026-11-09): export, preview, `shape-model` (parts, groups, placement, joints, pose, materials), `shape-cli`, `shape-wasm` and the TypeScript binding; sand3d's washing machine rebuilt in TypeScript, GLB with joints, preview (`docs/previews/phase4/`). Gaps in `docs/research.md` §8.5 |
 | 5 | In progress: stream D, `claude/mesh-tools` |
-| 5b | Not started |
+| 5b | Part 1 done (2026-11-09): skin in `Solid`, `shape-skin` (bones from named regions, blended weights, posing), glTF skin export, a stylised figure posed (`docs/previews/phase5b/`). Part 2 (imported skins through repair, decimate, unwrap) waits for phase 5 |

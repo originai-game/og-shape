@@ -422,6 +422,7 @@ dependencies = [
  "shape-gen",
  "shape-mesh",
  "shape-model",
+ "shape-skin",
  "shape-tools",
 ]
 
@@ -438,6 +439,21 @@ version = "0.0.0"
 dependencies = [
  "gltf",
  "serde_json",
+ "shape-2d",
+ "shape-bevel",
+ "shape-bool",
+ "shape-core",
+ "shape-edit",
+ "shape-gen",
+ "shape-mesh",
+ "shape-tools",
+]
+
+[[package]]
+name = "shape-skin"
+version = "0.0.0"
+dependencies = [
+ "gltf",
  "shape-2d",
  "shape-bevel",
  "shape-bool",
