@@ -8,10 +8,8 @@ in order. Phase M (the merge) needs the owner's go-ahead.
 - **No GPU is needed.** Development runs on x86-64 Linux (an Amp orb, a
   cloud container or WSL), plus wasm32 under wasmtime and bun.
 - **The other targets run on GitHub Actions** (`windows-latest`,
-  `ubuntu-24.04-arm`), so they never take a slot or a lane on macrunner and
-  never touch origin-engine's gate or landing queue.
-- **aarch64 macOS is deferred.** It joins the gate as its own change
-  (`macos-latest`), before phase 1 ends.
+  `ubuntu-24.04-arm`, `macos-latest`), so they never take a slot or a lane
+  on macrunner and never touch origin-engine's gate or landing queue.
 
 ## Gate
 
@@ -20,8 +18,7 @@ in order. Phase M (the merge) needs the owner's go-ahead.
 - the unit tests;
 - the licence check (cargo-deny) and the determinism lint (`clippy.toml`);
 - the golden output hashes of every operation on x86-64 Linux,
-  x86-64 Windows, aarch64 Linux and wasm32 (wasmtime); aarch64 macOS joins
-  later (§Where it runs).
+  x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime).
 
 One hash file is committed. Every target must reproduce it byte for byte.
 A change that moves a hash says why in its commit and changelog.

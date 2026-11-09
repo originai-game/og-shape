@@ -291,3 +291,4 @@
 - Golden case `mcp.process.ball_defects` (the `process` chain's report
   and GLB on the committed `golden/meshes/ball_defects.obj`); no existing
   hash moved.
+- The gate runs on aarch64 macOS too (`macos-latest`): five targets.

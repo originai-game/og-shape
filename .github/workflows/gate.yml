@@ -1,6 +1,6 @@
 # The gate (docs/plan.md §Gate). Lint runs once; the tests and the golden
 # hashes run on every target and must match golden/hashes.txt byte for
-# byte. aarch64 macOS joins later (docs/plan.md §Where it runs).
+# byte.
 name: gate
 
 on:
@@ -39,6 +39,9 @@ jobs:
             steps: test golden
           - name: aarch64 Linux
             os: ubuntu-24.04-arm
+            steps: test golden
+          - name: aarch64 macOS
+            os: macos-latest
             steps: test golden
     runs-on: ${{ matrix.os }}
     defaults:
