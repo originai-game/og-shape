@@ -239,7 +239,7 @@ pub fn unwrap(s: &Solid, d: &Unwrap) -> Result<Uvs, UnwrapError> {
     let pad = padding / f64::from(resolution);
     let mut corners = vec![[DVec2::ZERO; 3]; n];
     let mut scale = 0.0;
-    for round in 0..4 {
+    for round in 0..16 {
         let (at, sc) = pack_all(&sizes, pad).ok_or(UnwrapError::TooManyCharts(charts.len()))?;
         scale = sc;
         for (c, members) in charts.iter().enumerate() {
@@ -250,12 +250,19 @@ pub fn unwrap(s: &Solid, d: &Unwrap) -> Result<Uvs, UnwrapError> {
         }
         let mut leaving: Vec<u32> = Vec::new();
         for members in &charts {
-            leaving.extend(overlapping(members, &corners));
+            for (i, j) in overlapping(members, &corners) {
+                // The later leaves; after three rounds, both do, so this
+                // ends (a chart of one triangle overlaps nothing).
+                leaving.push(i.max(j));
+                if round >= 3 {
+                    leaving.push(i.min(j));
+                }
+            }
         }
         if leaving.is_empty() {
             break;
         }
-        if round == 3 {
+        if round == 15 {
             return Err(UnwrapError::BadDesc(
                 "charts still overlap after rounding; this is a bug".into(),
             ));
@@ -357,9 +364,9 @@ fn pack_all(sizes: &[DVec2], pad: f64) -> Option<(Vec<DVec2>, f64)> {
     Some(best)
 }
 
-/// Triangles of one chart that overlap another of it (the later of each
-/// pair), by a sweep along u with exact tests.
-fn overlapping(members: &[u32], uv: &[[DVec2; 3]]) -> Vec<u32> {
+/// Pairs of triangles of one chart that overlap, by a sweep along u with
+/// exact tests.
+fn overlapping(members: &[u32], uv: &[[DVec2; 3]]) -> Vec<(u32, u32)> {
     let bounds = |i: u32| {
         let t = uv[i as usize];
         (t[0].min(t[1]).min(t[2]), t[0].max(t[1]).max(t[2]))
@@ -374,7 +381,7 @@ fn overlapping(members: &[u32], uv: &[[DVec2; 3]]) -> Vec<u32> {
         for &j in &active {
             let (lo2, hi2) = bounds(j);
             if lo2.y < hi.y && hi2.y > lo.y && tris_overlap_2d(uv[i as usize], uv[j as usize]) {
-                out.push(i.max(j));
+                out.push((i, j));
             }
         }
         active.push(i);

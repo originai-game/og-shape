@@ -118,3 +118,34 @@
   and the cap names they touch. An offset larger than the faces allow is
   `BevelError::TooLarge`, never a clipped result. `quad_pairs` measures
   how much of a patch is quads. Golden cases `bevel.*` added.
+- `shape-tools` mesh tools (phase 5), for the platform's `asset_process`
+  (`docs/research.md` §9):
+  - `import`, `import_gltf`, `import_obj`, `import_fbx`: glTF 2.0 (GLB,
+    and `.gltf` with embedded or external buffers through a `Resolve`
+    callback), OBJ (with MTL texture maps) and FBX 7.x binary and ASCII,
+    into `ImportedPart`s (a solid each, its `Affine` transform, per-corner
+    UVs, material name) and the textures' sizes (`ImageInfo`). Polygons
+    are triangulated on the way in; faces carry their part's name.
+    Draco and meshopt compression, and FBX 6, are `Unsupported` errors.
+  - `repair` with `Repair`: `weld` (closes cracks, or all vertices with
+    `weld_all`), `remove_degenerate` (exact zero area, duplicates),
+    `remove_floaters` (`Floaters` by size or fraction), `orient`
+    (consistent winding, closed pieces facing out), `close_holes` (least
+    area fill, pinched rims split, fills named `fill`), and `fuse` of
+    interpenetrating shells; `RepairReport` says what each step did.
+    `apply_transform` and `join` place and merge imported parts.
+  - `decimate` and `lods` with `Decimate` (ratio or triangle target, error
+    limit, locked borders): quadric error metrics in f64 with the link
+    condition, so closed meshes stay closed; features and names kept.
+  - `unwrap` with `Unwrap`: charts grown within an angle with an exact
+    no-overlap test, planar projection, smallest-box turn, skyline packing
+    at one texel density, padding in texels; `Uvs` per triangle corner.
+  - `measure` with `Measure`, `MeshMeasures::to_json`: counts, bounds,
+    pivot, area, volume, closed, boundary loops, non-manifold and
+    inconsistent edges, degenerate and duplicate triangles, pieces and
+    floaters, exact self-intersections, UV coverage and overlap, texture
+    memory once decoded (with mips). No thresholds.
+  - `glb_plain` with `PlainGlb`: one node, one mesh, one primitive with
+    positions, normals and `TEXCOORD_0`: the texturing input contract.
+  - Golden cases `meshtools.*` added; no existing hash moved. The
+    acceptance chain is `bench/meshtools`.
