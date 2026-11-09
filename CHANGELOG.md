@@ -368,3 +368,34 @@
   dataset objects rebuilt by agents from a description and a picture,
   and again by translating the sand3d program; programs, previews and the
   runner (`eval/phase6/run.ts`) committed, datasets attributed.
+- Program JSON, binding, CLI and MCP (`docs/research.md` §14): new
+  generator ops `wire`, `body`, `knurl` and `gear` (the gear solid, with
+  `bore` and `hub`); `dome` takes `height`; `loft` takes `curve`
+  (`"auto"`, `"straight"`, `"catmullRom"`, `"spline"`); `revolve`,
+  `sphere`, `dome` and `torus` take `axis` (`"+Y"`, `"+Z"`); `torus`
+  takes `angle` (a part ring with `start`/`end` caps) and
+  `tubeSegments`; a `scale` op (a part along its own axes); profiles
+  `scale`, `polygon.flats` and a `poly` point's `bulge` (an arc edge).
+  The binding adds the generators, `Shape.scale`, and `og.translate`,
+  `og.rotate`, `og.offset`, `og.scale`.
+- `segments` (a turn; 0 keeps the chord rule) on `cylinder`, `cone`,
+  `tube`, `sphere`, `dome`, `torus` and `revolve`. In `shape-gen`:
+  `segments` on `CylinderDesc`, `SphereDesc`, `DomeDesc`, `Revolve`;
+  `angle`, `segments`, `tube_segments` on `TorusDesc`; new `ConeDesc`,
+  `TubeDesc` (`cone_desc`, `tube_desc`). In `shape-2d`: `Polygon::flats`,
+  `PolyPoint::bulge`, `ProfileError::ArcCorner` and `Conflict`. Zero
+  values keep every earlier result.
+- **Breaking for programs:** a field an operation, profile, loft
+  section, body view, frame or mimic does not take is now an error that
+  names it and lists the fields taken (it was ignored). Every program in
+  `eval/`, `golden/` and `guides/` already complied.
+- Errors name where they happened: `ModelError::At` gives the op's
+  index in the program (or the index it would be recorded at, live), its
+  verb and its part (`op 3 fillet "lid": …`; readers say `(a reader,
+  before op N)`). The binding appends the author's call site from the
+  stack, read only when a call fails. New `ModelError::BadField` and
+  `UnknownField`; field errors no longer repeat the op.
+- Fixed: a generator whose `on` frame was refused had already added its
+  part, so the model changed on an error and a replay diverged.
+- Golden cases `surface.program.glb` and `surface.program.measure`; no
+  existing hash moved.
