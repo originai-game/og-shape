@@ -1,0 +1,3 @@
+2026-11-09T18:00:11.932Z ok parts 3 open 0 joints 1 triangles 28632
+2026-11-09T18:00:18.231Z error op 0 wire "lower_tube": wire has no field "segments"; it takes: name, path, diameter, closed, fillet, fillets, on (at /home/user/og-shape/eval/phase6/M/auto1_curved_tubes/program.ts:22:20)
+2026-11-09T18:00:21.469Z ok parts 3 open 0 joints 1 triangles 28632
