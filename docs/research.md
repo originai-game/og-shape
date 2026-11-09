@@ -626,6 +626,210 @@ Every output hash is the same natively (x86-64) and as wasm32-wasip1
 under wasmtime (golden cases `bevel.box`, `bevel.curved`, `bevel.sand3d`,
 `bevel.adj`).
 
+## 8. Phase 4: parts, joints, the CLI and the wasm binding (stream E, 2026-11-09)
+
+### 8.1 Sources
+
+sand3d (Apache-2.0, `84c980a`) for semantics only: `src/sand3d/frames.py`
+(frames, `face`, `edge`, `bbox`, `local`, `at`, `grid`, `ring`, `along`,
+`snap`), `joints.py` (kinds, ranges, mimic, several joints per child,
+posing), `assembly.py` (group, assembly, attach, units, export), and
+`programs/washing_machine.py` (the acceptance). No code was copied; the
+washing machine is rebuilt line for line in TypeScript.
+
+### 8.2 Decisions
+
+- **Placement lives in two places.** `shape_core::Frame` gains the frame
+  operations as added methods: `facing` (CadQuery's axes, as sand3d: on a
+  ±Z face X is world +X, else X = Z × normal; components within 1e-6 of
+  zero cleaned off the normal), `with_up`, `offset`, `translate` (sand3d's
+  `move`; `move` is a Rust keyword, the binding calls it `move`), `turn`
+  (radians about own X, then Y, then Z: three.js's Euler `XYZ`; sines and
+  cosines within 1e-12 of 0 or ±1 snapped, so quarter turns are exact),
+  `inverse`, `is_rigid`. Everything that reads solids is
+  `shape_model::place`: `bbox`, `face`, `edge`, `grid`, `ring`, `along`,
+  `snap`.
+- **`face(name)` sits on the centroid**, as this task specified, not on
+  the parent's origin projected onto the face (sand3d's CadQuery rule):
+  the origin is the area-weighted centroid of the chosen triangles, +Z
+  their area-weighted normal. By name, the chosen triangles are the
+  largest flat group carrying it (normal and plane offset rounded to
+  1e-4 as integer keys); more than six groups with the largest under half
+  the named area is `NotFlat` (sand3d's rule). By direction (`"+X"`), the
+  triangles facing it within 1° and furthest along it; none is
+  `NotFacing`. A program ported from sand3d moves the frame down to
+  sand3d's origin once (`base = front.move(0, -h / 2)` in the washing
+  machine).
+- **`edge(name)` is a path**, as in sand3d: the longest run of the named
+  edges (ties to the lowest point), closed if it closes, anticlockwise
+  about its dominant axis from the point nearest that view's first axis;
+  forks are refused. Frames come from `along(path, …)`.
+- **`snap`** is brute force: nearest point (Ericson) or Möller–Trumbore
+  ray, every triangle, ties to the lower solid then triangle. No BVH: the
+  cost is triangles × points, fine at model scale.
+- **One world.** Every frame, pivot and axis the model API takes or gives
+  is in the world at rest. A part's solid stays in its own space with a
+  rigid placement; `at` sets it, `transform` composes a motion, and both
+  move everything under the node and the pivots of joints whose child is
+  among them (sand3d: "a jointed part moves with its pivot"). Edits take
+  world frames and run in the part's space, so a boolean tool is mapped
+  into the target's space. Geometry is always read at rest; `pose` only
+  changes export and preview (sand3d reads the posed scene).
+- **Booleans use their tool up** (sand3d); the tool's id then answers
+  `UsedUp`. A tool may not be a group, a jointed part or a joint's parent.
+  `seat` leaves its part.
+- **Mirror bakes.** A mirror is no rigid placement, so `mirror` writes the
+  image into each copied part's solid (triangles flipped) and gives it the
+  world placement. `copy` keeps placements. Neither copies joints (sand3d's
+  copy does); declare the copy's own.
+- **Joints.** Kinds revolute, continuous, prismatic, fixed, floating
+  (sand3d's `free`). Revolute and prismatic need a range containing 0;
+  continuous, fixed, floating and followers take none; fixed and floating
+  take no axis or mimic. The axis is a world direction (or the pivot's
+  normal), stored as a world vector and written in the pivot's frame. The
+  parent is explicit (`joint(child, parent, desc)`), where sand3d reads it
+  off the frame; every joint of one child hangs on one parent; cycles are
+  refused through the joints' parents and the scene tree. A follower may
+  not be posed, nor follow a fixed or floating joint, and a slide may not
+  follow an endless turn (sand3d's rules). Poses are checked against the
+  range with sand3d's 1e-9 slack.
+- **Several joints on one child** compose in declaration order, the first
+  nearest the parent (sand3d). The export desc keeps one joint per part,
+  so the model writes a link per joint before the last: a part with no
+  mesh named `<child>:<joint>`, chained from the parent. The joint nodes'
+  pivots are all world-at-rest frames, so `P0 M0 P0⁻¹ · P1 M1 P1⁻¹` is
+  exactly "the k-th rides on the motions of those before it".
+- **A jointed group** (the washing machine's door) becomes a part with no
+  mesh named after the group; its parts hang on it welded. Parts with no
+  joint hang on the body they move with (their nearest jointed ancestor),
+  or on the scene root.
+- **`fixed`** is a new `JointKind` in `shape-tools` (an added variant, and
+  `ExportError::FixedConstrained`): written `"type": "fixed"` with no
+  axis or limits. sand3d has no fixed kind; URDF does. Existing outputs
+  are unchanged (every earlier golden hash holds).
+- **Units.** `units` (mm, cm, m) before the first part; the built scene is
+  scaled to millimetres (positions, pivots, slide values and ranges, and
+  mimic multipliers across kinds), and export writes metres.
+- **Materials** stay `shape_tools::Material` (three.js
+  `MeshStandardMaterial` names). A group's material reaches every part
+  under it that sets none (the nearest wins). No presets in the kernel:
+  sand3d's presets are written out as values in the program.
+- **The program.** `shape_model::program::Session` is the whole API as
+  JSON operations (`{"op": "box", …}`, camelCase fields), one call at a
+  time. Operations that change the model are recorded; readers are not,
+  because the frames they answered are written as literals into the
+  operations that used them. The recorded program replays to the same
+  bytes (tested in Rust, in bun and in the gate). serde_json is the only
+  new kernel dependency; its float printing (`zmij`) and parsing are
+  exact, and maps are `BTreeMap` (sorted keys).
+- **The wasm boundary is strings and bytes.** `shape-wasm` exports one
+  class: `apply(op_json) → answer_json`, `program`, `glb`, `obj`, `stl`,
+  `measure`, `preview`. Frames are turned in wasm (with `trig`), never with
+  JavaScript's `Math.sin`; JavaScript does only `+ - * /` on lengths
+  (`og.deg` is `d * π / 180`). The crate builds under the workspace lints,
+  `unsafe_code = "forbid"` included.
+- **The binding** (`crates/shape-wasm/ts`, npm `og-shape`, private):
+  `load()` → `og`; `og.model({ name })` → a `Shape` whose methods are the
+  operations with desc objects, as in `docs/design.md` §3; `Part` and
+  `Frame` serialise themselves; errors are thrown `Error`s with the
+  kernel's message. wasm-bindgen `--target web`, loaded with `initSync`
+  from bytes, so bun and node run it unchanged.
+- **The CLI** replays a program: `shape build | export | measure | preview
+  <program.json>`, each subcommand a module, measures as JSON (the
+  design §7 list; UV coverage and overlap `null` and texture bytes 0 until
+  phase 5 adds UVs and textures). No argument-parsing dependency.
+- **Gate.** The `wasm` step builds `shape-wasm` for wasm32-unknown-unknown
+  and ends with `binding`: when wasm-bindgen 0.2.130 and bun are
+  installed it builds the module and runs the binding's tests, which
+  compare the washing machine's GLB and PNG with `golden/hashes.txt`.
+  Without them it says `binding: NOT RUN` and passes. CI installs both on
+  the x86-64 Linux job.
+
+### 8.3 Dependencies
+
+| crate | version | licence | where |
+|---|---|---|---|
+| serde_json | 1.0.154, `default-features = false`, `std` | MIT OR Apache-2.0 | kernel (`shape-model`) |
+| serde_core | 1.0.229 | MIT OR Apache-2.0 | via serde_json |
+| zmij | 1.0.23 | MIT | via serde_json (float printing) |
+| itoa | 1.0.19 | MIT OR Apache-2.0 | via serde_json |
+| memchr | 2.8.3 | Unlicense OR MIT | via serde_json |
+| wasm-bindgen (+ `-macro`, `-macro-support`, `-shared`) | 0.2.130, pinned `=` | MIT OR Apache-2.0 | `shape-wasm` only |
+| bumpalo, rustversion, proc-macro2, quote, syn, unicode-ident | as locked | MIT OR Apache-2.0; unicode-ident also Unicode-3.0 | build-time, via wasm-bindgen's macro |
+| gltf | 1.4.1 | MIT OR Apache-2.0 | dev only (`shape-model` tests) |
+| wasm-bindgen-cli | 0.2.130 | MIT OR Apache-2.0 | tool, not a dependency |
+| three (npm) | 0.186.1 | MIT | dev only, `tools/check_three.ts` |
+
+`cargo deny check licenses bans sources` passes.
+
+### 8.4 Acceptance: the washing machine
+
+`crates/shape-wasm/ts/examples/washing_machine.ts` rebuilds
+`programs/washing_machine.py` through the binding: `box`, `fillet(side)`,
+`pocket`, `cut`, `join`, `seat` (three times), `tube`, `group`, materials,
+four joints (door revolute 0–143° about −Z, drum and dial continuous,
+drawer prismatic 0–200 mm along +X), `assembly` with a `front` anchor,
+then `washer_open()`'s pose (door 92°, drawer 120 mm, dial 30°). Its
+recorded program is `golden/programs/washing_machine.json`; its preview
+is `docs/previews/phase4/washing_machine.png`.
+
+| part | triangles | closed | volume (mm³) |
+|---|---|---|---|
+| cabinet (filleted, porthole pocket, drawer bay and dial seat) | 1 258 | yes | 225 360 665 |
+| drum (bore cut, axle joined) | 868 | yes | 6 216 515 |
+| ring (glass groove seated) | 1 368 | yes | 4 798 606 |
+| glass | 252 | yes | 1 284 730 |
+| handle | 12 | yes | 79 200 |
+| drawer (front joined) | 40 | yes | 4 996 000 |
+| dial | 216 | yes | 84 639 |
+
+GLB 150 740 bytes, PNG (four 320² views) 18 650 bytes. Times: in bun
+(wasm32-unknown-unknown) build 193 ms, export 12 ms, preview 68 ms; the
+native CLI replays and exports in about 0.1 s.
+
+**Joints, read back by three.js** (`tools/check_three.ts`, three 0.186.1
+`GLTFLoader` under bun, headless): four joint nodes with
+`userData.s3d_joint` of the right kinds, limits in radians and metres,
+posed values written. Re-posing in three.js (undo the node's exported
+value about or along its axis, apply another) matches the kernel's own
+export at that pose to 1.2e-16 m (open file posed to rest vs the rest
+file) and 1.9e-16 m (rest file posed open vs the open file). At rest the
+door sits closed on the front (x 0.300–0.375 m) and the drawer flush (its
+front at x 0.315 m); at 143° the door swings out to x 0.670 m; the drawer
+slides out 0.120 m; the dial turns in place.
+
+**Bytes on every host available here:** the GLB, the PNG and the measures
+are the same natively (x86-64) and as wasm32-wasip1 under wasmtime (the
+golden run). As wasm32-unknown-unknown, the binding's test under bun
+(JavaScriptCore) compares the GLB's and the PNG's hashes with
+`golden/hashes.txt`, and a run under node 22.23 (V8,
+`--experimental-transform-types`) gave the GLB's hash; both match.
+
+### 8.5 Gaps and what is untested
+
+- **Not run here:** x86-64 Windows and aarch64 Linux (CI only); the
+  new golden lines are expected to hold there by the same rules, which
+  the CI gate checks. The binding in a browser. three.js was run headless
+  under bun only, with no renderer: the scene graph and matrices, not
+  pixels.
+- **OBJ and STL are written at rest** (`shape-tools` ignores joints for
+  meshes), where sand3d writes the current pose.
+- **Joints are not copied** by `copy` or `mirror`. A mirrored jointed
+  part's motion (sand3d: "the image of the motion") is not modelled.
+- **Geometry is read at rest**, never posed: `bbox` or `face` of a posed
+  part answers its rest place (sand3d reads the posed scene and refuses to
+  declare joints off rest).
+- **Directions in `shell(open)`** are the part's own axes, not the world's.
+- **Frames do not remember the part they were read on** (sand3d's
+  `Frame.part`); the joint's parent is given explicitly, and nothing checks
+  that a child still sits where its frame put it.
+- **No URDF or USD** (not in the first release), no gear or knurl parts
+  in the binding, no text profiles in the program (`shape_2d::text` needs
+  font bytes).
+- **The washing machine's look**: the glass is a transparent material in
+  the GLB, but the preview draws it opaque (the rasterizer ignores
+  opacity); sand3d's glass preset also has transmission, which glTF
+  core does not carry.
 ## 10. The generator gaps of §6.4 (stream F, 2026-11-09)
 
 Read at sand3d `84c980a` (Apache-2.0): `src/sand3d/solids.py` (`revolve`,
