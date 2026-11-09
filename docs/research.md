@@ -328,9 +328,15 @@ aarch64 Linux.
 1. **Validate operands.** `csg` returns an error value for an operand that
    is open or not oriented, after welding. It never returns open output
    silently (`docs/design.md` §6).
+   **Done** for the kernel's entries (`csg_points`, `boolean`). og-geom's
+   `csg` on f32 meshes keeps its old behaviour, so its output still
+   matches the engine's.
 2. **A broad phase.** Replace the all-pairs loop with a sort-and-sweep or a
    BVH over triangle boxes, with a deterministic visiting order. Target:
    within 2× of manifold-exact at 65 536².
+   **Done:** a sweep along x, with pairs visited in the old order, so the
+   output is unchanged. Spheres 16 384² go from 554 to 222 ms, and
+   65 536² from 9 018 to 1 149 ms (manifold-exact: 182 and 1 040 ms).
 3. **Self-intersecting operands.** These need a self-union, the same
    arrangement as CSG with one operand. Until it exists, `repair`
    (phase 5) runs before booleans on imported meshes. Phase 5 re-checks

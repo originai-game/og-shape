@@ -56,6 +56,8 @@
   with an error value (`docs/research.md` §5.4, follow-up 1).
 - `shape-bool::csg_points`: the f64 core of og-geom's CSG on welded
   operands; `csg` and its output bytes are unchanged.
+- CSG broad phase: a sweep along x replaces the all-pairs box test, with
+  the output unchanged. Two 65 536-triangle spheres: 9.0 s → 1.15 s.
 - Plan: aarch64 macOS joins the gate later; phase 0 benchmarks booleans on
   synthetic AI-mesh defects instead of provider outputs, which re-check the
   decision in phase 5.

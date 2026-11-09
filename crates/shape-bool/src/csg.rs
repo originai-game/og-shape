@@ -777,12 +777,8 @@ fn arrange(points: Vec<DVec3>, sa: Solid, sb: Solid, op: CsgOp) -> (Csg, Vec<Kep
     };
     let near_a = near(&c, 0, box_b);
     let near_b = near(&c, 1, box_a);
-    for &(ia, ba) in &near_a {
-        for &(ib, bb) in &near_b {
-            if overlap(ba, bb) {
-                c.pair(ia, ib);
-            }
-        }
+    for (ia, ib) in candidate_pairs(&near_a, &near_b) {
+        c.pair(ia, ib);
     }
     // 2. The pieces.
     struct Piece {
@@ -1005,4 +1001,50 @@ pub fn csg_points(
         origins.push((p.mesh, solid.source[p.tri as usize]));
     }
     Ok((out_points, out_tris, origins))
+}
+
+/// Every pair of triangles whose boxes overlap, in the order the
+/// all-pairs loop visited them (A's index, then B's), so crossing points
+/// are made in the same order and the output is unchanged. Found by a
+/// sweep along x over the boxes sorted by their low x.
+fn candidate_pairs(a: &[(u32, (DVec3, DVec3))], b: &[(u32, (DVec3, DVec3))]) -> Vec<(u32, u32)> {
+    let by_min_x = |v: &[(u32, (DVec3, DVec3))]| {
+        let mut v = v.to_vec();
+        v.sort_by(|x, y| x.1.0.x.total_cmp(&y.1.0.x).then(x.0.cmp(&y.0)));
+        v
+    };
+    let (sa, sb) = (by_min_x(a), by_min_x(b));
+    let (mut ia, mut ib) = (0, 0);
+    let mut active_a: Vec<(u32, (DVec3, DVec3))> = Vec::new();
+    let mut active_b: Vec<(u32, (DVec3, DVec3))> = Vec::new();
+    let mut pairs = Vec::new();
+    while ia < sa.len() || ib < sb.len() {
+        let take_a = ib >= sb.len() || (ia < sa.len() && sa[ia].1.0.x <= sb[ib].1.0.x);
+        if take_a {
+            let cur = sa[ia];
+            ia += 1;
+            active_b.retain(|o| o.1.1.x >= cur.1.0.x);
+            pairs.extend(
+                active_b
+                    .iter()
+                    .filter(|o| overlap(cur.1, o.1))
+                    .map(|o| (cur.0, o.0)),
+            );
+            active_a.push(cur);
+        } else {
+            let cur = sb[ib];
+            ib += 1;
+            active_a.retain(|o| o.1.1.x >= cur.1.0.x);
+            pairs.extend(
+                active_a
+                    .iter()
+                    .filter(|o| overlap(o.1, cur.1))
+                    .map(|o| (o.0, cur.0)),
+            );
+            active_b.push(cur);
+        }
+    }
+    pairs.sort_unstable();
+    pairs.dedup();
+    pairs
 }

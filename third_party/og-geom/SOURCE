@@ -23,3 +23,6 @@ Changes from the source:
   - csg.rs: csg_traced split into arrange() (steps 1-3 and the keep
     decision) and its emission, unchanged in output; csg_points() added,
     an f64 entry on welded operands that refuses open operands.
+  - csg.rs: the all-pairs box test replaced by a sweep along x
+    (candidate_pairs); pairs are visited in the same (A, B) order, so the
+    output is unchanged.
