@@ -5,19 +5,23 @@ in order. Phase M (the merge) needs the owner's go-ahead.
 
 ## Where it runs
 
-- **No GPU is needed.** Development runs in an Amp orb (x86-64 Linux, plus
-  wasm32 under wasmtime and bun).
-- **The aarch64 check runs on GitHub Actions** (`macos-latest` and
-  `ubuntu-24.04-arm`), so it never takes a slot or a lane on macrunner and
-  never touches origin-engine's gate or landing queue.
+- **No GPU is needed.** Development runs on x86-64 Linux (an Amp orb, a
+  cloud container or WSL), plus wasm32 under wasmtime and bun.
+- **The other targets run on GitHub Actions** (`windows-latest`,
+  `ubuntu-24.04-arm`), so they never take a slot or a lane on macrunner and
+  never touch origin-engine's gate or landing queue.
+- **aarch64 macOS is deferred.** It joins the gate as its own change
+  (`macos-latest`), before phase 1 ends.
 
 ## Gate
 
 `scripts/check.sh`, run locally and in GitHub Actions, does:
 - fmt and clippy (`-D warnings`);
 - the unit tests;
+- the licence check (cargo-deny) and the determinism lint (`clippy.toml`);
 - the golden output hashes of every operation on x86-64 Linux,
-  x86-64 Windows, aarch64 macOS, aarch64 Linux and wasm32 (wasmtime).
+  x86-64 Windows, aarch64 Linux and wasm32 (wasmtime); aarch64 macOS joins
+  later (§Where it runs).
 
 One hash file is committed. Every target must reproduce it byte for byte.
 A change that moves a hash says why in its commit and changelog.
@@ -31,13 +35,17 @@ A change that moves a hash says why in its commit and changelog.
   sequential) on three suites:
   - the sand3d programs' booleans, rebuilt by hand as fixtures;
   - Thingi10K's closed meshes;
-  - AI-generated meshes from the platform's providers.
+  - synthetic AI-mesh defects: clean meshes from the first two suites,
+    rebuilt by marching cubes from their distance field, then given seeded
+    noise, floaters, holes, flipped faces, duplicate vertices and
+    self-intersections. No provider or gateway is needed. Real provider
+    outputs re-check the decision in phase 5.
   
   Measure robustness (closed output, no lost faces), speed, and hash
   identity on all targets. Keep one boolean engine. Write the decision and
   its numbers into `docs/research.md`.
-- **Acceptance:** the gate runs on all five targets, and the decision is
-  recorded.
+- **Acceptance:** the gate runs on the four targets of §Gate, and the
+  decision is recorded.
 
 ## Phase 1: profiles and generators
 
@@ -92,6 +100,7 @@ A change that moves a hash says why in its commit and changelog.
 - UV unwrap;
 - measure.
 - **Acceptance:**
+  - Re-check the phase 0 boolean decision on real provider outputs.
   - Take provider outputs (Meshy, Tripo, Hunyuan), run the full chain
     `import → repair → decimate → unwrap → measure → preview → export`, and
     meet the Hunyuan texturing input contract (`docs/research.md` §3).
@@ -119,4 +128,4 @@ drop Blender from the asset image.
 | Phase | State |
 |---|---|
 | Research | Done (2026-11-09): `docs/research.md` |
-| 0 | Not started |
+| 0 | In progress: workspace, `shape-core`, determinism lint, gate |

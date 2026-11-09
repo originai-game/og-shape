@@ -1,0 +1,35 @@
+# Licence and dependency gate (AGENTS.md, "Permissive licences only" and
+# "No rayon or threads in the kernel"). Run by scripts/check.sh.
+
+[graph]
+all-features = true
+
+[licenses]
+version = 2
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "Zlib",
+  "ISC",
+]
+confidence-threshold = 0.9
+# The list is the policy; a licence not in use yet is fine.
+unused-allowed-license = "allow"
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = [
+  { name = "rayon", reason = "no threads in the kernel" },
+  { name = "rayon-core", reason = "no threads in the kernel" },
+]
+
+[advisories]
+version = 2
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

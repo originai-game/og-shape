@@ -1,0 +1,58 @@
+# The determinism lint (AGENTS.md, "Deterministic on every host").
+# Denied workspace-wide through [workspace.lints.clippy] in Cargo.toml.
+
+disallowed-methods = [
+  # Platform maths: last bits differ between hosts. Use shape_core::trig.
+  { path = "f64::sin", reason = "use shape_core::trig::sin" },
+  { path = "f64::cos", reason = "use shape_core::trig::cos" },
+  { path = "f64::sin_cos", reason = "use shape_core::trig::sin_cos" },
+  { path = "f64::tan", reason = "use shape_core::trig::tan" },
+  { path = "f64::asin", reason = "use shape_core::trig::asin" },
+  { path = "f64::acos", reason = "use shape_core::trig::acos" },
+  { path = "f64::atan", reason = "use shape_core::trig::atan" },
+  { path = "f64::atan2", reason = "use shape_core::trig::atan2" },
+  { path = "f64::sinh", reason = "not deterministic across hosts" },
+  { path = "f64::cosh", reason = "not deterministic across hosts" },
+  { path = "f64::tanh", reason = "not deterministic across hosts" },
+  { path = "f64::exp", reason = "use shape_core::trig::exp" },
+  { path = "f64::exp2", reason = "not deterministic across hosts" },
+  { path = "f64::exp_m1", reason = "not deterministic across hosts" },
+  { path = "f64::ln", reason = "use shape_core::trig::ln" },
+  { path = "f64::ln_1p", reason = "not deterministic across hosts" },
+  { path = "f64::log", reason = "not deterministic across hosts" },
+  { path = "f64::log2", reason = "not deterministic across hosts" },
+  { path = "f64::log10", reason = "not deterministic across hosts" },
+  { path = "f64::powf", reason = "use shape_core::trig::pow" },
+  { path = "f64::powi", reason = "use repeated multiplication" },
+  { path = "f64::cbrt", reason = "use shape_core::trig::cbrt" },
+  { path = "f64::hypot", reason = "use shape_core::trig::hypot" },
+  { path = "f64::mul_add", reason = "fused multiply-add is not used in the kernel" },
+  { path = "f32::sin", reason = "the kernel computes in f64 with shape_core::trig" },
+  { path = "f32::cos", reason = "the kernel computes in f64 with shape_core::trig" },
+  { path = "f32::tan", reason = "the kernel computes in f64 with shape_core::trig" },
+  { path = "f32::atan2", reason = "the kernel computes in f64 with shape_core::trig" },
+  { path = "f32::exp", reason = "the kernel computes in f64 with shape_core::trig" },
+  { path = "f32::powf", reason = "the kernel computes in f64 with shape_core::trig" },
+  { path = "f32::powi", reason = "the kernel computes in f64 with shape_core::trig" },
+  { path = "f32::mul_add", reason = "fused multiply-add is not used in the kernel" },
+  # glam's own fused multiply-add.
+  { path = "glam::DVec2::mul_add", reason = "fused multiply-add is not used in the kernel" },
+  { path = "glam::DVec3::mul_add", reason = "fused multiply-add is not used in the kernel" },
+  # No threads in the kernel.
+  { path = "std::thread::spawn", reason = "no threads in the kernel" },
+  { path = "std::thread::scope", reason = "no threads in the kernel" },
+]
+
+disallowed-types = [
+  # Iteration order depends on a random seed. Use BTreeMap, IndexMap or a
+  # sorted Vec.
+  { path = "std::collections::HashMap", reason = "use BTreeMap, IndexMap or a sorted Vec" },
+  { path = "std::collections::HashSet", reason = "use BTreeSet, IndexSet or a sorted Vec" },
+  # glam's SIMD-backed f32 types. The kernel uses DVec2/DVec3.
+  { path = "glam::Vec3A", reason = "SIMD type; use DVec3" },
+  { path = "glam::Vec4", reason = "SIMD type; use DVec3" },
+  { path = "glam::Mat3A", reason = "SIMD type; use Frame" },
+  { path = "glam::Mat4", reason = "SIMD type; use Frame" },
+  { path = "glam::Affine3A", reason = "SIMD type; use Frame" },
+  { path = "glam::Quat", reason = "SIMD type" },
+]

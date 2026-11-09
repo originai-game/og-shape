@@ -1,0 +1,55 @@
+# The gate (docs/plan.md §Gate). Lint runs once; the tests and the golden
+# hashes run on every target and must match golden/hashes.txt byte for
+# byte. aarch64 macOS joins later (docs/plan.md §Where it runs).
+name: gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - run: scripts/check.sh lint
+
+  targets:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86-64 Linux + wasm32
+            os: ubuntu-latest
+            steps: test golden wasm
+          - name: x86-64 Windows
+            os: windows-latest
+            steps: test golden
+          - name: aarch64 Linux
+            os: ubuntu-24.04-arm
+            steps: test golden
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - if: contains(matrix.steps, 'wasm')
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasmtime
+      - run: scripts/check.sh ${{ matrix.steps }}

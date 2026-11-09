@@ -16,7 +16,8 @@ Rust crates are vendored, its API becomes the IDL module `og.shape`, and its
 tools become `og model` commands. The platform uses it only through a
 released engine.
 
-Status: design. No code yet.
+Status: phase 0. `shape-core` and the gate exist. Run the gate with
+`scripts/check.sh` (needs cargo-deny and wasmtime).
 
 - `docs/design.md`: goals, scope, API, architecture, determinism.
 - `docs/plan.md`: phases, acceptance and the merge into the engine.

@@ -1,0 +1,26 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/originai-game/og-shape"
+publish = false
+
+[workspace.dependencies]
+shape-core = { path = "crates/shape-core" }
+glam = { version = "0.34", default-features = false, features = ["std", "f64", "libm", "scalar-math"] }
+libm = "0.2"
+robust = "1"
+sha2 = "0.11"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+disallowed_methods = "deny"
+disallowed_types = "deny"
+float_cmp = "allow"
