@@ -35,6 +35,7 @@ fn two_product(a: f64, b: f64) -> (f64, f64) {
 }
 
 impl Exp {
+    #[cfg(test)]
     pub(crate) fn from(a: f64) -> Exp {
         Exp(if a == 0.0 { Vec::new() } else { vec![a] })
     }
@@ -148,7 +149,8 @@ impl Fraction {
 
     /// The exact order of two fractions.
     pub(crate) fn cmp(&self, o: &Fraction) -> Ordering {
-        let s = self.num.mul(&o.den).sub(&o.num.mul(&self.den)).sign() * self.den.sign() * o.den.sign();
+        let s =
+            self.num.mul(&o.den).sub(&o.num.mul(&self.den)).sign() * self.den.sign() * o.den.sign();
         s.cmp(&0)
     }
 }
@@ -167,13 +169,41 @@ mod tests {
         assert_eq!(v.sub(&Exp::from(e * e)).sign(), 0);
         // Collinear in exact terms, and an ulp off.
         assert_eq!(orient2d([0.0, 0.0], [1.0, 1.0], [3.0, 3.0]).sign(), 0);
-        assert_eq!(orient2d([0.0, 0.0], [1.0, 1.0], [3.0, 3.0 + 4.0 * e]).sign(), 1);
-        let o = orient3d([0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.1, 0.1, 1e-300]);
-        assert_eq!(o.sign(), robust::orient3d(
-            robust::Coord3D { x: 0.0, y: 0.0, z: 0.0 },
-            robust::Coord3D { x: 1.0, y: 0.0, z: 0.0 },
-            robust::Coord3D { x: 0.0, y: 1.0, z: 0.0 },
-            robust::Coord3D { x: 0.1, y: 0.1, z: 1e-300 },
-        ).signum() as i32);
+        assert_eq!(
+            orient2d([0.0, 0.0], [1.0, 1.0], [3.0, 3.0 + 4.0 * e]).sign(),
+            1
+        );
+        let o = orient3d(
+            [0.0; 3],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.1, 0.1, 1e-300],
+        );
+        assert_eq!(
+            o.sign(),
+            robust::orient3d(
+                robust::Coord3D {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0
+                },
+                robust::Coord3D {
+                    x: 1.0,
+                    y: 0.0,
+                    z: 0.0
+                },
+                robust::Coord3D {
+                    x: 0.0,
+                    y: 1.0,
+                    z: 0.0
+                },
+                robust::Coord3D {
+                    x: 0.1,
+                    y: 0.1,
+                    z: 1e-300
+                },
+            )
+            .signum() as i32
+        );
     }
 }

@@ -537,7 +537,11 @@ fn non_manifold(points: &[DVec3], tris: &[[u32; 3]], origins: &[(u8, u32)]) -> (
             continue;
         }
         let count = |m: u8, f: bool| uses.iter().filter(|&&u| u == (m, f)).count();
-        if uses.len() == 4 && [(0, true), (0, false), (1, true), (1, false)].iter().all(|&(m, f)| count(m, f) == 1) {
+        if uses.len() == 4
+            && [(0, true), (0, false), (1, true), (1, false)]
+                .iter()
+                .all(|&(m, f)| count(m, f) == 1)
+        {
             touching += 1;
         } else {
             bad += 1;

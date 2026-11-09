@@ -72,10 +72,7 @@ fn identities(a: &Solid, b: &Solid) -> [f64; 3] {
     let vol = |o: BoolOp| match boolean_report(a, b, &op(o)) {
         Ok((s, r)) => {
             let m = s.measure();
-            assert!(
-                m.closed || r.touching_edges > 0,
-                "{o:?}: {m:?} {r:?}"
-            );
+            assert!(m.closed || r.touching_edges > 0, "{o:?}: {m:?} {r:?}");
             assert_eq!(m.boundary_edges, 0, "{o:?}");
             m.volume
         }
@@ -143,7 +140,10 @@ fn a_box_face_tangent_to_a_tube_joins() {
         let (s, c) = (shape_core::trig::sin(a), shape_core::trig::cos(a));
         let mut b = block(20.0, 20.0, 20.0);
         b.map_positions(|p| p + DVec3::new(20.0, 0.0, 5.0), false);
-        b.map_positions(|p| DVec3::new(c * p.x - s * p.y, s * p.x + c * p.y, p.z), false);
+        b.map_positions(
+            |p| DVec3::new(c * p.x - s * p.y, s * p.x + c * p.y, p.z),
+            false,
+        );
         identities(&t, &b);
     }
 }
@@ -168,9 +168,45 @@ fn a_tool_wholly_inside_leaves_a_void_and_says_so() {
     let s2 = boolean(&s, &c, &op(BoolOp::Cut)).unwrap().measure();
     assert!(s2.closed, "{s2:?}");
     // The bar takes 10 × 10 × 40 from the block; the void stays.
-    assert!((s2.volume - (63_000.0 - 4000.0)).abs() < 1e-6, "{}", s2.volume);
+    assert!(
+        (s2.volume - (63_000.0 - 4000.0)).abs() < 1e-6,
+        "{}",
+        s2.volume
+    );
     assert_eq!(s2.components, 2);
     // A join of the tool into the void fills it.
     let f = boolean(&s, &b, &op(BoolOp::Join)).unwrap().measure();
-    assert!(f.closed && f.components == 1 && (f.volume - 64_000.0).abs() < 1e-9, "{f:?}");
+    assert!(
+        f.closed && f.components == 1 && (f.volume - 64_000.0).abs() < 1e-9,
+        "{f:?}"
+    );
+}
+
+#[test]
+fn a_plate_along_a_tube_s_vertex_columns_with_flush_ends_joins() {
+    // Phase 6's hinged strap: the plate's top edges lie on the tube's
+    // vertex columns, and the tube's ends are flush with the plate's.
+    let plate = moved(block(914.4, 1.2, 38.14), DVec3::new(0.0, -2.26, 0.0));
+    let mut t = tube(2.86, 1.66, 914.4).unwrap();
+    t.map_positions(|p| DVec3::new(-457.2 + p.z, p.x, 38.14 + p.y), false);
+    identities(&plate, &t);
+    let s = boolean(&plate, &t, &op(BoolOp::Join)).unwrap().measure();
+    assert!(s.closed && s.components == 1, "{s:?}");
+}
+
+#[test]
+fn an_open_result_names_what_touches() {
+    let e = BoolError::OpenTouching {
+        boundary: 8,
+        target: vec!["bottom".into(), "side".into()],
+        tool: vec!["top".into()],
+    };
+    let m = e.to_string();
+    assert!(m.contains("touch along coplanar or tangent faces"), "{m}");
+    assert!(m.contains("target: bottom, side; tool: top"), "{m}");
+    assert!(
+        !BoolError::OpenResult { boundary: 3 }
+            .to_string()
+            .contains("most likely passes through itself")
+    );
 }

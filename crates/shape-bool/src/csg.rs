@@ -60,6 +60,13 @@ struct Solid {
     max: DVec3,
 }
 
+/// Two triangles, each `(mesh, triangle)`.
+type TriPair = ((u8, u32), (u8, u32));
+
+/// A region's boundary: its edges by sorted ids, each with how many times
+/// more it runs low to high than back.
+type Boundary = Vec<((u32, u32), i32)>;
+
 /// An edge of mesh `0` (A) or `1` (B), by its sorted point ids.
 type EdgeKey = (u8, u32, u32);
 
@@ -111,10 +118,10 @@ struct Csg {
     crossings: BTreeSet<(u32, u32)>,
     /// Pairs of triangles cut in one plane (`coplanar`), each as
     /// `((mesh, tri), (mesh, tri))`: where one surface lies on another.
-    coplanar_pairs: Vec<((u8, u32), (u8, u32))>,
+    coplanar_pairs: Vec<TriPair>,
     /// Pairs of triangles that meet without crossing: one lies on one side
     /// of the other's plane and touches it (a vertex or an edge on it).
-    touch_pairs: Vec<((u8, u32), (u8, u32))>,
+    touch_pairs: Vec<TriPair>,
     /// The second pass, for operands that touch (`docs/research.md` §5.4,
     /// item 5): crossings that round to one position stay two points,
     /// points on an edge are ordered exactly, and a triangle whose rounded
@@ -771,9 +778,12 @@ impl Csg {
                 end += 1;
             }
             if end - start > 1 {
-                let params: Vec<(u32, Option<exact::Fraction>)> =
-                    ids[start..end].iter().map(|&i| (i, self.param(i, e))).collect();
-                let cmp = |a: &(u32, Option<exact::Fraction>), b: &(u32, Option<exact::Fraction>)| {
+                let params: Vec<(u32, Option<exact::Fraction>)> = ids[start..end]
+                    .iter()
+                    .map(|&i| (i, self.param(i, e)))
+                    .collect();
+                let cmp = |a: &(u32, Option<exact::Fraction>),
+                           b: &(u32, Option<exact::Fraction>)| {
                     match (&a.1, &b.1) {
                         (Some(x), Some(y)) => x.cmp(y),
                         _ => u(a.0).total_cmp(&u(b.0)),
@@ -854,7 +864,7 @@ impl Csg {
         for k in 0..3 {
             let (a, b) = (t[k], t[(k + 1) % 3]);
             let e = edge_key(m, a, b);
-                let along: Vec<u32> = cut
+            let along: Vec<u32> = cut
                 .points
                 .iter()
                 .copied()
@@ -892,7 +902,6 @@ impl Csg {
         if let Some(out) = self.triangulate(&chain, cut, at, turn < 0) {
             return out;
         }
-        if std::env::var("CSG_DBG").is_ok() { eprintln!("fallback m{m} t{tri}"); }
         // The rounded outline is not a simple polygon, or a segment was lost
         // or merged into another: points made a rounding error from a corner
         // or from each other (operands that touch, `docs/research.md` §5.4,
@@ -946,7 +955,13 @@ impl Csg {
                     .segments
                     .iter()
                     .find_map(|s| {
-                        let k = if s[0] == i { s[1] } else if s[1] == i { s[0] } else { return None };
+                        let k = if s[0] == i {
+                            s[1]
+                        } else if s[1] == i {
+                            s[0]
+                        } else {
+                            return None;
+                        };
                         Some(place.get(&k).copied().unwrap_or(centre))
                     })
                     .unwrap_or(centre);
@@ -964,13 +979,8 @@ impl Csg {
             place.insert(i, q);
         }
         let at = |i: u32| place.get(&i).copied().unwrap_or(centre);
-        if std::env::var("CSG_TRI").is_ok_and(|x| x == format!("{m}:{tri}")) {
-            eprintln!("tri {t:?} chain {chain:?} sides {sides:?}");
-            for &i in chain.iter().chain(cut.points.iter()) { eprintln!("  {i} {:?} at {:?} on {:?}", self.p(i), at(i), self.on[i as usize]); }
-            eprintln!("  segs {:?} src {:?}", cut.segments, cut.src);
-        }
         self.triangulate(&chain, cut, at, false)
-            .unwrap_or_else(|| { if std::env::var("CSG_DBG").is_ok() { eprintln!("LOSSY m{m} t{tri}"); } self.triangulate_lossy(&chain, cut, at, false) })
+            .unwrap_or_else(|| self.triangulate_lossy(&chain, cut, at, false))
     }
 
     /// Each outline point's place in [`Csg::pieces`]' exact layout: the
@@ -1040,7 +1050,11 @@ impl Csg {
             for k in 0..ids.len() {
                 ks[k] = if k > 0 && group[k] == group[k - 1] {
                     ks[k - 1]
-                } else if group[..=k].iter().zip(&ids).any(|(&g, &i)| g == group[k] && at_a(i)) {
+                } else if group[..=k]
+                    .iter()
+                    .zip(&ids)
+                    .any(|(&g, &i)| g == group[k] && at_a(i))
+                {
                     0
                 } else {
                     raw[k].max(prev + 1)
@@ -1050,7 +1064,10 @@ impl Csg {
             let mut next = N;
             for k in (0..ids.len()).rev() {
                 let same = k + 1 < ids.len() && group[k] == group[k + 1];
-                let tail = group[k..].iter().zip(&ids[k..]).any(|(&g, &i)| g == group[k] && at_b(i));
+                let tail = group[k..]
+                    .iter()
+                    .zip(&ids[k..])
+                    .any(|(&g, &i)| g == group[k] && at_b(i));
                 ks[k] = if same {
                     ks[k + 1]
                 } else if tail {
@@ -1129,7 +1146,6 @@ impl Csg {
                     if strict {
                         faithful = false;
                     } else if self.robust {
-                        if std::env::var("CSG_DBG").is_ok() { eprintln!("  MERGE far {j} {i} {:?} {:?}", self.p(j), self.p(i)); }
                         self.merges.borrow_mut().push((j, i));
                     }
                 }
@@ -1152,7 +1168,6 @@ impl Csg {
             };
             if ha != hb {
                 if cdt.try_add_constraint(ha, hb).len() != 1 {
-                    if std::env::var("CSG_DBG").is_ok() && !strict { eprintln!("  lost outline {a}-{b}"); }
                     faithful = false;
                 }
                 boundary.insert((ha.index().min(hb.index()), ha.index().max(hb.index())));
@@ -1162,8 +1177,10 @@ impl Csg {
             let (Some(&ha), Some(&hb)) = (handle_of.get(&s[0]), handle_of.get(&s[1])) else {
                 continue;
             };
-            if ha != hb && cdt.try_add_constraint(ha, hb).len() != 1 && !cdt.exists_constraint(ha, hb) {
-                if std::env::var("CSG_DBG").is_ok() && !strict { eprintln!("  lost seg {:?}", s); }
+            if ha != hb
+                && cdt.try_add_constraint(ha, hb).len() != 1
+                && !cdt.exists_constraint(ha, hb)
+            {
                 faithful = false;
             }
         }
@@ -1225,7 +1242,7 @@ impl Csg {
             }
             out.push(if flip { [ids[0], ids[2], ids[1]] } else { ids });
         }
-        if strict || std::env::var("CSG_DBG").is_ok() {
+        if strict {
             // Every outline edge borders one piece, and every segment
             // inside two: the rounded outline was a simple polygon and the
             // segments lie inside it.
@@ -1236,7 +1253,13 @@ impl Csg {
                     *uses.entry((a.min(b), a.max(b))).or_default() += 1;
                 }
             }
-            let id = |a: u32| handle_of.get(&a).and_then(|h| id_of.get(&h.index())).copied().unwrap_or(a);
+            let id = |a: u32| {
+                handle_of
+                    .get(&a)
+                    .and_then(|h| id_of.get(&h.index()))
+                    .copied()
+                    .unwrap_or(a)
+            };
             let n = |a: u32, b: u32| {
                 let (a, b) = (id(a), id(b));
                 uses.get(&(a.min(b), a.max(b))).copied().unwrap_or(0)
@@ -1246,14 +1269,15 @@ impl Csg {
                 let (a, b) = (chain[k], chain[(k + 1) % chain.len()]);
                 outline.insert((id(a).min(id(b)), id(a).max(id(b))));
                 if id(a) != id(b) && n(a, b) != 1 {
-                    if !strict { eprintln!("  outline use {a}-{b} {}", n(a, b)); continue; }
                     return None;
                 }
             }
             for s in &cut.segments {
                 let (a, b) = (s[0], s[1]);
-                if id(a) != id(b) && !outline.contains(&(id(a).min(id(b)), id(a).max(id(b)))) && n(a, b) != 2 {
-                    if !strict { eprintln!("  seg use {a}-{b} {}", n(a, b)); continue; }
+                if id(a) != id(b)
+                    && !outline.contains(&(id(a).min(id(b)), id(a).max(id(b))))
+                    && n(a, b) != 2
+                {
                     return None;
                 }
             }
@@ -1710,60 +1734,6 @@ fn arrange(points: Vec<DVec3>, sa: Solid, sb: Solid, op: CsgOp, robust: bool) ->
             });
         }
     }
-    if robust && std::env::var("SHOW_NEAR").is_ok() {
-        let tq = [DVec3::new(4.85900341912718, -1.0709753590449127, 30.0), DVec3::new(7.36417106142635, -3.0517348204582584, 20.0)];
-        for (pi, p) in pieces.iter().enumerate() {
-            let ps = p.ids.map(|i| c.points[i as usize]);
-            if ps.contains(&tq[0]) && ps.iter().any(|q| (*q - tq[1]).length() < 1e-12) {
-                let k = kept.iter().any(|k| k.mesh == p.mesh && k.tri == p.tri && k.ids == p.ids);
-                eprintln!("NEAR piece {pi} m{} t{} {:?} {:?} region {} sides {:?} kept {k} tri {:?}", p.mesh, p.tri, p.ids, ps, regions.root[pi], sides[&regions.root[pi]], c.solids[p.mesh as usize].tris[p.tri as usize]);
-            }
-        }
-    }
-    if robust && std::env::var("CSG_DBG").is_ok() {
-        let key = |i: u32| c.points[i as usize].to_array().map(|x| (x + 0.0).to_bits());
-        let mut wid: BTreeMap<[u64; 3], u32> = BTreeMap::new();
-        let w = |i: u32, wid: &mut BTreeMap<[u64; 3], u32>| { let n = wid.len() as u32; *wid.entry(key(i)).or_insert(n) };
-        let mut bal: BTreeMap<(u32, u32), i64> = BTreeMap::new();
-        for k in &kept {
-            let ids = if k.flip { [k.ids[0], k.ids[2], k.ids[1]] } else { k.ids };
-            let t = ids.map(|i| w(i, &mut wid));
-            if t[0] == t[1] || t[1] == t[2] || t[0] == t[2] { continue; }
-            for j in 0..3 { let (a, b) = (t[j], t[(j + 1) % 3]); *bal.entry((a.min(b), a.max(b))).or_default() += if a < b { 1 } else { -1 }; }
-        }
-        let open: Vec<(u32, u32)> = bal.iter().filter(|(_, n)| **n != 0).map(|(e, _)| *e).collect();
-        eprintln!("ROBUST open {}", open.len());
-        if let Ok(v) = std::env::var("SHOW_PT") {
-            for i in v.split(',').map(|x| x.parse::<u32>().unwrap()) {
-                eprintln!(" pt {i} {:?} on {:?} origin {:?}", c.points[i as usize], c.on[i as usize], c.origin_of[i as usize].map(|o| match o { Origin::EdgeTri(e, m, t) => format!("ET {e:?} {m} {t}"), Origin::EdgeEdge(e, f) => format!("EE {e:?} {f:?}"), _ => "T".into() }));
-                for (&t, cut) in &c.cuts[1] { for (k, sg) in cut.segments.iter().enumerate() { if sg.contains(&i) { eprintln!("   B t{t} seg {sg:?} src {}", cut.src[k]); } } }
-            }
-            eprintln!(" crossings with 4166: {:?}", c.crossings.iter().filter(|e| e.0 == 4166 || e.1 == 4166).collect::<Vec<_>>());
-        }
-        if let (Ok(a), Ok(b)) = (std::env::var("PATH_A"), std::env::var("PATH_B")) {
-            let (a, b): (usize, usize) = (a.parse().unwrap(), b.parse().unwrap());
-            let mut by: BTreeMap<(u8, u32, u32), Vec<usize>> = BTreeMap::new();
-            for (pi, p) in pieces.iter().enumerate() { for k in 0..3 { let (x, y) = (p.ids[k], p.ids[(k + 1) % 3]); let e = (x.min(y), x.max(y)); if !c.crossings.contains(&e) { by.entry((p.mesh, e.0, e.1)).or_default().push(pi); } } }
-            let mut prev: BTreeMap<usize, (usize, (u32, u32))> = BTreeMap::new();
-            let mut q = std::collections::VecDeque::from([a]); prev.insert(a, (a, (0, 0)));
-            while let Some(x) = q.pop_front() { if x == b { break; } let p = &pieces[x]; for k in 0..3 { let (u, v) = (p.ids[k], p.ids[(k + 1) % 3]); let e = (u.min(v), u.max(v)); if let Some(l) = by.get(&(p.mesh, e.0, e.1)) { for &y in l { if !prev.contains_key(&y) { prev.insert(y, (x, e)); q.push_back(y); } } } } }
-            let mut x = b; while x != a { let (px, e) = prev[&x]; let pp = &pieces[x]; eprintln!("  path {x} m{} t{} {:?} via {e:?} {:?} {:?}", pp.mesh, pp.tri, pp.ids, c.points[e.0 as usize], c.points[e.1 as usize]); x = px; }
-        }
-        for e in open.iter().take(6) {
-            eprintln!(" edge {e:?}");
-            for (pi, p) in pieces.iter().enumerate() {
-                let t = p.ids.map(|i| w(i, &mut wid));
-                let has = (0..3).any(|j| { let (a, b) = (t[j], t[(j + 1) % 3]); (a.min(b), a.max(b)) == *e });
-                if has {
-                    let r = regions.root[pi];
-                    let b = regions.best[&r];
-                    let area = |q: &Piece| { let [a, bb, cc] = q.ids.map(|i| c.points[i as usize]); (bb - a).cross(cc - a).length() * 0.5 };
-                    let cr: Vec<bool> = (0..3).map(|k| { let (x, y) = (p.ids[k], p.ids[(k + 1) % 3]); c.crossings.contains(&(x.min(y), x.max(y))) }).collect();
-                    eprintln!("   piece {pi} m{} t{} ids {:?} area {:.3e} region {r} sides {:?} best {b} m{} t{} area {:.3e} cross {cr:?}", p.mesh, p.tri, p.ids, area(p), sides[&r], pieces[b].mesh, pieces[b].tri, area(&pieces[b]));
-                }
-            }
-        }
-    }
     (c, kept)
 }
 
@@ -1806,6 +1776,7 @@ fn merge_points(c: &mut Csg, pieces: Vec<Piece>) -> Vec<Piece> {
         used.extend(p.ids);
     }
     let key = |c: &Csg, i: u32| c.points[i as usize].to_array().map(|x| (x + 0.0).to_bits());
+    let tiny = c.scale() * (1.0 / (1u64 << 30) as f64);
     loop {
         let mut changed = false;
         let mut at: BTreeMap<[u64; 3], u32> = BTreeMap::new();
@@ -1840,6 +1811,16 @@ fn merge_points(c: &mut Csg, pieces: Vec<Piece>) -> Vec<Piece> {
                     } else {
                         seq[k..].iter().chain(&seq[..=j]).copied().collect()
                     };
+                    // Only a run a rounding error long: a longer one is
+                    // left, and the result's check refuses what follows.
+                    let (mut lo, mut hi) = (DVec3::INFINITY, DVec3::NEG_INFINITY);
+                    for &i in &run {
+                        lo = lo.min(c.points[i as usize]);
+                        hi = hi.max(c.points[i as usize]);
+                    }
+                    if (hi - lo).length() > tiny {
+                        continue;
+                    }
                     for w in run.windows(2) {
                         changed |= union(&mut parent, w[0], w[1]);
                     }
@@ -1891,7 +1872,11 @@ fn close_slivers(
     choice: &mut [(bool, bool)],
 ) {
     let directed = |p: &Piece, flip: bool| {
-        let ids = if flip { [p.ids[0], p.ids[2], p.ids[1]] } else { p.ids };
+        let ids = if flip {
+            [p.ids[0], p.ids[2], p.ids[1]]
+        } else {
+            p.ids
+        };
         (0..3).map(move |k| (ids[k], ids[(k + 1) % 3]))
     };
     let balance = |choice: &[(bool, bool)]| {
@@ -1906,7 +1891,11 @@ fn close_slivers(
         b
     };
     let base = balance(choice);
-    let open: BTreeSet<(u32, u32)> = base.iter().filter(|(_, n)| **n != 0).map(|(&e, _)| e).collect();
+    let open: BTreeSet<(u32, u32)> = base
+        .iter()
+        .filter(|(_, n)| **n != 0)
+        .map(|(&e, _)| e)
+        .collect();
     if open.is_empty() {
         return;
     }
@@ -1930,7 +1919,9 @@ fn close_slivers(
     let unsure: Vec<usize> = regions
         .best
         .iter()
-        .filter(|&(&r, &b)| inradius(&pieces[b]) < tiny && edges_of(r).iter().any(|e| open.contains(e)))
+        .filter(|&(&r, &b)| {
+            inradius(&pieces[b]) < tiny && edges_of(r).iter().any(|e| open.contains(e))
+        })
         .map(|(&r, _)| r)
         .collect();
     // Clusters: regions sharing an edge.
@@ -1995,7 +1986,10 @@ fn close_slivers(
                     }
                 }
             }
-            let cost: u64 = touched.iter().map(|e| b.get(e).map_or(0, |n| n.unsigned_abs())).sum();
+            let cost: u64 = touched
+                .iter()
+                .map(|e| b.get(e).map_or(0, |n| n.unsigned_abs()))
+                .sum();
             let key = (cost, (mask ^ now).count_ones(), mask);
             if best.is_none_or(|bk| key < bk) {
                 best = Some(key);
@@ -2060,10 +2054,14 @@ fn coincident_regions(c: &Csg, pieces: &[Piece], regions: &Regions) -> BTreeMap<
             *e.entry((a.min(b), a.max(b))).or_default() += if a < b { 1 } else { -1 };
         }
     }
-    let mut by_boundary: BTreeMap<Vec<((u32, u32), i32)>, Vec<usize>> = BTreeMap::new();
+    let mut by_boundary: BTreeMap<Boundary, Vec<usize>> = BTreeMap::new();
     let mut mesh_of: BTreeMap<usize, u8> = BTreeMap::new();
     for (&r, e) in &edges {
-        let b: Vec<((u32, u32), i32)> = e.iter().filter(|(_, n)| **n != 0).map(|(&k, &n)| (k, n)).collect();
+        let b: Vec<((u32, u32), i32)> = e
+            .iter()
+            .filter(|(_, n)| **n != 0)
+            .map(|(&k, &n)| (k, n))
+            .collect();
         if b.is_empty() {
             continue;
         }
@@ -2071,13 +2069,6 @@ fn coincident_regions(c: &Csg, pieces: &[Piece], regions: &Regions) -> BTreeMap<
         by_boundary.entry(b).or_default().push(r);
     }
     let mut twins: BTreeMap<usize, bool> = BTreeMap::new();
-    if let Ok(v) = std::env::var("TWIN") {
-        for r in v.split(',').map(|x| x.parse::<usize>().unwrap()) {
-            let b: Vec<_> = edges[&r].iter().filter(|(_, n)| **n != 0).collect();
-            eprintln!("TWIN region {r} boundary {b:?} tris {:?}", tris[&r]);
-            for t in &tris[&r] { eprintln!("   partners {t:?}: {:?}", partners.get(t)); }
-        }
-    }
     for (b, rs) in &by_boundary {
         let flipped: Vec<((u32, u32), i32)> = b.iter().map(|&(k, n)| (k, -n)).collect();
         for &r in rs {
@@ -2361,10 +2352,13 @@ pub fn csg_points_traced(
         let (c, kept) = arrange(points, sa, sb, op, robust);
         let (points, tris, origins, _) = emit(&c, &kept);
         let (tris, origins) = cancel_fins(&points, tris, origins);
-        let source = |pairs: &[((u8, u32), (u8, u32))]| {
+        let source = |pairs: &[TriPair]| {
             let mut v: Vec<(u32, u32)> = Vec::new();
             for &((ma, ia), (_, ib)) in pairs {
-                let (sa, sb) = (c.solids[0].source[ia as usize], c.solids[1].source[ib as usize]);
+                let (sa, sb) = (
+                    c.solids[0].source[ia as usize],
+                    c.solids[1].source[ib as usize],
+                );
                 if ma == 0 && !v.contains(&(sa, sb)) {
                     v.push((sa, sb));
                 }
