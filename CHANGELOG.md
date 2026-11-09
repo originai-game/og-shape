@@ -81,6 +81,14 @@
   including the wall thickness.
 - `shape-bool::fuse` and `components`: a solid of several shells is fused
   before a boolean.
+- `shape-bool::boolean` and `csg_points` refuse an operand whose surface
+  passes through itself (`BoolError::SelfIntersecting`,
+  `OperandError::SelfIntersecting`): two triangles that share no vertex
+  meet, decided with exact predicates. Such an operand passed the closed
+  check and gave open output without an error. The check is
+  `shape_mesh::self_intersections`; vertices within 10⁻⁹ of the
+  operand's size count as shared (`docs/research.md` §5.4, item 3).
+  Every output hash is unchanged.
 - CSG fix: a plate minus a pin whose vertex columns lie on the plate
   caps' 45° diagonal is now closed (it had open or non-manifold edges
   around the bore; `docs/research.md` §5.4, item 4). Crossing points that

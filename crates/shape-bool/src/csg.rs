@@ -979,12 +979,16 @@ pub enum OperandError {
     /// After exact welding, an edge is used other than once each way:
     /// the operand is open, not oriented, or not manifold.
     NotClosed(u8),
+    /// Two of the operand's triangles that share no vertex meet: the
+    /// surface folds through or touches itself.
+    SelfIntersecting(u8),
 }
 
 /// The f64 core of [`csg`] on welded operands: points and triangles in,
 /// points, triangles and each output triangle's source `(operand,
 /// triangle)` out. Unlike [`csg`], an operand that is not closed and
-/// oriented after exact welding is refused (`docs/research.md` §5.4).
+/// oriented after exact welding, or whose triangles meet other than at a
+/// shared vertex (points within 1e-9 of its size count as one), is refused (`docs/research.md` §5.4).
 #[allow(clippy::type_complexity)]
 pub fn csg_points(
     a: (&[DVec3], &[[u32; 3]]),
@@ -1052,6 +1056,13 @@ pub fn csg_points(
                 .all(|(&(x, y), &n)| n == 1 && directed.get(&(y, x)) == Some(&1));
         if !closed {
             return Err(OperandError::NotClosed(m));
+        }
+        // Points closer than 1e-9 of the operand's size count as one: the
+        // CSG's own output can leave such pairs unwelded (`docs/research.md`
+        // §5.4), and the classification of step 4 probes at 1e-6.
+        let weld = (s.max - s.min).length() * 1e-9;
+        if !shape_mesh::self_intersections(&points, &s.tris, weld).is_empty() {
+            return Err(OperandError::SelfIntersecting(m));
         }
         Ok(s)
     };

@@ -46,6 +46,9 @@ pub enum BoolError {
     NotClosed(&'static str),
     /// An operand has a position that is not finite.
     NotFinite(&'static str),
+    /// An operand's surface passes through or touches itself: two
+    /// triangles that share no vertex meet ("target"/"tool").
+    SelfIntersecting(&'static str),
     /// The result has no triangles (e.g. an intersection of disjoint solids).
     Empty,
 }
@@ -58,6 +61,10 @@ impl std::fmt::Display for BoolError {
                 "the {w} is not a closed, oriented solid; repair it first"
             ),
             BoolError::NotFinite(w) => write!(f, "the {w} has a position that is not finite"),
+            BoolError::SelfIntersecting(w) => write!(
+                f,
+                "the {w}'s surface passes through itself; repair it first"
+            ),
             BoolError::Empty => f.write_str("the result is empty"),
         }
     }
@@ -157,6 +164,8 @@ fn boolean_once(target: &Solid, tool: &Solid, d: &Boolean) -> Result<Solid, Bool
         OperandError::NotClosed(_) => BoolError::NotClosed("tool"),
         OperandError::NotFinite(0) => BoolError::NotFinite("target"),
         OperandError::NotFinite(_) => BoolError::NotFinite("tool"),
+        OperandError::SelfIntersecting(0) => BoolError::SelfIntersecting("target"),
+        OperandError::SelfIntersecting(_) => BoolError::SelfIntersecting("tool"),
     })?;
     if tris.is_empty() {
         return Err(BoolError::Empty);
@@ -396,5 +405,42 @@ mod tests {
             boolean(&plate(), &flipped, &Boolean::default()),
             Err(BoolError::NotClosed("tool"))
         );
+    }
+
+    #[test]
+    fn a_surface_folded_through_itself_is_refused() {
+        // A sphere whose +x pole is pulled through the far side: still
+        // closed and oriented, but its spike pierces the surface. The CSG
+        // used to return an open mesh for it without an error.
+        let mut folded = shape_gen::solids::sphere(20.0).unwrap();
+        let far = (0..folded.positions.len())
+            .max_by(|&a, &b| folded.positions[a].x.total_cmp(&folded.positions[b].x))
+            .unwrap();
+        folded.positions[far] = DVec3::new(-30.0, 0.5, 0.3);
+        assert!(folded.measure().closed);
+        assert!(
+            !shape_mesh::self_intersections(&folded.positions, &folded.triangles, 0.0).is_empty()
+        );
+        let mut tool = cuboid(&BoxDesc {
+            width: 10.0,
+            depth: 10.0,
+            height: 60.0,
+        })
+        .unwrap();
+        tool.map_positions(|p| p + DVec3::new(-15.0, 0.0, -30.0), false);
+        for op in [BoolOp::Join, BoolOp::Cut, BoolOp::Intersect] {
+            let d = Boolean {
+                op,
+                ..Default::default()
+            };
+            assert_eq!(
+                boolean(&folded, &tool, &d),
+                Err(BoolError::SelfIntersecting("target"))
+            );
+            assert_eq!(
+                boolean(&tool, &folded, &d),
+                Err(BoolError::SelfIntersecting("tool"))
+            );
+        }
     }
 }

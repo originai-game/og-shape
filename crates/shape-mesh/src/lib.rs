@@ -4,9 +4,11 @@
 //! Entry: [`Solid`]. A generator builds one, an operation consumes one and
 //! returns another, and every operation ends with [`Solid::canonicalize`].
 
+mod intersect;
 mod measure;
 mod names;
 
+pub use intersect::{self_intersections, tris_meet};
 pub use measure::Measures;
 pub use names::{LookupError, Names, Tag};
 

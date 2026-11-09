@@ -343,7 +343,20 @@ aarch64 Linux.
    this decision on real provider outputs (`docs/plan.md`).
    **Partly done:** `fuse` joins the separate shells of a solid (`merge`
    output, interpenetrating provider parts) before any boolean. A single
-   surface that folds through itself is still refused.
+   surface that folds through itself is refused: `csg_points` (and so
+   `boolean`) returns `SelfIntersecting` when two of an operand's
+   triangles that share no vertex meet, decided exactly
+   (`shape_mesh::self_intersections`, a sweep along x, then `orient3d`
+   and `orient2d`). Until 2026-11-09 this was claimed but not checked:
+   a sphere with one vertex pulled through its far side passed the
+   closed-and-oriented check and a cut returned open output.
+   Vertices closer than 10⁻⁹ of the operand's size count as shared. The
+   CSG's own output can hold such pairs unwelded: the countersink of the
+   `edit.holes.pocket` golden case leaves cone and bore vertices a few
+   ulps apart, and a cone triangle crosses the bore wall by 4·10⁻¹⁶.
+   Step 4 classifies at 10⁻⁶ of the size, so that fold does not change a
+   result; an exact-index check refused the following pocket. Welding the
+   CSG's near-coincident output points is open.
 4. **Exact edge-on-edge crossings (found in phase 2).** The minimal case:
    `cuboid(40, 40, 10)` minus a centred `cylinder(r = 2, 24 segments)`
    through it gave an open result with 100 boundary edges; a blind one
