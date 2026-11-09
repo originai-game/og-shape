@@ -21,6 +21,8 @@
 //! - Collapses are taken cheapest first; ties go to the smaller edge key,
 //!   then the smaller vertex. The order depends only on the input.
 //!
+//! A skinned solid is refused ([`DecimateError::Skinned`]).
+//!
 //! Names: every triangle left is an input triangle with corners moved, so
 //! it keeps its surface and face names. Edge names follow their vertices
 //! and survive on edges that still exist.
@@ -72,6 +74,9 @@ pub enum DecimateError {
     BadDesc(String),
     /// A position is NaN or infinite.
     NotFinite,
+    /// The solid is skinned: decimation would break its skin (weights are
+    /// interpolated from phase 5b).
+    Skinned,
 }
 
 impl fmt::Display for DecimateError {
@@ -79,6 +84,9 @@ impl fmt::Display for DecimateError {
         match self {
             DecimateError::BadDesc(w) => write!(f, "decimate: {w}"),
             DecimateError::NotFinite => f.write_str("decimate: a position is not finite"),
+            DecimateError::Skinned => f.write_str(
+                "decimate: the solid is skinned; decimating would break its skin, so it is refused",
+            ),
         }
     }
 }
@@ -389,6 +397,9 @@ pub fn collapse_short_edges(s: &Solid, length: f64) -> Result<(Solid, usize), De
             "an edge length must be finite and >= 0".into(),
         ));
     }
+    if s.skin.is_some() {
+        return Err(DecimateError::Skinned);
+    }
     if length == 0.0 || s.triangles.is_empty() {
         return Ok((s.clone(), 0));
     }
@@ -412,6 +423,9 @@ fn collapse(
     d: &Decimate,
     max_len: f64,
 ) -> Result<(Solid, DecimateReport), DecimateError> {
+    if s.skin.is_some() {
+        return Err(DecimateError::Skinned);
+    }
     if s.positions.iter().any(|p| !p.is_finite()) {
         return Err(DecimateError::NotFinite);
     }

@@ -1,8 +1,9 @@
-# Mesh tools: from a generated mesh to a texturable asset
+# Mesh tools: from an outside mesh to a usable asset
 
-The kernel's mesh tools take a mesh someone else made (a provider's GLB,
-an OBJ, an FBX) and make it fit for texturing and for the engine. They
-report measurements and never judge; this guide says what to look for.
+The kernel's mesh tools take a mesh it did not build (a scan, another
+tool's GLB, an OBJ, an FBX) and make it fit for texturing, booleans and
+the engine. They report measurements and never judge; this guide says
+what to look for.
 
 ## The chain
 
@@ -11,9 +12,13 @@ import → join → repair → decimate → unwrap → measure → preview → e
 ```
 
 1. **Import** the file (`import`). Read what was skipped
-   (`Imported::skipped`): a skinned mesh comes in its bind pose; points,
-   lines, NURBS and morph targets are not read. A Draco- or
-   meshopt-compressed glTF is refused: ask for an uncompressed one.
+   (`Imported::skipped`): points, lines, NURBS, morph targets and blend
+   shapes are not read. A Draco- or meshopt-compressed glTF is refused:
+   get an uncompressed one. A **skinned** mesh (bones and weights) is
+   read in its bind pose and marked (`measure` says `skinned`, and how
+   many bones): repair, join, decimate and export refuse it rather than
+   break the skin. Unwrap, measure and preview take it. Carrying skins
+   through the other tools comes later.
 2. **Join** the parts into one solid (`join`). Each part's faces keep its
    name, so a part can still be found after joining.
 3. **Repair** (`repair`). Settings that worked on the acceptance meshes
@@ -49,22 +54,24 @@ import → join → repair → decimate → unwrap → measure → preview → e
 | `floaters`, `largest_pieces` | pieces besides the largest | only the ones the object should have |
 | `degenerate_triangles`, `duplicate_triangles` | faces with no area; repeated faces | 0 |
 | `shortest_edge` | in mm; below about 1e-5 mm, f32 export merges vertices | well above 1e-5 |
-| `triangles` | the budget | at most what the target asks (Hunyuan3D texturing: 40 000) |
+| `triangles` | the budget | at most the budget (a texturing tool's input limit is often about 40 000) |
+| `skinned`, `skin.bones` | the mesh has a skin | know it before running a tool that refuses it |
 | `pivot_from_base` | where the origin sits relative to the base's centre | 0 for props that stand on the ground |
 | `uv.overlapping_pairs`, `uv.flipped`, `uv.outside` | UV faces over each other, mirrored, or outside the square | 0 for baking and painting |
-| `uv.coverage` | how much of the square the charts fill | the higher the better; 0.5–0.7 is usual for this packer |
+| `uv.coverage` | how much of the square the charts fill | the higher the better; 0.1–0.8 on the acceptance meshes, 0.5 on average, lowest on thin parts |
 | `texture.decoded_bytes_with_mips` | GPU memory the textures take | within the game's budget |
 
-## The texturing contract (Hunyuan3D)
+## A budget, for example a texturing tool's input
 
-A repaired, decimated (≤ 40k triangles), joined, triangulated plain GLB:
-`closed`, `triangles ≤ 40000`, one part, and `glb_plain`'s output (one
-node, one mesh, one triangle primitive). Every kernel solid is triangles,
-so "triangulated" always holds.
+Texturing tools typically take a closed, joined, triangulated plain GLB
+under a triangle budget, unwrapped: `closed`, `triangles` within the
+budget, one part, and `glb_plain`'s output (one node, one mesh, one
+triangle primitive with UVs). Every kernel solid is triangles, so
+"triangulated" always holds.
 
 ## What repair cannot do
 
 A single surface that folds through itself (one piece, closed, but with
 `self_intersections` above 0 after `fuse`) cannot be untangled here.
-Booleans on it are not reliable. Ask the provider for another mesh, or
-remesh it outside the kernel.
+Booleans on it are not reliable. Get another mesh, or remesh it outside
+the kernel.

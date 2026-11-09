@@ -12,6 +12,10 @@
 //! take the surface of the first triangle on its rim. [`join`] keeps each
 //! part's names (imported faces carry their part's name).
 //!
+//! A skinned solid (`Solid::skin`) is refused by every step with
+//! [`RepairError::Skinned`]: they change vertices, and skins are carried
+//! only from phase 5b.
+//!
 //! What repair cannot do: a single surface that folds through itself (a
 //! self-intersecting sheet, not two closed shells) has no inside to keep;
 //! [`repair`] reports its intersecting triangle pairs and leaves it, and
@@ -107,6 +111,9 @@ pub enum RepairError {
     NaN,
     /// A weld distance or floater size is negative or not finite.
     BadDistance,
+    /// The solid (or the part named) is skinned: repair would change its
+    /// vertices and break the skin (carrying skins is phase 5b).
+    Skinned(String),
 }
 
 impl fmt::Display for RepairError {
@@ -116,6 +123,10 @@ impl fmt::Display for RepairError {
             RepairError::BadDistance => {
                 f.write_str("a weld distance or size is negative or not finite")
             }
+            RepairError::Skinned(w) => write!(
+                f,
+                "{w} is skinned; repair would break its skin, so it is refused"
+            ),
         }
     }
 }
@@ -130,9 +141,20 @@ impl From<HashError> for RepairError {
 
 /// The part's solid placed by its transform. A mirroring transform
 /// (negative determinant) reverses every triangle so faces still point
-/// out. Names are kept.
-pub fn apply_transform(part: &ImportedPart) -> Solid {
-    transformed(&part.solid, &part.transform)
+/// out. Names are kept. A skinned part is refused: its bones, not its
+/// node, place it.
+pub fn apply_transform(part: &ImportedPart) -> Result<Solid, RepairError> {
+    if part.solid.skin.is_some() {
+        return Err(RepairError::Skinned(format!("part {:?}", part.name)));
+    }
+    Ok(transformed(&part.solid, &part.transform))
+}
+
+fn unskinned(s: &Solid) -> Result<(), RepairError> {
+    match s.skin {
+        Some(_) => Err(RepairError::Skinned("the solid".into())),
+        None => Ok(()),
+    }
 }
 
 fn transformed(s: &Solid, m: &Affine) -> Solid {
@@ -144,11 +166,11 @@ fn transformed(s: &Solid, m: &Affine) -> Solid {
 /// Every part placed by its transform and joined into one solid, in
 /// canonical order (exactly coincident vertices are welded). Each part's
 /// surfaces stay their own; faces keep their names, so each part stays
-/// addressable by its name.
+/// addressable by its name. A skinned part is refused.
 pub fn join(parts: &[ImportedPart]) -> Result<Solid, RepairError> {
     let mut out = Solid::default();
     for p in parts {
-        out.append(&apply_transform(p));
+        out.append(&apply_transform(p)?);
     }
     out.canonicalize()?;
     Ok(out)
@@ -216,6 +238,7 @@ pub struct Weld {
 /// positions, not on their order. Returns the solid and how many vertices
 /// went.
 pub fn weld(s: &Solid, d: &Weld) -> Result<(Solid, usize), RepairError> {
+    unskinned(s)?;
     let distance = d.distance;
     if !(distance >= 0.0 && distance.is_finite()) {
         return Err(RepairError::BadDistance);
@@ -301,6 +324,7 @@ pub fn weld(s: &Solid, d: &Weld) -> Result<(Solid, usize), RepairError> {
 /// opposite ways (a two-sided sheet) are both kept. Returns the solid and
 /// the counts `(degenerate, duplicates)`.
 pub fn remove_degenerate(s: &Solid) -> Result<(Solid, usize, usize), RepairError> {
+    unskinned(s)?;
     let mut seen: BTreeMap<[u32; 3], ()> = BTreeMap::new();
     let (mut deg, mut dup) = (0, 0);
     let mut keep = Vec::with_capacity(s.triangles.len());
@@ -361,6 +385,7 @@ pub(crate) fn pieces(s: &Solid) -> (Vec<u32>, usize) {
 /// order) is always kept. Returns the solid and the counts
 /// `(pieces dropped, triangles dropped)`.
 pub fn remove_floaters(s: &Solid, d: &Floaters) -> Result<(Solid, usize, usize), RepairError> {
+    unskinned(s)?;
     for v in [d.size, d.fraction] {
         if !(v >= 0.0 && v.is_finite()) {
             return Err(RepairError::BadDistance);
@@ -412,6 +437,7 @@ pub fn remove_floaters(s: &Solid, d: &Floaters) -> Result<(Solid, usize, usize),
 /// more than two triangles do not propagate. Returns the solid and how
 /// many triangles were turned.
 pub fn orient(s: &Solid) -> Result<(Solid, usize), RepairError> {
+    unskinned(s)?;
     let mut s = s.clone();
     s.canonicalize()?;
     let n = s.triangles.len();
@@ -517,6 +543,7 @@ pub fn close_holes(
     s: &Solid,
     max_edges: usize,
 ) -> Result<(Solid, usize, usize, usize), RepairError> {
+    unskinned(s)?;
     let mut s = s.clone();
     s.canonicalize()?;
     let mut directed: BTreeMap<(u32, u32), u32> = BTreeMap::new();
@@ -678,6 +705,7 @@ fn fill(s: &Solid, rim: &[u32], edges: &BTreeMap<(u32, u32), u32>) -> Option<Vec
 /// triangles, floaters, orientation, holes, fuse, short edges) and reports
 /// what each changed. The result is in canonical order.
 pub fn repair(s: &Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairError> {
+    unskinned(s)?;
     let mut r = RepairReport::default();
     let (s, welded) = weld(
         s,

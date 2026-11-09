@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use shape_core::{DVec2, DVec3};
-use shape_mesh::Solid;
+use shape_mesh::{Skin, Solid};
 
 use crate::image::ImageInfo;
 use crate::jsonread::{self, Value};
@@ -295,9 +295,12 @@ struct Doc<'a> {
 /// Read: triangle primitives (also strips and fans), `POSITION`,
 /// `TEXCOORD_0`, indices of every integer width, normalized and quantized
 /// attributes (`KHR_mesh_quantization`), sparse accessors, the default
-/// scene's node tree (matrices and TRS), and images' sizes. Skipped and
-/// listed in [`Imported::skipped`]: points and lines, skins (meshes stay
-/// in their bind pose) and morph targets. A required extension the
+/// scene's node tree (matrices and TRS), and images' sizes. A skin (a
+/// node's `skin`, or `JOINTS_0`/`WEIGHTS_0` on its mesh) is described on
+/// the part's `Solid::skin`: bones and weighted vertices; the mesh is in
+/// its bind pose, and tools that would break the skin refuse it. Skipped
+/// and listed in [`Imported::skipped`]: points and lines and morph
+/// targets. A required extension the
 /// importer does not read (Draco, meshopt compression) is
 /// [`ImportError::Unsupported`].
 pub fn import_gltf(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportError> {
@@ -603,7 +606,6 @@ impl Doc<'_> {
             .rev()
             .map(|&r| (r, Affine::IDENTITY, 0))
             .collect();
-        let mut skinned = 0;
         while let Some((i, above, depth)) = stack.pop() {
             let n = self.json.get("nodes").at(i);
             if n.is_null() || depth > 256 {
@@ -621,9 +623,6 @@ impl Doc<'_> {
             let Some(m) = n.get("mesh").index() else {
                 continue;
             };
-            if !n.get("skin").is_null() {
-                skinned += 1;
-            }
             let mesh = self.json.get("meshes").at(m);
             let name = n
                 .get("name")
@@ -631,12 +630,37 @@ impl Doc<'_> {
                 .or(mesh.get("name").str())
                 .map_or_else(|| format!("node{i}"), str::to_string);
             let name = unique(&name, &mut used);
-            let part = self.part(&name, mesh, &world, &mut out)?;
+            let mut part = self.part(&name, mesh, &world, &mut out)?;
+            // A skin: the node's, or weights on the mesh with no skin.
+            let weighted = part.solid.skin.take().map_or(0, |s| s.weighted_vertices);
+            if let Some(k) = n.get("skin").index() {
+                let skin = self.json.get("skins").at(k);
+                let bones = skin
+                    .get("joints")
+                    .items()
+                    .iter()
+                    .map(|j| {
+                        let j = j.index().unwrap_or(usize::MAX);
+                        self.json
+                            .get("nodes")
+                            .at(j)
+                            .get("name")
+                            .str()
+                            .map_or_else(|| format!("node{j}"), str::to_string)
+                    })
+                    .collect();
+                part.solid.skin = Some(Skin {
+                    name: skin.get("name").str().unwrap_or("").to_string(),
+                    bones,
+                    weighted_vertices: weighted,
+                });
+            } else if weighted > 0 {
+                part.solid.skin = Some(Skin {
+                    weighted_vertices: weighted,
+                    ..Default::default()
+                });
+            }
             out.parts.push(part);
-        }
-        if skinned > 0 {
-            out.skipped
-                .push(format!("{skinned} skinned meshes: read in their bind pose"));
         }
         Ok(out)
     }
@@ -652,6 +676,7 @@ impl Doc<'_> {
         let mut uvs: Vec<[DVec2; 3]> = Vec::new();
         let mut all_uv = true;
         let mut material = String::new();
+        let mut weighted = 0;
         for (pi, prim) in mesh.get("primitives").items().iter().enumerate() {
             let mode = prim.get("mode").index().unwrap_or(4);
             if !(4..=6).contains(&mode) {
@@ -664,6 +689,20 @@ impl Doc<'_> {
                     .push(format!("{name}: primitive {pi}'s morph targets"));
             }
             let attrs = prim.get("attributes");
+            if !attrs.get("JOINTS_0").is_null() || !attrs.get("WEIGHTS_0").is_null() {
+                weighted += attrs
+                    .get("POSITION")
+                    .index()
+                    .map(|a| {
+                        self.json
+                            .get("accessors")
+                            .at(a)
+                            .get("count")
+                            .index()
+                            .unwrap_or(0)
+                    })
+                    .unwrap_or(0);
+            }
             let Some(pa) = attrs.get("POSITION").index() else {
                 return Err(fmt_err(format!("{name}: primitive {pi} has no POSITION")));
             };
@@ -743,6 +782,13 @@ impl Doc<'_> {
                     }
                 }
             }
+        }
+        if weighted > 0 {
+            // Read by the caller, which names the bones.
+            solid.skin = Some(Skin {
+                weighted_vertices: weighted,
+                ..Default::default()
+            });
         }
         Ok(ImportedPart {
             name: name.to_string(),

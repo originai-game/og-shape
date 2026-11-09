@@ -1,25 +1,30 @@
-//! Phase 5's acceptance (`docs/plan.md`): the platform chain
-//! `import → repair → decimate → unwrap → measure → preview → export` on
-//! meshes standing in for provider outputs, checked against the Hunyuan3D
-//! texturing input contract (`docs/research.md` §3.1): repaired, at most
-//! 40k triangles, joined, triangulated, plain GLB.
+//! Phase 5's acceptance (`docs/plan.md`): meshes from outside the kernel
+//! go through the chain
+//! `import → repair → decimate → unwrap → measure → preview → export` and
+//! must come out closed, joined, triangulated, under a triangle budget
+//! (40 000 here, one example budget: a texturing tool's input limit) and
+//! unwrapped, as a plain GLB.
 //!
 //! ```text
 //! cargo run --release -- [--thingi DIR] [--grid N] [--previews DIR]
 //! ```
 //!
-//! No provider output is available here. The inputs are:
-//! - the synthetic AI-mesh defects of phase 0 (`bench/booleans`): five
+//! The inputs:
+//! - the synthetic generated-mesh defects of phase 0 (`bench/booleans`): five
 //!   shapes polygonised by marching tetrahedra, each with one defect;
 //! - Thingi10K's closed meshes (`bench/booleans/fetch-thingi10k.sh`),
 //!   subdivided once 1-to-4 and given the same defects;
 //! each written as a GLB by og-shape's own exporter (a model of
 //! interpenetrating parts as two nodes), then read back by the importer.
 //!
+//! With `--glb FILE` (repeated), other tools' files go through the same
+//! chain as they are instead; a skinned file must be refused by every
+//! tool that would break its skin.
+//!
 //! Per input, one TSV row: the measures before and after, what repair
 //! did, the stage times, the contract verdict, and whether a boolean cut
 //! (og-geom's CSG) succeeds on the result, re-checking phase 0's finding
-//! that AI meshes are a repair problem.
+//! that generated meshes are a repair problem.
 
 #[allow(dead_code)]
 #[path = "../../booleans/src/mesh.rs"]
@@ -178,7 +183,7 @@ fn ms(t: Instant) -> f64 {
     t.elapsed().as_secs_f64() * 1000.0
 }
 
-/// The texturing contract, read back from the GLB bytes: one node, one
+/// The budget's contract, read back from the GLB bytes: one node, one
 /// mesh, one triangle primitive, at most 40k triangles, closed.
 fn contract(bytes: &[u8]) -> Result<(), String> {
     let back = import(bytes, &Import::default(), &no_files).map_err(|e| e.to_string())?;
@@ -213,8 +218,7 @@ fn contract(bytes: &[u8]) -> Result<(), String> {
 }
 
 fn run(input: &str, defect: &str, t: &Tri, two_nodes: bool, tool: &Solid, out: &Option<PathBuf>) -> Row {
-    let mut times = [0.0; 7];
-    // The "provider output": a GLB written by og-shape's exporter.
+    // The outside mesh: a GLB written by og-shape's exporter.
     let raw = solid(t);
     let bytes = if two_nodes {
         let half = t.idx.len() / 6;
@@ -240,8 +244,74 @@ fn run(input: &str, defect: &str, t: &Tri, two_nodes: bool, tool: &Solid, out: &
         })
     }
     .expect("export");
+    chain(input, defect, &bytes, Some(tool), out)
+}
+
+/// What a skinned file must get: every tool that would break its skin
+/// refuses it with an error value.
+fn skinned_refusals(parts: &[shape_tools::ImportedPart]) -> Result<String, String> {
+    let s = &parts
+        .iter()
+        .find(|p| p.solid.skin.is_some())
+        .ok_or("no skinned part")?
+        .solid;
+    let skin = s.skin.clone().unwrap_or_default();
+    let mut refused = Vec::new();
+    let mut check = |tool: &str, err: Option<String>| match err {
+        Some(e) if e.contains("skinned") => refused.push(tool.to_string()),
+        Some(e) => refused.push(format!("{tool} (other error: {e})")),
+        None => refused.push(format!("{tool} ACCEPTED")),
+    };
+    check("join", join(parts).err().map(|e| e.to_string()));
+    check("repair", repair(s, &Repair::default()).err().map(|e| e.to_string()));
+    let half = Decimate { ratio: 0.5, ..Default::default() };
+    check("decimate", decimate(s, &half).err().map(|e| e.to_string()));
+    check("glb_plain", glb_plain(s, &PlainGlb::default()).err().map(|e| e.to_string()));
+    let scene = Scene { name: "s".into(), parts: vec![Part::new("p", s)] };
+    check("glb", glb(&scene).err().map(|e| e.to_string()));
+    let text = refused.join(", ");
+    if text.contains("ACCEPTED") || text.contains("other error") {
+        Err(text)
+    } else {
+        Ok(format!(
+            "skinned ({} bones, {} weighted vertices): refused by {text}",
+            skin.bones.len(),
+            skin.weighted_vertices
+        ))
+    }
+}
+
+fn chain(input: &str, defect: &str, bytes: &[u8], tool: Option<&Solid>, out: &Option<PathBuf>) -> Row {
+    let mut times = [0.0; 7];
     let start = Instant::now();
-    let imported = import(&bytes, &Import::default(), &no_files).expect("import");
+    let imported = import(bytes, &Import::default(), &no_files).expect("import");
+    if imported.parts.iter().any(|p| p.solid.skin.is_some()) {
+        let tris = imported.parts.iter().map(|p| p.solid.triangles.len()).sum();
+        return Row {
+            input: input.into(),
+            defect: "skinned".into(),
+            tris_in: tris,
+            closed_in: false,
+            pieces_in: imported.parts.len(),
+            welded: 0,
+            flipped: 0,
+            floaters: 0,
+            holes: (0, 0),
+            fused: "-".into(),
+            tris_out: tris,
+            decimate_error: 0.0,
+            closed_out: false,
+            self_x: 0,
+            charts: 0,
+            uv_cover: 0.0,
+            uv_overlap: 0,
+            contract: skinned_refusals(&imported.parts).map(|t| {
+                eprintln!("{input}: {t}");
+            }),
+            cut: "-".into(),
+            ms: times,
+        };
+    }
     let joined = join(&imported.parts).expect("join");
     times[0] = ms(start);
     let before = measure(&joined, &Measure::default());
@@ -322,17 +392,20 @@ fn run(input: &str, defect: &str, t: &Tri, two_nodes: bool, tool: &Solid, out: &
         (_, Ok(b)) => contract(b),
         _ => Err("no GLB".into()),
     };
-    let cut = match boolean(
-        &low,
-        tool,
-        &Boolean {
-            op: BoolOp::Cut,
-            ..Default::default()
-        },
-    ) {
-        Ok(c) if c.measure().closed => "ok".to_string(),
-        Ok(_) => "open".to_string(),
-        Err(e) => format!("refused: {e}"),
+    let cut = match tool.map(|t| {
+        boolean(
+            &low,
+            t,
+            &Boolean {
+                op: BoolOp::Cut,
+                ..Default::default()
+            },
+        )
+    }) {
+        None => "-".to_string(),
+        Some(Ok(c)) if c.measure().closed => "ok".to_string(),
+        Some(Ok(_)) => "open".to_string(),
+        Some(Err(e)) => format!("refused: {e}"),
     };
     Row {
         input: input.into(),
@@ -362,11 +435,42 @@ fn run(input: &str, defect: &str, t: &Tri, two_nodes: bool, tool: &Solid, out: &
     }
 }
 
+fn print_row(r: &Row) {
+    println!(
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}",
+        r.input,
+        r.defect,
+        r.tris_in,
+        r.closed_in,
+        r.pieces_in,
+        r.welded,
+        r.flipped,
+        r.floaters,
+        r.holes.0,
+        r.holes.1,
+        r.fused,
+        r.tris_out,
+        r.decimate_error,
+        r.closed_out,
+        r.self_x,
+        r.charts,
+        r.uv_cover,
+        r.uv_overlap,
+        match &r.contract {
+            Ok(()) => "ok".to_string(),
+            Err(e) => format!("FAIL: {e}"),
+        },
+        r.cut,
+        r.ms.map(|v| format!("{v:.0}")).join("\t"),
+    );
+}
+
 fn main() {
     let mut thingi: Option<PathBuf> = None;
     let mut grid = 96;
     let mut previews: Option<PathBuf> = None;
     let mut only: Option<String> = None;
+    let mut files: Vec<PathBuf> = Vec::new();
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
         let mut v = || it.next().unwrap_or_else(|| panic!("{k} needs a value"));
@@ -375,6 +479,7 @@ fn main() {
             "--grid" => grid = v().parse().expect("--grid N"),
             "--previews" => previews = Some(v().into()),
             "--only" => only = Some(v()),
+            "--glb" => files.push(PathBuf::from(v())),
             _ => panic!("unknown argument {k}"),
         }
     }
@@ -398,6 +503,17 @@ fn main() {
         "input\tdefect\ttris_in\tclosed_in\tpieces_in\twelded\tflipped\tfloaters\tholes_filled\tholes_left\tfused\ttris_out\tdecimate_error_mm\tclosed_out\tself_intersections\tcharts\tuv_coverage\tuv_overlaps\tcontract\tcut_after\tms_import\tms_repair\tms_decimate\tms_unwrap\tms_measure\tms_preview\tms_export"
     );
     let mut rows = Vec::new();
+    // Other tools' files, read as they are.
+    for f in &files {
+        let name = f.file_name().map_or(String::new(), |n| n.to_string_lossy().to_string());
+        let bytes = std::fs::read(f).expect("read");
+        let r = chain(&format!("file.{name}"), "as.is", &bytes, None, &previews);
+        print_row(&r);
+        rows.push(r);
+    }
+    if !files.is_empty() {
+        inputs.clear();
+    }
     for (k, (name, t, tool)) in inputs.iter().enumerate() {
         if only.as_ref().is_some_and(|o| !name.contains(o.as_str())) {
             continue;
@@ -406,33 +522,7 @@ fn main() {
         tool.canonicalize().expect("tool");
         for (defect, mesh, two) in defects(t, 7919 * (k as u64 + 1)) {
             let r = run(name, defect, &mesh, two, &tool, &previews);
-            println!(
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}",
-                r.input,
-                r.defect,
-                r.tris_in,
-                r.closed_in,
-                r.pieces_in,
-                r.welded,
-                r.flipped,
-                r.floaters,
-                r.holes.0,
-                r.holes.1,
-                r.fused,
-                r.tris_out,
-                r.decimate_error,
-                r.closed_out,
-                r.self_x,
-                r.charts,
-                r.uv_cover,
-                r.uv_overlap,
-                match &r.contract {
-                    Ok(()) => "ok".to_string(),
-                    Err(e) => format!("FAIL: {e}"),
-                },
-                r.cut,
-                r.ms.map(|v| format!("{v:.0}")).join("\t"),
-            );
+            print_row(&r);
             rows.push(r);
         }
     }

@@ -7,7 +7,7 @@
 //! cargo run --release --bin import-check -- FILE...
 //! ```
 
-use shape_tools::{Import, Measure, Part, Preview, Scene, import, join, measure, png, preview, sheet};
+use shape_tools::{Import, Measure, Part, Preview, Scene, import, measure, png, preview, sheet};
 fn main() {
     for path in std::env::args().skip(1) {
         let bytes = std::fs::read(&path).unwrap();
@@ -17,7 +17,19 @@ fn main() {
         match import(&bytes, &Import::default(), &resolve) {
             Err(e) => println!("{path}: {e}"),
             Ok(im) => {
-                let s = join(&im.parts).unwrap();
+                for p in im.parts.iter().filter(|p| p.solid.skin.is_some()) {
+                    let k = p.solid.skin.as_ref().unwrap();
+                    println!("  part {:?} is skinned: skin {:?}, {} bones, {} weighted vertices", p.name, k.name, k.bones.len(), k.weighted_vertices);
+                }
+                // A skinned part is refused by join: place the parts for
+                // looking at only, skin dropped.
+                let mut s = shape_mesh::Solid::default();
+                for p in &im.parts {
+                    let mut q = p.clone();
+                    q.solid.skin = None;
+                    s.append(&shape_tools::apply_transform(&q).unwrap());
+                }
+                s.canonicalize().unwrap();
                 let m = measure(&s, &Measure { uvs: None, images: &im.images, ..Default::default() });
                 println!("{path}: {} parts, {} polys triangulated, skipped {:?}, {:.0} ms", im.parts.len(), im.polygons_triangulated, im.skipped, t.elapsed().as_secs_f64()*1000.0);
                 println!("  names {:?}", im.parts.iter().map(|p| p.name.as_str()).take(8).collect::<Vec<_>>());

@@ -1,7 +1,7 @@
 //! A plain GLB of one solid: one node, one mesh, one primitive, one
-//! material, positions, normals and (if given) texture coordinates. This
-//! is what texturing services take (`docs/research.md` §3.1: "a repaired,
-//! decimated, joined, triangulated plain GLB").
+//! material, positions, normals and (if given) texture coordinates: what
+//! a texturing tool takes once a mesh is closed, joined, triangulated,
+//! under its triangle budget and unwrapped.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -30,12 +30,17 @@ pub enum PlainGlbError {
     NotFinite,
     /// The UVs are for a different number of triangles.
     UvMismatch,
+    /// The solid is skinned and this writer writes no skin (phase 5b).
+    Skinned,
 }
 
 impl fmt::Display for PlainGlbError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PlainGlbError::NotFinite => f.write_str("a position or UV is not finite"),
+            PlainGlbError::Skinned => f.write_str(
+                "the solid is skinned and a plain GLB carries no skin, so it is refused",
+            ),
             PlainGlbError::UvMismatch => {
                 f.write_str("the UVs were made for a different number of triangles")
             }
@@ -49,7 +54,11 @@ impl std::error::Error for PlainGlbError {}
 /// smooth within a surface, one vertex per (position, surface, UV), u32
 /// indices, three.js's default material. UVs are written with v flipped
 /// (glTF's origin is the top left). The bytes depend only on the input.
+/// A skinned solid is refused.
 pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
+    if s.skin.is_some() {
+        return Err(PlainGlbError::Skinned);
+    }
     if s.positions.iter().any(|p| !p.is_finite()) {
         return Err(PlainGlbError::NotFinite);
     }

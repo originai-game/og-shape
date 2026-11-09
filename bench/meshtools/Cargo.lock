@@ -25,7 +25,6 @@ name = "bench-meshtools"
 version = "0.0.0"
 dependencies = [
  "glam",
- "robust",
  "shape-bool",
  "shape-core",
  "shape-gen",

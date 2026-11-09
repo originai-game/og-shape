@@ -1,7 +1,9 @@
 //! Mesh tools end to end: files written by the exporters read back by the
-//! importers, external buffers, and the platform chain (import → repair →
+//! importers, external buffers, and the whole chain (import → repair →
 //! decimate → unwrap → measure → preview → export) on a broken mesh.
 
+#[path = "support/skinned.rs"]
+mod skinned;
 #[path = "support/fbx.rs"]
 mod support;
 
@@ -157,7 +159,7 @@ fn gltf_with_external_and_embedded_buffers() {
     assert!(import_gltf(draco.as_bytes(), &files).is_err());
 }
 
-/// A sphere with the defects providers' meshes have: split at seams, a
+/// A sphere with the defects meshes from outside the kernel have: split at seams, a
 /// hole, flipped triangles, a floater, a sliver.
 fn broken() -> Solid {
     let s = sphere(25.0).unwrap();
@@ -187,7 +189,7 @@ fn broken() -> Solid {
 }
 
 #[test]
-fn the_platform_chain_meets_the_texturing_contract() {
+fn the_chain_meets_a_texturing_budget() {
     let raw = broken();
     let before = measure(&raw, &Measure::default());
     assert!(!before.closed && before.pieces.len() > 1);
@@ -308,4 +310,85 @@ fn binary_fbx_with_pivots_compressed_arrays_and_a_texture() {
         near(m.bounds_min.z, 0.0) && near(m.bounds_max.z, 20.0),
         "{m:?}"
     );
+}
+
+#[test]
+fn a_skinned_glb_is_reported_and_never_broken_silently() {
+    use shape_tools::{
+        DecimateError, ExportError, PlainGlbError, RepairError, apply_transform,
+        collapse_short_edges, stl,
+    };
+    let imported = import(&skinned::skinned_glb(true), &Import::default(), &no_files).unwrap();
+    assert_eq!(imported.parts.len(), 1);
+    let part = &imported.parts[0];
+    let s = &part.solid;
+    let skin = s.skin.as_ref().expect("the skin is detected");
+    assert_eq!(skin.name, "rig");
+    assert_eq!(skin.bones, ["hip", "knee"]);
+    assert_eq!(skin.weighted_vertices, 4);
+    // Measured, in its bind pose, with the skin reported.
+    let json = measure(s, &Measure::default()).to_json();
+    assert!(json.contains(r#""skinned":true"#), "{json}");
+    assert!(
+        json.contains(r#""bones":2,"bone_names":["hip","knee"]"#),
+        "{json}"
+    );
+    // Every tool that would break the skin refuses it.
+    assert!(matches!(
+        join(&imported.parts),
+        Err(RepairError::Skinned(_))
+    ));
+    assert!(matches!(
+        apply_transform(part),
+        Err(RepairError::Skinned(_))
+    ));
+    assert!(matches!(
+        repair(s, &Repair::default()),
+        Err(RepairError::Skinned(_))
+    ));
+    let half = Decimate {
+        ratio: 0.5,
+        ..Default::default()
+    };
+    assert_eq!(decimate(s, &half).unwrap_err(), DecimateError::Skinned);
+    assert_eq!(
+        collapse_short_edges(s, 1.0).unwrap_err(),
+        DecimateError::Skinned
+    );
+    assert_eq!(
+        glb_plain(s, &PlainGlb::default()).unwrap_err(),
+        PlainGlbError::Skinned
+    );
+    let scene = Scene {
+        name: "rig".into(),
+        parts: vec![Part::new("legs", s)],
+    };
+    let refused = Err(ExportError::Skinned("legs".into()));
+    assert_eq!(glb(&scene), refused);
+    assert_eq!(
+        obj(&scene).map(|_| ()),
+        refused.clone().map(|_: Vec<u8>| ())
+    );
+    assert_eq!(stl(&scene), refused);
+    // Unwrap does not re-index, and a preview shows the bind pose.
+    let uv = unwrap(s, &Unwrap::default()).unwrap();
+    assert_eq!(uv.corners.len(), s.triangles.len());
+    let d = Preview {
+        width: 32,
+        views: 1,
+        ..Default::default()
+    };
+    assert!(preview(&scene, &d).is_ok());
+    // Appending keeps the mark: a skinned solid cannot be laundered.
+    let mut other = Solid::default();
+    other.append(s);
+    assert_eq!(other.skin.as_ref(), Some(skin));
+    // Weights with no skin on the node: still skinned, with no bones.
+    let bare = import(&skinned::skinned_glb(false), &Import::default(), &no_files).unwrap();
+    let skin = bare.parts[0]
+        .solid
+        .skin
+        .as_ref()
+        .expect("weights alone count");
+    assert!(skin.bones.is_empty() && skin.weighted_vertices == 4);
 }

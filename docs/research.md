@@ -830,9 +830,9 @@ golden run). As wasm32-unknown-unknown, the binding's test under bun
   the GLB, but the preview draws it opaque (the rasterizer ignores
   opacity); sand3d's glass preset also has transmission, which glTF
   core does not carry.
-## 9. Phase 5: mesh tools for the platform (stream D, 2026-11-09)
+## 9. Phase 5: mesh tools (stream D, 2026-11-09)
 
-### 9.1 What the platform's `asset_process` does, and where it is now
+### 9.1 The Blender pipeline of §3.1, and its equivalents here
 
 | `asset_process` (Blender, §3.1) | og-shape (`shape-tools`) |
 |---|---|
@@ -845,7 +845,7 @@ golden run). As wasm32-unknown-unknown, the binding's test under bun
 | smart-project UVs | `unwrap` (`Unwrap`: angle, resolution, padding) |
 | measure triangles and texture memory | `measure` → `MeshMeasures::to_json` (§9.5) |
 | Eevee turntable | `preview` (phase 4's CPU rasterizer) |
-| export | `glb` (parts, joints) and `glb_plain` (the texturing contract) |
+| export | `glb` (parts, joints) and `glb_plain` (one node, one mesh, with UVs) |
 
 Added beyond it, for generated meshes (§3.4 item 2): degenerate and
 duplicate triangles, floaters, consistent orientation, small holes, apply
@@ -922,7 +922,7 @@ self-intersection and UV overlap counts.
   | 20 000 | 1 / 0 | closed, 0 |
   | 5 000 | 0 / 0 | closed, 0 |
 
-  Its simplifier has no link-condition check, and the texturing contract
+  Its simplifier has no link-condition check, and phase 5's acceptance
   needs closed output, so it was dropped. The decimator here: area-weighted
   plane quadrics; borders and features (surfaces, face names, named
   edges) as lines with heavy quadrics of the plane square to the face;
@@ -975,13 +975,14 @@ There is a pure-Rust, permissive path, so FBX is in:
   per-polygon materials as surfaces), the model tree with FBX's full local
   transform `T·Roff·Rp·Rpre·R·Rpost⁻¹·Rp⁻¹·Soff·Sp·S·Sp⁻¹` (all six Euler
   orders) and the geometric transform, `GlobalSettings` axes and unit,
-  `Video` textures (embedded content, or files by the resolver). Skipped
-  and listed: deformers (skins, blend shapes: meshes stay in their bind
-  pose), NURBS and other geometry.
+  `Video` textures (embedded content, or files by the resolver), and
+  skin deformers as `Solid::skin` (§9.9). Skipped and listed: blend
+  shapes, NURBS and other geometry.
 - Checked on files not written here (three.js r160's examples, not
   committed): `Samba Dancing.fbx` (binary 7.x from Mixamo, skinned) reads
   as 2 parts, 55 320 triangles, a closed T-posed figure 1 803 mm tall and
-  1 947 mm across the arms, 95 pieces, in 133 ms; `stanford-bunny.fbx`
+  1 947 mm across the arms, 95 pieces, in 133 ms (its preview read with
+  the skins set aside: `bench/meshtools`'s `import-check`); `stanford-bunny.fbx`
   (ASCII 7.5) as 30 338 triangles with its 4 open rims, in 119 ms, at the
   file's own scale (vertices ±250 cm under a `Lcl Scaling` of 100: 500 m
   across; three.js's example scales it down itself); `nurbs.fbx` is
@@ -1000,8 +1001,8 @@ like `bench/booleans`.
 
 ### 9.5 Acceptance (`bench/meshtools`)
 
-**No provider output was available.** The inputs stand in for them:
-- the synthetic AI-mesh shapes of phase 0 (`bench/booleans/src/suites.rs`:
+Meshes from outside the kernel (`docs/plan.md` phase 5):
+- the synthetic generated-mesh shapes of phase 0 (`bench/booleans/src/suites.rs`:
   sphere, rounded box, torus, blob, mug), polygonised at 96³ (82k–146k
   triangles), and the 40 Thingi10K meshes of `thingi10k.txt` (fetched by
   `fetch-thingi10k.sh`, not committed), subdivided once 1-to-4;
@@ -1009,20 +1010,23 @@ like `bench/booleans`.
   removed, 2 % flipped, three floaters, and two overlapping copies written
   as two nodes (interpenetrating parts);
 - each written as a GLB by og-shape's own exporter, then read back by the
-  importer: a GLB we export ourselves, not one a provider wrote.
+  importer;
+- other tools' GLB, read as they are (§9.9).
 
 The chain per input: `import → join → repair (weld 1 µm, floaters below
 5 % of the largest piece, holes up to 64 edges, fuse) → decimate (target
 40 000) → unwrap → measure → preview (4 views, 256²) → glb_plain`. The
-contract is checked on the GLB bytes, read back: one node, one mesh, one
-triangle primitive, at most 40 000 triangles, closed, with UVs. After
+result is checked on the GLB bytes, read back: one node, one mesh, one
+triangle primitive, at most 40 000 triangles, closed, with UVs (the
+budget is one example, a texturing tool's input limit; "the contract"
+below). It also runs with `min_edge` 1 µm. After
 that, a boolean cut by phase 0's tilted cylinder re-checks §5.3's finding
-that AI meshes are a repair problem.
+that generated meshes are a repair problem.
 
 ### 9.6 A surface folded through itself (§5.4, item 3)
 
 What repair can do:
-- **Separate shells that pass through each other** (a provider's model
+- **Separate shells that pass through each other** (an outside model
   made of interpenetrating parts): `fuse` joins them by self-union, and
   the result is taken only if it is closed. With `min_edge`, the slivers
   the union leaves along its seams are collapsed, so f32 export does not
@@ -1109,16 +1113,22 @@ overlapping copies).
 
 ### 9.8 Gaps and what is untested
 
-- **No provider output was tried.** Meshy, Tripo and Hunyuan3D files were
-  not available here; everything above stands in for them. The phase 5
-  re-check of the boolean decision on real outputs is still open.
+- Outside meshes tried: synthetic defects, Thingi10K, our own GLB, and
+  eight GLB and three FBX files from three.js's and Khronos's examples
+  (§9.3, §9.9). Not tried: scans of millions of triangles, and other
+  tools' meshes with heavy defects; the boolean re-check rests on the
+  synthetic and Thingi10K runs (§9.7).
 - Not read: Draco and meshopt-compressed glTF (refused with a message),
-  FBX 6 and older, skins and blend shapes (bind pose only), FBX NURBS,
+  FBX 6 and older, morph targets and blend shapes, FBX NURBS,
   the second and later UV layers, vertex colours. Imported UVs and
   textures are measured but not carried through repair and decimation:
   the chain makes new UVs.
-- FBX was checked on two real files and hand-written ones, not on
-  provider FBX.
+- FBX was checked on two real files and hand-written ones only.
+- Skins are described, not carried: a skinned mesh can be measured,
+  unwrapped and previewed in its bind pose, and every other mesh tool
+  refuses it (§9.9). Other kernel tools (booleans, bevels) do not check
+  `Solid::skin` yet; a skinned solid comes only from import, and phase 5b
+  decides what they do with one.
 - Hole fills are least-area, not fair: a large hole on a curved surface
   closes flat. A fill can cross a nearby face (2 of 45 hole runs).
 - A single surface folded through itself is left as it is (§9.6); booleans
@@ -1128,6 +1138,49 @@ overlapping copies).
   parts is low. Decimation keeps no UVs (the chain unwraps after it).
 - Determinism was proven natively on x86-64 and as wasm32 under wasmtime
   locally; x86-64 Windows and aarch64 Linux run in CI.
+
+### 9.9 Skinned inputs, and other tools' GLB
+
+The design now says a skinned mesh keeps its skin through every tool or
+the tool refuses it (`docs/design.md` §1, §4); carrying it is phase 5b.
+- **Data.** `shape_mesh::Skin` on `Solid::skin`: the skin's name, its
+  bones' names, and how many vertices carry weights. It only describes;
+  phase 5b adds the inverse bind matrices and per-vertex weights to the
+  same struct. `Solid::append` keeps it, so joining by hand cannot drop
+  the mark. The output hash includes it only when present, so no
+  unskinned hash moved.
+- **Import.** glTF: a node's `skin` (bones named after its joint nodes),
+  or `JOINTS_0`/`WEIGHTS_0` on a mesh with no skin (no bones, weights
+  counted). FBX: a geometry's `Skin` deformer, each `Cluster` a bone
+  named after its model, weighted vertices from the clusters' indices;
+  a bone is no longer taken as a tree child of its cluster. The mesh
+  stays in its bind pose.
+- **Refusals**, error values naming the skin: repair's steps, `join` and
+  `apply_transform` (`RepairError::Skinned`; `apply_transform` now
+  returns a `Result`), `decimate`, `lods` and `collapse_short_edges`
+  (`DecimateError::Skinned`), `glb_plain` (`PlainGlbError::Skinned`),
+  `glb`, `obj` and `stl` (`ExportError::Skinned`). Accepted: `unwrap`
+  (it adds per-corner UVs and changes no vertex), `measure` (reports
+  `skinned`, the bones and the weighted vertices) and `preview` (the bind
+  pose).
+- **Tests.** A GLB written by hand (two triangles, two bones, inverse
+  bind matrices, `JOINTS_0`, `WEIGHTS_0`) is detected with its bones and
+  refused by each tool above (`tests/meshtools.rs`); golden case
+  `meshtools.import.skinned`.
+
+Other tools' files through the chain (`bench/meshtools --glb`; three.js
+r160's examples and Khronos's DamagedHelmet, not committed):
+
+| file | triangles | result |
+|---|---|---|
+| Horse, Flamingo, Parrot | 984, 542, 626 | contract met; morph targets reported as skipped; Flamingo and Parrot keep 21 and 36 intersecting pairs of their own |
+| ShaderBall | 88 264, 4 pieces | decimated to 40 000 (error 0.76 mm), contract met |
+| DamagedHelmet | 15 452, 55 pieces | not closed: open shells with 12 rims over 64 edges stay open (646 open edges), reported; the fuse is refused (its pieces are open) |
+| RobotExpressive | 3 237, 14 parts | 2 parts skinned (43 bones): refused by join, repair, decimate, `glb_plain` and `glb`; the other 12 hang rigidly on bones through the node tree |
+| Soldier, Xbot | 11 376, 49 112 | skinned (49 and 67 bones): refused the same way |
+
+The same reader on §9.3's Mixamo FBX finds two skins of 52 bones (17 336
+and 10 514 weighted vertices).
 
 ## 10. The generator gaps of §6.4 (stream F, 2026-11-09)
 

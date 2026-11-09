@@ -15,6 +15,9 @@ use crate::cases::Case;
 #[allow(dead_code)]
 #[path = "../../shape-tools/tests/support/fbx.rs"]
 mod fbx_support;
+#[allow(dead_code)]
+#[path = "../../shape-tools/tests/support/skinned.rs"]
+mod skinned_support;
 
 pub fn cases() -> Vec<Case> {
     vec![
@@ -29,6 +32,10 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "meshtools.import.fbx",
             run: import_fbx_case,
+        },
+        Case {
+            name: "meshtools.import.skinned",
+            run: import_skinned_case,
         },
         Case {
             name: "meshtools.repair",
@@ -192,7 +199,20 @@ Connections:  {
     Ok(())
 }
 
-/// A torus with the defects of a provider's mesh: triangle soup with
+/// A skinned GLB: the skin is read and described, and the measures say so.
+fn import_skinned_case(h: &mut OutputHash) -> Result<(), HashError> {
+    for on_node in [true, false] {
+        let bytes = skinned_support::skinned_glb(on_node);
+        let imported = import(&bytes, &Import::default(), &no_files).map_err(fail)?;
+        for p in &imported.parts {
+            hash_part(h, p)?;
+            h.str(&measure(&p.solid, &Measure::default()).to_json());
+        }
+    }
+    Ok(())
+}
+
+/// A torus with the defects of a generated or scanned mesh: triangle soup with
 /// sub-micrometre noise, a hole, flipped triangles, a floater and a
 /// sliver.
 fn broken() -> Result<Solid, HashError> {

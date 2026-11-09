@@ -10,14 +10,15 @@
 //! Euler order, scaling offset and pivot, scaling) and the geometric
 //! transform, the file's axes and unit (`GlobalSettings`), and texture
 //! images' sizes (embedded `Video` content or files through the
-//! resolver). Skipped and listed: skin deformers and blend shapes
-//! (meshes stay in their bind pose), NURBS and other geometry. FBX 6 and
+//! resolver), and skins (a `Skin` deformer's clusters as bones, on the
+//! part's `Solid::skin`; the mesh is in its bind pose). Skipped and
+//! listed: blend shapes, NURBS and other geometry. FBX 6 and
 //! older are [`ImportError::Unsupported`].
 
 use std::collections::BTreeMap;
 
 use shape_core::{DVec2, DVec3, trig};
-use shape_mesh::Solid;
+use shape_mesh::{Skin, Solid};
 
 use crate::image::ImageInfo;
 use crate::import::{
@@ -616,8 +617,10 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
             };
             if kind == "OO" || kind == "OP" {
                 children_of.entry(parent).or_default().push(child);
-                let child_is_model = by_id.get(&child).is_some_and(|n| n.name == "Model");
-                if child_is_model {
+                let is_model = |id: i64| by_id.get(&id).is_some_and(|n| n.name == "Model");
+                // A bone is also linked under its cluster; only a model (or
+                // the root, 0) is a parent in the tree.
+                if is_model(child) && (parent == 0 || is_model(parent)) {
                     parent_of.entry(child).or_insert(parent);
                 }
             }
@@ -656,10 +659,11 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
     };
     let mut out = Imported::default();
     let mut used = BTreeMap::new();
-    let mut deformers = 0;
+    let mut shapes = 0;
     for o in &objects.children {
-        if o.name == "Deformer" {
-            deformers += 1;
+        let class = o.props.get(2).and_then(Prop::str).unwrap_or("");
+        if o.name == "Deformer" && class != "Skin" && class != "Cluster" {
+            shapes += 1;
         }
         if o.name == "Geometry" && o.props.get(2).and_then(Prop::str) != Some("Mesh") {
             out.skipped.push(format!(
@@ -669,11 +673,55 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
             ));
         }
     }
-    if deformers > 0 {
+    if shapes > 0 {
         out.skipped.push(format!(
-            "{deformers} deformers (skins, blend shapes): meshes read in their bind pose"
+            "{shapes} blend-shape deformers: meshes read without them"
         ));
     }
+    // A geometry's skin: its Skin deformer's clusters, each a bone.
+    let skin_of = |g: &Node| -> Option<Skin> {
+        let gid = g.props.first().and_then(Prop::int)?;
+        let class = |n: &Node| n.props.get(2).and_then(Prop::str).unwrap_or("").to_string();
+        let skin = children_of
+            .get(&gid)?
+            .iter()
+            .filter_map(|c| by_id.get(c))
+            .find(|n| n.name == "Deformer" && class(n) == "Skin")?;
+        let sid = skin.props.first().and_then(Prop::int)?;
+        let mut bones = Vec::new();
+        let mut weighted: Vec<i64> = Vec::new();
+        for c in children_of.get(&sid).into_iter().flatten() {
+            let Some(cluster) = by_id.get(c).filter(|n| class(n) == "Cluster") else {
+                continue;
+            };
+            let cid = cluster.props.first().and_then(Prop::int).unwrap_or(0);
+            let bone = children_of
+                .get(&cid)
+                .into_iter()
+                .flatten()
+                .filter_map(|b| by_id.get(b))
+                .find(|n| n.name == "Model")
+                .map_or_else(
+                    || object_name(cluster.props.get(1).and_then(Prop::str).unwrap_or("")),
+                    |b| object_name(b.props.get(1).and_then(Prop::str).unwrap_or("")),
+                );
+            bones.push(bone);
+            weighted.extend(
+                cluster
+                    .array("Indexes")
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|&v| v as i64),
+            );
+        }
+        weighted.sort_unstable();
+        weighted.dedup();
+        Some(Skin {
+            name: object_name(skin.props.get(1).and_then(Prop::str).unwrap_or("")),
+            bones,
+            weighted_vertices: weighted.len(),
+        })
+    };
     // World transform of a model, by its parents.
     let world = |id: i64| -> Affine {
         let mut m = Affine::IDENTITY;
@@ -720,7 +768,8 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
         );
         let geo = geometric(o);
         for g in geometries {
-            let (solid, uvs, polys) = mesh(g, &name, &geo, unit, &to_kernel, p_det < 0.0)?;
+            let (mut solid, uvs, polys) = mesh(g, &name, &geo, unit, &to_kernel, p_det < 0.0)?;
+            solid.skin = skin_of(g);
             out.polygons_triangulated += polys;
             out.parts.push(ImportedPart {
                 name: name.clone(),
@@ -945,7 +994,7 @@ Connections:  {
         let p = &imported.parts[0];
         assert_eq!(p.name, "Plate");
         // Units of 0.1 cm (1 mm), Z up: kernel coordinates are the file's.
-        let s = crate::apply_transform(p);
+        let s = crate::apply_transform(p).unwrap();
         let mut pts = s.positions.clone();
         for q in &mut pts {
             *q = DVec3::new(q.x.round(), q.y.round(), q.z.round()) + DVec3::ZERO;

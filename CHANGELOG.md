@@ -182,7 +182,7 @@
 - Golden cases added (no existing hash moved): `model.frame`,
   `model.place`, `model.joints.glb`, `model.joints.preview`,
   `model.washing_machine.glb`, `.png` and `.measure`.
-- `shape-tools` mesh tools (phase 5), for the platform's `asset_process`
+- `shape-tools` mesh tools (phase 5) for meshes from outside the kernel
   (`docs/research.md` §9):
   - `import`, `import_gltf`, `import_obj`, `import_fbx`: glTF 2.0 (GLB,
     and `.gltf` with embedded or external buffers through a `Resolve`
@@ -191,6 +191,15 @@
     UVs, material name) and the textures' sizes (`ImageInfo`). Polygons
     are triangulated on the way in; faces carry their part's name.
     Draco and meshopt compression, and FBX 6, are `Unsupported` errors.
+  - Skinned inputs: a glTF skin (or `JOINTS_0`/`WEIGHTS_0`) and an FBX
+    skin deformer are read as `shape_mesh::Skin` on `Solid::skin` (name,
+    bone names, weighted vertices) and reported by `measure`. Every tool
+    that would break the skin refuses it with an error value:
+    `RepairError::Skinned` (repair's steps, `join`, `apply_transform`,
+    which now returns a `Result`), `DecimateError::Skinned`,
+    `PlainGlbError::Skinned`, and `ExportError::Skinned` from `glb`, `obj`
+    and `stl`. `unwrap` (which does not re-index), `measure` and
+    `preview` take it. Carrying skins through is phase 5b.
   - `repair` with `Repair`: `weld` (closes cracks, or all vertices with
     `weld_all`), `remove_degenerate` (exact zero area, duplicates),
     `remove_floaters` (`Floaters` by size or fraction), `orient`
@@ -208,10 +217,11 @@
     at one texel density, padding in texels; `Uvs` per triangle corner.
   - `measure` with `Measure`, `MeshMeasures::to_json`: counts, bounds,
     pivot, area, volume, closed, boundary loops, non-manifold and
-    inconsistent edges, shortest edge, degenerate and duplicate triangles, pieces and
-    floaters, exact self-intersections, UV coverage and overlap, texture
-    memory once decoded (with mips). No thresholds.
+    inconsistent edges, shortest edge, degenerate and duplicate triangles,
+    pieces and floaters, exact self-intersections, the skin, UV coverage
+    and overlap, texture memory once decoded (with mips). No thresholds.
   - `glb_plain` with `PlainGlb`: one node, one mesh, one primitive with
-    positions, normals and `TEXCOORD_0`: the texturing input contract.
+    positions, normals and `TEXCOORD_0`, what texturing tools take.
   - Golden cases `meshtools.*` added; no existing hash moved. The
-    acceptance chain is `bench/meshtools`.
+    acceptance chain is `bench/meshtools` (`--glb` runs other tools'
+    files); `guides/meshtools.md` says what the measures mean.

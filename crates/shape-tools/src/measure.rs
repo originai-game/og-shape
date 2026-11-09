@@ -1,8 +1,11 @@
-//! Measures of a mesh for the platform, as JSON, with no thresholds
+//! Measures of a mesh, as JSON, with no thresholds
 //! (`docs/design.md` §7): counts, bounds, pivot, area, volume, topology,
 //! floaters, self-intersections, UV coverage and overlap, and texture
 //! memory once decoded. The guides say what values are good; the agent
 //! judges.
+//!
+//! A skinned solid is measured as it is, in its bind pose, and its skin
+//! is reported (`skinned`, bones, weighted vertices).
 //!
 //! Topology is measured on the solid as if exactly coincident vertices
 //! were one, so an imported mesh split at UV seams is measured as the
@@ -14,7 +17,7 @@ use std::collections::BTreeMap;
 use shape_core::order::{cmp_dvec3, sorted_order};
 use shape_core::predicates::orient2d;
 use shape_core::{DVec2, DVec3};
-use shape_mesh::{Solid, edge_key};
+use shape_mesh::{Skin, Solid, edge_key};
 
 use crate::image::ImageInfo;
 use crate::intersect::{degenerate, self_intersections, tris_overlap_2d};
@@ -123,6 +126,8 @@ pub struct MeshMeasures {
     pub uv: Option<UvMeasures>,
     /// Texture memory.
     pub texture: TextureMeasures,
+    /// The solid's skin, if it is skinned (bones, weighted vertices).
+    pub skin: Option<Skin>,
 }
 
 /// Measures `s` (and the UVs and images `d` gives).
@@ -130,6 +135,7 @@ pub fn measure(s: &Solid, d: &Measure) -> MeshMeasures {
     let mut m = MeshMeasures {
         triangles: s.triangles.len(),
         vertices: s.positions.len(),
+        skin: s.skin.clone(),
         ..Default::default()
     };
     // Exact weld, as ids only.
@@ -501,6 +507,21 @@ impl MeshMeasures {
             (
                 "self_intersections",
                 self.self_intersections.map_or(Json::Null, count),
+            ),
+            ("skinned", Json::Bool(self.skin.is_some())),
+            (
+                "skin",
+                self.skin.as_ref().map_or(Json::Null, |k| {
+                    Json::Obj(vec![
+                        ("name", Json::Str(k.name.clone())),
+                        ("bones", count(k.bones.len())),
+                        (
+                            "bone_names",
+                            Json::Arr(k.bones.iter().map(|b| Json::Str(b.clone())).collect()),
+                        ),
+                        ("weighted_vertices", count(k.weighted_vertices)),
+                    ])
+                }),
             ),
             ("uv", uv),
             (

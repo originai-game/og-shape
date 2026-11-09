@@ -150,6 +150,9 @@ pub enum ExportError {
     BadAxis(String),
     /// A floating joint was given an axis, a range or a mimic.
     FloatingConstrained(String),
+    /// A part's solid is skinned and the exporters write no skin yet
+    /// (`docs/plan.md` phase 5b).
+    Skinned(String),
     /// A fixed joint was given an axis, a range, a mimic or a value.
     FixedConstrained(String),
 }
@@ -175,6 +178,10 @@ impl fmt::Display for ExportError {
             ExportError::BadAxis(j) => {
                 write!(f, "joint {j:?}: its axis or pivot frame is degenerate")
             }
+            ExportError::Skinned(p) => write!(
+                f,
+                "part {p:?} is skinned and export writes no skin yet, so it is refused"
+            ),
             ExportError::FloatingConstrained(j) => write!(
                 f,
                 "joint {j:?}: a floating joint moves every way: it takes no axis, range or mimic"
@@ -577,6 +584,7 @@ fn push_f32(bin: &mut Vec<u8>, v: f32) {
 ///
 /// The bytes depend only on the scene.
 pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
+    no_skins(scene)?;
     let checked = check_joints(scene)?;
     let mut bin: Vec<u8> = Vec::new();
     let mut views: Vec<Json> = Vec::new();
@@ -792,11 +800,20 @@ fn vec3(v: DVec3) -> Json {
     nums(&[v.x, v.y, v.z])
 }
 
+/// A skinned part cannot be written without its skin (phase 5b).
+fn no_skins(scene: &Scene) -> Result<(), ExportError> {
+    match scene.parts.iter().find(|p| p.solid.skin.is_some()) {
+        Some(p) => Err(ExportError::Skinned(p.name.clone())),
+        None => Ok(()),
+    }
+}
+
 /// A part's name, its positions in metres (kernel axes) and its triangles.
 type Metres<'s> = (&'s str, Vec<DVec3>, &'s [[u32; 3]]);
 
 /// Every part's triangles, after the scene's checks.
 fn meshes<'s>(scene: &'s Scene) -> Result<Vec<Metres<'s>>, ExportError> {
+    no_skins(scene)?;
     check(scene)?;
     Ok(scene
         .parts

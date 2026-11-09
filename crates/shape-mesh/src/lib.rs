@@ -6,9 +6,11 @@
 
 mod measure;
 mod names;
+mod skin;
 
 pub use measure::Measures;
 pub use names::{LookupError, Names, Tag};
+pub use skin::Skin;
 
 use std::collections::BTreeMap;
 
@@ -34,6 +36,8 @@ pub fn edge_key(a: u32, b: u32) -> EdgeKey {
 /// - `face_tags`: per triangle, the names of its face (sorted tag ids).
 /// - `edge_tags`: the names of real edges.
 /// - `names`: the strings behind the tag ids.
+/// - `skin`: the skin an imported mesh came with, if any. Tools that
+///   cannot keep it refuse the solid (`docs/design.md` §4).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Solid {
     /// Vertex positions.
@@ -48,6 +52,8 @@ pub struct Solid {
     pub edge_tags: BTreeMap<EdgeKey, Vec<Tag>>,
     /// The strings behind the tags.
     pub names: Names,
+    /// The skin an imported mesh came with.
+    pub skin: Option<Skin>,
 }
 
 impl Solid {
@@ -254,11 +260,24 @@ impl Solid {
             h.u64(tags.len() as u64);
             tags.iter().for_each(|&x| h.str(self.names.name(x)));
         }
+        // Only a skinned solid hashes its skin, so unskinned hashes stay.
+        if let Some(skin) = &self.skin {
+            h.str("skin");
+            h.str(&skin.name);
+            h.u64(skin.bones.len() as u64);
+            skin.bones.iter().for_each(|b| h.str(b));
+            h.u64(skin.weighted_vertices as u64);
+        }
         Ok(())
     }
 
     /// Appends another solid; its surfaces are renumbered after this one's.
+    /// A skin on `other` is kept (the first one, if both have one), so
+    /// appending never drops the mark that a mesh is skinned.
     pub fn append(&mut self, other: &Solid) {
+        if self.skin.is_none() {
+            self.skin.clone_from(&other.skin);
+        }
         let base = self.positions.len() as u32;
         let surface_base = self.surfaces.iter().max().map_or(0, |s| s + 1);
         self.positions.extend_from_slice(&other.positions);
