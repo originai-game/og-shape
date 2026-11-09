@@ -19,6 +19,7 @@
 
 mod decimate;
 mod export;
+mod fbx;
 mod image;
 mod import;
 mod intersect;
@@ -35,6 +36,7 @@ mod unwrap;
 
 pub use decimate::{Decimate, DecimateError, DecimateReport, decimate, lods};
 pub use export::{ExportError, Joint, JointKind, Material, Mimic, Part, Scene, glb, obj, stl};
+pub use fbx::import_fbx;
 pub use image::ImageInfo;
 pub use import::{
     Affine, Import, ImportError, Imported, ImportedPart, Resolve, import, import_gltf, import_obj,
@@ -45,7 +47,7 @@ pub use meshglb::{PlainGlb, PlainGlbError, glb_plain};
 pub use png::png;
 pub use preview::{Image, Preview, preview, sheet};
 pub use repair::{
-    Floaters, Repair, RepairError, RepairReport, apply_transform, close_holes, join, orient,
+    Floaters, Repair, RepairError, RepairReport, Weld, apply_transform, close_holes, join, orient,
     remove_degenerate, remove_floaters, repair, weld,
 };
 pub use unwrap::{Unwrap, UnwrapError, Uvs, unwrap};

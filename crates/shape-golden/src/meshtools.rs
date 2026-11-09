@@ -12,6 +12,10 @@ use shape_tools::{
 
 use crate::cases::Case;
 
+#[allow(dead_code)]
+#[path = "../../shape-tools/tests/support/fbx.rs"]
+mod fbx_support;
+
 pub fn cases() -> Vec<Case> {
     vec![
         Case {
@@ -21,6 +25,10 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "meshtools.import.obj",
             run: import_obj_case,
+        },
+        Case {
+            name: "meshtools.import.fbx",
+            run: import_fbx_case,
         },
         Case {
             name: "meshtools.repair",
@@ -125,6 +133,61 @@ fn import_obj_case(h: &mut OutputHash) -> Result<(), HashError> {
     h.u64(imported.polygons_triangulated as u64);
     for p in &imported.parts {
         hash_part(h, p)?;
+    }
+    Ok(())
+}
+
+/// A binary FBX (a cube under a parent, pivots, an Euler order, two
+/// materials, zlib arrays, an embedded PNG) and an ASCII one (Z up,
+/// millimetre units, a pre-rotation and a geometric offset).
+fn import_fbx_case(h: &mut OutputHash) -> Result<(), HashError> {
+    let ascii = r#"; FBX 7.5.0 project file
+FBXHeaderExtension:  {
+	FBXVersion: 7500
+}
+GlobalSettings:  {
+	Properties70:  {
+		P: "UpAxis", "int", "Integer", "",2
+		P: "FrontAxis", "int", "Integer", "",1
+		P: "FrontAxisSign", "int", "Integer", "",-1
+		P: "CoordAxis", "int", "Integer", "",0
+		P: "UnitScaleFactor", "double", "Number", "",0.1
+	}
+}
+Objects:  {
+	Geometry: 1, "Geometry::Tri", "Mesh" {
+		Vertices: *15 {
+			a: 0,0,0,4,0,0,4,3,0,2,5,0,0,3,0
+		}
+		PolygonVertexIndex: *5 {
+			a: 0,1,2,3,-5
+		}
+	}
+	Model: 2, "Model::Roof", "Mesh" {
+		Properties70:  {
+			P: "PreRotation", "Vector3D", "Vector", "",30,0,0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A",10,20,30
+			P: "RotationOrder", "enum", "", "",5
+			P: "GeometricTranslation", "Vector3D", "Vector", "",0,0,7
+		}
+	}
+}
+Connections:  {
+	C: "OO",2,0
+	C: "OO",1,2
+}
+"#;
+    for bytes in [fbx_support::binary_fbx(), ascii.as_bytes().to_vec()] {
+        let imported = import(&bytes, &Import::default(), &no_files).map_err(fail)?;
+        h.u64(imported.polygons_triangulated as u64);
+        for p in &imported.parts {
+            hash_part(h, p)?;
+        }
+        for i in &imported.images {
+            h.str(&i.name);
+            h.u64(u64::from(i.width.unwrap_or(0)));
+            h.u64(u64::from(i.height.unwrap_or(0)));
+        }
     }
     Ok(())
 }

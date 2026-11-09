@@ -1,22 +1,35 @@
-//! Decimation by edge collapse, and LOD chains.
+//! Decimation by edge collapse with quadric error metrics (Garland and
+//! Heckbert 1997), and LOD chains. Written here, in f64, deterministic
+//! (`docs/research.md` §9 says why not meshoptimizer-rs).
 //!
-//! The collapses are meshoptimizer's simplifier, through
-//! `meshoptimizer-rs` (a pure-Rust port of meshoptimizer 1.3, MIT;
-//! `docs/research.md` §9). It only removes vertices: every vertex left is
-//! one of the input's, so positions keep their f64 bits.
+//! - Each vertex carries the area-weighted quadric of its triangles'
+//!   planes. Open borders and features (edges between surfaces, between
+//!   different face names, named edges) add a heavy quadric of the plane
+//!   through the edge square to its face, so they stay in place.
+//! - Vertices are interior, on one border or feature line, or corners
+//!   (where lines meet or end, or on a non-manifold edge). A line vertex
+//!   only slides along its line into the next vertex on it; a corner never
+//!   goes. `lock_border` makes every open-border vertex a corner.
+//! - A collapse goes to the kept vertex's position, or for two interior
+//!   vertices to whichever of the two ends and the midpoint costs least.
+//! - A collapse is refused when it would break the link condition (the
+//!   two ends share a neighbour that is not across one of the edge's
+//!   triangles), so a closed manifold stays closed and manifold; when it
+//!   would turn a triangle over (its normal turns by more than 90°) or
+//!   leave it with no area; and beyond `max_error`.
+//! - Collapses are taken cheapest first; ties go to the smaller edge key,
+//!   then the smaller vertex. The order depends only on the input.
 //!
-//! Names: each vertex is split per (surface, face names) before
-//! simplifying, so the simplifier treats a change of surface or of face
-//! names as a seam: it collapses along it but never across it. Every
-//! output triangle takes the surface and face names of its corners. Edge
-//! names survive on edges whose two ends survive and that still exist.
+//! Names: every triangle left is an input triangle with corners moved, so
+//! it keeps its surface and face names. Edge names follow their vertices
+//! and survive on edges that still exist.
 
-use std::collections::BTreeMap;
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BinaryHeap};
 use std::fmt;
 
-use meshoptimizer_rs::{Positions, SimplifyOptions, SimplifySettings, Workspace};
 use shape_core::DVec3;
-use shape_mesh::{Solid, Tag};
+use shape_mesh::{EdgeKey, Solid, edge_key};
 
 use crate::repair::drop_unused;
 
@@ -29,8 +42,9 @@ pub struct Decimate {
     /// Keep at most this many triangles; 0 is unset. With `ratio` too,
     /// the smaller count wins.
     pub target: usize,
-    /// Stop before any collapse would move the surface more than this, in
-    /// mm; 0 is no limit.
+    /// Refuse any collapse that would move the surface more than this, in
+    /// mm (the root-mean-square distance its quadric measures); 0 is no
+    /// limit.
     pub max_error: f64,
     /// Never move vertices on open borders (holes, the edge of a sheet).
     pub lock_border: bool,
@@ -45,7 +59,8 @@ pub struct DecimateReport {
     pub triangles: usize,
     /// The count asked for.
     pub target: usize,
-    /// How far the surface moved, in mm (the simplifier's own estimate).
+    /// The largest error of a collapse taken, mm (root-mean-square
+    /// distance to the planes the collapsed vertices stood for).
     pub error: f64,
 }
 
@@ -54,15 +69,15 @@ pub struct DecimateReport {
 pub enum DecimateError {
     /// Neither a ratio nor a target was given, or a value is out of range.
     BadDesc(String),
-    /// The simplifier refused the mesh (non-finite position, overflow).
-    Simplifier(String),
+    /// A position is NaN or infinite.
+    NotFinite,
 }
 
 impl fmt::Display for DecimateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DecimateError::BadDesc(w) => write!(f, "decimate: {w}"),
-            DecimateError::Simplifier(w) => write!(f, "the simplifier refused the mesh: {w}"),
+            DecimateError::NotFinite => f.write_str("decimate: a position is not finite"),
         }
     }
 }
@@ -89,10 +104,266 @@ fn target_of(d: &Decimate, n: usize) -> Result<usize, DecimateError> {
     }
 }
 
+/// A symmetric 4×4 quadric, `[a², ab, ac, ad, b², bc, bd, c², cd, d²]`
+/// summed over planes, and the weight (area) behind it.
+#[derive(Clone, Copy, Debug, Default)]
+struct Quadric {
+    q: [f64; 10],
+    w: f64,
+}
+
+impl Quadric {
+    fn plane(n: DVec3, p: DVec3, w: f64) -> Quadric {
+        let d = -n.dot(p);
+        let (a, b, c) = (n.x, n.y, n.z);
+        Quadric {
+            q: [
+                a * a * w,
+                a * b * w,
+                a * c * w,
+                a * d * w,
+                b * b * w,
+                b * c * w,
+                b * d * w,
+                c * c * w,
+                c * d * w,
+                d * d * w,
+            ],
+            w,
+        }
+    }
+
+    fn add(&mut self, o: &Quadric) {
+        for k in 0..10 {
+            self.q[k] += o.q[k];
+        }
+        self.w += o.w;
+    }
+
+    /// Weighted sum of squared distances of `p` to the planes.
+    fn eval(&self, p: DVec3) -> f64 {
+        let q = &self.q;
+        let (x, y, z) = (p.x, p.y, p.z);
+        let v = q[0] * x * x
+            + 2.0 * q[1] * x * y
+            + 2.0 * q[2] * x * z
+            + 2.0 * q[3] * x
+            + q[4] * y * y
+            + 2.0 * q[5] * y * z
+            + 2.0 * q[6] * y
+            + q[7] * z * z
+            + 2.0 * q[8] * z
+            + q[9];
+        v.max(0.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Interior,
+    Line,
+    Corner,
+}
+
+/// A queued collapse: cheapest first, then by edge, then by direction.
+#[derive(Clone, Copy, Debug)]
+struct Entry {
+    cost: f64,
+    edge: EdgeKey,
+    /// The vertex removed.
+    from: u32,
+    to: u32,
+    pos: DVec3,
+    stamp: (u32, u32),
+}
+
+impl PartialEq for Entry {
+    fn eq(&self, o: &Self) -> bool {
+        self.cmp(o) == Ordering::Equal
+    }
+}
+impl Eq for Entry {}
+impl PartialOrd for Entry {
+    fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
+        Some(self.cmp(o))
+    }
+}
+impl Ord for Entry {
+    // Reversed, so the heap pops the cheapest.
+    fn cmp(&self, o: &Self) -> Ordering {
+        o.cost
+            .total_cmp(&self.cost)
+            .then(o.edge.cmp(&self.edge))
+            .then(o.from.cmp(&self.from))
+    }
+}
+
+struct Mesh {
+    pos: Vec<DVec3>,
+    tris: Vec<[u32; 3]>,
+    alive: Vec<bool>,
+    live: usize,
+    /// Per vertex, the live triangles around it.
+    around: Vec<Vec<u32>>,
+    quadric: Vec<Quadric>,
+    kind: Vec<Kind>,
+    /// Per vertex, the other ends of its border and feature edges.
+    lines: Vec<Vec<u32>>,
+    stamp: Vec<u32>,
+    /// The vertex each removed one went into.
+    into: Vec<u32>,
+}
+
+impl Mesh {
+    fn neighbours(&self, v: u32) -> Vec<u32> {
+        let mut n: Vec<u32> = self.around[v as usize]
+            .iter()
+            .flat_map(|&t| self.tris[t as usize])
+            .filter(|&x| x != v)
+            .collect();
+        n.sort_unstable();
+        n.dedup();
+        n
+    }
+
+    fn normal(&self, t: [u32; 3], moved: u32, to: DVec3) -> DVec3 {
+        let p = t.map(|v| if v == moved { to } else { self.pos[v as usize] });
+        (p[1] - p[0]).cross(p[2] - p[0])
+    }
+
+    /// The collapse `from → to` at `p`, if it keeps the mesh sound.
+    fn valid(&self, from: u32, to: u32, p: DVec3) -> bool {
+        // Link condition: the shared neighbours are exactly the third
+        // corners of the edge's triangles.
+        let b = self.neighbours(to);
+        let shared: Vec<u32> = self
+            .neighbours(from)
+            .into_iter()
+            .filter(|x| b.binary_search(x).is_ok())
+            .collect();
+        let mut opposite: Vec<u32> = self.around[from as usize]
+            .iter()
+            .map(|&t| self.tris[t as usize])
+            .filter(|t| t.contains(&to))
+            .flat_map(|t| t.into_iter().filter(|&x| x != from && x != to))
+            .collect();
+        opposite.sort_unstable();
+        opposite.dedup();
+        if shared != opposite || opposite.is_empty() {
+            return false;
+        }
+        // Nothing turns over or loses its area.
+        for v in [from, to] {
+            for &t in &self.around[v as usize] {
+                let tri = self.tris[t as usize];
+                if tri.contains(&from) && tri.contains(&to) {
+                    continue;
+                }
+                let before = self.normal(tri, u32::MAX, DVec3::ZERO);
+                let after = self.normal(tri, v, p);
+                if after == DVec3::ZERO || after.dot(before) <= 0.0 {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// The best allowed collapse of edge `a b`, if any.
+    fn plan(&self, a: u32, b: u32) -> Option<Entry> {
+        let edge = edge_key(a, b);
+        let on_line = self.lines[a as usize].contains(&b);
+        let mut best: Option<Entry> = None;
+        for (from, to) in [(a, b), (b, a)] {
+            let (kf, kt) = (self.kind[from as usize], self.kind[to as usize]);
+            let allowed = match kf {
+                Kind::Interior => true,
+                Kind::Line => on_line && kt != Kind::Interior,
+                Kind::Corner => false,
+            };
+            if !allowed {
+                continue;
+            }
+            let mut q = self.quadric[from as usize];
+            q.add(&self.quadric[to as usize]);
+            let (pf, pt) = (self.pos[from as usize], self.pos[to as usize]);
+            let mut options = vec![pt];
+            if kf == Kind::Interior && kt == Kind::Interior {
+                options.push((pf + pt) * 0.5);
+            }
+            for p in options {
+                let e = Entry {
+                    cost: q.eval(p),
+                    edge,
+                    from,
+                    to,
+                    pos: p,
+                    stamp: (self.stamp[from as usize], self.stamp[to as usize]),
+                };
+                if best.is_none_or(|b| e.cmp(&b) == Ordering::Greater) {
+                    best = Some(e);
+                }
+            }
+        }
+        best
+    }
+
+    fn collapse(&mut self, e: &Entry) {
+        let (from, to) = (e.from, e.to);
+        let around = std::mem::take(&mut self.around[from as usize]);
+        for &t in &around {
+            let tri = self.tris[t as usize];
+            if tri.contains(&to) {
+                self.alive[t as usize] = false;
+                self.live -= 1;
+                for v in tri {
+                    if v != from {
+                        self.around[v as usize].retain(|&x| x != t);
+                    }
+                }
+            } else {
+                for v in &mut self.tris[t as usize] {
+                    if *v == from {
+                        *v = to;
+                    }
+                }
+                self.around[to as usize].push(t);
+            }
+        }
+        self.around[to as usize].sort_unstable();
+        self.pos[to as usize] = e.pos;
+        let q = self.quadric[from as usize];
+        self.quadric[to as usize].add(&q);
+        // Lines through `from` now run through `to`.
+        for x in std::mem::take(&mut self.lines[from as usize]) {
+            self.lines[x as usize].retain(|&y| y != from);
+            if x != to {
+                if !self.lines[x as usize].contains(&to) {
+                    self.lines[x as usize].push(to);
+                }
+                if !self.lines[to as usize].contains(&x) {
+                    self.lines[to as usize].push(x);
+                }
+            }
+        }
+        self.into[from as usize] = to;
+        self.stamp[from as usize] += 1;
+        self.stamp[to as usize] += 1;
+    }
+
+    fn root(&self, mut v: u32) -> u32 {
+        while self.into[v as usize] != v {
+            v = self.into[v as usize];
+        }
+        v
+    }
+}
+
 /// Decimates `s` towards the triangle count `d` asks for. The target may
-/// not be reached when the error limit or the seams between surfaces stop
-/// it; the report says how many triangles are left. A solid already at
-/// or under the target comes back unchanged.
+/// not be reached when every remaining collapse is refused (features,
+/// the link condition, the error limit); the report says how many
+/// triangles are left. A solid already at or under the target comes back
+/// unchanged.
 pub fn decimate(s: &Solid, d: &Decimate) -> Result<(Solid, DecimateReport), DecimateError> {
     let n = s.triangles.len();
     let target = target_of(d, n)?;
@@ -104,6 +375,9 @@ fn decimate_to(
     target: usize,
     d: &Decimate,
 ) -> Result<(Solid, DecimateReport), DecimateError> {
+    if s.positions.iter().any(|p| !p.is_finite()) {
+        return Err(DecimateError::NotFinite);
+    }
     let n = s.triangles.len();
     let mut report = DecimateReport {
         triangles_before: n,
@@ -114,77 +388,147 @@ fn decimate_to(
     if n <= target {
         return Ok((s.clone(), report));
     }
-    // Split vertices per (vertex, surface, face names).
-    let mut groups: BTreeMap<(u32, &[Tag]), u32> = BTreeMap::new();
-    let mut ids: BTreeMap<(u32, u32), u32> = BTreeMap::new();
-    let mut split_of: Vec<(u32, u32)> = Vec::new();
-    let mut indices: Vec<u32> = Vec::with_capacity(n * 3);
+    let nv = s.positions.len();
+    let mut m = Mesh {
+        pos: s.positions.clone(),
+        tris: s.triangles.clone(),
+        alive: vec![true; n],
+        live: n,
+        around: vec![Vec::new(); nv],
+        quadric: vec![Quadric::default(); nv],
+        kind: vec![Kind::Interior; nv],
+        lines: vec![Vec::new(); nv],
+        stamp: vec![0; nv],
+        into: (0..nv as u32).collect(),
+    };
+    let mut users: BTreeMap<EdgeKey, Vec<u32>> = BTreeMap::new();
+    let mut total_area = 0.0;
     for (i, t) in s.triangles.iter().enumerate() {
-        let next = groups.len() as u32;
-        let g = *groups
-            .entry((s.surfaces[i], s.face_tags[i].as_slice()))
-            .or_insert(next);
+        let [a, b, c] = t.map(|v| s.positions[v as usize]);
+        let cr = (b - a).cross(c - a);
+        let area = cr.length() / 2.0;
+        total_area += area;
+        let nrm = if area > 0.0 {
+            cr / (2.0 * area)
+        } else {
+            DVec3::ZERO
+        };
+        let q = Quadric::plane(nrm, a, area);
         for &v in t {
-            let next = split_of.len() as u32;
-            let id = *ids.entry((v, g)).or_insert(next);
-            if id == next {
-                split_of.push((v, i as u32));
-            }
-            indices.push(id);
+            m.around[v as usize].push(i as u32);
+            m.quadric[v as usize].add(&q);
+        }
+        for k in 0..3 {
+            users
+                .entry(edge_key(t[k], t[(k + 1) % 3]))
+                .or_default()
+                .push(i as u32);
         }
     }
-    // f32 positions about the box's centre, so the rounding is small.
-    let (mut lo, mut hi) = (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY));
-    for p in &s.positions {
-        lo = lo.min(*p);
-        hi = hi.max(*p);
+    let weight = 1000.0 * (total_area / n as f64).max(f64::MIN_POSITIVE);
+    // Borders and features: lines, with heavy quadrics.
+    let mut pinned = vec![false; nv];
+    let mut border = vec![false; nv];
+    for (&(a, b), ts) in &users {
+        let named = s.edge_tags.contains_key(&(a, b));
+        let feature = ts.len() == 2 && {
+            let (x, y) = (ts[0] as usize, ts[1] as usize);
+            s.surfaces[x] != s.surfaces[y] || s.face_tags[x] != s.face_tags[y]
+        };
+        let open = ts.len() == 1;
+        if ts.len() > 2 {
+            pinned[a as usize] = true;
+            pinned[b as usize] = true;
+        }
+        if !(open || feature || named) {
+            continue;
+        }
+        m.lines[a as usize].push(b);
+        m.lines[b as usize].push(a);
+        if open {
+            border[a as usize] = true;
+            border[b as usize] = true;
+        }
+        let (pa, pb) = (s.positions[a as usize], s.positions[b as usize]);
+        for &t in ts {
+            let [x, y, z] = s.triangles[t as usize].map(|v| s.positions[v as usize]);
+            let side = (pb - pa).cross((y - x).cross(z - x));
+            let len = side.length();
+            if len > 0.0 {
+                let q = Quadric::plane(side / len, pa, weight);
+                m.quadric[a as usize].add(&q);
+                m.quadric[b as usize].add(&q);
+            }
+        }
     }
-    let centre = (lo + hi) / 2.0;
-    let pos: Vec<[f32; 3]> = split_of
-        .iter()
-        .map(|&(v, _)| {
-            let p = s.positions[v as usize] - centre;
-            [p.x as f32, p.y as f32, p.z as f32]
-        })
-        .collect();
-    let mut options = SimplifyOptions::ERROR_ABSOLUTE;
-    if d.lock_border {
-        options |= SimplifyOptions::LOCK_BORDER;
+    for v in 0..nv {
+        m.kind[v] = match m.lines[v].len() {
+            0 => Kind::Interior,
+            2 => Kind::Line,
+            _ => Kind::Corner,
+        };
+        if pinned[v] || (d.lock_border && border[v]) {
+            m.kind[v] = Kind::Corner;
+        }
     }
-    let settings = SimplifySettings {
-        target_index_count: target * 3,
-        target_error: if d.max_error > 0.0 {
-            d.max_error as f32
+    let mut heap: BinaryHeap<Entry> = BinaryHeap::new();
+    for &(a, b) in users.keys() {
+        if let Some(e) = m.plan(a, b) {
+            heap.push(e);
+        }
+    }
+    while m.live > target {
+        let Some(e) = heap.pop() else { break };
+        if (m.stamp[e.from as usize], m.stamp[e.to as usize]) != e.stamp {
+            continue;
+        }
+        let mut q = m.quadric[e.from as usize];
+        q.add(&m.quadric[e.to as usize]);
+        let err = if q.w > 0.0 {
+            (e.cost / q.w).sqrt()
         } else {
-            f32::MAX
-        },
-        options,
-    };
-    let mut ws = Workspace::default();
-    let out = meshoptimizer_rs::simplify(&indices, Positions::from_packed(&pos), settings, &mut ws)
-        .map_err(|e| DecimateError::Simplifier(format!("{e:?}")))?;
-    let mut result = Solid {
-        positions: s.positions.clone(),
+            0.0
+        };
+        if d.max_error > 0.0 && err > d.max_error {
+            continue;
+        }
+        if !m.valid(e.from, e.to, e.pos) {
+            continue;
+        }
+        m.collapse(&e);
+        report.error = report.error.max(err);
+        let to = e.to;
+        for x in m.neighbours(to) {
+            if let Some(next) = m.plan(to, x) {
+                heap.push(next);
+            }
+        }
+    }
+    let mut out = Solid {
+        positions: m.pos.clone(),
         names: s.names.clone(),
-        edge_tags: s.edge_tags.clone(),
         ..Default::default()
     };
-    for t in out.indices.as_chunks::<3>().0 {
-        // A triangle takes its first corner's surface and names.
-        let (_, from) = split_of[t[0] as usize];
-        result
-            .triangles
-            .push([t[0], t[1], t[2]].map(|k| split_of[k as usize].0));
-        result.surfaces.push(s.surfaces[from as usize]);
-        result.face_tags.push(s.face_tags[from as usize].clone());
+    for (i, t) in m.tris.iter().enumerate() {
+        if m.alive[i] {
+            out.triangles.push(*t);
+            out.surfaces.push(s.surfaces[i]);
+            out.face_tags.push(s.face_tags[i].clone());
+        }
     }
-    let mut result = drop_unused(&result);
-    result
-        .canonicalize()
-        .map_err(|e| DecimateError::Simplifier(e.to_string()))?;
-    report.triangles = result.triangles.len();
-    report.error = f64::from(out.error);
-    Ok((result, report))
+    for (&(a, b), tags) in &s.edge_tags {
+        let (a, b) = (m.root(a), m.root(b));
+        if a != b {
+            let e = out.edge_tags.entry(edge_key(a, b)).or_default();
+            e.extend(tags);
+            e.sort_unstable();
+            e.dedup();
+        }
+    }
+    let mut out = drop_unused(&out);
+    out.canonicalize().map_err(|_| DecimateError::NotFinite)?;
+    report.triangles = out.triangles.len();
+    Ok((out, report))
 }
 
 /// A chain of levels of detail: level `k` decimates level `k − 1` (level
@@ -209,10 +553,10 @@ pub fn lods(s: &Solid, levels: &[Decimate]) -> Result<Vec<(Solid, DecimateReport
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shape_gen::solids::sphere;
+    use shape_gen::solids::{BoxDesc, cuboid, sphere};
 
     #[test]
-    fn halves_a_sphere_and_keeps_its_names() {
+    fn halves_a_sphere_closed_and_keeps_a_box_square() {
         let s = sphere(20.0).unwrap();
         let n = s.triangles.len();
         let (half, r) = decimate(
@@ -225,14 +569,10 @@ mod tests {
         .unwrap();
         assert!(half.triangles.len() <= n / 2 + 1, "{r:?}");
         assert!(half.measure().closed);
-        assert!(r.error > 0.0 && r.error < 2.0);
-        // Every vertex left is one of the input's.
-        for p in &half.positions {
-            assert!(s.positions.contains(p));
-        }
+        assert!(r.error > 0.0 && r.error < 2.0, "{r:?}");
         let chain = lods(
             &s,
-            &[0.5, 0.25, 0.125].map(|ratio| Decimate {
+            &[0.5, 0.25, 0.05].map(|ratio| Decimate {
                 ratio,
                 ..Default::default()
             }),
@@ -240,6 +580,24 @@ mod tests {
         .unwrap();
         let counts: Vec<usize> = chain.iter().map(|l| l.0.triangles.len()).collect();
         assert!(counts[0] > counts[1] && counts[1] > counts[2], "{counts:?}");
+        assert!(chain.iter().all(|l| l.0.measure().closed));
         assert!(decimate(&s, &Decimate::default()).is_err());
+        // A box's faces are separate surfaces: their edges are features
+        // and its corners stay, so it keeps its volume.
+        let b = cuboid(&BoxDesc {
+            width: 10.0,
+            depth: 10.0,
+            height: 10.0,
+        })
+        .unwrap();
+        let (low, _) = decimate(
+            &b,
+            &Decimate {
+                target: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!((low.measure().volume - 1000.0).abs() < 1e-9);
     }
 }

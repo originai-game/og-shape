@@ -11,8 +11,6 @@ publish.workspace = true
 shape-core.workspace = true
 shape-mesh.workspace = true
 shape-bool.workspace = true
-# Pure-Rust port of meshoptimizer 1.3 (MIT); no SIMD, no rayon.
-meshoptimizer-rs = { version = "=0.2.19", default-features = false, features = ["std"] }
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 
 [dev-dependencies]

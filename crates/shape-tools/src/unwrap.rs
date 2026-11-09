@@ -225,35 +225,104 @@ pub fn unwrap(s: &Solid, d: &Unwrap) -> Result<Uvs, UnwrapError> {
         }
         charts.push(members);
     }
-    // Each chart turned to its smallest box, laid wide, from the origin.
-    let mut sizes: Vec<DVec2> = Vec::with_capacity(charts.len());
-    for members in &charts {
-        let pts: Vec<DVec2> = members.iter().flat_map(|&i| flat[i as usize]).collect();
-        let (e, p) = best_axes(&pts);
-        let mut local: Vec<DVec2> = pts.iter().map(|q| DVec2::new(q.dot(e), q.dot(p))).collect();
-        let (mut lo, mut hi) = (local[0], local[0]);
-        for q in &local {
-            lo = lo.min(*q);
-            hi = hi.max(*q);
-        }
-        let mut size = hi - lo;
-        let wide = size.x >= size.y;
-        for q in &mut local {
-            *q -= lo;
-            if !wide {
-                // A quarter turn: (x, y) ↦ (h − y, x), winding kept.
-                *q = DVec2::new(size.y - q.y, q.x);
+    // Each chart turned to its smallest box, laid wide, from the origin;
+    // packed; then checked exactly in its final coordinates. Rounding in
+    // the turn and the scale can push two triangles that only touched
+    // into a sliver of overlap: such a triangle leaves for a chart of its
+    // own, and the charts are packed again.
+    let projected = flat.clone();
+    let mut local = vec![[DVec2::ZERO; 3]; n];
+    let mut sizes: Vec<DVec2> = charts
+        .iter()
+        .map(|m| lay(m, &projected, &mut local))
+        .collect();
+    let pad = padding / f64::from(resolution);
+    let mut corners = vec![[DVec2::ZERO; 3]; n];
+    let mut scale = 0.0;
+    for round in 0..4 {
+        let (at, sc) = pack_all(&sizes, pad).ok_or(UnwrapError::TooManyCharts(charts.len()))?;
+        scale = sc;
+        for (c, members) in charts.iter().enumerate() {
+            let at = at[c] + DVec2::splat(pad / 2.0);
+            for &i in members {
+                corners[i as usize] = local[i as usize].map(|q| at + q * scale);
             }
         }
-        if !wide {
-            size = DVec2::new(size.y, size.x);
+        let mut leaving: Vec<u32> = Vec::new();
+        for members in &charts {
+            leaving.extend(overlapping(members, &corners));
         }
-        for (k, &i) in members.iter().enumerate() {
-            flat[i as usize] = [local[k * 3], local[k * 3 + 1], local[k * 3 + 2]];
+        if leaving.is_empty() {
+            break;
         }
-        sizes.push(size);
+        if round == 3 {
+            return Err(UnwrapError::BadDesc(
+                "charts still overlap after rounding; this is a bug".into(),
+            ));
+        }
+        leaving.sort_unstable();
+        leaving.dedup();
+        for members in &mut charts {
+            members.retain(|i| leaving.binary_search(i).is_err());
+        }
+        for &i in &leaving {
+            charts.push(vec![i]);
+        }
+        charts.retain(|m| !m.is_empty());
+        for (c, members) in charts.iter().enumerate() {
+            for &i in members {
+                chart_of[i as usize] = c as u32;
+            }
+        }
+        sizes = charts
+            .iter()
+            .map(|m| lay(m, &projected, &mut local))
+            .collect();
     }
-    let pad = padding / f64::from(resolution);
+    Ok(Uvs {
+        corners,
+        charts: chart_of,
+        chart_count: charts.len(),
+        scale,
+    })
+}
+
+/// Turns a chart to its smallest box, laid wide, from the origin; writes
+/// its triangles' coordinates into `local` and returns the box's size.
+fn lay(members: &[u32], projected: &[[DVec2; 3]], local: &mut [[DVec2; 3]]) -> DVec2 {
+    let pts: Vec<DVec2> = members
+        .iter()
+        .flat_map(|&i| projected[i as usize])
+        .collect();
+    let (e, p) = best_axes(&pts);
+    let mut q: Vec<DVec2> = pts.iter().map(|x| DVec2::new(x.dot(e), x.dot(p))).collect();
+    let (mut lo, mut hi) = (q[0], q[0]);
+    for x in &q {
+        lo = lo.min(*x);
+        hi = hi.max(*x);
+    }
+    let size = hi - lo;
+    let wide = size.x >= size.y;
+    for x in &mut q {
+        *x -= lo;
+        if !wide {
+            // A quarter turn: (x, y) ↦ (h − y, x), winding kept.
+            *x = DVec2::new(size.y - x.y, x.x);
+        }
+    }
+    for (k, &i) in members.iter().enumerate() {
+        local[i as usize] = [q[k * 3], q[k * 3 + 1], q[k * 3 + 2]];
+    }
+    if wide {
+        size
+    } else {
+        DVec2::new(size.y, size.x)
+    }
+}
+
+/// Packs every chart at the largest scale that fits (bisection), tallest
+/// first. Returns each chart's corner and the scale.
+fn pack_all(sizes: &[DVec2], pad: f64) -> Option<(Vec<DVec2>, f64)> {
     let total: f64 = sizes.iter().map(|s| s.x * s.y).sum();
     let mut order: Vec<usize> = (0..sizes.len()).collect();
     order.sort_by(|&a, &b| {
@@ -263,44 +332,54 @@ pub fn unwrap(s: &Solid, d: &Unwrap) -> Result<Uvs, UnwrapError> {
             .then(sizes[b].x.total_cmp(&sizes[a].x))
             .then(a.cmp(&b))
     });
-    let fit = |scale: f64| pack(&sizes, &order, scale, pad);
+    let fit = |scale: f64| pack(sizes, &order, scale, pad);
     let mut hi = if total > 0.0 {
         (1.0 / total).sqrt()
     } else {
         let longest = sizes.iter().map(|s| s.x.max(s.y)).fold(0.0, f64::max);
         if longest > 0.0 { 1.0 / longest } else { 1.0 }
     };
-    let mut lo = 0.0;
-    let mut best = fit(0.0).ok_or(UnwrapError::TooManyCharts(charts.len()))?;
+    let mut best = (fit(0.0)?, 0.0);
     if let Some(p) = fit(hi) {
-        best = p;
-        lo = hi;
-    } else {
-        for _ in 0..40 {
-            let mid = (lo + hi) / 2.0;
-            match fit(mid) {
-                Some(p) => {
-                    best = p;
-                    lo = mid;
-                }
-                None => hi = mid,
+        return Some((p, hi));
+    }
+    let mut lo = 0.0;
+    for _ in 0..40 {
+        let mid = (lo + hi) / 2.0;
+        match fit(mid) {
+            Some(p) => {
+                best = (p, mid);
+                lo = mid;
+            }
+            None => hi = mid,
+        }
+    }
+    Some(best)
+}
+
+/// Triangles of one chart that overlap another of it (the later of each
+/// pair), by a sweep along u with exact tests.
+fn overlapping(members: &[u32], uv: &[[DVec2; 3]]) -> Vec<u32> {
+    let bounds = |i: u32| {
+        let t = uv[i as usize];
+        (t[0].min(t[1]).min(t[2]), t[0].max(t[1]).max(t[2]))
+    };
+    let mut order: Vec<u32> = members.to_vec();
+    order.sort_by(|&a, &b| bounds(a).0.x.total_cmp(&bounds(b).0.x).then(a.cmp(&b)));
+    let mut active: Vec<u32> = Vec::new();
+    let mut out = Vec::new();
+    for &i in &order {
+        let (lo, hi) = bounds(i);
+        active.retain(|&j| bounds(j).1.x > lo.x);
+        for &j in &active {
+            let (lo2, hi2) = bounds(j);
+            if lo2.y < hi.y && hi2.y > lo.y && tris_overlap_2d(uv[i as usize], uv[j as usize]) {
+                out.push(i.max(j));
             }
         }
+        active.push(i);
     }
-    let scale = lo;
-    let mut corners = vec![[DVec2::ZERO; 3]; n];
-    for (c, members) in charts.iter().enumerate() {
-        let at = best[c] + DVec2::splat(pad / 2.0);
-        for &i in members {
-            corners[i as usize] = flat[i as usize].map(|q| at + q * scale);
-        }
-    }
-    Ok(Uvs {
-        corners,
-        charts: chart_of,
-        chart_count: charts.len(),
-        scale,
-    })
+    out
 }
 
 /// The axes (unit `e` and its left normal) along which the points' box is

@@ -43,8 +43,11 @@ pub struct Floaters {
 /// pieces and holes alone.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Repair {
-    /// Welds vertices closer than this, in mm (0: exact duplicates only).
+    /// Welds vertices on open edges closer than this, in mm (0: exact
+    /// duplicates only); see [`Weld`].
     pub weld: f64,
+    /// Welds every vertex within `weld`, not only those on open edges.
+    pub weld_all: bool,
     /// Small pieces to drop.
     pub floaters: Floaters,
     /// Closes holes whose rim has at most this many edges (0: none).
@@ -60,8 +63,8 @@ pub struct Repair {
 /// What each step of [`repair`] changed.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RepairReport {
-    /// Vertices merged into others by the weld (exact duplicates
-    /// included).
+    /// Vertices that went in the weld (merged, exact duplicates
+    /// included, or used by no triangle).
     pub welded: usize,
     /// Triangles dropped for having no area.
     pub degenerate: usize,
@@ -79,8 +82,8 @@ pub struct RepairReport {
     pub holes_filled: usize,
     /// Triangles added by closing holes.
     pub fill_triangles: usize,
-    /// Holes left open: too large, pinched (their rim passes a vertex
-    /// twice), or with no fill that keeps the mesh manifold.
+    /// Holes left open: too large, or with a rim that does not close (it
+    /// runs into a non-manifold edge).
     pub holes_left: usize,
     /// The outcome of fusing, if asked: `Some(Ok(pieces before))`, or why
     /// it was not done.
@@ -183,13 +186,29 @@ fn rebuild(s: &Solid, triangles: &[usize], remap: &[u32], positions: Vec<DVec3>)
     out
 }
 
-/// Welds every vertex to an earlier one within `distance` mm, then
-/// canonicalizes (which drops triangles that lost a corner). Vertices are
-/// visited in position order; each joins the nearest kept vertex within
-/// reach, or is kept itself. Kept vertices do not move, so the result
-/// depends only on the positions, not on their order. Returns the solid
-/// and how many vertices were merged.
-pub fn weld(s: &Solid, distance: f64) -> Result<(Solid, usize), RepairError> {
+/// How [`weld`] merges vertices. The zero value welds exact duplicates
+/// only.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Weld {
+    /// Merges vertices closer than this, in mm.
+    pub distance: f64,
+    /// Merges any vertices, not only those on open edges (Blender's merge
+    /// by distance). Off, a weld only closes cracks: a closed surface's
+    /// vertices never move, so two close but separate sheets are not
+    /// pinched together.
+    pub all: bool,
+}
+
+/// Welds exactly coincident vertices, then each vertex on an open edge
+/// (or each vertex, with `all`) to an earlier one within `distance` mm,
+/// and canonicalizes (which drops triangles that lost a corner and
+/// vertices no triangle uses). Vertices are visited in position order;
+/// each joins the nearest kept vertex within reach, or is kept itself.
+/// Kept vertices do not move, so the result depends only on the
+/// positions, not on their order. Returns the solid and how many vertices
+/// went.
+pub fn weld(s: &Solid, d: &Weld) -> Result<(Solid, usize), RepairError> {
+    let distance = d.distance;
     if !(distance >= 0.0 && distance.is_finite()) {
         return Err(RepairError::BadDistance);
     }
@@ -197,8 +216,24 @@ pub fn weld(s: &Solid, distance: f64) -> Result<(Solid, usize), RepairError> {
         return Err(RepairError::NaN);
     }
     let before = s.positions.len();
+    let mut exact = s.clone();
+    exact.canonicalize()?;
+    let s = &exact;
     let mut out = s.clone();
     if distance > 0.0 {
+        let mut uses: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+        for t in &s.triangles {
+            for k in 0..3 {
+                *uses.entry(edge_key(t[k], t[(k + 1) % 3])).or_default() += 1;
+            }
+        }
+        let mut open = vec![d.all; s.positions.len()];
+        for (&(a, b), &n) in &uses {
+            if n == 1 {
+                open[a as usize] = true;
+                open[b as usize] = true;
+            }
+        }
         let order = sorted_order(&s.positions);
         let cell = |p: DVec3| {
             let c = (p / distance).floor();
@@ -210,6 +245,11 @@ pub fn weld(s: &Solid, distance: f64) -> Result<(Solid, usize), RepairError> {
         let d2 = distance * distance;
         for &v in &order {
             let p = s.positions[v as usize];
+            if !open[v as usize] {
+                kept.push(p);
+                remap[v as usize] = kept.len() as u32 - 1;
+                continue;
+            }
             let (cx, cy, cz) = cell(p);
             let mut best: Option<(f64, u32)> = None;
             for dx in -1..=1 {
@@ -457,11 +497,13 @@ pub fn orient(s: &Solid) -> Result<(Solid, usize), RepairError> {
 
 /// Closes every hole whose rim has at most `max_edges` edges, after
 /// [`orient`]. A rim is traced along boundary edges; a rim that passes a
-/// vertex twice (pinched) is left open. The fill is the triangulation of
+/// vertex twice (pinched) is cut there into simple loops, each closed on
+/// its own. The fill is the triangulation of
 /// the rim with the least total area (dynamic programming over the rim,
 /// O(n³)), wound to match the faces around it; a triangle whose new edge
 /// already exists in the mesh is not allowed, so the result stays
-/// manifold, and a rim with no such fill is left open. Returns the solid
+/// manifold; a rim with no such fill is fanned from a new vertex at its
+/// centre instead. Returns the solid
 /// and the counts `(holes filled, triangles added, holes left)`.
 pub fn close_holes(
     s: &Solid,
@@ -485,76 +527,80 @@ pub fn close_holes(
             out_edges.entry(b).or_default().push((a, tri));
         }
     }
-    let pinched = |v: u32, out_edges: &BTreeMap<u32, Vec<(u32, u32)>>| {
-        out_edges.get(&v).is_some_and(|e| e.len() > 1)
-    };
     let mut used: BTreeMap<(u32, u32), ()> = BTreeMap::new();
     let (mut filled, mut added, mut left) = (0, 0, 0);
     let starts: Vec<(u32, u32)> = out_edges
         .iter()
         .flat_map(|(&v, es)| es.iter().map(move |&(w, _)| (v, w)))
         .collect();
-    let mut new_tris: Vec<([u32; 3], u32, Vec<Tag>)> = Vec::new();
+    // Trace every rim; a rim that passes a vertex twice (pinched) is cut
+    // there into simple loops, each closed on its own.
+    let mut loops: Vec<(Vec<u32>, Vec<u32>)> = Vec::new();
     for (v0, w0) in starts {
         if used.contains_key(&(v0, w0)) {
             continue;
         }
-        // Trace the rim.
-        let mut rim = vec![v0];
-        let mut rim_tris: Vec<u32> = Vec::new();
-        let mut ok = true;
+        let mut path: Vec<u32> = vec![v0];
+        let mut path_tris: Vec<u32> = Vec::new();
         let (mut v, mut w) = (v0, w0);
         loop {
             used.insert((v, w), ());
             let tri = out_edges[&v].iter().find(|e| e.0 == w).map_or(0, |e| e.1);
-            rim_tris.push(tri);
-            if pinched(v, &out_edges) {
-                ok = false;
-            }
-            if w == v0 {
-                break;
-            }
-            rim.push(w);
-            if rim.len() > max_edges.max(3) * 4 + 8 {
-                ok = false;
+            path_tris.push(tri);
+            if let Some(k) = path.iter().position(|&x| x == w) {
+                // A loop closes at w: cut it off.
+                loops.push((path.split_off(k), path_tris.split_off(k)));
+                path.push(w);
+            } else {
+                path.push(w);
             }
             let Some(next) = out_edges.get(&w).and_then(|e| {
                 e.iter()
                     .find(|(x, _)| !used.contains_key(&(w, *x)))
                     .map(|&(x, _)| x)
             }) else {
-                ok = false;
                 break;
             };
             v = w;
             w = next;
         }
-        if !ok || rim.len() < 3 || rim.len() > max_edges {
+        // Whatever did not close (a rim through a non-manifold edge).
+        if path.len() > 1 {
+            left += 1;
+        }
+    }
+    let mut new_tris: Vec<([u32; 3], u32, Vec<Tag>)> = Vec::new();
+    for (rim, rim_tris) in loops {
+        if rim.len() < 3 || rim.len() > max_edges {
             left += 1;
             continue;
         }
-        match fill(&s, &rim, &undirected) {
-            Some(tris) => {
-                let mut tags: Vec<Tag> = vec![s.names.intern("fill")];
-                for &t in &rim_tris {
-                    tags.extend(&s.face_tags[t as usize]);
-                }
-                tags.sort_unstable();
-                tags.dedup();
-                let surface = s.surfaces[rim_tris[0] as usize];
-                for t in &tris {
-                    for k in 0..3 {
-                        *undirected
-                            .entry(edge_key(t[k], t[(k + 1) % 3]))
-                            .or_default() += 1;
-                    }
-                }
-                added += tris.len();
-                filled += 1;
-                new_tris.extend(tris.into_iter().map(|t| (t, surface, tags.clone())));
-            }
-            None => left += 1,
+        let tris = fill(&s, &rim, &undirected).unwrap_or_else(|| {
+            // Every chord already exists: fan from a new vertex at the
+            // rim's centre, whose edges are all new.
+            let c = rim.iter().map(|&v| s.positions[v as usize]).sum::<DVec3>() / rim.len() as f64;
+            let ci = s.push_vertex(c);
+            (0..rim.len())
+                .map(|k| [rim[k], rim[(k + 1) % rim.len()], ci])
+                .collect()
+        });
+        let mut tags: Vec<Tag> = vec![s.names.intern("fill")];
+        for &t in &rim_tris {
+            tags.extend(&s.face_tags[t as usize]);
         }
+        tags.sort_unstable();
+        tags.dedup();
+        let surface = s.surfaces[rim_tris[0] as usize];
+        for t in &tris {
+            for k in 0..3 {
+                *undirected
+                    .entry(edge_key(t[k], t[(k + 1) % 3]))
+                    .or_default() += 1;
+            }
+        }
+        added += tris.len();
+        filled += 1;
+        new_tris.extend(tris.into_iter().map(|t| (t, surface, tags.clone())));
     }
     for (t, surface, tags) in new_tris {
         s.triangles.push(t);
@@ -625,7 +671,13 @@ fn fill(s: &Solid, rim: &[u32], edges: &BTreeMap<(u32, u32), u32>) -> Option<Vec
 /// changed. The result is in canonical order.
 pub fn repair(s: &Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairError> {
     let mut r = RepairReport::default();
-    let (s, welded) = weld(s, d.weld)?;
+    let (s, welded) = weld(
+        s,
+        &Weld {
+            distance: d.weld,
+            all: d.weld_all,
+        },
+    )?;
     r.welded = welded;
     let (s, deg, dup) = remove_degenerate(&s)?;
     r.degenerate = deg;

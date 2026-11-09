@@ -1,5 +1,5 @@
 //! Import of glTF 2.0 (`.glb`, and `.gltf` with embedded or external
-//! buffers) and Wavefront OBJ into parts: a [`Solid`] each, in its own
+//! buffers), Wavefront OBJ and FBX 7 ([`crate::import_fbx`]) into parts: a [`Solid`] each, in its own
 //! coordinates, with the transform that places it.
 //!
 //! Units and axes: the kernel works in millimetres with Z up. glTF is
@@ -162,18 +162,23 @@ pub fn no_files(uri: &str) -> Result<Vec<u8>, String> {
     Err(format!("no file system to read {uri:?} from"))
 }
 
-fn fmt_err(what: impl Into<String>) -> ImportError {
+pub(crate) fn fmt_err(what: impl Into<String>) -> ImportError {
     ImportError::Format(what.into())
 }
 
 /// Imports a file by its content: GLB by its magic, glTF JSON by a
-/// leading `{`, otherwise OBJ text.
+/// leading `{`, binary FBX by its magic and ASCII FBX by its header,
+/// otherwise OBJ text.
 pub fn import(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported, ImportError> {
     let first = bytes
         .iter()
         .find(|b| !b.is_ascii_whitespace() && **b != 0xEF && **b != 0xBB && **b != 0xBF);
+    let head = &bytes[..bytes.len().min(4096)];
+    let ascii_fbx = head.windows(18).any(|w| w == b"FBXHeaderExtension");
     if bytes.starts_with(b"glTF") || first == Some(&b'{') {
         import_gltf(bytes, resolve)
+    } else if bytes.starts_with(b"Kaydara FBX Binary") || ascii_fbx {
+        crate::fbx::import_fbx(bytes, resolve)
     } else {
         import_obj(bytes, d, resolve)
     }
@@ -181,7 +186,7 @@ pub fn import(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported, Im
 
 /// glTF space (metres, Y up) to kernel space (Z up), unit-free:
 /// `(x, y, z) ↦ (x, −z, y)`.
-fn from_y_up(v: DVec3) -> DVec3 {
+pub(crate) fn from_y_up(v: DVec3) -> DVec3 {
     DVec3::new(v.x, -v.z, v.y)
 }
 
@@ -197,7 +202,7 @@ fn conjugate(m: &Affine, unit: f64) -> Affine {
     }
 }
 
-fn unique(name: &str, used: &mut BTreeMap<String, ()>) -> String {
+pub(crate) fn unique(name: &str, used: &mut BTreeMap<String, ()>) -> String {
     let base = if name.is_empty() { "part" } else { name };
     let mut n = base.to_string();
     let mut k = 1;
@@ -253,7 +258,7 @@ fn base64(s: &str) -> Option<Vec<u8>> {
 }
 
 /// The bytes a URI names: a `data:` URI decoded, or the resolver's file.
-fn fetch(uri: &str, resolve: Resolve) -> Result<Vec<u8>, ImportError> {
+pub(crate) fn fetch(uri: &str, resolve: Resolve) -> Result<Vec<u8>, ImportError> {
     if let Some(rest) = uri.strip_prefix("data:") {
         let (head, data) = rest
             .split_once(',')

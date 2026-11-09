@@ -16,6 +16,8 @@ shape-mesh.workspace = true
 shape-edit.workspace = true
 shape-tools.workspace = true
 shape-bevel.workspace = true
+# Compresses the arrays of the hand-written binary FBX case.
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 
 [lints]
 workspace = true

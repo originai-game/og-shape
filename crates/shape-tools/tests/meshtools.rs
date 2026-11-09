@@ -2,6 +2,9 @@
 //! importers, external buffers, and the platform chain (import → repair →
 //! decimate → unwrap → measure → preview → export) on a broken mesh.
 
+#[path = "support/fbx.rs"]
+mod support;
+
 use shape_core::{DVec2, DVec3, Frame};
 use shape_gen::solids::{BoxDesc, cuboid, sphere};
 use shape_mesh::Solid;
@@ -265,4 +268,44 @@ fn the_platform_chain_meets_the_texturing_contract() {
     assert!(again.closed);
     assert_eq!(again.triangles, low.triangles.len());
     assert_eq!(again.uv.unwrap().overlapping_pairs, 0);
+}
+
+#[test]
+fn binary_fbx_with_pivots_compressed_arrays_and_a_texture() {
+    let bytes = support::binary_fbx();
+    let imported = import(&bytes, &Import::default(), &no_files).unwrap();
+    assert_eq!(imported.parts.len(), 1);
+    assert_eq!(imported.polygons_triangulated, 6);
+    let p = &imported.parts[0];
+    assert_eq!((p.name.as_str(), p.material.as_str()), ("Cube", "Steel"));
+    assert_eq!(p.uvs.as_ref().map(Vec::len), Some(12));
+    assert_eq!(imported.images.len(), 1);
+    assert_eq!(imported.images[0].name, "textures/albedo.png");
+    assert_eq!(imported.images[0].width, Some(16));
+    let s = join(&imported.parts).unwrap();
+    let m = s.measure();
+    // 2 cm cube: 20 mm a side, closed, two surfaces (materials).
+    assert!(m.closed);
+    assert!((m.volume - 8000.0).abs() < 1e-6, "{}", m.volume);
+    let mut surfaces = s.surfaces.clone();
+    surfaces.sort_unstable();
+    surfaces.dedup();
+    assert_eq!(surfaces.len(), 2);
+    // Scaled 2, turned 90° about y around the pivot x = 1 cm, then moved
+    // 10 cm in x by its parent: x ∈ [11, 13] cm, y ∈ [0, 2], z ∈ [−1, 1]
+    // (Y up); in kernel space (x, −z, y) mm: x ∈ [110, 130],
+    // y ∈ [−10, 10], z ∈ [0, 20].
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    assert!(
+        near(m.bounds_min.x, 110.0) && near(m.bounds_max.x, 130.0),
+        "{m:?}"
+    );
+    assert!(
+        near(m.bounds_min.y, -10.0) && near(m.bounds_max.y, 10.0),
+        "{m:?}"
+    );
+    assert!(
+        near(m.bounds_min.z, 0.0) && near(m.bounds_max.z, 20.0),
+        "{m:?}"
+    );
 }
