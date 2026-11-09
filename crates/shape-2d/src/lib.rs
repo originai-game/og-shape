@@ -2,8 +2,8 @@
 //! from (`docs/design.md` §2).
 //!
 //! Entry: [`Profile`]. Make one with a constructor ([`rect`], [`circle`],
-//! [`ellipse`], [`slot`], [`polygon`], [`poly`], [`superellipse`], or a
-//! [`Path`]), combine with [`Profile::union`], [`Profile::subtract`],
+//! [`ellipse`], [`slot`], [`polygon`], [`poly`], [`superellipse`], [`gear`], or a
+//! [`Path`], or [`text`] from a font's bytes), combine with [`Profile::union`], [`Profile::subtract`],
 //! [`Profile::intersect`], [`Profile::offset`], [`stroke`],
 //! [`Profile::mirror`] or [`Profile::hull`], and fill with
 //! [`Profile::triangulate`].
@@ -14,16 +14,20 @@
 //! spade's constrained Delaunay, on the exact contour points.
 
 pub mod curve;
+mod gear;
 mod make;
 mod ops;
 mod path;
+mod text;
 
+pub use gear::{Gear, gear};
 pub use make::{
     Circle, Ellipse, Poly, PolyPoint, Polygon, Rect, Slot, Superellipse, circle, ellipse, poly,
     polygon, rect, slot, superellipse,
 };
 pub use ops::{Join, StrokeDesc, stroke};
 pub use path::Path;
+pub use text::{Outline, Text, outline_profile, text};
 
 use shape_core::DVec2;
 use shape_core::predicates::orient2d;

@@ -79,6 +79,11 @@ impl Flags {
     }
 }
 
+/// i_overlay's output back to a profile, with the flags of `inputs`.
+pub(crate) fn from_overlay(shapes: Shapes, inputs: &[&Profile]) -> Profile {
+    from_shapes(shapes, &Flags::new(inputs))
+}
+
 /// Back to a profile: flags restored, each contour starting at its
 /// smallest point, regions sorted by their outer's smallest point.
 fn from_shapes(shapes: Shapes, flags: &Flags) -> Profile {

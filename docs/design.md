@@ -99,7 +99,7 @@ A Cargo workspace. Each crate has one job and a small public surface.
 | Crate | Job | Built on |
 |---|---|---|
 | `shape-core` | f64 vectors and frames, `trig` (libm), exact predicates, stable sort, the determinism rules in one place | glam (scalar), libm, robust |
-| `shape-2d` | profiles, 2D booleans, offset, stroke, triangulation with holes, curve flattening, glyph outlines | i_overlay (integer core), spade (CDT on exact points), own Bézier flattening, skrifa |
+| `shape-2d` | profiles, 2D booleans, offset, stroke, triangulation with holes, curve flattening, glyph outlines | i_overlay (integer core), spade (CDT on exact points), own Bézier flattening, ttf-parser (skrifa pulls in Unicode-3.0 crates, which are not on the licence list) |
 | `shape-mesh` | half-edge mesh, names, welding, measures, canonical ordering | — |
 | `shape-gen` | the generators: extrude, revolve, sweep, loft, body, wire, helix, primitives, gear, thread, knurl | og-geom's generators, copied at a pinned engine commit, plus new ones |
 | `shape-bool` | mesh booleans and split | og-geom's exact-predicate CSG, or manifold-rust; chosen in phase 0 |

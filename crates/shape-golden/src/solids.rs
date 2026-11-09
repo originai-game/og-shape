@@ -1,10 +1,11 @@
 //! Golden cases for profiles (shape-2d) and named solids (shape-gen).
 
 use shape_2d::{
-    Circle, Join, Path, Poly, PolyPoint, Profile, Rect, Slot, StrokeDesc, Superellipse, circle,
-    poly, rect, slot, stroke, superellipse,
+    Circle, Gear, Join, Outline, Path, Poly, PolyPoint, Profile, Rect, Slot, StrokeDesc,
+    Superellipse, circle, gear, outline_profile, poly, rect, slot, stroke, superellipse,
 };
 use shape_core::{DVec2, HashError, OutputHash, trig};
+use shape_gen::paths::{Helix, Loft, Sweep, Thread, helix, loft, sweep, thread};
 use shape_gen::solids::{
     BoxDesc, CylinderDesc, Extrude, Revolve, cone, cuboid, cylinder, dome, extrude, revolve,
     sphere, torus, tube, wedge,
@@ -102,6 +103,123 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "solid.wedge",
             run: |h| solid(h, wedge(10.0, 4.0, 3.0)),
+        },
+        Case {
+            name: "2d.gear",
+            run: |h| {
+                profile(
+                    h,
+                    &gear(&Gear {
+                        teeth: 17,
+                        module: 1.5,
+                        pressure_angle: 0.0,
+                    })
+                    .unwrap_or_default(),
+                )
+            },
+        },
+        Case {
+            name: "solid.gear",
+            run: |h| {
+                solid(
+                    h,
+                    extrude(
+                        &gear(&Gear {
+                            teeth: 12,
+                            module: 2.0,
+                            pressure_angle: 0.0,
+                        })
+                        .unwrap_or_default(),
+                        &Extrude {
+                            height: 5.0,
+                            ..Default::default()
+                        },
+                    ),
+                )
+            },
+        },
+        Case {
+            name: "solid.sweep.helix",
+            run: |h| {
+                let path = helix(&Helix {
+                    radius: 15.0,
+                    pitch: 8.0,
+                    turns: 1.5,
+                })
+                .unwrap_or_default();
+                solid(
+                    h,
+                    sweep(
+                        &circle(&Circle {
+                            radius: 2.0,
+                            segments: 0,
+                        })
+                        .unwrap(),
+                        &Sweep {
+                            path,
+                            twist: 1.0,
+                            scale_end: 0.5,
+                            ..Default::default()
+                        },
+                    ),
+                )
+            },
+        },
+        Case {
+            name: "solid.thread",
+            run: |h| {
+                solid(
+                    h,
+                    thread(&Thread {
+                        radius: 4.0,
+                        pitch: 0.7,
+                        length: 5.0,
+                        depth: 0.0,
+                    }),
+                )
+            },
+        },
+        Case {
+            name: "solid.loft",
+            run: |h| {
+                let sq = rect(&Rect {
+                    width: 10.0,
+                    height: 10.0,
+                    radius: 1.0,
+                })
+                .unwrap();
+                let ci = circle(&Circle {
+                    radius: 4.0,
+                    segments: 0,
+                })
+                .unwrap();
+                solid(
+                    h,
+                    loft(&Loft {
+                        sections: vec![(sq.clone(), 0.0), (ci, 8.0), (sq, 16.0)],
+                        samples: 40,
+                        steps: 3,
+                    }),
+                )
+            },
+        },
+        Case {
+            name: "2d.outline",
+            run: |h| {
+                let v = DVec2::new;
+                let cmds = [
+                    Outline::Move(v(0.0, 0.0)),
+                    Outline::Line(v(6.0, 0.0)),
+                    Outline::Cubic(v(9.0, 0.0), v(9.0, 8.0), v(6.0, 8.0)),
+                    Outline::Line(v(0.0, 8.0)),
+                    Outline::Close,
+                    Outline::Move(v(2.0, 2.0)),
+                    Outline::Line(v(2.0, 6.0)),
+                    Outline::Quad(v(6.0, 6.0), v(5.0, 2.0)),
+                    Outline::Close,
+                ];
+                profile(h, &outline_profile(&cmds).unwrap_or_default())
+            },
         },
     ]
 }

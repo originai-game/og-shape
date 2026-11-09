@@ -23,6 +23,7 @@ pub mod frames;
 pub mod lathe;
 pub mod merge;
 pub mod path2;
+pub mod paths;
 pub mod polyhedron;
 pub mod shape;
 pub mod solids;

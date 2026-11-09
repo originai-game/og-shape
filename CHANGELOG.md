@@ -38,6 +38,15 @@
   `tube`, `sphere`, `dome`, `torus`, `wedge`. Every output is canonical.
 - Golden cases for profiles, 2D booleans, offsets, triangulation and the
   named generators.
+- `shape-2d::gear` (involute spur gear, ISO 53 proportions) and `text`:
+  glyph outlines from a font file the caller supplies (ttf-parser; no font
+  ships), filled by the non-zero rule, corners where segments turn more
+  than about 11°. `outline_profile` takes outline commands directly.
+- `shape-gen::paths`: `sweep` along a polyline with rotation-minimizing
+  frames (double reflection), twist and end scale (`start`, `end`,
+  `side`); `helix`; `thread` (a 60° ridge swept on a helix, faces also
+  `thread`); `loft` through stacked sections, straight or Catmull-Rom
+  (`bottom`, `top`, `side`).
 - Plan: aarch64 macOS joins the gate later; phase 0 benchmarks booleans on
   synthetic AI-mesh defects instead of provider outputs, which re-check the
   decision in phase 5.

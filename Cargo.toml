@@ -19,6 +19,7 @@ libm = "0.2"
 robust = "1"
 sha2 = "0.11"
 spade = "2.15.1"
+ttf-parser = { version = "0.25.1", default-features = false, features = ["std", "opentype-layout", "glyph-names"] }
 i_overlay = { version = "9.1.0", default-features = false }
 shape-2d = { path = "crates/shape-2d" }
 shape-gen = { path = "crates/shape-gen" }

@@ -131,4 +131,4 @@ drop Blender from the asset image.
 |---|---|
 | Research | Done (2026-11-09): `docs/research.md` |
 | 0 | Done (2026-11-09): gate on four targets; booleans: og-geom's CSG (`docs/research.md` §5) |
-| 1 | In progress: `shape-mesh`, `shape-2d` (no text yet), named extrude/revolve and primitives; next: sweep, loft, helix, gear, thread, knurl, text |
+| 1 | In progress: `shape-mesh`, `shape-2d` (with gear and text), extrude, revolve, primitives, sweep, loft, helix, thread. Left: body, wire, knurl (needs phase 2 booleans), the ten sand3d gallery rebuilds and their previews (needs the phase 4 preview) |
