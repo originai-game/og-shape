@@ -8,12 +8,16 @@
 #![allow(missing_docs)]
 
 pub mod csg;
+mod exact;
 pub mod fracture;
 pub mod named;
 pub mod selfcheck;
 
-pub use csg::{CsgOp, OperandError, SelfUnion, csg, csg_points, csg_traced, self_union_points};
+pub use csg::{
+    CsgOp, CsgOutput, OperandError, SelfUnion, csg, csg_points, csg_points_traced, csg_traced,
+    self_union_points,
+};
 pub use named::{
-    BoolError, BoolOp, Boolean, boolean, check_operands, components, crossing_pairs, fuse,
-    self_union,
+    BoolError, BoolOp, BoolReport, Boolean, boolean, boolean_report, check_operands, components,
+    crossing_pairs, fuse, self_union,
 };

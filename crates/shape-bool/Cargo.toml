@@ -19,4 +19,5 @@ spade.workspace = true
 workspace = true
 
 [dev-dependencies]
+shape-2d.workspace = true
 glam.workspace = true

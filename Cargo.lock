@@ -367,6 +367,7 @@ version = "0.0.0"
 dependencies = [
  "glam",
  "robust",
+ "shape-2d",
  "shape-core",
  "shape-gen",
  "shape-mesh",
