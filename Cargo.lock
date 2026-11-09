@@ -476,6 +476,7 @@ dependencies = [
  "shape-core",
  "shape-gen",
  "shape-mesh",
+ "shape-skin",
 ]
 
 [[package]]

@@ -1131,7 +1131,6 @@ overlapping copies).
 - FBX was checked on two real files and hand-written ones only.
 - Skins are read and written (`glb`) but not carried through repair,
   decimation or `glb_plain`, which refuse them (§9.9); that is part 2.
-  Skeletons under a scaled armature are refused at import for now.
 - Hole fills are least-area, not fair: a large hole on a curved surface
   closes flat. A fill can cross a nearby face (2 of 45 hole runs).
 - A single surface folded through itself is left as it is (§9.6); booleans
@@ -1185,14 +1184,61 @@ On real files:
 - `Samba Dancing.fbx` (Mixamo, binary): two skins of 52 bones, every
   vertex weighted, `Skin::check` passes; refused by join, repair,
   decimate and `glb_plain`; `glb` → import keeps the bones.
-- **Soldier.glb, Xbot.glb and RobotExpressive.glb are refused**: their
-  bones hang under an armature node scaled 0.01 (Mixamo's centimetres)
-  or otherwise scaled, so no bone's world transform is rigid. This is the
-  decision §11.4 left open, taken the strict way. A uniform scale on an
-  ancestor could instead be taken out of the bones (rigid rest frames
-  from the normalized axes, positions as they are, inverse bind matrices
-  recomputed from the rest frames rather than kept as given); that is
-  the owner's call, and common files depend on it.
+- Soldier.glb, Xbot.glb and RobotExpressive.glb: their bones hang under
+  an armature scaled 0.01 (Mixamo's centimetres) or 100, so no bone's
+  world transform is rigid. They are accepted by taking the scale out
+  (below).
+
+**Taking a uniform armature scale out of the bones** (the owner's
+decision on the point §11.4 left open):
+- When every bone's world transform is a rotation times one uniform
+  scale (to `UNEVEN` = 10⁻⁴ relative: exporters write scales like
+  (1, 1.0000018, 1.0000156), as RobotExpressive's `UpperLeg.L`), the
+  scale comes out. An uneven or sheared scale, or bones scaled
+  differently, is still refused with an error value.
+- The bind pose is the file's inverse bind matrices, not its node
+  transforms, since a file can be saved posed. `bind` is
+  `world · inverse bind` of the bone that weights the most vertices: where
+  the file puts the mesh. Each bone's rest frame is `bind · IBM⁻¹`, its
+  scale divided out and its axes made exactly orthonormal; its inverse
+  bind matrix is recomputed as that frame's inverse; each vertex goes to
+  `bind · v`, so it stays where the file's bind pose puts it in the world.
+- Reported per part in `Imported::skin_scales` (`SkinScale`): the scale;
+  `bind_error`, how far the file's inverse bind matrices with the scale
+  factored back in put a vertex from the recomputed ones (they agree to
+  rounding); `uneven`, the largest departure from a uniform scale that
+  was rounded away; `node_offset`, how far the file's nodes stand from
+  the bind pose at the vertices their bones weight (0 when the file is
+  saved at its bind pose).
+- FBX does the same with its clusters (`TransformLink` scaled
+  uniformly): the vertices go where the clusters' mesh bind transforms
+  put them.
+- A file already rigid keeps the earlier reading: rest frames from its
+  nodes, inverse bind matrices as given (no hash moved).
+
+Checked (`bench/meshtools`, `skin-check`; the files are fetched, not
+committed: three.js r160's `examples/models/gltf/Soldier.glb` (2.2 MB),
+`Xbot.glb` (2.9 MB) and `RobotExpressive/RobotExpressive.glb` (0.46 MB)
+from raw.githubusercontent.com/mrdoob/three.js). Posing turns the bone
+with the most bones below it by 0.5 rad about its own +X and compares
+with the file's bind pose turned the same way, computed from its own
+node and inverse bind matrices by the independent `gltf` crate:
+
+| file, part | bones | scale out | IBMs agree to | nodes off the bind pose | our pose vs the file's |
+|---|---|---|---|---|---|
+| Soldier, vanguard_Mesh | 49 | 0.01 | 4.1·10⁻⁵ mm | 6.6·10⁻⁴ mm | 2.8·10⁻⁴ mm (Spine, moves 335 mm) |
+| Soldier, vanguard_visor | 2 | 0.01 | 8.6·10⁻⁶ mm | 0 | 2.0·10⁻⁴ mm |
+| Xbot, Beta_Joints / Beta_Surface | 67 | 0.01 | 1.2·10⁻⁵ mm | 1.2·10⁻³ mm | 1.3·10⁻¹¹ mm (Spine, moves 329 mm) |
+| RobotExpressive, Hand.R / Hand.L | 43 | 100 | 6.0·10⁻⁴ mm | 514 and 572 mm (saved posed) | 7.1·10⁻⁴ mm (Body, moves 731 mm) |
+
+All four files also go through the chain: refused by join, repair,
+decimate and `glb_plain`, and `glb` → import gives the same bones. The
+hand-written test (`tests/meshtools.rs`) puts the legs under a 0.01
+armature: the import equals the unscaled file's to f32, posing the knee
+matches the file's own matrices to 10⁻³ mm, the `glb` round trip keeps
+the bones and weights, a file saved with the knee turned gives the same
+bind pose and reports the offset (380.8 mm), and a (0.01, 0.02, 0.01)
+armature is refused. Golden case `meshtools.import.skinned.scaled`.
 
 Other tools' files through the chain (`bench/meshtools --glb`; three.js
 r160's examples and Khronos's DamagedHelmet, not committed):
@@ -1202,7 +1248,7 @@ r160's examples and Khronos's DamagedHelmet, not committed):
 | Horse, Flamingo, Parrot | 984, 542, 626 | budget met; morph targets reported as skipped; Flamingo and Parrot keep 21 and 36 intersecting pairs of their own |
 | ShaderBall | 88 264, 4 pieces | decimated to 40 000 (error 0.76 mm), budget met |
 | DamagedHelmet | 15 452, 55 pieces | not closed: open shells with 12 rims over 64 edges stay open (646 open edges), reported; the fuse is refused (its pieces are open) |
-| RobotExpressive, Soldier, Xbot | 3 237, 11 376, 49 112 | refused at import: scaled armatures (above) |
+| RobotExpressive, Soldier, Xbot | 3 237, 11 376, 49 112 | skinned, scale taken out (above); refused by join, repair, decimate and `glb_plain`; `glb` round trip keeps the bones |
 
 ## 10. The generator gaps of §6.4 (stream F, 2026-11-09)
 

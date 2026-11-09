@@ -119,6 +119,166 @@ pub struct Imported {
     /// Things read past and not imported (points, lines, skins, morph
     /// targets), one line each.
     pub skipped: Vec<String>,
+    /// The uniform scales taken out of skinned parts' bones, one per
+    /// skinned part that had one.
+    pub skin_scales: Vec<SkinScale>,
+}
+
+/// A uniform scale taken out of a skinned part's bones: their bind
+/// transforms were rigid up to it (an armature scaled 0.01 for
+/// centimetres, say). The bones' rest frames are their bind transforms in
+/// the world (from the file's inverse bind matrices) with it divided out;
+/// the vertices are placed where the file's bind pose puts them in the
+/// world; the inverse bind matrices are recomputed from the rest frames.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SkinScale {
+    /// The part.
+    pub part: String,
+    /// The scale every bone's world transform carried.
+    pub scale: f64,
+    /// How far, in mm, the file's inverse bind matrices, with the scale
+    /// factored back in, put a vertex from where the recomputed ones do:
+    /// they agree to this.
+    pub bind_error: f64,
+    /// The largest departure of a bone's world transform from a uniform
+    /// scale (relative axis lengths and cosines; exporters' rounding,
+    /// below [`UNEVEN`]), made exact in its rest frame.
+    pub uneven: f64,
+    /// How far, in mm, the file's own bone nodes stand from the bind pose
+    /// at the vertices they weight: 0 to rounding when the file is saved
+    /// at its bind pose, more where it is saved posed. The bind pose (the
+    /// inverse bind matrices) is what is kept.
+    pub node_offset: f64,
+}
+
+/// Departures from a uniform scale up to this (relative: axis lengths,
+/// and the cosines between axes) are exporters' rounding, and taken as
+/// uniform; beyond it a scale is uneven or sheared.
+pub const UNEVEN: f64 = 1e-4;
+
+/// `a` as a uniform scale times a rigid motion, `(scale, rigid, uneven)`,
+/// if it is one to [`UNEVEN`]: `scale` is the mean axis length, `rigid`
+/// the axes made exactly orthonormal (Gram–Schmidt, x first), `uneven`
+/// how far `a` was from that.
+pub(crate) fn similarity(a: &Affine) -> Option<(f64, Affine, f64)> {
+    let l = [a.x.length(), a.y.length(), a.z.length()];
+    let s = (l[0] + l[1] + l[2]) / 3.0;
+    if !(s > 0.0 && s.is_finite()) || a.determinant() <= 0.0 {
+        return None;
+    }
+    let (x, y, z) = (a.x / l[0], a.y / l[1], a.z / l[2]);
+    let uneven = [
+        (l[0] - s).abs() / s,
+        (l[1] - s).abs() / s,
+        (l[2] - s).abs() / s,
+        x.dot(y).abs(),
+        y.dot(z).abs(),
+        x.dot(z).abs(),
+    ]
+    .into_iter()
+    .fold(0.0, f64::max);
+    if uneven > UNEVEN {
+        return None;
+    }
+    let y = (y - x * x.dot(y)).normalize();
+    let z = x.cross(y);
+    Some((s, Affine { x, y, z, t: a.t }, uneven))
+}
+
+/// The inverse of an affine map, if it is not singular.
+pub(crate) fn affine_inverse(a: &Affine) -> Option<Affine> {
+    let det = a.determinant();
+    if det == 0.0 || !det.is_finite() {
+        return None;
+    }
+    // Rows of the inverse: the cross products of the columns over det.
+    let (r0, r1, r2) = (
+        a.y.cross(a.z) / det,
+        a.z.cross(a.x) / det,
+        a.x.cross(a.y) / det,
+    );
+    let l = Affine {
+        x: DVec3::new(r0.x, r1.x, r2.x),
+        y: DVec3::new(r0.y, r1.y, r2.y),
+        z: DVec3::new(r0.z, r1.z, r2.z),
+        t: DVec3::ZERO,
+    };
+    Some(Affine {
+        t: -l.rotate(a.t),
+        ..l
+    })
+}
+
+/// Each vertex placed by the weighted blend of its bones' bind matrices
+/// (`bind(joint)`, kernel space), and the largest distance between one of
+/// those bones' placement and the blend. A weight naming no bone, a
+/// mirroring bind matrix, or a vertex with no weight is an error.
+pub(crate) fn place(
+    positions: &[DVec3],
+    raw: &[Vec<(u32, f64)>],
+    bind: &dyn Fn(u32) -> Option<Affine>,
+) -> Result<(Vec<DVec3>, f64), String> {
+    let mut out = Vec::with_capacity(positions.len());
+    let mut error: f64 = 0.0;
+    for (v, (p, pairs)) in positions.iter().zip(raw).enumerate() {
+        let mut each = Vec::with_capacity(4);
+        let mut total = 0.0;
+        for &(j, w) in pairs {
+            if w > 0.0 {
+                let m = bind(j)
+                    .ok_or_else(|| format!("vertex {v} names joint {j}, which the skin lacks"))?;
+                if m.determinant() <= 0.0 {
+                    return Err(format!(
+                        "joint {j}'s bind pose mirrors or flattens the mesh"
+                    ));
+                }
+                each.push((m.apply(*p), w));
+                total += w;
+            }
+        }
+        if total <= 0.0 {
+            return Err(format!("vertex {v} has no bone weight"));
+        }
+        let q = each
+            .iter()
+            .fold(DVec3::ZERO, |acc, (x, w)| acc + *x * (*w / total));
+        for (x, _) in &each {
+            error = error.max((*x - q).length());
+        }
+        out.push(q);
+    }
+    Ok((out, error))
+}
+
+/// The inverse of a rigid motion: its rotation transposed.
+pub(crate) fn rigid_inverse(a: &Affine) -> Affine {
+    let r = Affine {
+        x: DVec3::new(a.x.x, a.y.x, a.z.x),
+        y: DVec3::new(a.x.y, a.y.y, a.z.y),
+        z: DVec3::new(a.x.z, a.y.z, a.z.z),
+        t: DVec3::ZERO,
+    };
+    Affine {
+        t: -r.rotate(a.t),
+        ..r
+    }
+}
+
+/// A rigid motion as a frame, and as its inverse matrix (column-major).
+pub(crate) fn rest_and_inverse(r: &Affine) -> (Frame, [f64; 16]) {
+    let i = rigid_inverse(r);
+    (
+        Frame {
+            origin: r.t,
+            x: r.x,
+            y: r.y,
+            z: r.z,
+        },
+        [
+            i.x.x, i.x.y, i.x.z, 0.0, i.y.x, i.y.y, i.y.z, 0.0, i.z.x, i.z.y, i.z.z, 0.0, i.t.x,
+            i.t.y, i.t.z, 1.0,
+        ],
+    )
 }
 
 /// Why a file could not be imported.
@@ -283,6 +443,10 @@ const SUPPORTED_EXTENSIONS: [&str; 6] = [
     "KHR_materials_unlit",
 ];
 
+/// A skin read, and the placed vertices and the scale taken out of its
+/// bones, if one was.
+pub(crate) type ReadSkin = (Skin, Option<(Vec<DVec3>, SkinScale)>);
+
 /// Per vertex, its `(joint, weight)` pairs as the file has them.
 type RawWeights = Vec<Vec<(u32, f64)>>;
 
@@ -303,8 +467,11 @@ struct Doc<'a> {
 /// first, with world rest frames and the file's inverse bind matrices,
 /// and `JOINTS_0`/`WEIGHTS_0` as weights (`docs/research.md` §11.4). The
 /// mesh is in its bind pose, at its node's origin (glTF does not use a
-/// skinned mesh's node transform). A bone that is scaled or sheared, or a
-/// skin that does not check (an unweighted vertex), is
+/// skinned mesh's node transform). Bones under one uniform scale (an
+/// armature scaled 0.01) have it taken out and the mesh is placed where
+/// the file's bind pose puts it; [`Imported::skin_scales`] records it. A
+/// bone scaled unevenly or sheared, bones scaled differently, or a skin
+/// that does not check (an unweighted vertex), is
 /// [`ImportError::Unsupported`]. Skipped and listed in
 /// [`Imported::skipped`]: points and lines, morph targets, and bone
 /// weights with no skin. A required extension the
@@ -642,7 +809,12 @@ impl Doc<'_> {
             let weighted = raw.iter().any(|r| r.iter().any(|p| p.1 > 0.0));
             match n.get("skin").index() {
                 Some(k) => {
-                    let skin = self.skin(k, &name, &raw)?;
+                    let (skin, scaled) = self.skin(k, &name, &raw, &part.solid.positions)?;
+                    if let Some((placed, info)) = scaled {
+                        // Where the file's bind pose puts the vertices.
+                        part.solid.positions = placed;
+                        out.skin_scales.push(info);
+                    }
                     // glTF: a skinned mesh's own node transform is not used;
                     // its bones place it.
                     if part.transform != Affine::IDENTITY {
@@ -690,12 +862,25 @@ impl Doc<'_> {
         m
     }
 
-    /// Skin `k` for a mesh whose vertices carry `raw` (joint, weight)
-    /// pairs: its joints as bones, parents first, with their world rest
-    /// frames and the file's inverse bind matrices, in kernel space; the
-    /// weights through `Weights::from_raw`. A bone node that is not rigid
-    /// (scaled or sheared), or a skin that does not check, is an error.
-    fn skin(&self, k: usize, name: &str, raw: &[Vec<(u32, f64)>]) -> Result<Skin, ImportError> {
+    /// Skin `k` for a mesh whose vertices (`positions`, kernel space) carry
+    /// `raw` (joint, weight) pairs: its joints as bones, parents first, with
+    /// their world rest frames and the file's inverse bind matrices, in
+    /// kernel space; the weights through `Weights::from_raw`.
+    ///
+    /// Bones rigid up to one uniform scale (a scaled armature) have it
+    /// taken out: the rest frames are the world transforms divided by it,
+    /// the inverse bind matrices their inverses, and the vertices are
+    /// returned where the file's bind pose puts them, with the scale and
+    /// how well the file's matrices agree. A scale that
+    /// is not uniform, differs between bones, or a skin that does not
+    /// check, is an error.
+    fn skin(
+        &self,
+        k: usize,
+        name: &str,
+        raw: &[Vec<(u32, f64)>],
+        positions: &[DVec3],
+    ) -> Result<ReadSkin, ImportError> {
         let skin = self.json.get("skins").at(k);
         let joints: Vec<usize> = skin
             .get("joints")
@@ -752,37 +937,50 @@ impl Doc<'_> {
         for (b, &ji) in order.iter().enumerate() {
             bone_of[ji] = b as u32;
         }
-        let mut used = BTreeMap::new();
-        let mut bones = Vec::with_capacity(joints.len());
-        for &ji in &order {
-            let node = joints[ji];
-            let n = self.json.get("nodes").at(node);
-            let bone = unique(
-                &n.get("name")
-                    .str()
-                    .map_or_else(|| format!("node{node}"), str::to_string),
-                &mut used,
-            );
-            let w = conjugate(&self.world(node, &parents), 1000.0);
-            let rigid = [w.x, w.y, w.z]
+        let names: Vec<String> = {
+            let mut used = BTreeMap::new();
+            order
                 .iter()
-                .all(|a| (a.length() - 1.0).abs() < 1e-9)
-                && w.x.dot(w.y).abs() < 1e-9
-                && w.y.dot(w.z).abs() < 1e-9
-                && w.x.dot(w.z).abs() < 1e-9
-                && w.determinant() > 0.0;
-            if !rigid {
-                return Err(ImportError::Unsupported(format!(
-                    "{name}: bone {bone:?} is scaled or sheared; a bone must be rigid"
-                )));
-            }
-            let rest = Frame {
-                origin: w.t,
-                x: w.x,
-                y: w.y,
-                z: w.z,
-            };
-            let inverse_bind = match &ibm {
+                .map(|&ji| {
+                    let node = joints[ji];
+                    unique(
+                        &self
+                            .json
+                            .get("nodes")
+                            .at(node)
+                            .get("name")
+                            .str()
+                            .map_or_else(|| format!("node{node}"), str::to_string),
+                        &mut used,
+                    )
+                })
+                .collect()
+        };
+        // Each joint's world transform (glTF space) as a uniform scale
+        // times a rigid motion; one scale for all, or none of this.
+        let mut worlds: Vec<(f64, Affine, f64)> = Vec::with_capacity(order.len());
+        for (b, &ji) in order.iter().enumerate() {
+            let w = self.world(joints[ji], &parents);
+            let sim = similarity(&w).ok_or_else(|| {
+                ImportError::Unsupported(format!(
+                    "{name}: bone {:?} is scaled unevenly or sheared (beyond {UNEVEN}); a bone must be rigid up to one uniform scale",
+                    names[b]
+                ))
+            })?;
+            worlds.push(sim);
+        }
+        let scale = worlds[0].0;
+        if let Some(b) = worlds
+            .iter()
+            .position(|(s, _, _)| (s - scale).abs() > UNEVEN * scale)
+        {
+            return Err(ImportError::Unsupported(format!(
+                "{name}: bones {:?} and {:?} are scaled differently ({} and {})",
+                names[0], names[b], scale, worlds[b].0
+            )));
+        }
+        let ibm_of = |ji: usize, bone: &str| -> Result<Affine, ImportError> {
+            Ok(match &ibm {
                 Some(m) => {
                     let m = &m[ji * 16..ji * 16 + 16];
                     if m[3] != 0.0 || m[7] != 0.0 || m[11] != 0.0 || m[15] != 1.0 {
@@ -790,31 +988,159 @@ impl Doc<'_> {
                             "{name}: bone {bone:?}'s inverse bind matrix is projective"
                         )));
                     }
-                    let a = conjugate(
-                        &Affine {
-                            x: DVec3::new(m[0], m[1], m[2]),
-                            y: DVec3::new(m[4], m[5], m[6]),
-                            z: DVec3::new(m[8], m[9], m[10]),
-                            t: DVec3::new(m[12], m[13], m[14]),
-                        },
-                        1000.0,
-                    );
-                    [
-                        a.x.x, a.x.y, a.x.z, 0.0, a.y.x, a.y.y, a.y.z, 0.0, a.z.x, a.z.y, a.z.z,
-                        0.0, a.t.x, a.t.y, a.t.z, 1.0,
-                    ]
+                    Affine {
+                        x: DVec3::new(m[0], m[1], m[2]),
+                        y: DVec3::new(m[4], m[5], m[6]),
+                        z: DVec3::new(m[8], m[9], m[10]),
+                        t: DVec3::new(m[12], m[13], m[14]),
+                    }
                 }
                 // No matrices: each is the identity (glTF).
-                None => [
-                    1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-                ],
-            };
-            bones.push(Bone {
-                name: bone,
-                parent: info[ji].1.map(|p| bone_of[p]),
-                rest,
-                inverse_bind,
-            });
+                None => Affine::IDENTITY,
+            })
+        };
+        // Rigid already (every axis of unit length, to 1e-9): kept as it is.
+        let rigid = order.iter().all(|&ji| {
+            let w = self.world(joints[ji], &parents);
+            [w.x, w.y, w.z]
+                .iter()
+                .all(|a| (a.length() - 1.0).abs() < 1e-9)
+        });
+        let mut bones = Vec::with_capacity(joints.len());
+        let mut scaled = None;
+        if rigid {
+            // Rest frames are the world transforms; the file's inverse bind
+            // matrices are kept as given.
+            for (b, &ji) in order.iter().enumerate() {
+                let w = conjugate(&self.world(joints[ji], &parents), 1000.0);
+                let a = conjugate(&ibm_of(ji, &names[b])?, 1000.0);
+                bones.push(Bone {
+                    name: names[b].clone(),
+                    parent: info[ji].1.map(|p| bone_of[p]),
+                    rest: Frame {
+                        origin: w.t,
+                        x: w.x,
+                        y: w.y,
+                        z: w.z,
+                    },
+                    inverse_bind: [
+                        a.x.x, a.x.y, a.x.z, 0.0, a.y.x, a.y.y, a.y.z, 0.0, a.z.x, a.z.y, a.z.z,
+                        0.0, a.t.x, a.t.y, a.t.z, 1.0,
+                    ],
+                });
+            }
+        } else {
+            // The scale comes out of the bones. The bind pose is the file's
+            // inverse bind matrices: with `bind` = `world · inverse bind` of
+            // the bone that weights the most vertices (where the file puts
+            // the mesh), each bone's rest is `bind · inverse bind⁻¹`, the
+            // uniform scale divided out, and its new inverse bind matrix is
+            // that rest frame's inverse; the vertices go to `bind · v`.
+            let ibms: Vec<Affine> = order
+                .iter()
+                .enumerate()
+                .map(|(b, &ji)| ibm_of(ji, &names[b]))
+                .collect::<Result<_, _>>()?;
+            let nodes: Vec<Affine> = order
+                .iter()
+                .map(|&ji| self.world(joints[ji], &parents))
+                .collect();
+            let mut uses = vec![0usize; order.len()];
+            for pairs in raw {
+                for &(j, w) in pairs {
+                    if let Some(&b) = bone_of.get(j as usize).filter(|_| w > 0.0) {
+                        uses[b as usize] += 1;
+                    }
+                }
+            }
+            let main = (0..order.len())
+                .max_by(|&a, &b| uses[a].cmp(&uses[b]).then(b.cmp(&a)))
+                .unwrap_or(0);
+            let bind = nodes[main].then(&ibms[main]);
+            if bind.determinant() <= 0.0 {
+                return Err(ImportError::Unsupported(format!(
+                    "{name}: its bind pose mirrors or flattens the mesh"
+                )));
+            }
+            let mut uneven: f64 = 0.0;
+            let mut rests = Vec::with_capacity(order.len());
+            for (b, ibm) in ibms.iter().enumerate() {
+                let inv = affine_inverse(ibm).ok_or_else(|| {
+                    ImportError::Unsupported(format!(
+                        "{name}: bone {:?}'s inverse bind matrix is singular",
+                        names[b]
+                    ))
+                })?;
+                let (sb, rigid, u) = similarity(&bind.then(&inv)).ok_or_else(|| {
+                    ImportError::Unsupported(format!(
+                        "{name}: bone {:?} is scaled unevenly or sheared at bind time (beyond {UNEVEN}); a bone must be rigid up to one uniform scale",
+                        names[b]
+                    ))
+                })?;
+                if (sb - scale).abs() > UNEVEN * scale {
+                    return Err(ImportError::Unsupported(format!(
+                        "{name}: bone {:?} is scaled {sb} at bind time, the others {scale}",
+                        names[b]
+                    )));
+                }
+                uneven = uneven.max(u);
+                rests.push(conjugate(&rigid, 1000.0));
+            }
+            let kbind = conjugate(&bind, 1000.0);
+            let placed: Vec<DVec3> = positions.iter().map(|p| kbind.apply(*p)).collect();
+            // How far the file's own nodes stand from that bind pose, at the
+            // vertices each bone weights: 0 to rounding when the file is
+            // saved at its bind pose; more where it is saved posed.
+            let mut offset: f64 = 0.0;
+            let at_nodes: Vec<Affine> = (0..order.len())
+                .map(|b| conjugate(&nodes[b].then(&ibms[b]), 1000.0))
+                .collect();
+            for (p, pairs) in positions.iter().zip(raw) {
+                let q = kbind.apply(*p);
+                for &(j, w) in pairs {
+                    if let Some(&b) = bone_of.get(j as usize).filter(|_| w > 0.0) {
+                        offset = offset.max((at_nodes[b as usize].apply(*p) - q).length());
+                    }
+                }
+            }
+            // The recomputed inverse bind matrices against the file's, the
+            // scale factored out: `rest · S(scale) · file's` should be `bind`.
+            let mut error: f64 = 0.0;
+            for (p, pairs) in positions.iter().zip(raw) {
+                let q = kbind.apply(*p);
+                for &(j, w) in pairs {
+                    if let Some(&b) = bone_of.get(j as usize).filter(|_| w > 0.0) {
+                        let b = b as usize;
+                        let scaled_rest = Affine {
+                            x: rests[b].x * scale,
+                            y: rests[b].y * scale,
+                            z: rests[b].z * scale,
+                            t: rests[b].t,
+                        };
+                        let file = scaled_rest.then(&conjugate(&ibms[b], 1000.0));
+                        error = error.max((file.apply(*p) - q).length());
+                    }
+                }
+            }
+            for (b, &ji) in order.iter().enumerate() {
+                let (rest, inverse_bind) = rest_and_inverse(&rests[b]);
+                bones.push(Bone {
+                    name: names[b].clone(),
+                    parent: info[ji].1.map(|p| bone_of[p]),
+                    rest,
+                    inverse_bind,
+                });
+            }
+            scaled = Some((
+                placed,
+                SkinScale {
+                    part: name.to_string(),
+                    scale,
+                    bind_error: error,
+                    uneven,
+                    node_offset: offset,
+                },
+            ));
         }
         let mut weights = Vec::with_capacity(raw.len());
         for pairs in raw {
@@ -834,7 +1160,7 @@ impl Doc<'_> {
         let skin = Skin { bones, weights };
         skin.check(raw.len())
             .map_err(|e| ImportError::Unsupported(format!("{name}: its skin: {e}")))?;
-        Ok(skin)
+        Ok((skin, scaled))
     }
 
     fn part(

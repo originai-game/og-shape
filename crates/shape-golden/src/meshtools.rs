@@ -38,6 +38,10 @@ pub fn cases() -> Vec<Case> {
             run: import_skinned_case,
         },
         Case {
+            name: "meshtools.import.skinned.scaled",
+            run: import_skinned_scaled_case,
+        },
+        Case {
             name: "meshtools.repair",
             run: repair_case,
         },
@@ -207,6 +211,25 @@ fn import_skinned_case(h: &mut OutputHash) -> Result<(), HashError> {
         for p in &imported.parts {
             hash_part(h, p)?;
             h.str(&measure(&p.solid, &Measure::default()).to_json());
+        }
+    }
+    Ok(())
+}
+
+/// Skinned GLBs under an armature scaled 0.01, saved at the bind pose and
+/// posed: the scale taken out of the bones, the vertices where the bind
+/// pose puts them, and the report.
+fn import_skinned_scaled_case(h: &mut OutputHash) -> Result<(), HashError> {
+    let q = core::f32::consts::FRAC_1_SQRT_2;
+    for turn in [None, Some([0.0, 0.0, q, q])] {
+        let bytes = skinned_support::skinned_glb_posed(true, Some([0.01; 3]), turn);
+        let imported = import(&bytes, &Import::default(), &no_files).map_err(fail)?;
+        for p in &imported.parts {
+            hash_part(h, p)?;
+        }
+        for s in &imported.skin_scales {
+            h.str(&s.part);
+            h.f64s(&[s.scale, s.bind_error, s.uneven, s.node_offset])?;
         }
     }
     Ok(())

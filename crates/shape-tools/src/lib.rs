@@ -59,8 +59,8 @@ pub use export::{ExportError, Joint, JointKind, Material, Mimic, Part, Scene, gl
 pub use fbx::import_fbx;
 pub use image::ImageInfo;
 pub use import::{
-    Affine, Import, ImportError, Imported, ImportedPart, Resolve, import, import_gltf, import_obj,
-    no_files,
+    Affine, Import, ImportError, Imported, ImportedPart, Resolve, SkinScale, UNEVEN, import,
+    import_gltf, import_obj, no_files,
 };
 pub use measure::{Measure, MeshMeasures, Piece, TextureMeasures, UvMeasures, measure};
 pub use meshglb::{PlainGlb, PlainGlbError, glb_plain};

@@ -15,6 +15,10 @@ shape-gen = { path = "../../crates/shape-gen" }
 shape-mesh = { path = "../../crates/shape-mesh" }
 shape-bool = { path = "../../crates/shape-bool" }
 shape-tools = { path = "../../crates/shape-tools" }
+shape-skin = { path = "../../crates/shape-skin" }
+# An independent glTF reader, to pose files by their own matrices.
+gltf = { version = "1.4.1", default-features = false, features = ["utils", "names"] }
+libm = "0.2"
 glam = { version = "0.34", default-features = false, features = ["std", "f64", "i64", "u32", "libm", "scalar-math"] }
 
 [profile.release]

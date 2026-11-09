@@ -25,7 +25,8 @@ use shape_mesh::{Bone, Skin, Solid, Weights};
 
 use crate::image::ImageInfo;
 use crate::import::{
-    Affine, ImportError, Imported, ImportedPart, Resolve, fetch, fmt_err, from_y_up, unique,
+    Affine, ImportError, Imported, ImportedPart, Resolve, SkinScale, fetch, fmt_err, from_y_up,
+    place, rest_and_inverse, similarity, unique,
 };
 use crate::polygon::triangulate;
 
@@ -684,7 +685,11 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
     // A geometry's skin: its Skin deformer's clusters, each a bone, with
     // the bind matrices the clusters carry (`Transform`: the mesh at bind
     // time; `TransformLink`: the bone), in the mesh's own coordinates.
-    let skin_of = |g: &Node, name: &str, vertices: usize| -> Result<Option<Skin>, ImportError> {
+    let skin_of = |g: &Node,
+                   name: &str,
+                   positions: &[DVec3]|
+     -> Result<Option<FbxSkin>, ImportError> {
+        let vertices = positions.len();
         let Some(gid) = g.props.first().and_then(Prop::int) else {
             return Ok(None);
         };
@@ -774,36 +779,109 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
             bone_of[k] = b as u32;
         }
         let mut used = BTreeMap::new();
-        let mut bones = Vec::with_capacity(clusters.len());
+        let mut names = Vec::with_capacity(order.len());
+        let mut binds = Vec::with_capacity(order.len());
         for &k in &order {
             let (_, bname, cluster) = &clusters[k];
-            let bname = unique(bname, &mut used);
-            let (mesh_bind, bone_bind) = (
+            names.push(unique(bname, &mut used));
+            binds.push((
                 matrix(cluster, "Transform")?,
                 matrix(cluster, "TransformLink")?,
-            );
-            if !rigid(&mesh_bind) || !rigid(&bone_bind) {
+            ));
+        }
+        let mut bones = Vec::with_capacity(clusters.len());
+        let mut scaled = None;
+        if binds.iter().all(|(m, b)| rigid(m) && rigid(b)) {
+            for (i, &k) in order.iter().enumerate() {
+                let (mesh_bind, bone_bind) = &binds[i];
+                // The bone at rest in the mesh's coordinates, and its inverse.
+                let rest = inverse(mesh_bind).then(bone_bind);
+                let ibm = inverse(&rest);
+                bones.push(Bone {
+                    name: names[i].clone(),
+                    parent: info[k].1.map(|p| bone_of[p]),
+                    rest: Frame {
+                        origin: rest.t,
+                        x: rest.x,
+                        y: rest.y,
+                        z: rest.z,
+                    },
+                    inverse_bind: [
+                        ibm.x.x, ibm.x.y, ibm.x.z, 0.0, ibm.y.x, ibm.y.y, ibm.y.z, 0.0, ibm.z.x,
+                        ibm.z.y, ibm.z.z, 0.0, ibm.t.x, ibm.t.y, ibm.t.z, 1.0,
+                    ],
+                });
+            }
+        } else {
+            // A uniform scale on the bones comes out: the rest frames are the
+            // bones' bind transforms divided by it, and the vertices go where
+            // the mesh's bind transform puts them, in the world.
+            let mut scale = None;
+            for (i, (mesh_bind, bone_bind)) in binds.iter().enumerate() {
+                let (sb, _, _) = similarity(bone_bind).ok_or_else(|| {
+                    unsupported(format!(
+                        "bone {:?} is scaled unevenly or sheared at bind time",
+                        names[i]
+                    ))
+                })?;
+                if similarity(mesh_bind).is_none() {
+                    return Err(unsupported(
+                        "the mesh is scaled unevenly or sheared at bind time".into(),
+                    ));
+                }
+                let s0 = *scale.get_or_insert(sb);
+                if (sb - s0).abs() > crate::import::UNEVEN * s0 {
+                    return Err(unsupported(format!(
+                        "bones {:?} and {:?} are scaled differently ({s0} and {sb})",
+                        names[0], names[i]
+                    )));
+                }
+            }
+            // Each vertex goes where its clusters' mesh bind transforms put
+            // it, blended by weight; how far they disagree is the error.
+            let mut raw: Vec<Vec<(u32, f64)>> = vec![Vec::new(); vertices];
+            for (i, &k) in order.iter().enumerate() {
+                let c = clusters[k].2;
+                let idx = c.array("Indexes").unwrap_or(&[]);
+                let w = c.array("Weights").unwrap_or(&[]);
+                for (&v, &x) in idx.iter().zip(w) {
+                    if let Some(r) = raw.get_mut(v as usize) {
+                        r.push((i as u32, x));
+                    }
+                }
+            }
+            let (placed, error) = place(positions, &raw, &|b| binds.get(b as usize).map(|m| m.0))
+                .map_err(unsupported)?;
+            let size = placed
+                .iter()
+                .fold(0.0f64, |m, q| m.max(q.abs().max_element()));
+            if error > 1e-4 * size.max(1.0) {
                 return Err(unsupported(format!(
-                    "bone {bname:?} or the mesh is scaled or sheared at bind time; a bone must be rigid"
+                    "its clusters place a vertex differently at bind time, by {error} mm"
                 )));
             }
-            // The bone at rest in the mesh's coordinates, and its inverse.
-            let rest = inverse(&mesh_bind).then(&bone_bind);
-            let ibm = inverse(&rest);
-            bones.push(Bone {
-                name: bname,
-                parent: info[k].1.map(|p| bone_of[p]),
-                rest: Frame {
-                    origin: rest.t,
-                    x: rest.x,
-                    y: rest.y,
-                    z: rest.z,
+            let mut uneven: f64 = 0.0;
+            for (i, &k) in order.iter().enumerate() {
+                let (_, rigid_link, u) = similarity(&binds[i].1).unwrap_or((1.0, binds[i].1, 0.0));
+                uneven = uneven.max(u);
+                let (rest, inverse_bind) = rest_and_inverse(&rigid_link);
+                bones.push(Bone {
+                    name: names[i].clone(),
+                    parent: info[k].1.map(|p| bone_of[p]),
+                    rest,
+                    inverse_bind,
+                });
+            }
+            scaled = Some((
+                placed,
+                SkinScale {
+                    part: name.to_string(),
+                    scale: scale.unwrap_or(1.0),
+                    bind_error: error,
+                    uneven,
+                    node_offset: 0.0,
                 },
-                inverse_bind: [
-                    ibm.x.x, ibm.x.y, ibm.x.z, 0.0, ibm.y.x, ibm.y.y, ibm.y.z, 0.0, ibm.z.x,
-                    ibm.z.y, ibm.z.z, 0.0, ibm.t.x, ibm.t.y, ibm.t.z, 1.0,
-                ],
-            });
+            ));
         }
         let mut raw: Vec<Vec<(u32, f64)>> = vec![Vec::new(); vertices];
         for (k, (_, _, cluster)) in clusters.iter().enumerate() {
@@ -825,7 +903,7 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
         };
         skin.check(vertices)
             .map_err(|e| unsupported(e.to_string()))?;
-        Ok(Some(skin))
+        Ok(Some((skin, scaled)))
     };
     // World transform of a model, by its parents.
     let world = |id: i64| -> Affine {
@@ -874,7 +952,15 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
         let geo = geometric(o);
         for g in geometries {
             let (mut solid, uvs, polys) = mesh(g, &name, &geo, unit, &to_kernel, p_det < 0.0)?;
-            solid.skin = skin_of(g, &name, solid.positions.len())?;
+            let read = skin_of(g, &name, &solid.positions)?;
+            if let Some((skin, scaled)) = read {
+                if let Some((placed, info)) = scaled {
+                    // Where the file's bind pose puts the vertices.
+                    solid.positions = placed;
+                    out.skin_scales.push(info);
+                }
+                solid.skin = Some(skin);
+            }
             let mut transform = conj(&world(id));
             if solid.skin.is_some() {
                 // The bones place a skinned mesh; its vertices and bones
@@ -954,6 +1040,8 @@ fn back(p: &impl Fn(DVec3) -> DVec3, v: DVec3) -> DVec3 {
 }
 
 type Mesh = (Solid, Option<Vec<[DVec2; 3]>>, usize);
+
+use crate::import::ReadSkin as FbxSkin;
 
 fn mesh(
     g: &Node,

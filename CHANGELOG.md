@@ -256,3 +256,15 @@
   - Golden cases `meshtools.*` added; no existing hash moved. The
     acceptance chain is `bench/meshtools` (`--glb` runs other tools'
     files); `guides/meshtools.md` says what the measures mean.
+- Skinned imports under a uniformly scaled armature (Mixamo's 0.01) are
+  accepted: the scale is taken out of the bones, their rest frames come
+  from the file's bind pose (its inverse bind matrices) with the scale
+  divided out, the inverse bind matrices are recomputed from them, and
+  the vertices stay where the bind pose puts them in the world. glTF and
+  FBX. `Imported::skin_scales` (`SkinScale`) reports the scale, how well
+  the file's inverse bind matrices agree, the rounding taken as uniform
+  (`UNEVEN` = 1e-4) and how far the file's nodes stand from the bind
+  pose. An uneven or sheared scale is still refused. Golden case
+  `meshtools.import.skinned.scaled`; `bench/meshtools` gains
+  `skin-check`, which poses imported skins against the files' own
+  matrices.

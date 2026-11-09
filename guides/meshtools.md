@@ -18,7 +18,8 @@ import → join → repair → decimate → unwrap → measure → preview → e
    read whole, in its bind pose (`measure` says `skinned` and lists the
    bones). Repair, join, decimate and `glb_plain` refuse it rather than
    break the skin; `glb` writes it back, and unwrap, measure and preview
-   take it. A skeleton under a scaled armature is refused at import.
+   take it. A skeleton under a uniformly scaled armature (centimetres)
+   has the scale taken out; the import report (`skin_scales`) says so.
 2. **Join** the parts into one solid (`join`). Each part's faces keep its
    name, so a part can still be found after joining.
 3. **Repair** (`repair`). Settings that worked on the acceptance meshes

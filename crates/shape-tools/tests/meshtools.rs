@@ -419,3 +419,120 @@ fn a_skinned_glb_is_read_whole_and_never_broken_silently() {
             .any(|x| x.contains("bone weights with no skin"))
     );
 }
+
+#[test]
+fn a_uniform_armature_scale_comes_out_of_the_bones() {
+    use shape_skin::{Pose, Turn, pose};
+    use shape_tools::SkinScale;
+    let plain = import(&skinned::skinned_glb(true), &Import::default(), &no_files).unwrap();
+    let cm = skinned::skinned_glb_under(true, Some([0.01; 3]));
+    let scaled = import(&cm, &Import::default(), &no_files).unwrap();
+    // The scale is reported, with how well the file's matrices agree.
+    let [
+        SkinScale {
+            part,
+            scale,
+            bind_error,
+            uneven,
+            node_offset,
+        },
+    ] = scaled.skin_scales.as_slice()
+    else {
+        panic!("{:?}", scaled.skin_scales)
+    };
+    assert_eq!(part, "legs");
+    assert!((scale - 0.01).abs() < 1e-9, "{scale}");
+    assert!(*bind_error < 1e-6, "{bind_error}");
+    assert!(*uneven < 1e-12, "{uneven}");
+    // Saved at its bind pose: the nodes stand where the matrices say.
+    assert!(*node_offset < 1e-6, "{node_offset}");
+    // The same mesh and skeleton as the file without the armature, to
+    // f32: the bind pose lands where it did.
+    let (a, b) = (&plain.parts[0].solid, &scaled.parts[0].solid);
+    let (ka, kb) = (a.skin.as_ref().unwrap(), b.skin.as_ref().unwrap());
+    for (p, q) in a.positions.iter().zip(&b.positions) {
+        assert!((*p - *q).length() < 1e-4, "{p:?} {q:?}");
+    }
+    assert_eq!(ka.weights, kb.weights);
+    for (x, y) in ka.bones.iter().zip(&kb.bones) {
+        assert_eq!((&x.name, x.parent), (&y.name, y.parent));
+        assert!((x.rest.origin - y.rest.origin).length() < 1e-4);
+        assert!((x.rest.x - y.rest.x).length() < 1e-9);
+        for k in 0..16 {
+            assert!((x.inverse_bind[k] - y.inverse_bind[k]).abs() < 1e-4, "{k}");
+        }
+    }
+    // Posing the knee 0.7 rad about its own glTF z gives what the file's
+    // own matrices give: S · T(knee) · R · T(knee)⁻¹ on the knee's
+    // vertices (cm), the hip's still, then metres to kernel space.
+    let (sn, cs) = shape_core::trig::sin_cos(0.7);
+    let file_posed: Vec<DVec3> = [(0.0, 0.0), (10.0, 0.0), (10.0, 50.0), (0.0, 50.0)]
+        .iter()
+        .map(|&(x, y): &(f64, f64)| {
+            let (x, y) = if y > 25.0 {
+                let (dx, dy) = (x, y - 25.0);
+                (dx * cs - dy * sn, dx * sn + dy * cs + 25.0)
+            } else {
+                (x, y)
+            };
+            // glTF (x, y, z) cm under the 0.01 armature → kernel mm.
+            DVec3::new(x * 10.0, 0.0, y * 10.0)
+        })
+        .collect();
+    let posed = pose(
+        b,
+        &Pose {
+            turns: vec![Turn {
+                bone: "knee".into(),
+                // glTF's +Z is kernel −Y.
+                axis: DVec3::new(0.0, -1.0, 0.0),
+                angle: 0.7,
+            }],
+        },
+    )
+    .unwrap();
+    for (p, q) in posed.positions.iter().zip(&file_posed) {
+        assert!((*p - *q).length() < 1e-3, "{p:?} {q:?}");
+    }
+    // Round trip: glb writes rigid bones; reading them back gives the same
+    // skeleton and weights, and no scale to take out.
+    let scene = Scene {
+        name: "rig".into(),
+        parts: vec![Part::new("legs", b)],
+    };
+    let back = import(&glb(&scene).unwrap(), &Import::default(), &no_files).unwrap();
+    assert!(back.skin_scales.is_empty());
+    let kc = back.parts[0].solid.skin.as_ref().unwrap();
+    for (x, y) in kb.bones.iter().zip(&kc.bones) {
+        assert_eq!((&x.name, x.parent), (&y.name, y.parent));
+        assert!((x.rest.origin - y.rest.origin).length() < 1e-3);
+    }
+    for (p, w) in back.parts[0].solid.positions.iter().zip(&kc.weights) {
+        let i = b
+            .positions
+            .iter()
+            .position(|q| (*q - *p).length() < 1e-3)
+            .expect("same vertex");
+        assert_eq!(w.bones, kb.weights[i].bones);
+    }
+    // Saved posed (the knee node turned 90° about z): the bind pose comes
+    // from the inverse bind matrices, so the mesh and bones are as before,
+    // and how far the nodes stood from it is reported.
+    let q = std::f32::consts::FRAC_1_SQRT_2;
+    let posed_file = skinned::skinned_glb_posed(true, Some([0.01; 3]), Some([0.0, 0.0, q, q]));
+    let posed_import = import(&posed_file, &Import::default(), &no_files).unwrap();
+    let pb = &posed_import.parts[0].solid;
+    for (p, q) in b.positions.iter().zip(&pb.positions) {
+        assert!((*p - *q).length() < 1e-6, "{p:?} {q:?}");
+    }
+    let kp = pb.skin.as_ref().unwrap();
+    assert!((kp.bones[1].rest.x - kb.bones[1].rest.x).length() < 1e-9);
+    // The knee's far vertex, (10, 25) cm from the knee, turned 90° to
+    // (−25, 10): √(35² + 15²) cm off.
+    let off = posed_import.skin_scales[0].node_offset;
+    assert!((off - 380.788_655).abs() < 1e-3, "{off}");
+    // An uneven scale is still refused, with an error value.
+    let lopsided = skinned::skinned_glb_under(true, Some([0.01, 0.02, 0.01]));
+    let err = import(&lopsided, &Import::default(), &no_files).unwrap_err();
+    assert!(err.to_string().contains("unevenly"), "{err}");
+}
