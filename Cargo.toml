@@ -27,6 +27,7 @@ shape-bool = { path = "crates/shape-bool" }
 shape-mesh = { path = "crates/shape-mesh" }
 shape-edit = { path = "crates/shape-edit" }
 shape-tools = { path = "crates/shape-tools" }
+shape-bevel = { path = "crates/shape-bevel" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

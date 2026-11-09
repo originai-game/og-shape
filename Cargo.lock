@@ -337,6 +337,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "shape-bevel"
+version = "0.0.0"
+dependencies = [
+ "shape-2d",
+ "shape-core",
+ "shape-edit",
+ "shape-gen",
+ "shape-mesh",
+]
+
+[[package]]
 name = "shape-bool"
 version = "0.0.0"
 dependencies = [
@@ -384,6 +395,7 @@ name = "shape-golden"
 version = "0.0.0"
 dependencies = [
  "shape-2d",
+ "shape-bevel",
  "shape-bool",
  "shape-core",
  "shape-edit",

@@ -131,7 +131,7 @@ drop Blender from the asset image.
 |---|---|
 | Research | Done (2026-11-09): `docs/research.md` |
 | 0 | Done (2026-11-09): gate on four targets; booleans: og-geom's CSG (`docs/research.md` §5) |
-| 1 | In progress: `shape-mesh`, `shape-2d` (with gear and text), extrude, revolve, primitives, sweep, loft, helix, thread. Left: body, wire, knurl (needs phase 2 booleans), the ten sand3d gallery rebuilds and their previews (stream B, `claude/preview-export`) |
+| 1 | Done (2026-11-09): ten sand3d programs rebuilt and previewed (`docs/previews/phase1/`). Gaps found (loft sections with holes, +y revolve axis, no placement layer, body, wire, knurl) in `docs/research.md` §6.4 |
 | 2 | Done (2026-11-09): named `boolean`, operand validation, broad phase, `fuse`, the CSG rounding fixes; split, hole (counterbore, countersink), pocket, seat, shell, dent, merge in `shape-edit`; sand3d's edit cases rebuilt as tests, shell walls exact. A single surface folded through itself is refused; repairing it is phase 5's |
-| 3 | In progress: stream C, `claude/bevel` |
-| 4 | In progress: export and preview, stream B, `claude/preview-export` |
+| 3 | Done (2026-11-09): `shape-bevel` fillet, chamfer, soften; sand3d's bracket, washer and enclosure corners closed with all-quad patches. Left: UVs (Solid has none yet), arc and patch mitres, pipe joints, loop slide (`docs/research.md` §7) |
+| 4 | In progress: export (GLB, OBJ, STL) and CPU preview done. Left: parts, groups, assemblies, joints, materials API, shape-cli, wasm build and TypeScript binding, the washing-machine acceptance |

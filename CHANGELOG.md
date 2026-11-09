@@ -106,3 +106,13 @@
   `docs/examples/gate.py`) rebuilt with existing generators, exported and
   previewed; previews in `docs/previews/phase1/`, gaps in
   `docs/research.md` §6.4.
+- `shape-bevel` (phase 3): `fillet`, `chamfer` (`distance2` or `angle`) and
+  `soften` on named edges, clean-room from Blender's published Bevel
+  design (`docs/research.md` §7). Superellipse profiles, segments from the
+  chord rule, mitred two-edge corners, octant patches at three-edge
+  corners, the ADJ pattern by boundary-constrained Catmull-Clark above
+  three; planar and curved neighbours (cylinder rims, hole rims). New
+  faces are named `fillet` or `chamfer`; their sharp edges take the kind
+  and the cap names they touch. An offset larger than the faces allow is
+  `BevelError::TooLarge`, never a clipped result. `quad_pairs` measures
+  how much of a patch is quads. Golden cases `bevel.*` added.
