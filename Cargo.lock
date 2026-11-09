@@ -375,6 +375,8 @@ dependencies = [
 name = "shape-cli"
 version = "0.0.0"
 dependencies = [
+ "serde_json",
+ "shape-mesh",
  "shape-model",
  "shape-tools",
 ]
@@ -418,12 +420,23 @@ dependencies = [
  "shape-2d",
  "shape-bevel",
  "shape-bool",
+ "shape-cli",
  "shape-core",
  "shape-edit",
  "shape-gen",
  "shape-mesh",
  "shape-model",
  "shape-skin",
+ "shape-tools",
+]
+
+[[package]]
+name = "shape-mcp"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "shape-cli",
+ "shape-model",
  "shape-tools",
 ]
 

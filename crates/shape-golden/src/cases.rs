@@ -38,6 +38,7 @@ pub fn all() -> Vec<Case> {
     cases.extend(crate::tools::cases());
     cases.extend(crate::bevel::cases());
     cases.extend(crate::gen2::cases());
+    cases.extend(crate::mcp::cases());
     cases.extend(crate::model::cases());
     cases.extend(crate::meshtools::cases());
     cases.extend(crate::skin::cases());

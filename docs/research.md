@@ -1551,3 +1551,148 @@ Previews: `docs/previews/phase5b/rest.png`, `bend.png`, `wave.png`.
   weights, as the GLB export already does through `split`.
 - Every stream D tool that does not carry skins yet must refuse a skinned
   input with an error value, as the booleans do.
+
+## 12. The CLI's mesh tools and the MCP server (stream H, 2026-11-09)
+
+Stream H makes the kernel usable by any agent now, before the merge: the
+`shape` CLI gains the mesh tools, and a new crate, `shape-mcp`, serves
+the same commands over MCP.
+
+### 12.1 Decisions
+
+- **One library, two front ends.** `shape-cli`'s commands became the
+  `shape_cli` library, one module per subcommand (`build`, `measure`,
+  `preview`, `export`, `import`, `repair`, `decimate`, `unwrap`,
+  `process`), each a desc struct with a zero value and a function that
+  returns a JSON report or a `Failure` value. The `shape` binary parses
+  arguments into those descs; `shape-mcp` parses tool arguments into the
+  same descs. File access goes through a `Files` trait: plain files for the
+  CLI, the confined workspace for the server, memory for the golden case.
+  So the server cannot drift from the CLI, and every result it returns is
+  the kernel's.
+- **Inputs by extension.** `.glb`, `.gltf`, `.obj` and `.fbx` are meshes
+  (`shape_tools::import`; glTF buffers and images and OBJ material
+  libraries are read beside the file, through the same `Files`, so the
+  server confines them too); anything else is a program. `measure`,
+  `preview` and `export` take either. A mesh's parts are placed by their
+  transforms (a skinned part stays in its bind pose); `repair`,
+  `decimate` and `process` join them first (`shape_tools::join`, which
+  refuses a skin), and `unwrap` takes a single skinned part as it is.
+- **Outputs.** The mesh tools write one solid: GLB as `glb_plain` (one
+  node, one mesh, UVs when unwrapped), or OBJ or STL. Face names do not
+  survive a file: a plain GLB has none, and re-import names faces by part.
+  `export` and `import -o` write a mesh file's parts placed through `glb`,
+  which keeps skins. `decimate --lods N` writes `<stem>.lod1.<ext>` ….
+- **Reports.** Keys in a fixed order; numbers printed by serde_json
+  (shortest round trip). A kernel report (`MeshMeasures::to_json`) is
+  embedded as the kernel wrote it, never parsed and printed again. The
+  mesh reports use `shape-tools`' snake_case; program measures keep
+  `shape_model::program`'s camelCase, as before.
+- **`process`** is the guide's chain on one file: import → join → repair
+  → decimate to `budget` (skipped at or under it) → unwrap → measure
+  (with the UVs and the file's images) → export. Repair and unwrap take
+  their zero values unless set; the settings that worked on the
+  acceptance meshes stay in `guides/meshtools.md`, not in the tool.
+- **The protocol layer is written here, not an SDK.** The official Rust
+  SDK, `rmcp` 3.9.0 (2026-11-05, Apache-2.0, MSRV 1.88), is permissive
+  and pure Rust, but it is built on tokio and brings `tokio-util`,
+  `futures`, `chrono`, `tracing`, `thiserror`, `pin-project-lite` and
+  `indexmap` (and `schemars` for its macros): an async runtime for a
+  loop that reads one line, answers it and reads the next. What MCP's
+  stdio transport needs is that loop, JSON-RPC 2.0 framing and seven
+  methods (`initialize`, `ping`, `tools/list`, `tools/call`,
+  `resources/list`, `resources/read`, `resources/templates/list`); it is
+  about 200 lines over serde_json, which the kernel already uses. Versions
+  2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05 are answered as asked;
+  any other gets the newest. Notifications are taken and not answered. A
+  tool that fails answers `isError: true` with the kernel's message (an
+  argument not in the schema, or of the wrong type, too); an unknown tool
+  or method is a JSON-RPC error.
+- **Tools** (`crates/shape-mcp/src/tools.rs`, each with a JSON schema,
+  `additionalProperties: false`): `build`, `preview` (PNG as MCP image
+  content, base64, plus its size as text; `out` saves it too), `measure`,
+  `export`, `import`, `repair`, `decimate`, `unwrap`, `process` and
+  `run_typescript`. Argument names are the kernel descs' fields in
+  snake_case.
+- **TypeScript: capture the recorded program, replay it natively.** The
+  author's module default-exports `(og) => Shape`. The server writes an
+  embedded runner (`crates/shape-mcp/ts/run.ts`) to a scratch directory
+  and runs `bun run.ts <binding index.ts> <program.ts> <out.json>` in the
+  workspace root; the runner loads the binding, calls the function and
+  writes `shape.program()`. The server replays that program with
+  `shape_model::program::run` and reports from the native kernel. Why
+  this capture:
+  - the program is the asset (`docs/design.md` §1), and the recorded
+    program already replays to the same bytes (§8.2), so nothing new is
+    trusted;
+  - every number, image and file the server returns then comes from one
+    place, the native kernel, as for the JSON tools; bun's process only
+    decides which operations run;
+  - a file, not stdout: the program's own `console.log` stays free, and
+    comes back as `logs`.
+  Rejected: reading GLB, PNG or measures from bun (a second path to the
+  outputs, through wasm32 in JavaScriptCore, deterministic by the gate
+  but not the server's own), and parsing stdout (collides with the
+  program's logs). The program's JSON is returned and can be saved
+  (`program_out`) for `build`, `preview` and `export`. bun missing, the
+  binding not built, a timeout (`--ts-timeout`, 120 s by default), a
+  program that throws or returns no Shape: each is an error value that
+  says which. bun's failure output leads with its `error:` lines.
+- **Safety.** `--root` is canonicalized at start. A path is resolved by
+  canonicalizing its longest existing prefix (following links) and
+  appending the rest; it must lie under the root, the rest may hold no
+  `..`, and a dangling link is refused, so no write goes through one.
+  Files read and inline programs are capped by `--max-bytes` (64 MiB);
+  a request line over the cap plus 1 MiB is skipped and answered with an
+  error. A TypeScript program is code: it runs with the server's
+  permissions and is not confined (said in the tool's description and
+  `guides/mcp.md`); `--no-typescript` turns the tool off.
+- **Resources** are the guides, compiled in: `guides/program.md` (new:
+  the program JSON, ids, frames, names, profiles and every operation),
+  `guides/typescript.md` (new: the binding's API, about 1 300 tokens) and
+  `guides/meshtools.md`. Both new guides' examples are built by the tests.
+- **Golden.** `mcp.process.ball_defects` runs `shape_cli`'s `process` on
+  the committed mesh from memory and hashes its report and GLB; native
+  x86-64 and wasm32-wasip1 under wasmtime agree. No existing hash moved.
+
+### 12.2 Dependencies
+
+No new crate in the tree. `shape-cli` adds `serde_json` and `shape-mesh`
+(both already in the workspace); `shape-mcp` depends on `shape-cli`,
+`shape-tools` and `serde_json` (MIT OR Apache-2.0), with `shape-model` for
+its tests; `shape-golden` adds `shape-cli`. `cargo deny check licenses
+bans sources` passes. Tools, not dependencies: bun 1.4.4 (MIT) for
+`run_typescript` and the binding step, wasm-bindgen-cli 0.2.130 (MIT OR
+Apache-2.0).
+
+### 12.3 Measurements (x86-64, release)
+
+- `shape process` on `golden/meshes/ball_defects.obj` (a 1 980-triangle
+  sphere with every 25th face flipped and a 1 mm floater; budget 1 000):
+  35 ms. Repair turns 79 faces and drops the floater; the result is
+  closed, 1 000 triangles, 8 charts, no UV overlap.
+- `run_typescript` on `guides/typescript.md`'s bracket, through the
+  release server: 80 ms end to end (bun start, wasm load, the program,
+  native replay). The binary is 4.1 MB.
+
+### 12.4 What is untested
+
+- **No real MCP client was run against the server here.** The tests drive
+  it over stdio in-process and through the binary (initialize, the tools,
+  the resources, refusals, malformed lines); registration with Claude
+  Code, Claude Desktop or others follows their documented config but was
+  not exercised.
+- Calls are synchronous: no progress notifications, and
+  `notifications/cancelled` is ignored, so a long repair blocks the
+  server until it ends. No `outputSchema` or `structuredContent`; reports
+  are JSON text.
+- Windows: path confinement (canonical `\\?\` paths) and bun importing an
+  absolute Windows path are untested; the link test runs on Unix only.
+- A path is checked before each read and write; a link swapped in by
+  another process between the check and the I/O is not guarded against.
+- The TypeScript program is not sandboxed (above).
+- Through the server, FBX and `.gltf` with external buffers were not
+  tried (the tests use OBJ and GLB); the CLI and server share the
+  importer, which §9 tested on them.
+- Mesh tool outputs lose face names other than the part's (plain GLB),
+  as §9.8's chain does.

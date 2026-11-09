@@ -125,7 +125,8 @@ A Cargo workspace. Each crate has one job and a small public surface.
 | `shape-tools` | import, repair, decimate and LODs, UV unwrap, measure, preview, export | own glTF, OBJ and FBX readers, own QEM decimator, own unwrap, own CPU rasterizer, miniz_oxide (`docs/research.md` §9) |
 | `shape-model` | parts, groups, joints, materials, the program API in Rust | all |
 | `shape-wasm` | wasm32 build and the TypeScript binding | wasm-bindgen |
-| `shape-cli` | `shape build / export / measure / preview / repair / decimate / unwrap`, for tests and for the platform before the merge | all |
+| `shape-cli` | `shape build / export / measure / preview / import / repair / decimate / unwrap / process`, for tests and for the platform before the merge; its commands are a library the MCP server calls | all |
+| `shape-mcp` | an MCP server on stdio: the CLI's commands as tools, a TypeScript program run through the binding and replayed natively, the guides as resources, paths confined to a workspace | `shape-cli`, serde_json |
 
 Why og-geom's code is copied and not depended on:
 - og-geom already has deterministic extrude, lathe, sweep, frames, `trig`,

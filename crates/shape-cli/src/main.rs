@@ -2,35 +2,51 @@
 //! before the merge (`docs/design.md` §5 and §7).
 //!
 //! ```text
-//! shape build   <program.json>
-//! shape export  <program.json> -o <out.glb|out.obj|out.stl>
-//! shape measure <program.json>
-//! shape preview <program.json> -o <out.png> [--views N] [--width PX]
-//!               [--height PX] [--columns N] [--elevation RAD]
-//!               [--azimuth RAD] [--no-edges] [--no-ground]
+//! shape build    <program.json>
+//! shape export   <input> -o <out.glb|out.obj|out.stl>
+//! shape measure  <input> [--intersections]
+//! shape preview  <input> -o <out.png> [--views N] [--width PX]
+//!                [--height PX] [--columns N] [--elevation RAD]
+//!                [--azimuth RAD] [--no-edges] [--no-ground]
+//! shape import   <mesh> [-o out]
+//! shape repair   <mesh> [-o out] [--weld MM] [--weld-all] [--floaters F]
+//!                [--floater-size MM] [--holes N] [--fuse] [--min-edge MM]
+//!                [--intersections]
+//! shape decimate <mesh> (--ratio R | --target N) [--max-error MM]
+//!                [--lock-border] [--lods N] [-o out]
+//! shape unwrap   <mesh> [-o out.glb] [--angle DEG] [--resolution PX]
+//!                [--padding TEXELS]
+//! shape process  <mesh> [--budget N] [-o out.glb] [repair and unwrap
+//!                options] [--intersections]
 //! ```
 //!
-//! A program is the JSON a binding records (`shape_model::program`).
-//! Reports go to stdout as JSON with no thresholds; errors go to stderr
-//! with exit status 1 (2 for a usage error). Each subcommand is one
-//! module; repair, decimate and unwrap join them in phase 5.
-
-mod args;
-mod build;
-mod export;
-mod measure;
-mod preview;
+//! An input is a program (the JSON a binding records,
+//! `shape_model::program`) or a mesh file (`.glb`, `.gltf`, `.obj`,
+//! `.fbx`; OBJ with `--unit-mm MM` and `--z-up`). Reports go to stdout
+//! as JSON with no thresholds; errors go to stderr with exit status 1 (2
+//! for a usage error). Each subcommand is one module of the `shape_cli`
+//! library, which the MCP server (`shape-mcp`) calls too.
 
 use std::process::ExitCode;
 
-use args::{Args, Failure};
+use shape_cli::Failure;
+use shape_cli::args::Args;
 
-const USAGE: &str = "usage: shape <build|export|measure|preview> <program.json> [options]
-  build   <program.json>                       report the built model as JSON
-  export  <program.json> -o <out.glb|obj|stl>  write the posed model
-  measure <program.json>                       measures as JSON
-  preview <program.json> -o <out.png> [--views N] [--width PX] [--height PX]
-          [--columns N] [--elevation RAD] [--azimuth RAD] [--no-edges] [--no-ground]";
+const USAGE: &str = "usage: shape <command> <input> [options]
+  an input is a program (.json) or a mesh file (.glb .gltf .obj .fbx);
+  OBJ takes --unit-mm MM (default metres) and --z-up
+  build    <program.json>                       report the built model as JSON
+  export   <input> -o <out.glb|obj|stl>         write the posed model or the mesh
+  measure  <input> [--intersections]            measures as JSON
+  preview  <input> -o <out.png> [--views N] [--width PX] [--height PX]
+           [--columns N] [--elevation RAD] [--azimuth RAD] [--no-edges] [--no-ground]
+  import   <mesh> [-o out.glb|obj|stl]          parts, images and what was skipped
+  repair   <mesh> [-o out] [--weld MM] [--weld-all] [--floaters FRACTION]
+           [--floater-size MM] [--holes N] [--fuse] [--min-edge MM] [--intersections]
+  decimate <mesh> (--ratio R | --target N) [--max-error MM] [--lock-border]
+           [--lods N] [-o out]
+  unwrap   <mesh> [-o out.glb] [--angle DEG] [--resolution PX] [--padding TEXELS]
+  process  <mesh> [--budget N] [-o out.glb] [repair and unwrap options] [--intersections]";
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -38,10 +54,15 @@ fn main() -> ExitCode {
         Some((cmd, rest)) => {
             let a = Args::new(rest);
             match cmd.as_str() {
-                "build" => build::run(a),
-                "export" => export::run(a),
-                "measure" => measure::run(a),
-                "preview" => preview::run(a),
+                "build" => shape_cli::build::run(&a),
+                "export" => shape_cli::export::run(&a),
+                "measure" => shape_cli::measure::run(&a),
+                "preview" => shape_cli::preview::run(&a),
+                "import" => shape_cli::import::run(&a),
+                "repair" => shape_cli::repair::run(&a),
+                "decimate" => shape_cli::decimate::run(&a),
+                "unwrap" => shape_cli::unwrap::run(&a),
+                "process" => shape_cli::process::run(&a),
                 "help" | "-h" | "--help" => {
                     println!("{USAGE}");
                     return ExitCode::SUCCESS;

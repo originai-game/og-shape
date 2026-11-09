@@ -1,19 +1,25 @@
 [package]
 name = "shape-cli"
-description = "The og-shape command line: build, export, measure and preview a model program."
+description = "The og-shape command line: build, export, measure and preview a model program; import, repair, decimate, unwrap and process a mesh. Its commands are also a library the MCP server calls."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[lib]
+name = "shape_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "shape"
 path = "src/main.rs"
 
 [dependencies]
+shape-mesh.workspace = true
 shape-model.workspace = true
 shape-tools.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
