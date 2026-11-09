@@ -26,6 +26,13 @@
 //!
 //! Crossing points and winding numbers are computed in f64 with `+ - * /`,
 //! `sqrt` and [`crate::trig::atan2`]: the same on every host.
+//!
+//! [`csg_points`] runs these steps twice when the first result is open
+//! (operands that touch: faces on faces, vertices within an ulp of a face).
+//! The second pass orders points on an edge exactly (`exact`), lays a
+//! triangle out exactly where its rounded outline is not simple, makes
+//! points at one position one point, and classifies faces lying on the
+//! other operand by orientation (`docs/research.md` §5.4, item 5).
 
 use glam::{DVec2, DVec3};
 use robust::{Coord, Coord3D, orient2d, orient3d};

@@ -5,6 +5,8 @@
 //! numbers per region. Phase 0 decides whether this engine or
 //! manifold-rust stays (`docs/plan.md`). [`selfcheck`] finds triangles of
 //! one surface that cross, for the operand check and the self-union.
+//! `exact` holds the expansion arithmetic that orders points on an edge
+//! in the CSG's second pass (`docs/research.md` §5.4, item 5).
 #![allow(missing_docs)]
 
 pub mod csg;
