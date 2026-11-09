@@ -743,6 +743,53 @@ mod tests {
     }
 
     #[test]
+    fn a_pole_pulled_through_is_refused_as_either_operand() {
+        // From the session that first refused such operands
+        // (`claude/stoic-brown-bhuout`): a sphere whose +x pole is pulled
+        // through the far side, with the tool where the spike comes out.
+        let mut folded = shape_gen::solids::sphere(20.0).unwrap();
+        let far = (0..folded.positions.len())
+            .max_by(|&a, &b| folded.positions[a].x.total_cmp(&folded.positions[b].x))
+            .unwrap();
+        folded.positions[far] = DVec3::new(-30.0, 0.5, 0.3);
+        assert!(folded.measure().closed);
+        let pairs = crossing_pairs(&folded);
+        assert!(pairs > 0);
+        let mut tool = bar();
+        tool.map_positions(|p| p + DVec3::new(-15.0, 0.0, 0.0), false);
+        assert_eq!(
+            check_operands(&folded, &tool),
+            Err(BoolError::SelfIntersecting {
+                operand: "target",
+                pairs
+            })
+        );
+        assert_eq!(
+            check_operands(&tool, &folded),
+            Err(BoolError::SelfIntersecting {
+                operand: "tool",
+                pairs
+            })
+        );
+        // Without the check first: refused, or closed; never open.
+        for op in [BoolOp::Join, BoolOp::Cut, BoolOp::Intersect] {
+            let d = Boolean {
+                op,
+                ..Default::default()
+            };
+            for r in [boolean(&folded, &tool, &d), boolean(&tool, &folded, &d)] {
+                match r {
+                    Ok(s) => assert!(s.measure().closed, "{op:?}"),
+                    Err(BoolError::SelfIntersecting { .. }) => {}
+                    Err(e) => panic!("{op:?}: {e:?}"),
+                }
+            }
+        }
+        let u = self_union(&folded).unwrap();
+        assert!(u.measure().closed && crossing_pairs(&u) == 0);
+    }
+
+    #[test]
     fn two_overlapping_copies_untangle_into_one_shell() {
         let mut two = plate();
         let mut other = plate();

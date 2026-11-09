@@ -410,6 +410,29 @@ aarch64 Linux.
      so the up-front check is opt-in (`check_operands`) and every golden
      hash is unchanged. Whether to turn it on for imported meshes only
      (the CLI, MCP) is left to the integrator.
+   - **Another implementation, reviewed and not merged.** Branch
+     `claude/stoic-brown-bhuout` (e3b7189, on an older main) refused such
+     operands inside `csg_points`, always on. Its check lived in
+     `shape_mesh::self_intersections`, and pairs with vertices within
+     1e-9 of the operand's size counted as sharing a vertex, which kept
+     `edit.holes.pocket` unchanged. Stream J keeps one implementation,
+     this one, for four reasons:
+     - it also catches improper crossings between triangles that share a
+       vertex or an edge;
+     - it needs no distance threshold;
+     - `self_union` uses it too;
+     - it does not add the check's cost to every boolean.
+     
+     Taken from that branch: its regression case, a sphere's pole pulled
+     through, refused as either operand
+     (`a_pole_pulled_through_is_refused_as_either_operand`).
+     
+     Measured on this branch: with that 1e-9 rule added to
+     `crossing_pairs` and `check_operands` called first in `boolean`, no
+     pre-existing golden hash moves. Refusing by default is therefore
+     possible. It would cost 35–55 % of each boolean and need an opt-out
+     field on `Boolean`, whose struct literals sit in other crates; the
+     integrator decides.
    - **Self-union** (`self_union(&Solid)`, `csg::self_union_points`): the
      arrangement CSG builds for two operands, built for one. Pairs whose
      boxes overlap are intersected: those sharing no vertex, and those
