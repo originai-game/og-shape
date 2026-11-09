@@ -147,6 +147,13 @@ pub enum ExportError {
     BadAxis(String),
     /// A floating joint was given an axis, a range or a mimic.
     FloatingConstrained(String),
+    /// A part's skin cannot be written.
+    BadSkin {
+        /// The part.
+        part: String,
+        /// Why.
+        why: String,
+    },
 }
 
 impl fmt::Display for ExportError {
@@ -174,6 +181,7 @@ impl fmt::Display for ExportError {
                 f,
                 "joint {j:?}: a floating joint moves every way: it takes no axis, range or mimic"
             ),
+            ExportError::BadSkin { part, why } => write!(f, "part {part:?}: its skin: {why}"),
         }
     }
 }
@@ -229,7 +237,7 @@ impl Rigid {
         t: DVec3::ZERO,
     };
 
-    fn of(f: &Frame) -> Rigid {
+    pub(crate) fn of(f: &Frame) -> Rigid {
         Rigid {
             x: f.x,
             y: f.y,
@@ -247,7 +255,7 @@ impl Rigid {
     }
 
     /// `self ∘ other`: `other` first.
-    fn then(&self, other: &Rigid) -> Rigid {
+    pub(crate) fn then(&self, other: &Rigid) -> Rigid {
         Rigid {
             x: self.rotate(other.x),
             y: self.rotate(other.y),
@@ -256,7 +264,7 @@ impl Rigid {
         }
     }
 
-    fn inverse(&self) -> Rigid {
+    pub(crate) fn inverse(&self) -> Rigid {
         // (R, t)⁻¹ = (Rᵀ, −Rᵀ t).
         let tr = |v: DVec3| DVec3::new(self.x.dot(v), self.y.dot(v), self.z.dot(v));
         Rigid {
@@ -281,7 +289,7 @@ impl Rigid {
 
     /// The same motion in glTF space (metres, Y up): translation and
     /// rotation (x, y, z, w).
-    fn gltf(&self) -> (DVec3, [f64; 4]) {
+    pub(crate) fn gltf(&self) -> (DVec3, [f64; 4]) {
         let down = |v: DVec3| DVec3::new(v.x, -v.z, v.y);
         let col = |e: DVec3| y_up(self.rotate(down(e)));
         (
@@ -542,10 +550,14 @@ const ARRAY_BUFFER: u64 = 34962;
 const ELEMENT_ARRAY_BUFFER: u64 = 34963;
 const FLOAT: u64 = 5126;
 const UNSIGNED_INT: u64 = 5125;
+const UNSIGNED_SHORT: u64 = 5123;
 
 fn push_f32(bin: &mut Vec<u8>, v: f32) {
     bin.extend_from_slice(&v.to_le_bytes());
 }
+
+/// A skin to write: inverse bind bytes, joint node indices, root bone node.
+type SkinOut = (Vec<u8>, Vec<usize>, Option<usize>);
 
 /// The scene as glTF 2.0 binary (GLB).
 ///
@@ -558,6 +570,10 @@ fn push_f32(bin: &mut Vec<u8>, v: f32) {
 ///   `{"s3d_joint": {name, type, value, axis, lower, upper, mimic}}` in SI
 ///   units, the axis in the joint node's frame (`docs/research.md` §1.5).
 ///   Face and edge names are not written.
+/// - A skinned part (no joint) also gets a glTF skin: its bones as nodes
+///   under the part's node, each at its rest frame relative to its parent
+///   bone, inverse bind matrices, and JOINTS_0 (u16) and WEIGHTS_0 (f32)
+///   per vertex (`docs/research.md` §11).
 ///
 /// The bytes depend only on the scene.
 pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
@@ -572,6 +588,7 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
     let mut part_node: BTreeMap<&str, usize> = BTreeMap::new();
     let mut children: Vec<Vec<usize>> = Vec::new();
     let mut roots: Vec<usize> = Vec::new();
+    let mut skins: Vec<SkinOut> = Vec::new();
     let mut view = |bin: &mut Vec<u8>, start: usize, target: u64| -> u64 {
         views.push(Json::Obj(vec![
             ("buffer", Json::Int(0)),
@@ -582,6 +599,7 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
         (views.len() - 1) as u64
     };
     for (part, (joint, _)) in scene.parts.iter().zip(&checked) {
+        let skin = crate::skin::checked(part)?;
         let s = split(part.solid);
         // Positions and normals in glTF space, f32.
         let pos: Vec<[f32; 3]> = s
@@ -633,6 +651,23 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
                 ("type", Json::Str("VEC3".into())),
             ]));
             attributes.push(("NORMAL", Json::Int((accessors.len() - 1) as u64)));
+            if let Some(sk) = skin {
+                let (j, w) = crate::skin::vertex_data(sk, &s.sources);
+                for (bytes, kind, name) in
+                    [(j, UNSIGNED_SHORT, "JOINTS_0"), (w, FLOAT, "WEIGHTS_0")]
+                {
+                    let start = bin.len();
+                    bin.extend_from_slice(&bytes);
+                    let v = view(&mut bin, start, ARRAY_BUFFER);
+                    accessors.push(Json::Obj(vec![
+                        ("bufferView", Json::Int(v)),
+                        ("componentType", Json::Int(kind)),
+                        ("count", Json::Int(s.sources.len() as u64)),
+                        ("type", Json::Str("VEC4".into())),
+                    ]));
+                    attributes.push((name, Json::Int((accessors.len() - 1) as u64)));
+                }
+            }
             let start = bin.len();
             s.indices
                 .iter()
@@ -670,6 +705,9 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
         let mut node = vec![("name", Json::Str(part.name.clone()))];
         if !pos.is_empty() {
             node.push(("mesh", Json::Int(mesh_index)));
+            if skin.is_some() {
+                node.push(("skin", Json::Int(skins.len() as u64)));
+            }
         }
         match joint {
             Some(j) => {
@@ -700,8 +738,54 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
                 children.push(Vec::new());
                 attach(pn, &mut children);
                 part_node.insert(part.name.as_str(), pn);
+                if let (Some(sk), false) = (skin, pos.is_empty()) {
+                    // The bones hang under the part's node, at the origin.
+                    let mut joints: Vec<usize> = Vec::with_capacity(sk.bones.len());
+                    for (fields, parent) in crate::skin::bone_nodes(sk) {
+                        let bn = nodes.len();
+                        nodes.push(Json::Obj(fields));
+                        children.push(Vec::new());
+                        match parent {
+                            Some(p) => children[joints[p as usize]].push(bn),
+                            None => children[pn].push(bn),
+                        }
+                        joints.push(bn);
+                    }
+                    let roots_of = sk.bones.iter().filter(|b| b.parent.is_none()).count();
+                    let skeleton = (roots_of == 1).then(|| joints[0]);
+                    skins.push((crate::skin::inverse_binds(sk), joints, skeleton));
+                }
             }
         }
+    }
+    // Inverse bind matrices go in last: their views carry no target.
+    let mut skins_json = Vec::with_capacity(skins.len());
+    for (ibm, joints, skeleton) in skins {
+        let start = bin.len();
+        bin.extend_from_slice(&ibm);
+        views.push(Json::Obj(vec![
+            ("buffer", Json::Int(0)),
+            ("byteOffset", Json::Int(start as u64)),
+            ("byteLength", Json::Int(ibm.len() as u64)),
+        ]));
+        accessors.push(Json::Obj(vec![
+            ("bufferView", Json::Int((views.len() - 1) as u64)),
+            ("componentType", Json::Int(FLOAT)),
+            ("count", Json::Int(joints.len() as u64)),
+            ("type", Json::Str("MAT4".into())),
+        ]));
+        let mut fields = vec![(
+            "inverseBindMatrices",
+            Json::Int((accessors.len() - 1) as u64),
+        )];
+        if let Some(root) = skeleton {
+            fields.push(("skeleton", Json::Int(root as u64)));
+        }
+        fields.push((
+            "joints",
+            Json::Arr(joints.iter().map(|&k| Json::Int(k as u64)).collect()),
+        ));
+        skins_json.push(Json::Obj(fields));
     }
     // Children lists go in last, now that every node exists.
     for (n, kids) in nodes.iter_mut().zip(&children) {
@@ -737,6 +821,9 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
         doc.push(("meshes", Json::Arr(meshes)));
         doc.push(("materials", Json::Arr(materials)));
         doc.push(("accessors", Json::Arr(accessors)));
+        if !skins_json.is_empty() {
+            doc.push(("skins", Json::Arr(skins_json)));
+        }
         doc.push(("bufferViews", Json::Arr(views)));
         doc.push((
             "buffers",

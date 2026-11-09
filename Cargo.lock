@@ -401,6 +401,7 @@ dependencies = [
  "shape-edit",
  "shape-gen",
  "shape-mesh",
+ "shape-skin",
  "shape-tools",
 ]
 
@@ -409,6 +410,21 @@ name = "shape-mesh"
 version = "0.0.0"
 dependencies = [
  "shape-core",
+]
+
+[[package]]
+name = "shape-skin"
+version = "0.0.0"
+dependencies = [
+ "gltf",
+ "shape-2d",
+ "shape-bevel",
+ "shape-bool",
+ "shape-core",
+ "shape-edit",
+ "shape-gen",
+ "shape-mesh",
+ "shape-tools",
 ]
 
 [[package]]
