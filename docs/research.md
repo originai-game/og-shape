@@ -631,6 +631,160 @@ Every output hash is the same natively (x86-64) and as wasm32-wasip1
 under wasmtime (golden cases `bevel.box`, `bevel.curved`, `bevel.sand3d`,
 `bevel.adj`).
 
+### 7.4 The gaps C left (stream K, 2026-11-09)
+
+**Sources.** The same two published design notes as §7.1, nothing else
+from Blender: Trickey's page (Bevel Ends; one of two edges bevelled, the
+choices (a)–(e) and the slide distance; Preserve Widths, Preserve
+Angles and the Loop Slide option; Full and Partial Vertex Bevel; the
+uneven widths a per-vertex slide leaves and the need for a global width
+pass) and the Bevel V2 issue #98674, read through
+`projects.blender.org/api/v1/repos/blender/blender/issues/98674` (pipe
+joints "snapped to the pipe profile"; arc and patch miters, spread, the
+attachment of unbevelled edges to the split points; the terminal-edge
+patterns). Blender's source and the Mesh Bevel node PR (#158151) were not
+opened. The figures of the issue were not fetched; where the text leaves
+a shape open, the choice below is ours and says so.
+
+**One path for the rest.** The classic layout of §7.2 is kept, byte for
+byte, for every vertex it handled; a vertex it refused goes through
+`general.rs`. There each gap between bevelled edges gets a run of
+boundary points `Q_0 … Q_r` instead of one, consecutive points joined by
+a **face chain**: a profile of `n` segments lying on the gap's faces,
+around a corner of its own. The gap's triangles take the run, each the
+piece in front of it (split by spoke direction, as the end face of a
+terminal edge already was). The corner hole then has `m + Σr` sides and
+is filled by `patch.rs` like any corner: the octant only when every side
+is a bevelled edge (a face chain's corner does not fit the octant's
+single centre: on a pyramid apex it bulged 0.1 outside the face), the ADJ
+pattern otherwise.
+
+- **Two or more unbevelled edges in a gap** (and a lone edge with three
+  or more faces past its end): Blender's Full Vertex Bevel. The first
+  and last points slide along the first and last unbevelled edges to
+  where the bevels' offset lines meet them; the others along their edges
+  by distances evenly between ("the amount the previous edge slid" in
+  the notes; even spacing keeps it symmetric). Each face between two
+  unbevelled edges is cut on a profile around the vertex. Partial Vertex
+  Bevel (keep the vertex) is not offered.
+- **A lone edge whose two faces meet again at its end** (one unbevelled
+  edge, usually its continuation: part of a rim): the design's choice (b),
+  a tip, with a slide of **zero**. Blender slides the tip by the offset;
+  here that tilted every face triangle at the vertex, and on a cylinder's
+  faceted wall it shaved a wedge off the wall's whole height (5 mm³ too
+  much on a quarter rim, r = 1.5). The strip's last profile is one
+  point, so its last row is triangles.
+- **Pipe joints**: when two of three or more bevelled edges at a vertex
+  are within 1° of opposite, the hole takes the ADJ pattern and its
+  inner points, with those of the two edges' chains, are moved onto the
+  pipe (the first edge's profile at the vertex, swept along it) from the
+  profile's centre in its cross-section. With planar faces two in-line
+  edges leave the edges across them flat, so the case arises at seams
+  (coplanar faces of different surfaces, as joins and split contours
+  leave) and on curved faces.
+- **Miters** (`inner_miter`, `outer_miter`, `spread`; zero values are the
+  old sharp miter). They apply to a gap with no unbevelled edge whose
+  faces are one plane, at a vertex of two or more bevelled edges; it is
+  outer when its angle at the vertex is above 180°, inner below.
+  - Arc: the gap's point `P` splits in two, slid by the spread (0: the
+    offset) along the bevelled edges; an arc around `P` joins them on
+    the face. It is tangent to both bevels' edge lines, rounds the face's
+    corner (cutting a convex one, filling a reflex one) and adds a side
+    to the hole.
+  - Patch (outer only; `inner_miter: Patch` is `BevelError::Invalid`): a
+    third point between, slid from `P` toward the vertex, and two arcs
+    whose corners lie on the bevels' edge lines, so the outline is
+    tangent at all three points. Our reading: a first try with the middle
+    point slid away from the vertex (into the face) cannot be tangent to
+    the edge lines without the two arcs crossing near `P`.
+- **Loop slide** (`loop_slide`): an optional pass over the four offsets
+  per edge before any vertex is built. At each gap with one unbevelled
+  edge the two faces' offset lines meet that edge at `t_l` and `t_r`; the
+  classic layout takes their mean. The pass sets each bevel side's width,
+  at both its ends, to the mean of the widths that would put its line
+  through those means, and repeats until no width moves by more than
+  1e-12 of the largest (at most 32 times), so strips keep an even width
+  along their edges. Mismatch left over (a loop of such corners whose
+  angles do not close) is still averaged. Blender solves this as least
+  squares; this is the cheap fixed point.
+- **Faces in slivers.** C's model rebuilds each old triangle alone. A
+  cap's ear-cut fan, or a boolean's faces, have slivers whose three
+  corners all move, and one flipped is `TooLarge` although the face fits.
+  Now a triangle that does not fit is rebuilt with its whole planar face
+  (same surface, normals within the planar tolerance, reached across
+  edges): its outline loops, holes bridged to the outer loop by the
+  nearest visible vertex (exact `orient2d`), ear-clipped. If that fails
+  too, the error is the first triangle's, as before.
+- **Straight runs.** A boolean leaves its cut edges in pieces; on the
+  join of §7.4's table a piece 1 long sat under a 1.5 bevel's corner. When
+  a bevel is `TooLarge`, it is tried once more with each vertex inside a
+  straight run of bevelled edges (two in line within 1e-9, only diagonals
+  of its two planar faces besides) dissolved: its faces re-triangulated
+  without it, its two edges one, with both edges' names. The original
+  error is returned if the retry fails.
+
+Both fallbacks run only where C's code returned `TooLarge`, so every
+result it produced is unchanged; the four `bevel.*` hashes did not move.
+
+**Measurements** (`cargo run --release -p shape-bevel --example phase3`,
+6 segments unless said; previews in `docs/previews/phase3/`, the close-ups
+are the result intersected with a cube around the vertex). All closed,
+no degenerate triangle. Quads are `quad_pairs` over the new faces.
+
+| case | volume | quads | worst fold |
+|---|---|---|---|
+| pyramid 20 × 20 × 20, `fillet(1.5)` on two adjacent side edges | 2 635.096 | 84/90 | 30.4° |
+| same, one side edge (three faces past its apex end) | 2 654.836 | 64/66 | 118.9° |
+| cylinder r 15, `fillet(1.5)` on the rim's first quadrant: tips | 14 068.163 | 72/84 | 0° |
+| L-prism `fillet(2, top)`, sharp | 4 895.976 | 70/72 | 15.0° |
+| same, outer arc | 4 896.090 | 126/126 | 127.4° |
+| same, outer patch | 4 896.062 | 138/144 | 130.9° |
+| same, inner arc (five convex top corners) | 4 889.493 | 332/342 | 25.7° |
+| box 40 × 30 × 20, `fillet(3)` all, inner arc: six-sided corners | 22 976.457 | 1 008/1 008 | 31.3° |
+| split-front block, `fillet(3, top seam)`, 8 seg: pipe | 23 734.013 | 190/192 | 17.0° |
+| tapered uneven quad, `chamfer(2, top)`, averaged | 3 737.510 | 8/8 | 3.0° |
+| same, loop slide | 3 737.058 | 8/8 | 0° |
+| box 20 joined with box 8, `fillet(1)` all | 4 464.698 | 1 144/1 152 | 75.0° |
+| ring 5–10 × 8 turned 2 rad, `fillet(0.3)` all | 594.491 | 1 052/1 056 | 15.0° |
+| square 20 twisted 1 rad, `fillet(1.5)` all | 7 584.722 | 760/864 | 83.1° |
+| square 20 tapered 0.5, `fillet(1.5)` all | 4 569.921 | 568/576 | 14.3° |
+
+- The pipe joint lies on the round to 1e-9 and its volume equals the
+  plain top fillet's: the seam's bevel is flat.
+- The tips' last rows are the unpaired triangles of the rim case; the
+  removed volume is within the 4-segment section times the arc's length.
+- The large folds are where the geometry has a crease the patch must
+  carry: the pyramid's unbevelled side edges (78° between faces) running
+  into the apex patch along a quad's diagonal, and on the L the point on
+  the concave vertical edge where the two top fillets' profiles meet at
+  an angle and the hole narrows to it. The twisted block's strips pair
+  three quarters: its walls are twisted quads and a strip quad across a
+  wall's diagonal is not convex.
+- Loop slide flattens the averaged case's strips (3° → 0°) and makes the
+  front wall's bevel the same width at both ends (a test).
+- The join failed before (`TooLarge` at the small box's foot); its
+  chamfer too. The part revolve at r 0.3 worked before and is unchanged.
+
+**Still errors, and untested.**
+- A bevel wider than a segment of a curved face (the part revolve's bore
+  at r 1.5) is `TooLarge`: its offset line would have to cross the
+  face's own edges, which needs the inset-and-intersect re-meshing of
+  the V2 notes ("handle overlaps").
+- `Unsupported` remains for a vertex whose fan does not close, two cones
+  at one vertex, a face corner of zero angle, an edge in line with its
+  unbevelled neighbour on a curved gap, and a bevelled edge that is the
+  only real edge at its vertex (impossible on a closed solid).
+- Miters only on planar gaps without unbevelled edges; Partial Vertex
+  Bevel, Blender's Cutoff and the custom/other vertex-mesh patterns, a
+  per-corner spread and a slide distance for tips are not offered.
+- Untested: pipes with curved through-faces (no generator makes one with
+  a real edge across a round), patches of seven or more sides, loop
+  slide on fillets around curved faces, miters with chamfers of several
+  segments at reflex corners of curved solids, and very small spreads.
+- On the join, the classic three-edge corners where a convex vertical
+  fillet meets the concave seam fillets show a small light streak in the
+  preview; the octant there is fitted to a saddle, not a cube corner.
+
 ## 8. Phase 4: parts, joints, the CLI and the wasm binding (stream E, 2026-11-09)
 
 ### 8.1 Sources

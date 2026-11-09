@@ -9,7 +9,9 @@
 //! notes and the Bevel V2 design issue; sources in `docs/research.md` §7):
 //! offset lines on each face, four offsets per edge, a superellipse
 //! profile, edge strips, and corner patches by the number of bevelled
-//! edges at a vertex.
+//! edges at a vertex. Gaps with several unbevelled edges, tips, pipe
+//! joints, arc and patch miters and loop slide follow the same notes
+//! (`docs/research.md` §7.4).
 //!
 //! Names (`docs/design.md` §4):
 //! - New faces carry only `fillet` or `chamfer`.
