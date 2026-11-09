@@ -91,14 +91,6 @@ impl Value {
         }
     }
 
-    /// The fields of an object; empty for anything else.
-    pub(crate) fn fields(&self) -> &[(String, Value)] {
-        match self {
-            Value::Obj(fields) => fields,
-            _ => &[],
-        }
-    }
-
     /// An array of numbers, if this is one.
     pub(crate) fn nums(&self) -> Option<Vec<f64>> {
         match self {
