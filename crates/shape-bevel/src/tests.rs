@@ -1,4 +1,5 @@
 use super::*;
+use crate::bevel;
 use shape_core::DVec2;
 use shape_edit::{Hole, above, hole};
 use shape_gen::solids::{BoxDesc, CylinderDesc, Extrude, cuboid, cylinder, extrude};
@@ -425,4 +426,499 @@ fn too_large_is_an_error_never_a_clipped_result() {
     assert!(
         matches!(e, Err(BevelError::NoSuchEdge(m, a)) if m == ["rim"] && a.contains(&"top".to_string()))
     );
+}
+
+/// The square pyramid of `four_edge_corners_take_the_adj_pattern`, its
+/// side edges to the base corners with `x > 0` (and `y > 0` for `one`)
+/// named `pick`.
+fn pyramid(pick: &str, one: bool) -> Solid {
+    let mut p = extrude(
+        &shape_2d::rect(&shape_2d::Rect {
+            width: 20.0,
+            height: 20.0,
+            radius: 0.0,
+        })
+        .unwrap(),
+        &Extrude {
+            height: 20.0,
+            taper: 1.0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    for (a, b) in p.edges(&["side"]).unwrap() {
+        let base = [a, b]
+            .map(|v| p.positions[v as usize])
+            .into_iter()
+            .find(|q| q.z == 0.0)
+            .unwrap();
+        if base.x > 0.0 && (!one || base.y > 0.0) {
+            p.tag_edge(a, b, &[pick]);
+        }
+    }
+    p
+}
+
+/// Every vertex of the result lies inside the convex solid it came from.
+fn inside(s: &Solid, of: &Solid) {
+    for t in 0..of.triangles.len() {
+        let n = bevel::tri_normal(of, t);
+        let c = of.positions[of.triangles[t][0] as usize];
+        for p in &s.positions {
+            assert!(n.dot(*p - c) < 1e-9, "{p} outside");
+        }
+    }
+}
+
+#[test]
+fn two_unbevelled_edges_between_bevelled_ones_cut_their_face_on_a_profile() {
+    // Two adjacent side edges at the apex: the other two sides are
+    // unbevelled, and the face between them is cut on a profile around
+    // the apex; the corner is a three-sided ADJ patch.
+    let p = pyramid("pair", false);
+    let s = fillet(
+        &p,
+        &Fillet {
+            radius: 1.5,
+            edges: names(&["pair"]),
+            segments: 4,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let apex: Vec<u32> = s
+        .faces(&["fillet"])
+        .unwrap()
+        .into_iter()
+        .filter(|&t| {
+            s.triangles[t as usize]
+                .iter()
+                .all(|&v| s.positions[v as usize].z > 15.0)
+        })
+        .collect();
+    // Three sectors of 2 × 2 quads, and the strips' last rows.
+    let q = quad_pairs(&s, &apex);
+    assert_eq!((q.paired, q.triangles), (24, 24), "{q:?}");
+    assert!(q.max_fold < trig::to_radians(35.0), "{q:?}");
+    check_closed(&s);
+    inside(&s, &p);
+    // The two unbevelled side edges still reach toward the apex, named.
+    assert_eq!(s.edges(&["side"]).unwrap().len(), 2);
+    // A lone side edge: three unbevelled edges past its end, two faces
+    // cut on profiles, a three-sided patch.
+    let one = pyramid("one", true);
+    let s = fillet(
+        &one,
+        &Fillet {
+            radius: 1.5,
+            edges: names(&["one"]),
+            segments: 4,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    check_closed(&s);
+    inside(&s, &one);
+    let f = s.faces(&["fillet"]).unwrap();
+    let q = quad_pairs(&s, &f);
+    // All but the strip's twisted last quad at the base.
+    assert!(q.triangles - q.paired <= 2, "{q:?}");
+}
+
+fn check_closed(s: &Solid) {
+    let m = s.measure();
+    assert!(m.closed && m.degenerate_triangles == 0, "{m:?}");
+}
+
+#[test]
+fn a_lone_edge_whose_faces_meet_again_tapers_to_a_tip() {
+    // Part of a cylinder's rim: each end continues into an unbevelled rim
+    // edge, between the same two faces.
+    let mut c = cylinder(&CylinderDesc {
+        radius: 15.0,
+        radius_top: 0.0,
+        height: 20.0,
+    })
+    .unwrap();
+    let rim = c.edges(&["top"]).unwrap();
+    let arc: Vec<_> = rim
+        .iter()
+        .copied()
+        .filter(|&(a, b)| {
+            [a, b].iter().all(|&v| {
+                let p = c.positions[v as usize];
+                p.x > 0.0 && p.y > 0.0
+            })
+        })
+        .collect();
+    for &(a, b) in &arc {
+        c.tag_edge(a, b, &["arc"]);
+    }
+    let s = fillet(
+        &c,
+        &Fillet {
+            radius: 1.5,
+            edges: names(&["arc"]),
+            segments: 4,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    check_closed(&s);
+    // Each tip's row is 4 triangles; the rest of the strips are quads.
+    let f = s.faces(&["fillet"]).unwrap();
+    let q = quad_pairs(&s, &f);
+    assert_eq!(q.triangles, arc.len() * 8 - 2 * 4);
+    assert_eq!(q.triangles - q.paired, 2 * 4, "{q:?}");
+    assert!(q.max_fold < 1e-6, "{q:?}");
+    // The tips are the arc's end vertices; the rim's other edges keep
+    // `top` and their vertices.
+    for &(a, b) in &rim {
+        if !arc.contains(&(a, b)) {
+            for v in [a, b] {
+                assert!(s.positions.contains(&c.positions[v as usize]));
+            }
+        }
+    }
+    let fillets = s.edges(&["fillet"]).unwrap();
+    let plain = s
+        .edges(&["top"])
+        .unwrap()
+        .into_iter()
+        .filter(|e| !fillets.contains(e))
+        .count();
+    assert_eq!(plain, rim.len() - arc.len());
+    // Full width along the arc (a 4-segment profile, at the fillet's
+    // centroid radius about 14.5), less where the end edges taper.
+    let length: f64 = arc
+        .iter()
+        .map(|&(a, b)| (c.positions[a as usize] - c.positions[b as usize]).length())
+        .sum();
+    let section = 2.25 * (1.0 - 2.0 * trig::sin(trig::PI / 8.0));
+    let lost = c.measure().volume - s.measure().volume;
+    let want = section * length * 14.5 / 15.0;
+    let end = section * length / arc.len() as f64;
+    assert!(lost < want && lost > want - 2.0 * end, "{lost} {want}");
+}
+
+fn l_prism() -> Solid {
+    let corners = [
+        (0.0, 0.0),
+        (30.0, 0.0),
+        (30.0, 10.0),
+        (10.0, 10.0),
+        (10.0, 30.0),
+        (0.0, 30.0),
+    ];
+    extrude(
+        &shape_2d::Profile::from_contour(shape_2d::Contour::corners(
+            corners.iter().map(|&(x, y)| DVec2::new(x, y)).collect(),
+        )),
+        &Extrude {
+            height: 10.0,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn arc_and_patch_miters_round_the_face_corner_and_stay_on_it() {
+    let l = l_prism();
+    let base = Fillet {
+        radius: 2.0,
+        edges: names(&["top"]),
+        segments: 4,
+        ..Default::default()
+    };
+    let sharp = fillet(&l, &base).unwrap();
+    let mut volumes = vec![sharp.measure().volume];
+    for (inner, outer) in [
+        (Miter::Arc, Miter::Sharp),
+        (Miter::Sharp, Miter::Arc),
+        (Miter::Sharp, Miter::Patch),
+    ] {
+        let s = fillet(
+            &l,
+            &Fillet {
+                inner_miter: inner,
+                outer_miter: outer,
+                ..base.clone()
+            },
+        )
+        .unwrap();
+        check_closed(&s);
+        // The top stays flat: every arc lies on it.
+        for t in s.faces(&["top"]).unwrap() {
+            for &v in &s.triangles[t as usize] {
+                assert_eq!(s.positions[v as usize].z, 10.0);
+            }
+        }
+        let f = s.faces(&["fillet"]).unwrap();
+        let q = quad_pairs(&s, &f);
+        assert!(q.paired * 10 >= q.triangles * 9, "{q:?}");
+        volumes.push(s.measure().volume);
+    }
+    // Inner arcs cut the five convex corners of the top; outer miters
+    // round the reflex one by keeping more of the top.
+    assert!(volumes[1] < volumes[0], "{volumes:?}");
+    assert!(
+        volumes[2] > volumes[0] && volumes[3] > volumes[0],
+        "{volumes:?}"
+    );
+    // A patch miter needs a reflex corner.
+    let e = fillet(
+        &l,
+        &Fillet {
+            inner_miter: Miter::Patch,
+            ..base.clone()
+        },
+    );
+    assert!(matches!(e, Err(BevelError::Invalid(_))), "{e:?}");
+    // Chamfers and a box's all-edge corners take them too.
+    let ch = chamfer(
+        &l,
+        &Chamfer {
+            distance: 2.0,
+            edges: names(&["top"]),
+            inner_miter: Miter::Arc,
+            outer_miter: Miter::Patch,
+            segments: 2,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    check_closed(&ch);
+    let all = fillet(
+        &block(),
+        &Fillet {
+            radius: 3.0,
+            segments: 4,
+            inner_miter: Miter::Arc,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    check(&all, "fillet");
+}
+
+#[test]
+fn faces_cut_into_slivers_are_rebuilt_from_their_outline() {
+    // A join leaves its cut edges in short pieces and its faces in
+    // slivers; each run is bevelled as one edge.
+    let big = cuboid(&BoxDesc {
+        width: 20.0,
+        depth: 20.0,
+        height: 10.0,
+    })
+    .unwrap();
+    let mut small = cuboid(&BoxDesc {
+        width: 8.0,
+        depth: 8.0,
+        height: 10.0,
+    })
+    .unwrap();
+    small.map_positions(|p| p + shape_core::DVec3::new(3.0, 2.0, 8.0), false);
+    let j = shape_bool::boolean(&big, &small, &shape_bool::Boolean::default()).unwrap();
+    let s = fillet(
+        &j,
+        &Fillet {
+            radius: 1.0,
+            segments: 4,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    check(&s, "fillet");
+    // The concave seam's fillet adds what the convex ones remove, about.
+    assert!((s.measure().volume - j.measure().volume).abs() < 0.03 * j.measure().volume);
+    // 1.5 on either side of a 3 gap meets exactly: refused.
+    let e = fillet(
+        &j,
+        &Fillet {
+            radius: 1.5,
+            segments: 4,
+            ..Default::default()
+        },
+    );
+    assert!(matches!(e, Err(BevelError::TooLarge(_))), "{e:?}");
+    // A part-turn revolve's end faces are slivers too.
+    let ring = shape_gen::solids::revolve(
+        &shape_2d::Profile::from_contour(shape_2d::Contour::corners(vec![
+            DVec2::new(5.0, 0.0),
+            DVec2::new(10.0, 0.0),
+            DVec2::new(10.0, 8.0),
+            DVec2::new(5.0, 8.0),
+        ])),
+        &shape_gen::solids::Revolve {
+            angle: 2.0,
+            axis: shape_gen::solids::Axis::Z,
+        },
+    )
+    .unwrap();
+    let s = fillet(
+        &ring,
+        &Fillet {
+            radius: 0.3,
+            segments: 4,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    check_closed(&s);
+    // Wider than a segment of the bore: the offset would cross the bore's
+    // own edges, which this version does not do.
+    let e = fillet(
+        &ring,
+        &Fillet {
+            radius: 1.5,
+            segments: 4,
+            ..Default::default()
+        },
+    );
+    assert!(matches!(e, Err(BevelError::TooLarge(_))), "{e:?}");
+}
+
+#[test]
+fn a_pipe_joint_stays_on_the_pipe() {
+    // A block whose front is two faces in one plane: the seam between
+    // them is a real edge under the top's front edge, which runs straight
+    // through it.
+    let corners = [
+        (-20.0, -15.0),
+        (0.0, -15.0),
+        (20.0, -15.0),
+        (20.0, 15.0),
+        (-20.0, 15.0),
+    ];
+    let mut b = extrude(
+        &shape_2d::Profile::from_contour(shape_2d::Contour::corners(
+            corners.iter().map(|&(x, y)| DVec2::new(x, y)).collect(),
+        )),
+        &Extrude {
+            height: 20.0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let seam = b
+        .real_edges()
+        .into_iter()
+        .find(|&(x, y)| {
+            [x, y].iter().all(|&v| {
+                let q = b.positions[v as usize];
+                q.x == 0.0 && q.y == -15.0
+            })
+        })
+        .unwrap();
+    b.tag_edge(seam.0, seam.1, &["seam"]);
+    let r = 3.0;
+    let plain = fillet(
+        &b,
+        &Fillet {
+            radius: r,
+            edges: names(&["top"]),
+            segments: 8,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let s = fillet(
+        &b,
+        &Fillet {
+            radius: r,
+            edges: names(&["top", "seam"]),
+            segments: 8,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    check_closed(&s);
+    let q = quad_pairs(&s, &s.faces(&["fillet"]).unwrap());
+    assert!(q.triangles - q.paired <= 2, "{q:?}");
+    // The seam's faces are one plane, so its bevel is flat and the joint
+    // is the top edge's round, unbroken: every new point near the joint
+    // lies on the cylinder of radius r about the round's axis.
+    let axis = |q: shape_core::DVec3| {
+        let (dy, dz) = (q.y - (-15.0 + r), q.z - (20.0 - r));
+        (dy * dy + dz * dz).sqrt()
+    };
+    let mut near = 0;
+    for t in s.faces(&["fillet"]).unwrap() {
+        for &v in &s.triangles[t as usize] {
+            let q = s.positions[v as usize];
+            if q.x.abs() < r && q.y < -15.0 + r && q.z > 20.0 - r {
+                near += 1;
+                assert!((axis(q) - r).abs() < 1e-9, "{q} at {}", axis(q));
+            }
+        }
+    }
+    assert!(near > 20);
+    let (v0, v1) = (plain.measure().volume, s.measure().volume);
+    assert!((v0 - v1).abs() < 1e-6 * v0, "{v0} {v1}");
+}
+
+#[test]
+fn loop_slide_keeps_each_bevel_s_width_even_along_its_edge() {
+    // A tapered, uneven quadrilateral: at each top corner the two walls
+    // meet the slanted edge at different angles, so their offset lines
+    // meet it at different points.
+    let quad = [(0.0, 0.0), (30.0, 0.0), (24.0, 20.0), (-6.0, 14.0)];
+    let p = extrude(
+        &shape_2d::Profile::from_contour(shape_2d::Contour::corners(
+            quad.iter().map(|&(x, y)| DVec2::new(x, y)).collect(),
+        )),
+        &Extrude {
+            height: 10.0,
+            taper: 0.3,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let d = Chamfer {
+        distance: 2.0,
+        edges: names(&["top"]),
+        ..Default::default()
+    };
+    // The width of the front wall's bevel at each end: the distance from
+    // the wall's top edge of the points the chamfer leaves on the wall.
+    let wall = (0..p.triangles.len())
+        .find(|&t| bevel::tri_normal(&p, t).y < -0.5)
+        .unwrap();
+    let n = bevel::tri_normal(&p, wall);
+    let on = |q: shape_core::DVec3, a: shape_core::DVec3| n.dot(q - a).abs() < 1e-9;
+    let a = p.positions[p.triangles[wall][0] as usize];
+    let top: Vec<_> = p
+        .positions
+        .iter()
+        .filter(|q| q.z == 10.0 && on(**q, a))
+        .copied()
+        .collect();
+    let (a, line) = (top[0], (top[1] - top[0]).normalize());
+    let front = |s: &Solid| -> Vec<f64> {
+        let mut out: Vec<f64> = s
+            .positions
+            .iter()
+            .filter(|q| q.z < 10.0 && q.z > 5.0 && on(**q, a))
+            .map(|&q| ((q - a) - line * (q - a).dot(line)).length())
+            .collect();
+        out.sort_by(f64::total_cmp);
+        out
+    };
+    let plain = chamfer(&p, &d).unwrap();
+    let w = front(&plain);
+    assert_eq!(w.len(), 2, "{w:?}");
+    assert!((w[0] - w[1]).abs() > 1e-3, "{w:?}");
+    let slid = chamfer(
+        &p,
+        &Chamfer {
+            loop_slide: true,
+            ..d.clone()
+        },
+    )
+    .unwrap();
+    check(&slid, "chamfer");
+    let w = front(&slid);
+    assert_eq!(w.len(), 2, "{w:?}");
+    assert!((w[0] - w[1]).abs() < 1e-6, "{w:?}");
 }

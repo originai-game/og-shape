@@ -355,6 +355,7 @@ impl Session {
                     edges: a.names_or("edges")?,
                     segments: a.u32_or("segments", 0)?,
                     profile: a.num_or("profile", 0.0)?,
+                    ..Default::default()
                 };
                 m.fillet(a.id("id")?, &d)?;
                 Ok((none(), true))
@@ -366,6 +367,7 @@ impl Session {
                     angle: a.num_or("angle", 0.0)?,
                     edges: a.names_or("edges")?,
                     segments: a.u32_or("segments", 0)?,
+                    ..Default::default()
                 };
                 m.chamfer(a.id("id")?, &d)?;
                 Ok((none(), true))

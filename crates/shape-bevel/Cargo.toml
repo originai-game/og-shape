@@ -16,6 +16,8 @@ shape-mesh.workspace = true
 shape-gen.workspace = true
 shape-edit.workspace = true
 shape-2d.workspace = true
+shape-bool.workspace = true
+shape-tools.workspace = true
 
 [lints]
 workspace = true

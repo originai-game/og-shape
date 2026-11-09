@@ -333,3 +333,25 @@
   21.
 - Golden cases `selfunion.*` (folded ball, noisy ball, overlapping
   copies, the check, repair's fuse). No existing hash moved.
+- `shape-bevel` closes the configurations it refused as `Unsupported`
+  (`docs/research.md` §7.4):
+  - a gap with two or more unbevelled edges between bevelled ones (and a
+    lone edge ending among three or more faces): the faces between the
+    unbevelled edges are cut on a profile around the vertex and the hole
+    takes an ADJ patch (Blender's Full Vertex Bevel);
+  - a lone bevelled edge whose two faces meet again at its end (part of
+    a rim): it tapers to a tip at the vertex;
+  - pipe joints: where two of three or more bevelled edges are in line,
+    the corner patch lies on the round running through;
+  - `Fillet` and `Chamfer` gain `outer_miter`, `inner_miter` (`Miter::
+    Sharp`, `Arc`, `Patch`; inner takes no `Patch`, refused as the new
+    `BevelError::Invalid`), `spread` and `loop_slide`. Zero values keep
+    the old results.
+- `shape-bevel`: a bevel that did not fit because a face was cut into
+  slivers (a cylinder's cap under part of its rim, a boolean's faces)
+  now rebuilds that planar face from its outline, holes bridged, and a
+  straight run of bevelled edges that a boolean left in short pieces is
+  bevelled as one edge. Results that fitted before are unchanged.
+- Golden cases `bevel.gaps`, `bevel.miters`, `bevel.pipe`,
+  `bevel.slide` and `bevel.slivers`; no existing hash moved. Previews in
+  `docs/previews/phase3/` (`cargo run -p shape-bevel --example phase3`).
