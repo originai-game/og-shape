@@ -351,7 +351,16 @@ aarch64 Linux.
    r = 3, also 24 segments, the result is closed. The plate's top-cap
    diagonal runs through the cylinder's vertex columns. The crossing
    points are made, but the pieces around them are classified wrongly.
-   The root cause is not isolated yet. Until it is fixed in `csg.rs`:
+   The root cause is not isolated yet. What is known:
+   - The cracks are all on the plate's bottom face, around the bore.
+   - The bore wall's pieces next to z = 0 are dropped: their region
+     leaks into the region outside.
+   - The leak is at the vertex column on the diagonal. There the crossing
+     is an edge-on-edge point, computed by the closest-point formula
+     (`edge_edge`), so it lies off both edges by rounding.
+   
+   The first suspect is the region split in `arrange` step 3. A crossing
+   segment that ends at such a point may not close the band. Until it is fixed in `csg.rs`:
    - `shape-edit` turns its round tools half a segment off the axes, which
      clears the case for holes;
    - a countersink's cone runs on below the bore, a quarter segment off
