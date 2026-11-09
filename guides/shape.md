@@ -61,13 +61,12 @@ export default function (og) {
 - **One function per distinct part**, built about its own origin; each
   dimension named once, the rest derived.
 - **Say each shape with its verb**: turned is `revolve`, hollow `shell`,
-  a bore `hole`, a rod or bent tube `sweep` (a bend's points from
-  `s.ring({ n, radius, angle })` origins), a changing section `loft`, a
-  draft `extrude` with `taper`, a constant section along any axis
-  `extrude` on a turned frame, a curved panel the `intersect` of a slab
-  and a big cylinder or sphere. A table of points is the last resort.
-  `Math.sin` and `Math.cos` may size things, never place them: turn a
-  frame.
+  a bore `hole`, a rod or bent tube `wire` (bends by `fillet`), a pipe
+  elbow a part `torus`, a hull or fuselage `body`, a changing section
+  `loft`, a draft `extrude` with `taper`, a curved panel the `intersect`
+  of a slab and a big cylinder, an arc in an outline a `poly` point's
+  `bulge`. `Math.sin` and `Math.cos` may size things, never place them:
+  turn a frame.
 
 ## 3. Names
 
@@ -79,8 +78,8 @@ coordinates (`s.names(part)`; a joined detail's own: `"boss.top"`).
 ## 4. Placement with frames
 
 `on: frame` in a generator, or `s.at(part, frame)`, puts the part's own
-origin and axes on the frame's. A revolve, dome or torus stands upright
-on `og.frame({ origin, normal: [0, -1, 0], up: [0, 0, 1] })`.
+origin and axes on the frame's. A revolve, sphere, dome or torus with
+`axis: "+Z"` stands upright on z = 0.
 
 **A later `at` replaces an `on` without warning.** So:
 - a part placed once gets `on`, or is built at the origin and `at`-ed;
@@ -150,12 +149,12 @@ before joining: after a join, `edges: "top"` takes every operand's.
   with none; `join` keeps the target's, so join only one colour.
 - **Triangles**: the task's budget; without one, a few thousand for a
   prop and under about 20 000 for a large object. Round things cost most
-  (up to 64 segments a turn; a small sphere or torus is several hundred);
-  only `og.circle` and fillets take `segments`.
+  (24 to 64 segments a turn by size); give small or many round parts
+  `segments` (12 to 16).
 
 ## 8. Review: build → preview → measure → fix
 
-Build after each part: errors do not name the call.
+An error names the op, its part and your line; fix it there.
 
 1. **Measure** every part: `closed: true`, `components: 1` unless meant
    otherwise, no non-manifold edges or degenerate triangles; the bounds
@@ -179,4 +178,4 @@ Build after each part: errors do not name the call.
 | `the bevel is larger than the faces allow` | radius over half the smallest face, or a fillet after a join | smaller, or before the join |
 | a part moves the wrong way | the axis's sign | flip it |
 | a cut that changes nothing | the tool is wholly inside or outside | make it cross the surface |
-| a polygon too wide | `radius` is to the corners | radius = flats ÷ 2 ÷ cos(180° ÷ sides) |
+| a polygon too wide | `radius` is to the corners | `flats` |

@@ -17,23 +17,24 @@ export default function (og) {
 
 Millimetres, radians (`og.deg(90)`), Z up, the front looks −Y. Points
 are `[x, y, z]` arrays; every frame is in the world at rest. Desc objects
-are zero-value; a field not listed here is ignored, not refused. Errors
-are thrown with the kernel's message, which does not say which call.
+are zero-value; a field not listed here is refused. An error names the
+op, its index, the part and your line.
 
 ## `og` and profiles
 
 - `og.model({ name, units? })` → `Shape`; `og.deg(d)`; `og.world`.
 - `og.frame({ origin?, normal?, up? })`: +z along `normal`, +y toward
   `up`, else by the facing rule.
-- Profiles are 2D and centred on their origin: `og.rect({ width, height,
+- Profiles are 2D, centred on their origin: `og.rect({ width, height,
   radius? })` (x by y), `og.circle({ radius, segments? })`,
   `og.ellipse({ rx, ry })`, `og.slot({ length, width })` (along x),
-  `og.polygon({ sides, radius })` (radius to the corners, a corner on +x),
-  `og.poly({ points: [[x, y] | { x, y, radius }] })` (points kept as
-  given; a radius rounds that corner), `og.gear({ teeth, module })`,
-  `og.union / subtract / intersect(a, b, …)` (subtract makes a hollow
-  section). Anywhere a profile goes: `{ translate: { profile, x, y } }`,
-  `{ rotate: { profile, angle } }`, `{ offset: { profile, distance } }`.
+  `og.polygon({ sides, radius | flats })` (to the corners, or across
+  the flats; a corner on +x), `og.poly({ points: [[x, y] | { x, y,
+  radius?, bulge? }] })` (`radius` rounds that corner; `bulge` bows the
+  edge to the next point into an arc that far, outward if positive), `og.gear({ teeth, module })`, `og.union /
+  subtract / intersect(a, b, …)` (subtract makes a hollow section),
+  `og.translate({ profile, x?, y? })`, `og.rotate({ profile, angle })`,
+  `og.offset({ profile, distance })`, `og.scale({ profile, x?, y? })`.
 
 ## `Frame`
 
@@ -51,15 +52,20 @@ Generators take `name` and `on?` and return a `Part`. `on` puts the
 part's own origin and axes on the frame's; a profile's x, y are the
 part's x, y.
 
+Round generators take `segments?` a turn (0: by size, 24 to 64).
+
 | generator | its own space |
 |---|---|
 | `box({ width, depth, height })` | x, y, z sizes; centred in x and y, from z = 0 up |
 | `cylinder({ radius, height, radiusTop? })`, `cone({ radius, height })`, `tube({ outer, inner, height })` | radii; about +z from z = 0 |
 | `extrude({ profile, height, twist?, taper?, bothSides? })` | along +z; the top is scaled by 1 − `taper` (negative widens); `bothSides` centres it |
-| `loft({ sections: [{ profile, z }], samples?, steps? })` | `z` in its own space; straight between sections; `steps` > 1 curves, and can overshoot |
+| `loft({ sections: [{ profile, z }], samples?, steps?, curve? })` | `z` in its own space; straight between sections; `steps` > 1 curves (`curve: "spline"` through every section), and can overshoot |
 | `sphere({ radius })` | centred |
-| `revolve({ profile, angle? })`, `dome({ radius })`, `torus({ radius, tube })` | about **+y**; profile x is the radius (≥ 0); a part `angle` turns from +x toward −z |
-| `sweep({ profile, path, up?, twist?, scaleEnd? })` | the profile (its y toward `up`) along a polyline of `[x, y, z]` in the part's space; corners are mitred |
+| `revolve({ profile, angle? })`, `dome({ radius, height? })`, `torus({ radius, tube, angle?, tubeSegments? })` | about **+y**, or `axis: "+Z"` (profile y up, on z = 0; spheres too); profile x is the radius (≥ 0); a part `angle` turns from +x toward −z; a dome `height` makes a cap |
+| `sweep({ profile, path, up?, twist?, scaleEnd? })` | the profile (its y toward `up`) along a polyline; corners mitred |
+| `wire({ path, diameter, fillet?, fillets?, closed? })` | a round rod along a polyline; corners bent round `fillet` (≥ diameter / 2), else mitred |
+| `body({ plan, top, bottom, n? })` | along +y: `plan` the width, `top` and `bottom` the z lines, `n` the squareness (2 round); each a number, `[[y, v], …]` or `{ points, smooth: true }` |
+| `gear({ teeth, module, width, bore?, hub?, hubHeight? })`, `knurl({ diameter, height, pitch?, straight? })` | about +z from z = 0; `bore`, `hub` diameters |
 | `wedge({ width, height, depth })`, `thread({ radius, pitch, length, depth })` | from the origin into +x, +y, +z; about +z |
 
 Placement (readers answer frames and are not recorded):
@@ -83,7 +89,8 @@ anchors? })`, `attach(assembly, { name, children })`, `copy(part, name)`,
 
 Edits (a tool must be a part; it is used up; the target keeps its name):
 - `cut`, `join`, `intersect(target, tool)`; `seat(host, part)` cuts
-  `part`'s volume out of `host` and keeps `part`.
+  `part`'s volume out of `host` and keeps `part`. `scale(part, { x?, y?,
+  z? })` along its own axes, about its own origin.
 - `hole(part, { diameter, at, depth?, counterbore?, countersink? })`:
   `at` one frame or a list, +z out of the material; `depth` 0 goes
   through; `counterbore: [d, depth]`, `countersink: [d, full angle]`.
