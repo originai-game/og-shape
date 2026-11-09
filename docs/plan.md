@@ -1,0 +1,122 @@
+# og-shape plan
+
+Each phase ends when its acceptance is met, with the gate green. Phases run
+in order. Phase M (the merge) needs the owner's go-ahead.
+
+## Where it runs
+
+- **No GPU is needed.** Development runs in an Amp orb (x86-64 Linux, plus
+  wasm32 under wasmtime and bun).
+- **The aarch64 check runs on GitHub Actions** (`macos-latest` and
+  `ubuntu-24.04-arm`), so it never takes a slot or a lane on macrunner and
+  never touches origin-engine's gate or landing queue.
+
+## Gate
+
+`scripts/check.sh`, run locally and in GitHub Actions, does:
+- fmt and clippy (`-D warnings`);
+- the unit tests;
+- the golden output hashes of every operation on x86-64 Linux,
+  x86-64 Windows, aarch64 macOS, aarch64 Linux and wasm32 (wasmtime).
+
+One hash file is committed. Every target must reproduce it byte for byte.
+A change that moves a hash says why in its commit and changelog.
+
+## Phase 0: foundations and the boolean decision
+
+- Workspace, `shape-core`, the determinism lint and the CI matrix.
+- Copy og-geom from origin-engine at a pinned commit into `shape-gen` and
+  `shape-bool`, recorded in `third_party/og-geom/SOURCE`.
+- Benchmark og-geom's exact-predicate CSG against manifold-rust (pinned,
+  sequential) on three suites:
+  - the sand3d programs' booleans, rebuilt by hand as fixtures;
+  - Thingi10K's closed meshes;
+  - AI-generated meshes from the platform's providers.
+  
+  Measure robustness (closed output, no lost faces), speed, and hash
+  identity on all targets. Keep one boolean engine. Write the decision and
+  its numbers into `docs/research.md`.
+- **Acceptance:** the gate runs on all five targets, and the decision is
+  recorded.
+
+## Phase 1: profiles and generators
+
+- `shape-2d`: all profile constructors, 2D booleans, offset, stroke,
+  triangulation, text via skrifa.
+- `shape-mesh` names, and canonical ordering.
+- `shape-gen`: every generator in `docs/design.md` §2, with sand3d's
+  naming of caps and walls.
+- **Acceptance:** every generator has a golden hash on every target. Rebuild
+  ten sand3d gallery programs (no booleans or bevels) and inspect their
+  previews.
+
+## Phase 2: booleans and edits
+
+- cut, join, intersect, split, hole, pocket, seat, shell, dent, merge, with
+  names carried through.
+- **Acceptance:** sand3d's edit examples rebuild with the same names on the
+  same edges. Shell walls measure the requested thickness within
+  tolerance.
+
+## Phase 3: fillet and chamfer
+
+- `shape-bevel`, clean-room from Blender's published Bevel V2 design
+  (`docs/research.md` §2.2):
+  - four offsets per edge;
+  - a superellipse profile;
+  - segments;
+  - miters;
+  - corner fill by valence (octant patch, the ADJ quad pattern by
+    boundary-constrained Catmull-Clark, Cutoff fallback);
+  - clamp per vertex with exact predicates;
+  - UVs by mean-value interpolation.
+- **Acceptance:** fillets and chamfers on the sand3d examples (bracket,
+  washer, enclosure corners) produce all-quad corner patches, closed
+  output, and the names `fillet` and `chamfer`. Inspect their previews.
+
+## Phase 4: parts, joints, materials, export, preview
+
+- Parts, groups, assemblies, joints, pose, materials.
+- GLB export with joint extras; OBJ and STL.
+- The CPU turntable preview.
+- `shape-cli` and the wasm build with its TypeScript binding.
+- **Acceptance:** sand3d's washing machine, rebuilt as a TypeScript program,
+  exports a GLB that three.js loads with working joints. Its preview
+  renders with no GPU.
+
+## Phase 5: mesh tools for the platform
+
+- import (glb/gltf/obj; fbx if a Rust-only path exists);
+- repair (weld, floaters, degenerate faces, transforms, triangulate, join);
+- decimate with LODs (meshoptimizer-rs);
+- UV unwrap;
+- measure.
+- **Acceptance:**
+  - Take provider outputs (Meshy, Tripo, Hunyuan), run the full chain
+    `import → repair → decimate → unwrap → measure → preview → export`, and
+    meet the Hunyuan texturing input contract (`docs/research.md` §3).
+  - Everything the platform's `asset_process` does today is covered.
+
+## Phase 6: the authoring guide
+
+- `guides/shape.md`: how to plan an object (parts first, then details),
+  naming, joints, budgets, and the review loop with previews and measures.
+  It follows sand3d's eight assembly rules where they fit, with no platform
+  names.
+- Evaluate it: an agent with only the guide and the API rebuilds 20
+  objects from sand3d's datasets (CC BY 4.0). Record the success rate and
+  the token counts.
+- **Acceptance:** the evaluation results are recorded in `docs/research.md`.
+
+## Phase M: merge into origin-engine (needs the owner's go-ahead)
+
+As in `docs/design.md` §8. It runs as one origin-engine stream from
+origin/main, landed through `scripts/land.sh`, and draws the platform ask to
+drop Blender from the asset image.
+
+## Status
+
+| Phase | State |
+|---|---|
+| Research | Done (2026-11-09): `docs/research.md` |
+| 0 | Not started |

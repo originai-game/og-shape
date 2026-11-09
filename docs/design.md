@@ -1,0 +1,165 @@
+# og-shape design
+
+## 1. Goal
+
+A game agent asks for an object ("a washing machine whose door opens") and
+writes it as a short program that reads like the object's construction:
+named parts, named faces and edges, joints that say how the parts move.
+The kernel builds that program into a game-ready mesh, the same bytes on
+every host. The program is the asset. The agent changes the model by
+editing the program.
+
+The same tool covers what the platform's asset pipeline does today with
+Blender (`docs/research.md` §3), so an asset sandbox no longer needs Blender:
+- repair, decimate and UV-unwrap generated meshes;
+- measure them;
+- render a turntable preview;
+- export GLB.
+
+What it is not:
+- A CAD kernel. There are no NURBS and no B-rep, only meshes.
+- A sculpting tool or a retopology tool.
+- A 3D auto-rigger. Providers do rigging today (Meshy, Tripo).
+
+## 2. Scope of the first release
+
+| Family | Operations | Comes from |
+|---|---|---|
+| Profiles (2D) | rect (with corner radius), circle, ellipse, slot, polygon, poly (points with sharp/smooth flags), arc, tangent arc, spline, superellipse, text; union, subtract, intersect, offset, stroke, mirror, hull | sand3d's vocabulary; engine Shape/Path |
+| Solids and paths | extrude (taper, twist, both sides, `until` a face), revolve, sweep (rotation-minimizing frames), loft, body, wire, helix; box, cylinder, tube, cone, sphere, torus, dome, wedge | sand3d; og-geom extrude/lathe/sweep |
+| Edits | cut, join, intersect, split, hole (plain, counterbore, countersink), pocket, seat, fillet, chamfer, soften, shell, dent, merge, copy, scale, delete | sand3d |
+| Placement | Frame, face(name), edge(name), bbox, local, at, transform, grid, ring, along, snap | sand3d |
+| Parts | gear (involute), thread, knurl | sand3d |
+| Articulation | joint (revolute, continuous, prismatic, fixed, floating; axis, range, mimic), pose | sand3d |
+| Assembly | group, assembly, attach, units | sand3d |
+| Materials | material (engine `type model` material fields: glTF metallic-roughness by three.js names) | engine |
+| Mesh tools | import (glb/gltf/obj/fbx), weld, remove floaters and degenerate faces, apply transforms, triangulate, join into one node, decimate (ratio or triangle target, with LODs), UV unwrap, measure, preview, export (GLB, OBJ, STL) | platform `asset_process` (`docs/research.md` §3) |
+
+Not in the first release: USD and URDF export, runtime (in-game)
+generation, remeshing to quads, baking high-poly detail onto low-poly,
+atlas packing. Each can be added later without changing the API.
+
+## 3. How an author uses it
+
+- **The source.** An author writes either:
+  - a TypeScript program in the engine's API style, or
+  - the declarative `type model` `.ogt` text, which already exists in the
+    engine and is extended with the new operations.
+  
+  Both go through the same kernel. Before the merge, this repository
+  carries a TypeScript binding over the wasm build (the `og-shape` npm
+  package, private) for its own tests and examples. After the merge, the
+  binding is generated from the engine's IDL as `og.shape`.
+
+  ```ts
+  const plate = shape.extrude({ name: "plate", profile: shape.rect({ width: 80, height: 40, radius: 4 }), depth: 6 });
+  shape.hole(plate, { diameter: 6.6, on: shape.grid({ x: 2, y: 1, pitchX: 50 }) });
+  shape.fillet(plate, { radius: 1, edges: "top" });
+  ```
+
+- **Where the result lives.** The program lives under the game's
+  `assets/models/`. `og cook` builds it into the engine's model blob, the
+  same blob a glTF cooks to, with LODs, compression and pivots. Joints
+  become pivots and joint metadata that animation and physics read.
+  `og model export` writes GLB for tools outside the engine (the asset
+  card, the Stage viewer, providers' texturing).
+- **When it runs.** At asset build time only, for now. The kernel also
+  runs in wasm, so in-game generation can be added later as more API
+  members, without a second implementation.
+
+## 4. Data model
+
+- **Solid:** a closed, oriented triangle mesh in f64. It carries:
+  - per-face attributes: material, surface id, operand id;
+  - names: sets of face tags and edge tags.
+  
+  Positions are rounded to f32 only on output.
+- **Names.** Every face and edge carries a set of tags. sand3d's rules are
+  the starting point (`docs/research.md` §1.3):
+  - Generators name caps and walls (`top`, `bottom`, `start`, `end`,
+    `side`, `rim`, `seam`).
+  - A boolean names the edges along the cut `cut`, plus each operand's
+    name, and keeps each operand's face names, qualified as
+    `<part>.<tag>`.
+  - A fillet or chamfer names its new faces `fillet` or `chamfer`, and
+    re-tags the boundary edges with the cap names they touch.
+  - A named edge left between two coplanar faces loses its name.
+  - Lookup returns every element carrying any of the names given. A miss
+    is an error value that lists the names that exist.
+- **Part:** a named solid with a material and a placement.
+- **Group / assembly:** a tree of parts. A **joint** connects a child to a
+  parent at a frame, with a kind, an axis, a range and an optional mimic.
+- **Units:** millimetres in programs by default; metres on export. All
+  tolerances are fixed in millimetres, whatever the unit.
+
+## 5. Architecture
+
+A Cargo workspace. Each crate has one job and a small public surface.
+
+| Crate | Job | Built on |
+|---|---|---|
+| `shape-core` | f64 vectors and frames, `trig` (libm), exact predicates, stable sort, the determinism rules in one place | glam (scalar), libm, robust |
+| `shape-2d` | profiles, 2D booleans, offset, stroke, triangulation with holes, curve flattening, glyph outlines | i_overlay, i_triangle, kurbo (`libm` feature), skrifa |
+| `shape-mesh` | half-edge mesh, names, welding, measures, canonical ordering | — |
+| `shape-gen` | the generators: extrude, revolve, sweep, loft, body, wire, helix, primitives, gear, thread, knurl | og-geom's generators, copied at a pinned engine commit, plus new ones |
+| `shape-bool` | mesh booleans and split | og-geom's exact-predicate CSG, or manifold-rust; chosen in phase 0 |
+| `shape-bevel` | fillet, chamfer, soften | written here, clean-room, from Blender's published Bevel V2 design |
+| `shape-edit` | shell, dent, hole, pocket, seat, merge | the crates above |
+| `shape-tools` | import, repair, decimate and LODs, UV unwrap, preview, export | gltf, ufbx (if Rust-only allows; else fbx stays in og cook), meshoptimizer-rs, xatlas port or own unwrap, own CPU rasterizer |
+| `shape-model` | parts, groups, joints, materials, the program API in Rust | all |
+| `shape-wasm` | wasm32 build and the TypeScript binding | wasm-bindgen |
+| `shape-cli` | `shape build / export / measure / preview / repair / decimate / unwrap`, for tests and for the platform before the merge | all |
+
+Why og-geom's code is copied and not depended on:
+- og-geom already has deterministic extrude, lathe, sweep, frames, `trig`,
+  and an exact-predicate CSG.
+- Copying it at a pinned engine commit keeps this repository free of
+  engine dependencies.
+- At the merge, og-shape replaces og-geom in the engine, so the code
+  returns home.
+- The commit it was copied from is recorded in `third_party/og-geom/SOURCE`.
+
+## 6. Determinism
+
+The rules are in `AGENTS.md`. The design consequences:
+- Every operation ends with canonical ordering: vertices by position, then
+  edges and faces by vertex index. This makes the output independent of
+  internal visiting order.
+- Segment counts depend only on the arguments: a chord tolerance in
+  millimetres, clamped to a minimum and a maximum per turn.
+- Coordinates that come within a weld distance of a target's coordinates
+  are snapped onto them before a boolean.
+- An operation that cannot honour its input returns an error value. It
+  never returns a best effort silently. Examples: a boolean on a
+  non-manifold input, or a fillet radius larger than the faces allow.
+- The gate hashes every operation's output on every target
+  (`docs/plan.md` §Gate).
+
+## 7. Tool outputs
+
+- **measure:** triangle and vertex counts; bounds; pivot; surface area;
+  volume; closed or open; non-manifold edges; degenerate faces; floaters;
+  UV coverage and overlap; texture memory once decoded. Reported as JSON
+  measurements with no thresholds. The guides carry the thresholds.
+- **preview:** a turntable of N views to PNG from a deterministic CPU
+  rasterizer: flat and Lambert shading, edges, a ground shadow. It runs
+  with no GPU, for an agent to look at.
+- **export:** GLB with materials. Joints go into node extras in the shape
+  sand3d writes (`docs/research.md` §1.5), so outside tools can read them.
+  OBJ and STL hold meshes only.
+
+## 8. The merge into origin-engine
+
+Done once, at plan phase M:
+1. Vendor the crates under `crates/og-shape*` in origin-engine and replace
+   og-geom with them.
+2. Write `crates/og-api/api/shape.ogt`. The TypeScript `og.shape` is
+   generated for both hosts.
+3. Extend `type model` with the new operations.
+4. Make `og cook` build programs.
+5. Add `og model export / measure / preview / repair / decimate / unwrap`.
+6. Move `guides/` here to `crates/og-api/guides/`.
+7. Ship it in a minor release with changelog fragments.
+
+The platform then switches `asset_process` to the `og model` commands and
+drops Blender from the asset image (platform ask, drafted at the merge).
