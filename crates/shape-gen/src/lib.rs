@@ -14,6 +14,10 @@
 //! [`Mesh`] into a renderer geometry (og-runtime's `geometry.rs`), the cook
 //! into a model (`type model`).
 //!
+//! The named generators (sand3d's, `docs/design.md` §2) return a
+//! [`shape_mesh::Solid`]: [`solids`], [`paths`], [`loft`], [`body`],
+//! [`wire`] and [`parts`].
+//!
 //! uvs follow og-render's convention: v runs down the image (glTF's), so
 //! where three.js writes `v` this crate writes `1 - v`.
 

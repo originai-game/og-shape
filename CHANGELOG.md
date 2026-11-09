@@ -118,3 +118,28 @@
   and the cap names they touch. An offset larger than the faces allow is
   `BevelError::TooLarge`, never a clipped result. `quad_pairs` measures
   how much of a patch is quads. Golden cases `bevel.*` added.
+- `shape-gen`, the generators the phase 1 rebuilds found missing
+  (`docs/research.md` §10):
+  - `loft` takes sections with holes (one region each, as many holes in
+    every section, matched by nearest centre; hole walls `side` +
+    `inner`) and a `curve` field: `Auto` (as before), `Straight`,
+    `CatmullRom`, or `Spline`, sand3d's natural cubic spline through
+    every section by height. `loft` moves to `shape_gen::loft` and is
+    re-exported from `paths`.
+  - `Revolve` gains `axis`: `Axis::Y` (default, as before) or `Axis::Z`
+    (sand3d's: profile y is height). `sphere_desc`, `torus_desc` and
+    `dome_desc` take an `axis` too, and with `Axis::Z` rest on z = 0;
+    `DomeDesc::height` makes sand3d's spherical cap.
+  - `body`: sand3d's solid along +y from plan, top and bottom views and a
+    squareness; superellipse sections, straight or spline views, steps,
+    pointed or capped (`start`, `end`) ends.
+  - `wire`: a round wire along a path, corners bent round a `fillet`
+    radius (one, or one per point) or mitred (`seam` edges); open (`start`,
+    `end`) or closed.
+  - `knurl`: sand3d's diamond or straight knurl on a cylinder.
+  - `gear_solid`: an involute gear with a `bore` and a `hub`, no boolean.
+  - `GenError::Invalid` carries a message for inputs that cannot make a
+    solid.
+  - Golden cases `gen2.*` added; every existing hash is unchanged. A
+    preview sheet is in `docs/previews/gen2/`
+    (`cargo run -p shape-tools --example gen2_preview -- <dir>`).

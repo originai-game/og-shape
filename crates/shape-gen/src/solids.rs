@@ -7,6 +7,11 @@
 //! | [`revolve`] | `side`; `start`, `end` when not a full turn | `rim` (at corners), `start`, `end` |
 //! | primitives | as the generator they are made with | |
 //!
+//! Turned solids are about +y by default; [`Axis::Z`] turns them about +z
+//! instead, and [`sphere_desc`], [`torus_desc`] and [`dome_desc`] then rest
+//! on z = 0 (sand3d's). More generators: [`crate::loft`], [`crate::body`],
+//! [`crate::wire`], [`crate::parts`] (gear solid, knurl).
+//!
 //! Every generator returns a canonical [`Solid`] (`Solid::canonicalize`).
 
 use shape_2d::curve::segments;
