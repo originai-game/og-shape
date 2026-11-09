@@ -799,10 +799,11 @@ front at x 0.315 m); at 143° the door swings out to x 0.670 m; the drawer
 slides out 0.120 m; the dial turns in place.
 
 **Bytes on every host available here:** the GLB, the PNG and the measures
-are the same natively (x86-64), as wasm32-wasip1 under wasmtime (the
-golden run), as wasm32-unknown-unknown under bun (JavaScriptCore) and
-under node 22.23 (V8) (the binding's test and a node run compare the
-GLB's and PNG's hashes with `golden/hashes.txt`).
+are the same natively (x86-64) and as wasm32-wasip1 under wasmtime (the
+golden run). As wasm32-unknown-unknown, the binding's test under bun
+(JavaScriptCore) compares the GLB's and the PNG's hashes with
+`golden/hashes.txt`, and a run under node 22.23 (V8,
+`--experimental-transform-types`) gave the GLB's hash; both match.
 
 ### 8.5 Gaps and what is untested
 
