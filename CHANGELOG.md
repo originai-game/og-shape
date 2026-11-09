@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Design: og-shape is "3D modeling in Rust, built for LLMs". It owns its
+  capabilities, not where an agent's other meshes come from. Skinning is
+  planned (phase 5b): bones from the program, imported skins carried
+  through every tool, never broken silently.
 - Licence list: Unicode-3.0 allowed (Unicode data tables; reached through
   `gltf` in tests), in `AGENTS.md` and `deny.toml`.
 - Repository created: design, plan and verified research.

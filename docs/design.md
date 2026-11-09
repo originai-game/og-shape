@@ -2,24 +2,32 @@
 
 ## 1. Goal
 
-A game agent asks for an object ("a washing machine whose door opens") and
-writes it as a short program that reads like the object's construction:
-named parts, named faces and edges, joints that say how the parts move.
-The kernel builds that program into a game-ready mesh, the same bytes on
-every host. The program is the asset. The agent changes the model by
-editing the program.
+3D modeling in Rust, built for LLMs.
 
-The same tool covers what the platform's asset pipeline does today with
-Blender (`docs/research.md` §3), so an asset sandbox no longer needs Blender:
-- repair, decimate and UV-unwrap generated meshes;
-- measure them;
+An agent asks for an object ("a washing machine whose door opens") and
+writes it as a short program that reads like the object's construction:
+named parts, named faces and edges, joints that say how the parts move, and
+for a figure, the bones that bend it. The kernel builds that program into a
+game-ready mesh, the same bytes on every host. The program is the asset.
+The agent changes the model by editing the program.
+
+The kernel's job is its own capability: what a program can say, and what
+the kernel does with any mesh it is given. Where an agent's meshes come
+from otherwise is the agent's concern, not the kernel's. Every mesh, built
+or imported, gets the same tools:
+- repair, decimate and UV-unwrap;
+- measure;
 - render a turntable preview;
-- export GLB.
+- export (GLB, OBJ, STL).
+
+A skinned mesh (bones and weights) keeps its skin through every tool, or
+the tool refuses it. It is never broken silently.
 
 What it is not:
 - A CAD kernel. There are no NURBS and no B-rep, only meshes.
 - A sculpting tool or a retopology tool.
-- A 3D auto-rigger. Providers do rigging today (Meshy, Tripo).
+- A rigger for arbitrary meshes. Bones come from the program that builds
+  the mesh (§4, skinning), and imported skins are carried through.
 
 ## 2. Scope of the first release
 
@@ -87,6 +95,14 @@ atlas packing. Each can be added later without changing the API.
   - Lookup returns every element carrying any of the names given. A miss
     is an error value that lists the names that exist.
 - **Part:** a named solid with a material and a placement.
+- **Skin (planned, `docs/plan.md` phase 5b):** a skeleton of named bones
+  and, per vertex, up to four bone weights.
+  - Bones come from the program: a part or a named region becomes a bone,
+    a joint becomes its pivot. Weights blend smoothly across the seams the
+    program names.
+  - Imported skins are kept: bones, inverse bind matrices, and weights.
+    Weights are interpolated through repair and decimation.
+  - GLB export writes a glTF skin.
 - **Group / assembly:** a tree of parts. A **joint** connects a child to a
   parent at a frame, with a kind, an axis, a range and an optional mimic.
 - **Units:** millimetres in programs by default; metres on export. All
