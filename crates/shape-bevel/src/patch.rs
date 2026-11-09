@@ -32,6 +32,9 @@ pub(crate) struct Corner {
     pub o: DVec3,
     pub ends: Vec<(DVec3, DVec3, DVec3, Vec<u32>)>,
     pub n: u32,
+    /// Whether three sides may take the octant (their chains were made
+    /// around `o`); otherwise the ADJ pattern.
+    pub octant: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -94,7 +97,7 @@ pub(crate) fn fill(
         return Ok(cutoff(c, pos));
     }
     let h = n / 2;
-    let inner = if m == 3 {
+    let inner = if m == 3 && c.octant {
         octant(c, exponent, samples).unwrap_or_else(|| adj(c, samples))
     } else {
         adj(c, samples)

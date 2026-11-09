@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 use shape_core::{DVec3, trig};
 use shape_mesh::{EdgeKey, Solid};
 
-use bevel::{Kind, Offsets, Spec};
+use bevel::{Kind, Miters, Offsets, Spec};
 
 /// Why a bevel could not be honoured.
 #[derive(Clone, Debug, PartialEq)]
@@ -54,6 +54,8 @@ pub enum BevelError {
     /// The solid is skinned: bevels do not carry skins yet, and never drop
     /// one silently.
     Skinned,
+    /// A field holds a value it does not take (the field and why).
+    Invalid(&'static str),
 }
 
 impl std::fmt::Display for BevelError {
@@ -75,6 +77,7 @@ impl std::fmt::Display for BevelError {
                 write!(f, "the bevel is larger than the faces allow at {p}")
             }
             BevelError::Unsupported(p, what) => write!(f, "at {p}: {what} is not supported"),
+            BevelError::Invalid(why) => f.write_str(why),
             BevelError::Skinned => f.write_str(
                 "the solid is skinned; bevels do not carry skins yet: bevel first, then skin it",
             ),
@@ -83,6 +86,21 @@ impl std::fmt::Display for BevelError {
 }
 
 impl std::error::Error for BevelError {}
+
+/// How two bevels meet at a gap between them with no unbevelled edge
+/// (`docs/research.md` §7.4).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Miter {
+    /// The bevels meet along one line.
+    #[default]
+    Sharp,
+    /// The meeting point splits in two, slid by the spread along each
+    /// bevelled edge, joined by an arc of the bevel's profile.
+    Arc,
+    /// As `Arc`, with a third point slid by the spread straight away from
+    /// the vertex and two arcs.
+    Patch,
+}
 
 /// Rounds edges.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -97,6 +115,16 @@ pub struct Fillet {
     pub segments: u32,
     /// Profile shape: 0.5 (or 0) a circle, 0.25 straight, toward 1 square.
     pub profile: f64,
+    /// The miter where a face corner between two bevelled edges is
+    /// reflex (more than 180°).
+    pub outer_miter: Miter,
+    /// The miter where it is less than 180°: `Sharp` or `Arc`.
+    pub inner_miter: Miter,
+    /// How far an arc or patch miter slides its points; 0 for the offset.
+    pub spread: f64,
+    /// Where a bevel's end slides along an unbevelled edge, even out the
+    /// bevel's width along its whole edge (Blender's Loop Slide).
+    pub loop_slide: bool,
 }
 
 /// Bevels edges flat.
@@ -114,6 +142,14 @@ pub struct Chamfer {
     pub edges: Vec<String>,
     /// Segments; 0 for one.
     pub segments: u32,
+    /// As for [`Fillet::outer_miter`].
+    pub outer_miter: Miter,
+    /// As for [`Fillet::inner_miter`].
+    pub inner_miter: Miter,
+    /// As for [`Fillet::spread`].
+    pub spread: f64,
+    /// As for [`Fillet::loop_slide`].
+    pub loop_slide: bool,
 }
 
 /// Rounds every sharp edge a little.
@@ -138,6 +174,25 @@ fn positive(v: f64, name: &'static str) -> Result<f64, BevelError> {
     } else {
         Ok(v)
     }
+}
+
+/// The miters, checked: a patch miter needs a reflex corner.
+fn miters(inner: Miter, outer: Miter, spread: f64) -> Result<Miters, BevelError> {
+    if inner == Miter::Patch {
+        return Err(BevelError::Invalid(
+            "inner_miter takes Sharp or Arc: a patch miter needs a reflex corner",
+        ));
+    }
+    let spread = if spread == 0.0 {
+        0.0
+    } else {
+        positive(spread, "spread")?
+    };
+    Ok(Miters {
+        inner,
+        outer,
+        spread,
+    })
 }
 
 /// The edges named, or the real edges turning more than `min_turn`.
@@ -180,6 +235,8 @@ pub fn fillet(s: &Solid, d: &Fillet) -> Result<Solid, BevelError> {
             segments: d.segments,
             exponent: 4.0 * profile,
             kind: Kind::Fillet,
+            miters: miters(d.inner_miter, d.outer_miter, d.spread)?,
+            loop_slide: d.loop_slide,
         },
     )
 }
@@ -210,6 +267,8 @@ pub fn chamfer(s: &Solid, d: &Chamfer) -> Result<Solid, BevelError> {
             segments: d.segments,
             exponent: 1.0,
             kind: Kind::Chamfer,
+            miters: miters(d.inner_miter, d.outer_miter, d.spread)?,
+            loop_slide: d.loop_slide,
         },
     )
 }
@@ -238,6 +297,8 @@ pub fn soften(s: &Solid, d: &Soften) -> Result<Solid, BevelError> {
             segments: d.segments,
             exponent: 2.0,
             kind: Kind::Fillet,
+            miters: Miters::default(),
+            loop_slide: false,
         },
     )
 }

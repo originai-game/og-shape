@@ -20,9 +20,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use shape_core::{DVec2, DVec3, predicates, trig};
 use shape_mesh::{EdgeKey, Solid, edge_key};
 
-use crate::BevelError;
 use crate::patch::{self, Corner};
 use crate::profile;
+use crate::{BevelError, Miter};
+
+#[path = "general.rs"]
+mod general;
+#[path = "runs.rs"]
+mod runs;
 
 /// What the new faces are called.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,6 +67,18 @@ pub(crate) struct Spec {
     /// The superellipse exponent (2 a circle, 1 straight).
     pub exponent: f64,
     pub kind: Kind,
+    pub miters: Miters,
+    /// Even out each bevel side's width where its ends slide along
+    /// unbevelled edges.
+    pub loop_slide: bool,
+}
+
+/// Miter kinds and their spread (0: the gap's offset).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Miters {
+    pub inner: Miter,
+    pub outer: Miter,
+    pub spread: f64,
 }
 
 /// Faces closer to coplanar than this (on unit normals) are one plane
@@ -184,6 +201,7 @@ struct Build<'a> {
     n: u32,
     exponent: f64,
     kind: Kind,
+    miters: Miters,
 }
 
 impl Build<'_> {
@@ -293,6 +311,9 @@ impl Build<'_> {
     }
 
     fn vertex(&mut self, v: u32) -> Result<(), BevelError> {
+        if self.needs_general(v)? {
+            return self.general(v);
+        }
         let s = self.s;
         let p = s.positions[v as usize];
         let mut f = fan(s, &self.topo, v)?;
@@ -424,6 +445,7 @@ impl Build<'_> {
             o,
             ends,
             n: self.n,
+            octant: true,
         };
         let exponent = self.exponent;
         let mut samples = |n: u32| profile::samples(exponent, n);
@@ -524,6 +546,155 @@ fn clip(poly: &[u32], pos: &[DVec3], n: DVec3) -> Option<Vec<[u32; 3]>> {
     Some(out)
 }
 
+/// The triangles of `t`'s face that lie in its plane, reached across
+/// shared edges, in index order.
+fn planar_region(s: &Solid, topo: &Topology, t: usize) -> Vec<usize> {
+    let n = tri_normal(s, t);
+    let mut seen = BTreeSet::from([t]);
+    let mut stack = vec![t];
+    while let Some(x) = stack.pop() {
+        let tri = s.triangles[x];
+        for k in 0..3 {
+            let Some(&y) = topo.dir.get(&(tri[(k + 1) % 3], tri[k])) else {
+                continue;
+            };
+            if !seen.contains(&y)
+                && s.surfaces[y] == s.surfaces[t]
+                && tri_normal(s, y).dot(n) > PLANAR_DOT
+            {
+                seen.insert(y);
+                stack.push(y);
+            }
+        }
+    }
+    seen.into_iter().collect()
+}
+
+/// The outline loops of a set of polygons sharing edges, or `None` when
+/// a vertex is passed twice.
+fn outline(polys: &[Vec<u32>]) -> Option<Vec<Vec<u32>>> {
+    let mut edges: BTreeMap<(u32, u32), usize> = BTreeMap::new();
+    for poly in polys {
+        let mut ring = poly.clone();
+        ring.dedup();
+        while ring.len() > 1 && ring.first() == ring.last() {
+            ring.pop();
+        }
+        for k in 0..ring.len() {
+            *edges
+                .entry((ring[k], ring[(k + 1) % ring.len()]))
+                .or_default() += 1;
+        }
+    }
+    let mut next: BTreeMap<u32, u32> = BTreeMap::new();
+    for (&(a, c), &count) in &edges {
+        let back = edges.get(&(c, a)).copied().unwrap_or(0);
+        if count > back && (count - back > 1 || next.insert(a, c).is_some()) {
+            return None;
+        }
+    }
+    let mut loops = Vec::new();
+    let mut seen = BTreeSet::new();
+    for &start in next.keys() {
+        if seen.contains(&start) {
+            continue;
+        }
+        let mut ring = vec![start];
+        seen.insert(start);
+        let mut cur = next[&start];
+        while cur != start {
+            if !seen.insert(cur) {
+                return None;
+            }
+            ring.push(cur);
+            cur = *next.get(&cur)?;
+        }
+        loops.push(ring);
+    }
+    Some(loops)
+}
+
+/// One ring from an outer loop and its holes, each hole joined to the
+/// outer ring by a bridge to the nearest vertex it sees (exact
+/// predicates), as in ear-cut hole elimination.
+fn bridge(loops: Vec<Vec<u32>>, pos: &[DVec3], n: DVec3) -> Option<Vec<u32>> {
+    use core::cmp::Ordering::{Greater, Less};
+    let proj = projector(n);
+    let p2 = |i: u32| proj(pos[i as usize]);
+    let area = |r: &[u32]| {
+        (0..r.len())
+            .map(|k| p2(r[k]).perp_dot(p2(r[(k + 1) % r.len()])))
+            .sum::<f64>()
+    };
+    let (outer, mut holes): (Vec<Vec<u32>>, Vec<Vec<u32>>) =
+        loops.into_iter().partition(|r| area(r) > 0.0);
+    let [mut ring] = <[Vec<u32>; 1]>::try_from(outer).ok()?;
+    // Rightmost hole first.
+    let right = |r: &[u32]| {
+        let mut best = 0;
+        for k in 1..r.len() {
+            let (a, b) = (p2(r[k]), p2(r[best]));
+            if a.x > b.x || (a.x == b.x && a.y < b.y) {
+                best = k;
+            }
+        }
+        best
+    };
+    holes.sort_by(|a, b| {
+        let (pa, pb) = (p2(a[right(a)]), p2(b[right(b)]));
+        pb.x.total_cmp(&pa.x).then(pa.y.total_cmp(&pb.y))
+    });
+    for (hi, hole) in holes.iter().enumerate() {
+        let h = right(hole);
+        let ph = p2(hole[h]);
+        let mut cands: Vec<(f64, usize)> = ring
+            .iter()
+            .enumerate()
+            .map(|(k, &o)| ((p2(o) - ph).length_squared(), k))
+            .collect();
+        cands.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let blocked = |po: shape_core::DVec2, r: &[u32]| {
+            (0..r.len()).any(|k| {
+                let (pa, pb) = (p2(r[k]), p2(r[(k + 1) % r.len()]));
+                if pa == ph || pb == ph || pa == po || pb == po {
+                    return false;
+                }
+                let o1 = predicates::orient2d(ph, po, pa);
+                let o2 = predicates::orient2d(ph, po, pb);
+                let o3 = predicates::orient2d(pa, pb, ph);
+                let o4 = predicates::orient2d(pa, pb, po);
+                ((o1 == Less && o2 == Greater) || (o1 == Greater && o2 == Less))
+                    && ((o3 == Less && o4 == Greater) || (o3 == Greater && o4 == Less))
+            })
+        };
+        // The bridge must leave the hole into the region, which lies to
+        // the left of every outline edge, the holes' included.
+        let len = hole.len();
+        let (hp, hn) = (p2(hole[(h + len - 1) % len]), p2(hole[(h + 1) % len]));
+        let k = cands.iter().map(|&(_, k)| k).find(|&k| {
+            let po = p2(ring[k]);
+            if po == ph {
+                return false;
+            }
+            let (l1, l2) = (
+                predicates::orient2d(hp, ph, po) == Greater,
+                predicates::orient2d(ph, hn, po) == Greater,
+            );
+            let into = if predicates::orient2d(hp, ph, hn) == Greater {
+                l1 && l2
+            } else {
+                l1 || l2
+            };
+            into && !blocked(po, &ring) && holes.iter().skip(hi).all(|r| !blocked(po, r))
+        })?;
+        let mut merged = ring[..=k].to_vec();
+        merged.extend((0..=len).map(|j| hole[(h + j) % len]));
+        merged.extend_from_slice(&ring[k..]);
+        ring = merged;
+    }
+    Some(ring)
+}
+
 const CAPS: [&str; 4] = ["top", "bottom", "start", "end"];
 
 fn is_cap(name: &str) -> bool {
@@ -531,6 +702,28 @@ fn is_cap(name: &str) -> bool {
 }
 
 pub(crate) fn bevel(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
+    match bevel_once(s, spec) {
+        Err(BevelError::TooLarge(at)) => {
+            // Straight runs may be cut into pieces shorter than the bevel.
+            let Some((solid, edges)) = runs::dissolve(s, &spec.edges) else {
+                return Err(BevelError::TooLarge(at));
+            };
+            let again = Spec {
+                edges,
+                offsets: spec.offsets,
+                segments: spec.segments,
+                exponent: spec.exponent,
+                kind: spec.kind,
+                miters: spec.miters,
+                loop_slide: spec.loop_slide,
+            };
+            bevel_once(&solid, &again).map_err(|_| BevelError::TooLarge(at))
+        }
+        r => r,
+    }
+}
+
+fn bevel_once(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
     if !s.measure().closed {
         return Err(BevelError::NotClosed);
     }
@@ -600,6 +793,7 @@ pub(crate) fn bevel(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
         n,
         exponent: spec.exponent,
         kind: spec.kind,
+        miters: spec.miters,
     };
     let verts: BTreeSet<u32> = b.edges.keys().flat_map(|&(x, y)| [x, y]).collect();
     for &v in &verts {
@@ -622,8 +816,12 @@ pub(crate) fn bevel(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
         let unit = b.unit();
         strip_of.insert(key, unit);
         for k in 0..cu.len() - 1 {
-            b.new_tris.push(([cw[k], cu[k], cu[k + 1]], unit));
-            b.new_tris.push(([cw[k], cu[k + 1], cw[k + 1]], unit));
+            // A tip's profile is one point: skip the folded triangles.
+            for t in [[cw[k], cu[k], cu[k + 1]], [cw[k], cu[k + 1], cw[k + 1]]] {
+                if t[0] != t[1] && t[1] != t[2] && t[2] != t[0] {
+                    b.new_tris.push((t, unit));
+                }
+            }
         }
     }
     for &(e0, e1) in &b.smooth {
@@ -643,23 +841,63 @@ fn finish(b: Build<'_>) -> Result<Solid, BevelError> {
     let s = b.s;
     let kind = b.kind.name();
     let seq = |t: usize, x: u32| -> Vec<u32> { b.repl.get(&(t, x)).cloned().unwrap_or(vec![x]) };
-    // Old faces, rebuilt.
-    let mut tris: Vec<([u32; 3], Option<usize>, usize)> = Vec::new(); // (tri, unit, old)
+    // Old faces, rebuilt triangle by triangle; where a triangle does not
+    // fit (a sliver whose corners all moved), its whole planar face is
+    // rebuilt from its outline instead.
+    let n_old = s.triangles.len();
+    let mut pieces: Vec<Option<Vec<[u32; 3]>>> = vec![None; n_old];
+    let mut failed = Vec::new();
     for (i, t) in s.triangles.iter().enumerate() {
-        let changed = t.iter().any(|&x| b.repl.contains_key(&(i, x)));
-        if !changed {
-            tris.push((*t, None, i));
+        if !t.iter().any(|&x| b.repl.contains_key(&(i, x))) {
             continue;
         }
         let poly: Vec<u32> = t.iter().flat_map(|&x| seq(i, x)).collect();
-        let nrm = tri_normal(s, i);
+        match clip(&poly, &b.pos, tri_normal(s, i)) {
+            Some(p) => pieces[i] = Some(p),
+            None => failed.push(i),
+        }
+    }
+    let mut absorbed = vec![false; n_old];
+    let mut regions: BTreeMap<usize, Vec<[u32; 3]>> = BTreeMap::new();
+    for &i in &failed {
+        if absorbed[i] {
+            continue;
+        }
+        let t = s.triangles[i];
         let at = t
             .iter()
             .find(|&&x| b.repl.contains_key(&(i, x)))
             .map_or(DVec3::ZERO, |&x| s.positions[x as usize]);
-        let pieces = clip(&poly, &b.pos, nrm).ok_or(BevelError::TooLarge(at))?;
-        for p in pieces {
-            tris.push((p, None, i));
+        let region = planar_region(s, &b.topo, i);
+        let polys: Vec<Vec<u32>> = region
+            .iter()
+            .map(|&r| s.triangles[r].iter().flat_map(|&x| seq(r, x)).collect())
+            .collect();
+        let nrm = tri_normal(s, i);
+        let tris = outline(&polys)
+            .and_then(|loops| bridge(loops, &b.pos, nrm))
+            .and_then(|ring| clip(&ring, &b.pos, nrm))
+            .ok_or(BevelError::TooLarge(at))?;
+        for &r in &region {
+            absorbed[r] = true;
+        }
+        regions.insert(region[0], tris);
+    }
+    let mut tris: Vec<([u32; 3], Option<usize>, usize)> = Vec::new(); // (tri, unit, old)
+    for (i, t) in s.triangles.iter().enumerate() {
+        if absorbed[i] {
+            for &p in regions.get(&i).into_iter().flatten() {
+                tris.push((p, None, i));
+            }
+            continue;
+        }
+        match &pieces[i] {
+            None => tris.push((*t, None, i)),
+            Some(ps) => {
+                for &p in ps {
+                    tris.push((p, None, i));
+                }
+            }
         }
     }
     for &(t, unit) in &b.new_tris {
