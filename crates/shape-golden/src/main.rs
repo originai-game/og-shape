@@ -8,6 +8,7 @@
 mod cases;
 mod geom;
 mod solids;
+mod tools;
 
 use std::process::ExitCode;
 

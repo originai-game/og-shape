@@ -1,0 +1,21 @@
+[package]
+name = "shape-tools"
+description = "og-shape tools: GLB, OBJ and STL export, and a deterministic CPU turntable preview with a PNG encoder."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+shape-core.workspace = true
+shape-mesh.workspace = true
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
+
+[dev-dependencies]
+gltf = { version = "1.4.1", default-features = false, features = ["utils", "names", "extras"] }
+shape-2d.workspace = true
+shape-gen.workspace = true
+
+[lints]
+workspace = true
