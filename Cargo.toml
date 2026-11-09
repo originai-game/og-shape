@@ -19,6 +19,8 @@ libm = "0.2"
 robust = "1"
 sha2 = "0.11"
 spade = "2.15.1"
+i_overlay = { version = "9.1.0", default-features = false }
+shape-2d = { path = "crates/shape-2d" }
 shape-gen = { path = "crates/shape-gen" }
 shape-bool = { path = "crates/shape-bool" }
 shape-mesh = { path = "crates/shape-mesh" }

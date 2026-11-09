@@ -25,6 +25,7 @@ pub mod merge;
 pub mod path2;
 pub mod polyhedron;
 pub mod shape;
+pub mod solids;
 pub mod sweep;
 pub mod trig;
 

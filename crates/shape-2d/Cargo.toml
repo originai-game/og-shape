@@ -1,0 +1,16 @@
+[package]
+name = "shape-2d"
+description = "og-shape 2D profiles: constructors, booleans, offset, stroke, hull and triangulation."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+shape-core.workspace = true
+i_overlay.workspace = true
+spade.workspace = true
+
+[lints]
+workspace = true

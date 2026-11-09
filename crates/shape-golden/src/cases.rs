@@ -34,6 +34,7 @@ pub fn all() -> Vec<Case> {
         },
     ];
     cases.extend(crate::geom::cases());
+    cases.extend(crate::solids::cases());
     cases
 }
 

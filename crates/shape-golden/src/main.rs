@@ -7,6 +7,7 @@
 
 mod cases;
 mod geom;
+mod solids;
 
 use std::process::ExitCode;
 

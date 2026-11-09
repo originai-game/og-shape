@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 glam.workspace = true
 shape-core.workspace = true
+shape-2d.workspace = true
+shape-mesh.workspace = true
 
 [lints]
 workspace = true

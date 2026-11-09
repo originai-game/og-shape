@@ -23,6 +23,21 @@
 - `shape-mesh`: `Solid` (f64 triangles with surfaces, face names and edge
   names), name lookup that lists existing names on a miss, canonical
   ordering, measures, and the output hash.
+- `shape-2d`: profiles (`rect` with corner radius, `circle`, `ellipse`,
+  `slot`, `polygon`, `poly` with per-corner fillets, `superellipse`, and a
+  `Path` with lines, three-point and tangent arcs, Béziers and splines),
+  each point flagged sharp or smooth; union, subtract, intersect, xor,
+  offset, stroke (i_overlay, integer core), mirror, hull (exact
+  predicates), transforms; triangulation by spade's constrained Delaunay
+  on the exact contour points. Curves follow one rule: 0.05 mm chord, 24
+  to 64 segments a turn.
+- `shape-gen::solids`: named generators. `extrude` (twist, taper, both
+  sides) names `bottom`, `top`, `side` (and `inner` on hole walls) and the
+  edges between them; `revolve` names `side`, `rim`, `start`, `end`;
+  `cuboid` (also `left`, `right`, `front`, `back`), `cylinder`, `cone`,
+  `tube`, `sphere`, `dome`, `torus`, `wedge`. Every output is canonical.
+- Golden cases for profiles, 2D booleans, offsets, triangulation and the
+  named generators.
 - Plan: aarch64 macOS joins the gate later; phase 0 benchmarks booleans on
   synthetic AI-mesh defects instead of provider outputs, which re-check the
   decision in phase 5.

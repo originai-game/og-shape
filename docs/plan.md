@@ -131,4 +131,4 @@ drop Blender from the asset image.
 |---|---|
 | Research | Done (2026-11-09): `docs/research.md` |
 | 0 | Done (2026-11-09): gate on four targets; booleans: og-geom's CSG (`docs/research.md` §5) |
-| 1 | In progress: `shape-mesh` |
+| 1 | In progress: `shape-mesh`, `shape-2d` (no text yet), named extrude/revolve and primitives; next: sweep, loft, helix, gear, thread, knurl, text |
