@@ -54,7 +54,9 @@ impl std::error::Error for PlainGlbError {}
 /// smooth within a surface, one vertex per (position, surface, UV), u32
 /// indices, three.js's default material. UVs are written with v flipped
 /// (glTF's origin is the top left). The bytes depend only on the input.
-/// A skinned solid is refused.
+/// A skinned solid is refused: a plain GLB promises one mesh with no
+/// skin, and dropping the bones would break it silently. [`crate::glb`]
+/// writes skins.
 pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
     if s.skin.is_some() {
         return Err(PlainGlbError::Skinned);

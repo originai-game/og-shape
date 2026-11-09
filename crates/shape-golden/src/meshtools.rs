@@ -5,9 +5,9 @@ use shape_core::{DVec2, DVec3, Frame, HashError, OutputHash};
 use shape_gen::solids::{BoxDesc, cuboid, sphere, torus};
 use shape_mesh::Solid;
 use shape_tools::{
-    Decimate, Floaters, Import, ImportedPart, Joint, JointKind, Measure, Part, PlainGlb, Repair,
-    Scene, Unwrap, Uvs, glb, glb_plain, import, import_obj, join, lods, measure, no_files, repair,
-    unwrap,
+    Affine, Decimate, Floaters, Import, ImportedPart, Joint, JointKind, Measure, Part, PlainGlb,
+    Repair, Scene, Unwrap, Uvs, apply_transform, collapse_short_edges, decimate, glb, glb_plain,
+    import, import_obj, join, lods, measure, no_files, repair, unwrap,
 };
 
 use crate::cases::Case;
@@ -60,6 +60,18 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "meshtools.glb.plain",
             run: plain_case,
+        },
+        Case {
+            name: "meshtools.skin.repair",
+            run: skin_repair_case,
+        },
+        Case {
+            name: "meshtools.skin.decimate",
+            run: skin_decimate_case,
+        },
+        Case {
+            name: "meshtools.skin.join",
+            run: skin_join_case,
         },
     ]
 }
@@ -439,5 +451,121 @@ fn plain_case(h: &mut OutputHash) -> Result<(), HashError> {
     .map_err(fail)?;
     h.bytes(&bytes);
     h.bytes(&glb_plain(&low, &PlainGlb::default()).map_err(fail)?);
+    Ok(())
+}
+
+/// The skinned tube with its top cap cut off and every vertex of one ring
+/// doubled (a seam-split export), repaired: welded, the hole filled, the
+/// weights carried and blended.
+fn skin_repair_case(h: &mut OutputHash) -> Result<(), HashError> {
+    let mut s = skinned_support::skinned_tube();
+    let keep: Vec<bool> = s.surfaces.iter().map(|&x| x != 2).collect();
+    let mut i = 0;
+    s.triangles.retain(|_| (keep[i], i += 1).0);
+    i = 0;
+    s.surfaces.retain(|_| (keep[i], i += 1).0);
+    i = 0;
+    s.face_tags.retain(|_| (keep[i], i += 1).0);
+    // Ring 10's vertices doubled for the triangles above it.
+    let ring = 10 * 32..11 * 32;
+    let first = s.positions.len() as u32;
+    for v in ring.clone() {
+        let w = s.skin.as_ref().map(|k| k.weights[v]);
+        let c = s.push_vertex(s.positions[v]);
+        if let (Some(k), Some(w)) = (s.skin.as_mut(), w) {
+            k.weights[c as usize] = w;
+        }
+    }
+    for t in &mut s.triangles {
+        if t.iter()
+            .any(|&v| v as usize >= 11 * 32 && (v as usize) < 12 * 32)
+        {
+            for v in t.iter_mut() {
+                if ring.contains(&(*v as usize)) {
+                    *v = first + *v - ring.start as u32;
+                }
+            }
+        }
+    }
+    let (r, rep) = repair(
+        &s,
+        &Repair {
+            weld: 0.001,
+            max_hole_edges: 64,
+            min_edge: 0.001,
+            ..Default::default()
+        },
+    )
+    .map_err(fail)?;
+    r.hash_into(h)?;
+    for n in [
+        rep.welded,
+        rep.holes_filled,
+        rep.fill_triangles,
+        rep.holes_left,
+    ] {
+        h.u64(n as u64);
+    }
+    let (c, n) = collapse_short_edges(&r, 2.5).map_err(fail)?;
+    c.hash_into(h)?;
+    h.u64(n as u64);
+    Ok(())
+}
+
+/// The skinned tube decimated to half with bone borders kept and crossed,
+/// and a LOD chain.
+fn skin_decimate_case(h: &mut OutputHash) -> Result<(), HashError> {
+    let s = skinned_support::skinned_tube();
+    for cross in [false, true] {
+        let (d, r) = decimate(
+            &s,
+            &Decimate {
+                ratio: 0.5,
+                cross_bone_borders: cross,
+                ..Default::default()
+            },
+        )
+        .map_err(fail)?;
+        d.hash_into(h)?;
+        h.u64(r.triangles as u64);
+        h.f64(r.error)?;
+    }
+    let levels = [0.5, 0.25, 0.1].map(|ratio| Decimate {
+        ratio,
+        ..Default::default()
+    });
+    for (d, r) in lods(&s, &levels).map_err(fail)? {
+        d.hash_into(h)?;
+        h.f64(r.error)?;
+    }
+    Ok(())
+}
+
+/// Skinned parts placed by one rigid transform, baked and joined into one
+/// skeleton; placed apart, the error naming the bones.
+fn skin_join_case(h: &mut OutputHash) -> Result<(), HashError> {
+    let tube = skinned_support::skinned_tube();
+    let part = |name: &str, t: DVec3| ImportedPart {
+        name: name.into(),
+        solid: tube.clone(),
+        transform: Affine {
+            x: DVec3::Y,
+            y: -DVec3::X,
+            z: DVec3::Z,
+            t,
+        },
+        ..Default::default()
+    };
+    apply_transform(&part("a", DVec3::new(5.0, 0.0, 0.0)))
+        .map_err(fail)?
+        .hash_into(h)?;
+    let at = DVec3::new(5.0, 0.0, 0.0);
+    join(&[part("a", at), part("b", at)])
+        .map_err(fail)?
+        .hash_into(h)?;
+    match join(&[part("a", at), part("b", DVec3::ZERO)]) {
+        Ok(_) => h.str("joined"),
+        Err(e) => h.str(&e.to_string()),
+    }
     Ok(())
 }

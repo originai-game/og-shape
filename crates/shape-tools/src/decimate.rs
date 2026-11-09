@@ -21,7 +21,18 @@
 //! - Collapses are taken cheapest first; ties go to the smaller edge key,
 //!   then the smaller vertex. The order depends only on the input.
 //!
-//! A skinned solid is refused ([`DecimateError::Skinned`]).
+//! Skins are carried: each collapse gives the kept vertex the blend of
+//! the two ends' weights by where it lands (`Weights::blend`: its own
+//! weights at its own position, half and half at the midpoint). Bone
+//! borders are kept by a penalty, not a ban: removing a vertex costs, on
+//! top of its quadric error, the error of moving the surface by its
+//! largest weight difference to any neighbour (on any bone) times 0.5 %
+//! of the bounding-box diagonal. A joint so keeps the rows of vertices it
+//! bends with while the triangle target is still met (a ban cannot meet
+//! it). The reported `error` leaves the penalty out.
+//! `Decimate::cross_bone_borders` drops the penalty; the cost of keeping
+//! borders, in surface error at the same triangle count, is measured in
+//! `docs/research.md` §11.5.
 //!
 //! Names: every triangle left is an input triangle with corners moved, so
 //! it keeps its surface and face names. Edge names follow their vertices
@@ -32,7 +43,7 @@ use std::collections::{BTreeMap, BinaryHeap};
 use std::fmt;
 
 use shape_core::DVec3;
-use shape_mesh::{EdgeKey, Solid, edge_key};
+use shape_mesh::{EdgeKey, Skin, Solid, Weights, edge_key};
 
 use crate::repair::drop_unused;
 
@@ -51,6 +62,10 @@ pub struct Decimate {
     pub max_error: f64,
     /// Never move vertices on open borders (holes, the edge of a sheet).
     pub lock_border: bool,
+    /// On a skinned solid, collapse across bone-weight borders as freely as
+    /// anywhere (off by default: removing a vertex whose weights differ
+    /// from a neighbour's costs extra, so joints keep their rows).
+    pub cross_bone_borders: bool,
 }
 
 /// What a decimation did.
@@ -74,8 +89,8 @@ pub enum DecimateError {
     BadDesc(String),
     /// A position is NaN or infinite.
     NotFinite,
-    /// The solid is skinned: decimation would break its skin (weights are
-    /// interpolated from phase 5b).
+    /// No longer returned: skins are carried (phase 5b part 2). Kept so
+    /// that code matching on it still compiles.
     Skinned,
 }
 
@@ -112,6 +127,29 @@ fn target_of(d: &Decimate, n: usize) -> Result<usize, DecimateError> {
         (Some(a), None) | (None, Some(a)) => Ok(a),
     }
 }
+
+/// The largest difference between two vertices' weights on any bone.
+fn weight_step(a: &Weights, b: &Weights) -> f64 {
+    let mut d: f64 = 0.0;
+    for (bone, x) in a.pairs() {
+        let y = b.pairs().find(|p| p.0 == bone).map_or(0.0, |p| p.1);
+        d = d.max((x - y).abs());
+    }
+    for (bone, y) in b.pairs() {
+        if !a.pairs().any(|p| p.0 == bone) {
+            d = d.max(y);
+        }
+    }
+    d
+}
+
+/// The bend scale, as a fraction of the solid's bounding-box diagonal: a
+/// collapse whose removed vertex differs from a neighbour's weights by `Δ`
+/// on some bone costs as if it moved the surface by `Δ ×` this. The
+/// smallest of the scales swept on the acceptance meshes (0.005 to 0.1,
+/// `docs/research.md` §11.5): all keep a bending joint exact, and larger
+/// ones cost more surface error elsewhere.
+const BEND_FRACTION: f64 = 0.005;
 
 /// A symmetric 4×4 quadric, `[a², ab, ac, ad, b², bc, bd, c², cd, d²]`
 /// summed over planes, and the weight (area) behind it.
@@ -178,6 +216,8 @@ enum Kind {
 #[derive(Clone, Copy, Debug)]
 struct Entry {
     cost: f64,
+    /// The part of `cost` that is the skin's (weights changed).
+    penalty: f64,
     edge: EdgeKey,
     /// The vertex removed.
     from: u32,
@@ -223,6 +263,12 @@ struct Mesh {
     into: Vec<u32>,
     /// Only edges shorter than this collapse (0: any).
     max_len: f64,
+    /// Per vertex, its bone weights, on a skinned solid.
+    weights: Option<Vec<Weights>>,
+    /// Collapses that change weights cost extra.
+    keep_borders: bool,
+    /// The bend scale, mm.
+    bend: f64,
 }
 
 impl Mesh {
@@ -307,9 +353,27 @@ impl Mesh {
             if kf == Kind::Interior && kt == Kind::Interior {
                 options.push((pf + pt) * 0.5);
             }
+            // On a skinned solid: what changing the weights costs, as if the
+            // surface moved by the weight change times the bend scale.
+            let penalty = match (&self.weights, self.keep_borders) {
+                (Some(w), true) => {
+                    // Removing `from` changes how weights blend over its
+                    // ring: the largest difference from it to a neighbour.
+                    let wf = &w[from as usize];
+                    let step = self
+                        .neighbours(from)
+                        .iter()
+                        .map(|&n| weight_step(wf, &w[n as usize]))
+                        .fold(0.0, f64::max);
+                    let d = step * self.bend;
+                    q.w * d * d
+                }
+                _ => 0.0,
+            };
             for p in options {
                 let e = Entry {
-                    cost: q.eval(p),
+                    cost: q.eval(p) + penalty,
+                    penalty,
                     edge,
                     from,
                     to,
@@ -347,6 +411,16 @@ impl Mesh {
             }
         }
         self.around[to as usize].sort_unstable();
+        if let Some(w) = &mut self.weights {
+            // The kept vertex's weights by where it lands between the two:
+            // its own at its own position, half and half at the midpoint.
+            let (wt, wf) = (w[to as usize], w[from as usize]);
+            if e.pos != self.pos[to as usize] {
+                let mut items = [(wt, 0.5), (wf, 0.5)];
+                items.sort_by(|a, b| a.0.cmp_total(&b.0));
+                w[to as usize] = Weights::blend(&items);
+            }
+        }
         self.pos[to as usize] = e.pos;
         let q = self.quadric[from as usize];
         self.quadric[to as usize].add(&q);
@@ -397,9 +471,6 @@ pub fn collapse_short_edges(s: &Solid, length: f64) -> Result<(Solid, usize), De
             "an edge length must be finite and >= 0".into(),
         ));
     }
-    if s.skin.is_some() {
-        return Err(DecimateError::Skinned);
-    }
     if length == 0.0 || s.triangles.is_empty() {
         return Ok((s.clone(), 0));
     }
@@ -423,9 +494,6 @@ fn collapse(
     d: &Decimate,
     max_len: f64,
 ) -> Result<(Solid, DecimateReport), DecimateError> {
-    if s.skin.is_some() {
-        return Err(DecimateError::Skinned);
-    }
     if s.positions.iter().any(|p| !p.is_finite()) {
         return Err(DecimateError::NotFinite);
     }
@@ -452,6 +520,23 @@ fn collapse(
         stamp: vec![0; nv],
         into: (0..nv as u32).collect(),
         max_len,
+        weights: s.skin.as_ref().map(|k| {
+            let mut w = k.weights.clone();
+            w.resize(nv, Weights::default());
+            w
+        }),
+        keep_borders: !d.cross_bone_borders,
+        bend: {
+            let (lo, hi) = s.positions.iter().fold(
+                (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY)),
+                |(l, h), p| (l.min(*p), h.max(*p)),
+            );
+            if s.positions.is_empty() {
+                0.0
+            } else {
+                (hi - lo).length() * BEND_FRACTION
+            }
+        },
     };
     let mut users: BTreeMap<EdgeKey, Vec<u32>> = BTreeMap::new();
     let mut total_area = 0.0;
@@ -576,7 +661,7 @@ fn collapse(
         let mut q = m.quadric[e.from as usize];
         q.add(&m.quadric[e.to as usize]);
         let err = if q.w > 0.0 {
-            (e.cost / q.w).sqrt()
+            ((e.cost - e.penalty).max(0.0) / q.w).sqrt()
         } else {
             0.0
         };
@@ -598,6 +683,10 @@ fn collapse(
     let mut out = Solid {
         positions: m.pos.clone(),
         names: s.names.clone(),
+        skin: s.skin.as_ref().map(|k| Skin {
+            bones: k.bones.clone(),
+            weights: m.weights.clone().unwrap_or_default(),
+        }),
         ..Default::default()
     };
     for (i, t) in m.tris.iter().enumerate() {

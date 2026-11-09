@@ -102,7 +102,9 @@ atlas packing. Each can be added later without changing the API.
     program names.
   - Imported skins are kept: bones, inverse bind matrices, and weights;
     a uniform armature scale is taken out of the bones. Weights are
-    interpolated through repair and decimation.
+    interpolated through repair and decimation, which keeps bone-weight
+    borders. Rigid placement is baked into the bones, and join merges
+    skeletons by bone name.
   - GLB export writes a glTF skin.
 - **Group / assembly:** a tree of parts. A **joint** connects a child to a
   parent at a frame, with a kind, an axis, a range and an optional mimic.
