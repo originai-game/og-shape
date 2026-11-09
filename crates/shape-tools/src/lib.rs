@@ -17,12 +17,29 @@
 //! host. Programs are in millimetres with Z up; the files say which units
 //! and axes they use.
 
+mod decimate;
 mod export;
+mod image;
+mod import;
+mod intersect;
 mod json;
+mod jsonread;
 mod png;
+mod polygon;
 mod preview;
+mod repair;
 mod surface;
 
+pub use decimate::{Decimate, DecimateError, DecimateReport, decimate, lods};
 pub use export::{ExportError, Joint, JointKind, Material, Mimic, Part, Scene, glb, obj, stl};
+pub use image::ImageInfo;
+pub use import::{
+    Affine, Import, ImportError, Imported, ImportedPart, Resolve, import, import_gltf, import_obj,
+    no_files,
+};
 pub use png::png;
 pub use preview::{Image, Preview, preview, sheet};
+pub use repair::{
+    Floaters, Repair, RepairError, RepairReport, apply_transform, close_holes, join, orient,
+    remove_degenerate, remove_floaters, repair, weld,
+};

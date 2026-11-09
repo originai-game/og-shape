@@ -232,6 +232,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "meshoptimizer-rs"
+version = "0.2.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66b4c406090c8dc16ed0247482bf6796abd05dbf065520297bb0eed7d779382c"
+dependencies = [
+ "libm",
+]
+
+[[package]]
 name = "miniz_oxide"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -416,8 +425,10 @@ name = "shape-tools"
 version = "0.0.0"
 dependencies = [
  "gltf",
+ "meshoptimizer-rs",
  "miniz_oxide",
  "shape-2d",
+ "shape-bool",
  "shape-core",
  "shape-gen",
  "shape-mesh",
