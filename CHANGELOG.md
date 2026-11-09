@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Design: og-shape is "3D modeling in Rust, built for LLMs". It owns its
+  capabilities, not where an agent's other meshes come from. Skinning is
+  planned (phase 5b): bones from the program, imported skins carried
+  through every tool, never broken silently.
 - Licence list: Unicode-3.0 allowed (Unicode data tables; reached through
   `gltf` in tests), in `AGENTS.md` and `deny.toml`.
 - Repository created: design, plan and verified research.
@@ -118,6 +122,66 @@
   and the cap names they touch. An offset larger than the faces allow is
   `BevelError::TooLarge`, never a clipped result. `quad_pairs` measures
   how much of a patch is quads. Golden cases `bevel.*` added.
+- `shape-gen`, the generators the phase 1 rebuilds found missing
+  (`docs/research.md` §10):
+  - `loft` takes sections with holes (one region each, as many holes in
+    every section, matched by nearest centre; hole walls `side` +
+    `inner`) and a `curve` field: `Auto` (as before), `Straight`,
+    `CatmullRom`, or `Spline`, sand3d's natural cubic spline through
+    every section by height. `loft` moves to `shape_gen::loft` and is
+    re-exported from `paths`.
+  - `Revolve` gains `axis`: `Axis::Y` (default, as before) or `Axis::Z`
+    (sand3d's: profile y is height). `sphere_desc`, `torus_desc` and
+    `dome_desc` take an `axis` too, and with `Axis::Z` rest on z = 0;
+    `DomeDesc::height` makes sand3d's spherical cap.
+  - `body`: sand3d's solid along +y from plan, top and bottom views and a
+    squareness; superellipse sections, straight or spline views, steps,
+    pointed or capped (`start`, `end`) ends.
+  - `wire`: a round wire along a path, corners bent round a `fillet`
+    radius (one, or one per point) or mitred (`seam` edges); open (`start`,
+    `end`) or closed.
+  - `knurl`: sand3d's diamond or straight knurl on a cylinder.
+  - `gear_solid`: an involute gear with a `bore` and a `hub`, no boolean.
+  - `GenError::Invalid` carries a message for inputs that cannot make a
+    solid.
+  - Golden cases `gen2.*` added; every existing hash is unchanged. A
+    preview sheet is in `docs/previews/gen2/`
+    (`cargo run -p shape-tools --example gen2_preview -- <dir>`).
+- Placement (phase 4): `Frame` gains `facing` (CadQuery's face axes),
+  `with_up`, `offset`, `translate`, `turn` (radians, own X then Y then Z,
+  quarter turns exact), `inverse` and `is_rigid`. `shape_model::place`
+  reads frames off solids: `bbox("+X-Y")`, `face(name or "+X")` on the
+  face's centroid with +Z its normal, `edge(name)` as a path, and the
+  distributors `grid`, `ring`, `along` and `snap`.
+- `shape-model` (phase 4): `Model` holds named parts (a solid, a
+  placement, a material), groups, assemblies with anchors and `attach`,
+  `copy` and `mirror`, units (mm, cm, m; metres on export). Booleans,
+  `seat`, holes, pockets, `split`, `shell`, `dent`, fillets and chamfers
+  run on parts with world frames; a boolean uses its tool up. Joints:
+  revolute, continuous, prismatic, fixed and floating, with axis, range
+  and mimic, several on one child (composed in order); `pose` within the
+  range. `Model::glb`, `obj`, `stl` and `preview` export the posed model
+  through `shape-tools`, a jointed group as a node with no mesh, a second
+  joint on one child through a `<child>:<joint>` link.
+- `shape-tools`: `JointKind::Fixed`, written `"type": "fixed"`, and
+  `ExportError::FixedConstrained`. Existing outputs are unchanged.
+- `shape_model::program`: the model API as JSON operations; the
+  operations that change a model are recorded as a program that replays
+  to the same bytes.
+- `shape-cli` (the `shape` binary): `build`, `export` (GLB, OBJ, STL),
+  `measure` (JSON) and `preview` (PNG) on a recorded program.
+- `shape-wasm` and the private `og-shape` TypeScript binding
+  (`crates/shape-wasm/ts`): `load()`, `og.model({ name })`, operations
+  with desc objects, frames with `offset`, `move` and `turn` computed in
+  wasm. The gate builds it for wasm32 and runs its tests when
+  wasm-bindgen and bun are installed.
+- Phase 4 acceptance: sand3d's washing machine rebuilt as a TypeScript
+  program through the binding; its GLB's four joints checked in three.js
+  (headless), its preview in `docs/previews/phase4/`, its program in
+  `golden/programs/` (`docs/research.md` §8).
+- Golden cases added (no existing hash moved): `model.frame`,
+  `model.place`, `model.joints.glb`, `model.joints.preview`,
+  `model.washing_machine.glb`, `.png` and `.measure`.
 - `shape-tools` mesh tools (phase 5), for the platform's `asset_process`
   (`docs/research.md` §9):
   - `import`, `import_gltf`, `import_obj`, `import_fbx`: glTF 2.0 (GLB,

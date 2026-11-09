@@ -7,8 +7,10 @@
 
 mod bevel;
 mod cases;
+mod gen2;
 mod geom;
 mod meshtools;
+mod model;
 mod solids;
 mod tools;
 

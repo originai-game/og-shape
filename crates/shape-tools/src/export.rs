@@ -43,6 +43,9 @@ pub enum JointKind {
     Prismatic,
     /// Moves every way: no axis, no range.
     Floating,
+    /// Does not move: a named mount point, written `fixed`, with no axis,
+    /// range or mimic (URDF's `fixed`).
+    Fixed,
 }
 
 /// A joint's value follows another's: `multiplier` × the leader's value.
@@ -147,6 +150,8 @@ pub enum ExportError {
     BadAxis(String),
     /// A floating joint was given an axis, a range or a mimic.
     FloatingConstrained(String),
+    /// A fixed joint was given an axis, a range, a mimic or a value.
+    FixedConstrained(String),
 }
 
 impl fmt::Display for ExportError {
@@ -173,6 +178,10 @@ impl fmt::Display for ExportError {
             ExportError::FloatingConstrained(j) => write!(
                 f,
                 "joint {j:?}: a floating joint moves every way: it takes no axis, range or mimic"
+            ),
+            ExportError::FixedConstrained(j) => write!(
+                f,
+                "joint {j:?}: a fixed joint does not move: it takes no axis, range, mimic or value"
             ),
         }
     }
@@ -380,7 +389,13 @@ fn check_joints(scene: &Scene) -> Result<Vec<(Option<Checked>, Rigid)>, ExportEr
         {
             return Err(ExportError::FloatingConstrained(jn()));
         }
-        let local = if floating {
+        let fixed = j.kind == JointKind::Fixed;
+        if fixed
+            && (j.axis != DVec3::ZERO || j.range.is_some() || j.mimic.is_some() || j.value != 0.0)
+        {
+            return Err(ExportError::FixedConstrained(jn()));
+        }
+        let local = if floating || fixed {
             None
         } else {
             let a = if j.axis == DVec3::ZERO {
@@ -429,6 +444,7 @@ fn check_joints(scene: &Scene) -> Result<Vec<(Option<Checked>, Rigid)>, ExportEr
             JointKind::Continuous => "continuous",
             JointKind::Prismatic => "prismatic",
             JointKind::Floating => "floating",
+            JointKind::Fixed => "fixed",
         };
         // A continuous joint has no bounds.
         let span = if kind == "continuous" { None } else { span };

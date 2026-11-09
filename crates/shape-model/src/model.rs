@@ -1,0 +1,1181 @@
+//! The model: a tree of named parts and groups in the world, the joints
+//! between them, their materials and pose, built into an export scene.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use shape_bevel::{Chamfer, Fillet, Soften};
+use shape_bool::{BoolOp, Boolean};
+use shape_core::{DVec3, Frame};
+use shape_edit::{Dent, Hole, Keep, Pocket, Shell};
+use shape_mesh::{Measures, Solid};
+use shape_tools::{Image, JointKind, Material, Mimic, Part, Preview, Scene};
+
+use crate::error::ModelError;
+use crate::place::{self, Path};
+
+/// A node of a [`Model`]: a part or a group. Ids are given in order of
+/// creation and never reused.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Id(pub u32);
+
+/// The length unit of a program. Tolerances stay in millimetres whatever
+/// the unit; export writes metres.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Unit {
+    /// Millimetres (the default).
+    #[default]
+    Millimetre,
+    /// Centimetres.
+    Centimetre,
+    /// Metres.
+    Metre,
+}
+
+impl Unit {
+    /// Millimetres per unit.
+    pub fn millimetres(self) -> f64 {
+        match self {
+            Unit::Millimetre => 1.0,
+            Unit::Centimetre => 10.0,
+            Unit::Metre => 1000.0,
+        }
+    }
+}
+
+/// How a child moves on its parent: a zero-value desc.
+///
+/// The zero value is a revolute joint about the world origin's +Z with no
+/// name and no range, which [`Model::joint`] refuses until a name and a
+/// range are given.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct JointDesc {
+    /// Unique among the model's joints.
+    pub name: String,
+    /// Revolute, continuous, prismatic, fixed or floating.
+    pub kind: JointKind,
+    /// The pivot, in the world at rest: revolute and continuous joints turn
+    /// about `axis` through its origin; the joint's node sits here.
+    pub on: Frame,
+    /// The axis, a world direction; zero is `on`'s +Z (its normal).
+    /// Positive values turn by the right hand about it, or slide along it.
+    /// Fixed and floating joints take none.
+    pub axis: DVec3,
+    /// `(lower, upper)` containing 0: radians for turns, the model's unit
+    /// for slides. Revolute and prismatic joints need one; the others,
+    /// and followers, take none.
+    pub range: Option<(f64, f64)>,
+    /// This joint's value is `multiplier` × another's (radians or units
+    /// per radian or unit, across kinds).
+    pub mimic: Option<Mimic>,
+}
+
+#[derive(Clone, Debug)]
+struct Node {
+    name: String,
+    /// The solid in the part's own space; `None` for a group.
+    solid: Option<Solid>,
+    /// Own space to world, at rest.
+    placement: Frame,
+    /// The group it is in.
+    parent: Option<Id>,
+    /// Its own material, if one was set on it.
+    material: Option<Material>,
+    /// Named frames an assembly publishes, in the world.
+    anchors: BTreeMap<String, Frame>,
+    used_up: bool,
+}
+
+#[derive(Clone, Debug)]
+struct JointRec {
+    child: Id,
+    parent: Id,
+    desc: JointDesc,
+    /// Unit world axis (none for fixed and floating).
+    axis: Option<DVec3>,
+    value: f64,
+}
+
+/// One part's measures in the world, in the model's unit.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PartMeasures {
+    /// The part's name.
+    pub name: String,
+    /// Its measures at rest.
+    pub measures: Measures,
+}
+
+/// A model built for export: every part in the world, in millimetres,
+/// posed by the joints' values at export. [`Built::scene`] lends it to the
+/// tools.
+#[derive(Clone, Debug, Default)]
+pub struct Built {
+    name: String,
+    parts: Vec<(String, Solid, Material, String, Option<shape_tools::Joint>)>,
+}
+
+impl Built {
+    /// The scene the tools read: parents before children.
+    pub fn scene(&self) -> Scene<'_> {
+        Scene {
+            name: self.name.clone(),
+            parts: self
+                .parts
+                .iter()
+                .map(|(name, solid, material, parent, joint)| Part {
+                    material: material.clone(),
+                    parent: parent.clone(),
+                    joint: joint.clone(),
+                    ..Part::new(name, solid)
+                })
+                .collect(),
+        }
+    }
+}
+
+/// A model: named parts (solids with a placement and a material), groups
+/// and assemblies above them, and joints between them (`docs/design.md`
+/// §4).
+///
+/// - Every placement, frame, pivot and axis the API takes or gives is in
+///   the world at rest (every joint at 0), in the model's unit.
+/// - A part's solid stays in its own space; [`Model::at`] and
+///   [`Model::transform`] move the part (and everything under it, with
+///   the pivots of joints it carries) without touching the solid.
+/// - Edits take their frames in the world and run in the part's space.
+///   A boolean uses its tool up: the tool's id answers
+///   [`ModelError::UsedUp`] after.
+/// - Joints hang a child (a part or a group) on a parent part. Several on
+///   one child compose in declaration order, the first nearest the parent.
+///   [`Model::pose`] sets a value; geometry is always read at rest.
+#[derive(Clone, Debug, Default)]
+pub struct Model {
+    name: String,
+    unit: Unit,
+    nodes: Vec<Node>,
+    joints: Vec<JointRec>,
+}
+
+fn finite_frame(f: &Frame, what: &str) -> Result<(), ModelError> {
+    if f.is_rigid(1e-9) {
+        Ok(())
+    } else {
+        Err(ModelError::BadValue(format!(
+            "{what} (a frame must be finite, orthonormal and right-handed)"
+        )))
+    }
+}
+
+/// The rigid motion taking `from` onto `to`: `to ∘ from⁻¹`.
+fn motion(from: &Frame, to: &Frame) -> Frame {
+    to.compose(&from.inverse())
+}
+
+/// A solid mapped by a placement (rigid: no mirror).
+fn placed(mut s: Solid, f: &Frame) -> Solid {
+    s.map_positions(|p| f.point_to_world(p), false);
+    let _ = s.canonicalize();
+    s
+}
+
+impl Model {
+    /// An empty model named `name` (the scene's name on export), in
+    /// millimetres.
+    pub fn new(name: &str) -> Model {
+        Model {
+            name: name.to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// The model's name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The program's length unit, set before the first part.
+    pub fn units(&mut self, unit: Unit) -> Result<(), ModelError> {
+        if !self.nodes.is_empty() && unit != self.unit {
+            return Err(ModelError::Units(
+                "set the unit before the first part".into(),
+            ));
+        }
+        self.unit = unit;
+        Ok(())
+    }
+
+    /// The unit in force.
+    pub fn unit(&self) -> Unit {
+        self.unit
+    }
+
+    // ── nodes ────────────────────────────────────────────────────────────────
+
+    fn node(&self, id: Id) -> Result<&Node, ModelError> {
+        let n = self
+            .nodes
+            .get(id.0 as usize)
+            .ok_or(ModelError::UnknownId(id.0))?;
+        if n.used_up {
+            return Err(ModelError::UsedUp(n.name.clone()));
+        }
+        Ok(n)
+    }
+
+    fn solid_of(&self, id: Id) -> Result<&Solid, ModelError> {
+        let n = self.node(id)?;
+        n.solid
+            .as_ref()
+            .ok_or_else(|| ModelError::NotAPart(n.name.clone()))
+    }
+
+    /// The node's name.
+    pub fn name_of(&self, id: Id) -> Result<&str, ModelError> {
+        Ok(&self.node(id)?.name)
+    }
+
+    /// The live node named `name`.
+    pub fn find(&self, name: &str) -> Option<Id> {
+        self.nodes
+            .iter()
+            .position(|n| !n.used_up && n.name == name)
+            .map(|i| Id(i as u32))
+    }
+
+    fn check_name(&self, name: &str) -> Result<(), ModelError> {
+        if name.is_empty() {
+            return Err(ModelError::EmptyName);
+        }
+        if self.find(name).is_some() {
+            return Err(ModelError::NameTaken(name.into()));
+        }
+        Ok(())
+    }
+
+    /// `name` if free, else `name.001`, `name.002`… (Blender's suffix, as a
+    /// copy gets in sand3d).
+    fn unique(&self, name: &str) -> String {
+        let mut out = name.to_string();
+        let mut k = 0;
+        while self.find(&out).is_some() {
+            k += 1;
+            out = format!("{name}.{k:03}");
+        }
+        out
+    }
+
+    fn push(&mut self, node: Node) -> Id {
+        self.nodes.push(node);
+        Id(self.nodes.len() as u32 - 1)
+    }
+
+    /// A part named `name` holding `solid`, its own space on the world's.
+    pub fn add(&mut self, name: &str, solid: Solid) -> Result<Id, ModelError> {
+        self.check_name(name)?;
+        if solid.positions.iter().any(|p| !p.is_finite()) {
+            return Err(ModelError::BadValue(format!("{name:?}'s positions")));
+        }
+        Ok(self.push(Node {
+            name: name.into(),
+            solid: Some(solid),
+            placement: Frame::IDENTITY,
+            parent: None,
+            material: None,
+            anchors: BTreeMap::new(),
+            used_up: false,
+        }))
+    }
+
+    /// Whether `inner` is `outer` or somewhere under it.
+    fn under(&self, inner: Id, outer: Id) -> bool {
+        let mut at = Some(inner);
+        while let Some(i) = at {
+            if i == outer {
+                return true;
+            }
+            at = self.nodes[i.0 as usize].parent;
+        }
+        false
+    }
+
+    /// The live nodes under `id`, itself first, in id order below it.
+    fn subtree(&self, id: Id) -> Vec<Id> {
+        let mut out = vec![id];
+        for i in 0..self.nodes.len() {
+            let i = Id(i as u32);
+            if i != id && !self.nodes[i.0 as usize].used_up && self.under(i, id) {
+                out.push(i);
+            }
+        }
+        out
+    }
+
+    /// A group named `name` holding `children`, which keep their places.
+    /// A child already in a group moves to this one.
+    pub fn group(&mut self, name: &str, children: &[Id]) -> Result<Id, ModelError> {
+        self.check_name(name)?;
+        for &c in children {
+            self.node(c)?;
+        }
+        for (k, &a) in children.iter().enumerate() {
+            for &b in &children[k + 1..] {
+                if self.under(a, b) || self.under(b, a) {
+                    return Err(ModelError::Refused(
+                        self.nodes[a.0 as usize].name.clone(),
+                        "a group holds a node and one of its own parts".into(),
+                    ));
+                }
+            }
+        }
+        let id = self.push(Node {
+            name: name.into(),
+            solid: None,
+            placement: Frame::IDENTITY,
+            parent: None,
+            material: None,
+            anchors: BTreeMap::new(),
+            used_up: false,
+        });
+        for &c in children {
+            self.nodes[c.0 as usize].parent = Some(id);
+        }
+        Ok(id)
+    }
+
+    /// An assembly: a group that publishes named frames (`anchors`, in
+    /// the world) for details and joints to use.
+    pub fn assembly(
+        &mut self,
+        name: &str,
+        children: &[Id],
+        anchors: &[(String, Frame)],
+    ) -> Result<Id, ModelError> {
+        for (n, f) in anchors {
+            finite_frame(f, &format!("anchor {n:?}"))?;
+        }
+        let id = self.group(name, children)?;
+        self.nodes[id.0 as usize].anchors = anchors.iter().cloned().collect();
+        Ok(id)
+    }
+
+    /// The anchor `name` of an assembly, where the assembly is now.
+    pub fn anchor(&self, assembly: Id, name: &str) -> Result<Frame, ModelError> {
+        let n = self.node(assembly)?;
+        let local = n.anchors.get(name).ok_or_else(|| {
+            ModelError::Refused(
+                n.name.clone(),
+                format!(
+                    "no anchor named {name:?}; anchors: {}",
+                    n.anchors.keys().cloned().collect::<Vec<_>>().join(", ")
+                ),
+            )
+        })?;
+        Ok(n.placement.compose(local))
+    }
+
+    /// A detail: `children` grouped under `name`, the group put under
+    /// `assembly`.
+    pub fn attach(&mut self, assembly: Id, name: &str, children: &[Id]) -> Result<Id, ModelError> {
+        self.node(assembly)?;
+        for &c in children {
+            if self.under(assembly, c) {
+                return Err(ModelError::Refused(
+                    self.nodes[c.0 as usize].name.clone(),
+                    "a detail cannot hold the assembly it is attached to".into(),
+                ));
+            }
+        }
+        let id = self.group(name, children)?;
+        self.nodes[id.0 as usize].parent = Some(assembly);
+        Ok(id)
+    }
+
+    // ── placement ────────────────────────────────────────────────────────────
+
+    /// Moves `id` and everything under it by the rigid motion `m` (world),
+    /// with the pivots and axes of joints whose child is among them.
+    fn move_by(&mut self, id: Id, m: &Frame) {
+        let moved = self.subtree(id);
+        for &i in &moved {
+            let n = &mut self.nodes[i.0 as usize];
+            n.placement = m.compose(&n.placement);
+        }
+        for j in &mut self.joints {
+            if moved.contains(&j.child) {
+                j.desc.on = m.compose(&j.desc.on);
+                j.axis = j.axis.map(|a| m.vector_to_world(a));
+                if j.desc.axis != DVec3::ZERO {
+                    j.desc.axis = m.vector_to_world(j.desc.axis);
+                }
+            }
+        }
+    }
+
+    /// Puts `id`'s own space on `frame` (world); what is under it moves
+    /// with it. Use [`Frame::translate`], [`Frame::turn`] and
+    /// [`Frame::offset`] on the frame for offsets.
+    pub fn at(&mut self, id: Id, frame: &Frame) -> Result<(), ModelError> {
+        finite_frame(frame, "at")?;
+        let m = motion(&self.node(id)?.placement, frame);
+        self.move_by(id, &m);
+        Ok(())
+    }
+
+    /// Moves `id` (and what is under it) by `motion`, a rigid motion in
+    /// the world: turned about the world origin, then moved.
+    pub fn transform(&mut self, id: Id, motion: &Frame) -> Result<(), ModelError> {
+        finite_frame(motion, "transform")?;
+        self.node(id)?;
+        self.move_by(id, motion);
+        Ok(())
+    }
+
+    /// `id`'s placement: its own space in the world.
+    pub fn placement(&self, id: Id) -> Result<Frame, ModelError> {
+        Ok(self.node(id)?.placement)
+    }
+
+    /// A frame given in `id`'s own space (where it was built), in the
+    /// world: a source's joint origin, as written.
+    pub fn local(&self, id: Id, frame: &Frame) -> Result<Frame, ModelError> {
+        Ok(self.node(id)?.placement.compose(frame))
+    }
+
+    /// A part's solid in the world, at rest.
+    pub fn world_solid(&self, id: Id) -> Result<Solid, ModelError> {
+        let n = self.node(id)?;
+        let s = self.solid_of(id)?.clone();
+        Ok(placed(s, &n.placement))
+    }
+
+    /// Every world position of the parts under `ids`.
+    fn points(&self, ids: &[Id]) -> Result<Vec<DVec3>, ModelError> {
+        let mut out = Vec::new();
+        for &id in ids {
+            self.node(id)?;
+            for i in self.subtree(id) {
+                let n = &self.nodes[i.0 as usize];
+                if let Some(s) = &n.solid {
+                    out.extend(s.positions.iter().map(|&p| n.placement.point_to_world(p)));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The frame on the box bounding `ids` (and everything under them):
+    /// `"+X"` a side's centre, `"+X-Y"` an edge's middle, `"+X-Y+Z"` a
+    /// corner; its normal looks the first way named.
+    pub fn bbox(&self, ids: &[Id], which: &str) -> Result<Frame, ModelError> {
+        place::bbox(&self.points(ids)?, which)
+    }
+
+    /// The frame on part `id`'s face named `which` (or furthest along a
+    /// direction, `"+X"`): origin at the face's centroid, +Z along its
+    /// normal ([`place::face`]).
+    pub fn face(&self, id: Id, which: &str) -> Result<Frame, ModelError> {
+        let s = self.world_solid(id)?;
+        place::face(&s, &self.nodes[id.0 as usize].name, which)
+    }
+
+    /// The edges of part `id` named `which`, as a path in the world
+    /// ([`place::edge`]).
+    pub fn edge(&self, id: Id, which: &str) -> Result<Path, ModelError> {
+        let s = self.world_solid(id)?;
+        place::edge(&s, &self.nodes[id.0 as usize].name, which)
+    }
+
+    /// Frames on the surface of the parts `targets` ([`place::snap`]).
+    pub fn snap(
+        &self,
+        targets: &[Id],
+        points: &[DVec3],
+        direction: Option<DVec3>,
+    ) -> Result<Vec<Frame>, ModelError> {
+        let solids: Vec<Solid> = targets
+            .iter()
+            .map(|&t| self.world_solid(t))
+            .collect::<Result<_, _>>()?;
+        let refs: Vec<&Solid> = solids.iter().collect();
+        Ok(place::snap(&refs, points, direction))
+    }
+
+    /// The face and edge names part `id` carries, sorted.
+    pub fn names(&self, id: Id) -> Result<(Vec<String>, Vec<String>), ModelError> {
+        let s = self.solid_of(id)?;
+        let faces: Vec<String> = s
+            .face_tags
+            .iter()
+            .flatten()
+            .map(|&t| s.names.name(t).to_string())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let edges: Vec<String> = s
+            .edge_tags
+            .values()
+            .flatten()
+            .map(|&t| s.names.name(t).to_string())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Ok((faces, edges))
+    }
+
+    // ── copies ───────────────────────────────────────────────────────────────
+
+    /// Copies `id` and everything under it, apart from joints, with the
+    /// geometry each node gets from `geometry`. The copy's root takes
+    /// `name`, the nodes under it their own names with a free suffix.
+    fn duplicate(
+        &mut self,
+        id: Id,
+        name: &str,
+        geometry: impl Fn(&Node) -> (Option<Solid>, Frame),
+    ) -> Result<Id, ModelError> {
+        self.node(id)?;
+        self.check_name(name)?;
+        let tree = self.subtree(id);
+        let mut map: BTreeMap<Id, Id> = BTreeMap::new();
+        for &old in &tree {
+            let src = self.nodes[old.0 as usize].clone();
+            let (solid, placement) = geometry(&src);
+            let new_name = if old == id {
+                name.to_string()
+            } else {
+                self.unique(&src.name)
+            };
+            let parent = if old == id {
+                src.parent
+            } else {
+                src.parent.and_then(|p| map.get(&p).copied())
+            };
+            let new = self.push(Node {
+                name: new_name,
+                solid,
+                placement,
+                parent,
+                material: src.material.clone(),
+                anchors: src.anchors.clone(),
+                used_up: false,
+            });
+            map.insert(old, new);
+        }
+        Ok(map[&id])
+    }
+
+    /// A copy of `id` and everything under it, in the same place, named
+    /// `name` (the nodes under it keep their names with a suffix:
+    /// `.001`…). Joints are not copied: declare the copy's own.
+    pub fn copy(&mut self, id: Id, name: &str) -> Result<Id, ModelError> {
+        self.duplicate(id, name, |n| (n.solid.clone(), n.placement))
+    }
+
+    /// The mirror image of `id` and everything under it across `plane`'s
+    /// XY plane (its normal is +Z), named `name`. Each part's image is
+    /// built into its solid (a mirror is no placement), so the copy's
+    /// parts sit with their own space on the world's. Joints are not
+    /// copied.
+    pub fn mirror(&mut self, id: Id, plane: &Frame, name: &str) -> Result<Id, ModelError> {
+        finite_frame(plane, "mirror")?;
+        let (o, n) = (plane.origin, plane.z);
+        let image = move |p: DVec3| p - n * (2.0 * (p - o).dot(n));
+        self.duplicate(id, name, |node| {
+            let solid = node.solid.clone().map(|mut s| {
+                let f = node.placement;
+                s.map_positions(|p| image(f.point_to_world(p)), true);
+                let _ = s.canonicalize();
+                s
+            });
+            (solid, Frame::IDENTITY)
+        })
+    }
+
+    // ── materials ────────────────────────────────────────────────────────────
+
+    /// `material` on each node: a group's reaches every part under it
+    /// that names none of its own (the nearest wins).
+    pub fn material(&mut self, ids: &[Id], material: &Material) -> Result<(), ModelError> {
+        let m = material;
+        for v in m
+            .color
+            .iter()
+            .flatten()
+            .chain(&m.emissive)
+            .chain(m.roughness.iter())
+            .chain(m.opacity.iter())
+            .chain([&m.metalness])
+        {
+            if !v.is_finite() {
+                return Err(ModelError::BadValue("a material value".into()));
+            }
+        }
+        for &id in ids {
+            self.node(id)?;
+        }
+        for &id in ids {
+            self.nodes[id.0 as usize].material = Some(material.clone());
+        }
+        Ok(())
+    }
+
+    fn material_of(&self, id: Id) -> Material {
+        let mut at = Some(id);
+        while let Some(i) = at {
+            let n = &self.nodes[i.0 as usize];
+            if let Some(m) = &n.material {
+                return m.clone();
+            }
+            at = n.parent;
+        }
+        Material::default()
+    }
+
+    // ── edits ────────────────────────────────────────────────────────────────
+
+    /// Replaces part `id`'s solid with `f` of it (in its own space).
+    fn edit(
+        &mut self,
+        id: Id,
+        f: impl FnOnce(&Solid, &Frame) -> Result<Solid, ModelError>,
+    ) -> Result<(), ModelError> {
+        let placement = self.node(id)?.placement;
+        let s = f(self.solid_of(id)?, &placement)?;
+        self.nodes[id.0 as usize].solid = Some(s);
+        Ok(())
+    }
+
+    /// Why `tool` may not be used up.
+    fn usable(&self, tool: Id, target: Id) -> Result<(), ModelError> {
+        let n = self.node(tool)?;
+        if tool == target {
+            return Err(ModelError::Refused(
+                n.name.clone(),
+                "a part cannot be its own tool".into(),
+            ));
+        }
+        if self
+            .nodes
+            .iter()
+            .any(|m| !m.used_up && m.parent == Some(tool))
+        {
+            return Err(ModelError::Refused(
+                n.name.clone(),
+                "it holds other nodes; a tool is a single part".into(),
+            ));
+        }
+        if let Some(j) = self
+            .joints
+            .iter()
+            .find(|j| j.child == tool || j.parent == tool)
+        {
+            return Err(ModelError::Refused(
+                n.name.clone(),
+                format!(
+                    "joint {:?} needs it; seat cuts a cavity and leaves the part",
+                    j.desc.name
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// `tool`'s solid in `target`'s own space.
+    fn tool_in(&self, tool: Id, target: Id) -> Result<Solid, ModelError> {
+        let w = self.world_solid(tool)?;
+        Ok(placed(w, &self.node(target)?.placement.inverse()))
+    }
+
+    fn boolean(&mut self, target: Id, tool: Id, op: BoolOp) -> Result<(), ModelError> {
+        self.solid_of(target)?;
+        self.solid_of(tool)?;
+        self.usable(tool, target)?;
+        let t = self.tool_in(tool, target)?;
+        let (tn, un) = (
+            self.nodes[target.0 as usize].name.clone(),
+            self.nodes[tool.0 as usize].name.clone(),
+        );
+        self.edit(target, |s, _| {
+            Ok(shape_bool::boolean(
+                s,
+                &t,
+                &Boolean {
+                    op,
+                    target: &tn,
+                    tool: &un,
+                },
+            )?)
+        })?;
+        self.nodes[tool.0 as usize].used_up = true;
+        Ok(())
+    }
+
+    /// `target` minus `tool`; the tool is used up. Names as
+    /// [`shape_bool::boolean`] gives them (`cut`, `<target>.cut`, the
+    /// tool's name).
+    pub fn cut(&mut self, target: Id, tool: Id) -> Result<(), ModelError> {
+        self.boolean(target, tool, BoolOp::Cut)
+    }
+
+    /// `target` joined with `tool`; the tool is used up.
+    pub fn join(&mut self, target: Id, tool: Id) -> Result<(), ModelError> {
+        self.boolean(target, tool, BoolOp::Join)
+    }
+
+    /// `target` intersected with `tool`; the tool is used up.
+    pub fn intersect(&mut self, target: Id, tool: Id) -> Result<(), ModelError> {
+        self.boolean(target, tool, BoolOp::Intersect)
+    }
+
+    /// The volume `part` fills, taken out of `host`; `part` is untouched
+    /// ([`shape_edit::seat`]).
+    pub fn seat(&mut self, host: Id, part: Id) -> Result<(), ModelError> {
+        if host == part {
+            return Err(ModelError::Refused(
+                self.node(host)?.name.clone(),
+                "a part cannot seat itself".into(),
+            ));
+        }
+        let t = self.tool_in(part, host)?;
+        let name = self.node(part)?.name.clone();
+        self.edit(host, |s, _| Ok(shape_edit::seat(s, &t, &name)?))
+    }
+
+    /// Holes ([`shape_edit::hole`]); `d.at` frames are in the world.
+    pub fn hole(&mut self, id: Id, d: &Hole) -> Result<(), ModelError> {
+        self.edit(id, |s, p| {
+            let inv = p.inverse();
+            let local = Hole {
+                at: d.at.iter().map(|f| inv.compose(f)).collect(),
+                ..d.clone()
+            };
+            Ok(shape_edit::hole(s, &local)?)
+        })
+    }
+
+    /// A pocket ([`shape_edit::pocket`]); `d.at` frames are in the world.
+    pub fn pocket(&mut self, id: Id, d: &Pocket) -> Result<(), ModelError> {
+        self.edit(id, |s, p| {
+            let inv = p.inverse();
+            let at = if d.at.is_empty() {
+                vec![inv]
+            } else {
+                d.at.iter().map(|f| inv.compose(f)).collect()
+            };
+            let local = Pocket { at, ..d.clone() };
+            Ok(shape_edit::pocket(s, &local)?)
+        })
+    }
+
+    /// The part cut by the plane of `frame` (world), keeping one side.
+    pub fn split(&mut self, id: Id, frame: &Frame, keep: Keep) -> Result<(), ModelError> {
+        finite_frame(frame, "split")?;
+        self.edit(id, |s, p| {
+            Ok(shape_edit::split(s, &p.inverse().compose(frame), keep)?)
+        })
+    }
+
+    /// Hollows the part ([`shape_edit::shell`]); directions in `d.open`
+    /// are the part's own axes.
+    pub fn shell(&mut self, id: Id, d: &Shell) -> Result<(), ModelError> {
+        self.edit(id, |s, _| Ok(shape_edit::shell(s, d)?))
+    }
+
+    /// Dents ([`shape_edit::dent`]); `d.at` points are in the world.
+    pub fn dent(&mut self, id: Id, d: &Dent) -> Result<(), ModelError> {
+        self.edit(id, |s, p| {
+            let inv = p.inverse();
+            let local = Dent {
+                at: d.at.iter().map(|&q| inv.point_to_world(q)).collect(),
+                ..d.clone()
+            };
+            Ok(shape_edit::dent(s, &local)?)
+        })
+    }
+
+    /// Fillets on named edges ([`shape_bevel::fillet`]).
+    pub fn fillet(&mut self, id: Id, d: &Fillet) -> Result<(), ModelError> {
+        self.edit(id, |s, _| Ok(shape_bevel::fillet(s, d)?))
+    }
+
+    /// Chamfers on named edges ([`shape_bevel::chamfer`]).
+    pub fn chamfer(&mut self, id: Id, d: &Chamfer) -> Result<(), ModelError> {
+        self.edit(id, |s, _| Ok(shape_bevel::chamfer(s, d)?))
+    }
+
+    /// Softened edges ([`shape_bevel::soften`]).
+    pub fn soften(&mut self, id: Id, d: &Soften) -> Result<(), ModelError> {
+        self.edit(id, |s, _| Ok(shape_bevel::soften(s, d)?))
+    }
+
+    // ── joints ───────────────────────────────────────────────────────────────
+
+    /// The jointed node `id` moves with: its nearest jointed
+    /// ancestor-or-self, or `None` for the root body.
+    fn body(&self, id: Id) -> Option<Id> {
+        let mut at = Some(id);
+        while let Some(i) = at {
+            if self.joints.iter().any(|j| j.child == i) {
+                return Some(i);
+            }
+            at = self.nodes[i.0 as usize].parent;
+        }
+        None
+    }
+
+    fn joint_index(&self, name: &str) -> Result<usize, ModelError> {
+        self.joints
+            .iter()
+            .position(|j| j.desc.name == name)
+            .ok_or_else(|| {
+                ModelError::NoSuchJoint(
+                    name.into(),
+                    self.joints.iter().map(|j| j.desc.name.clone()).collect(),
+                )
+            })
+    }
+
+    /// Whether the joint at `k` turns without end (continuous, or a turn
+    /// following one).
+    fn endless(&self, k: usize) -> bool {
+        let j = &self.joints[k];
+        match &j.desc.mimic {
+            None => j.desc.kind == JointKind::Continuous,
+            Some(m) => {
+                j.desc.kind != JointKind::Prismatic
+                    && self.joint_index(&m.joint).is_ok_and(|l| self.endless(l))
+            }
+        }
+    }
+
+    /// Declares how `child` (a part or a group) moves on `parent` (a part,
+    /// or a group). It does not move the child: place it first, at rest.
+    /// A second joint on one child must hang on the same parent; it rides
+    /// on the first one's motion.
+    pub fn joint(&mut self, child: Id, parent: Id, d: &JointDesc) -> Result<(), ModelError> {
+        let name = &d.name;
+        let err = |why: &str| Err(ModelError::Joint(name.clone(), why.into()));
+        if name.is_empty() {
+            return Err(ModelError::EmptyName);
+        }
+        let cn = self.node(child)?.name.clone();
+        let pn = self.node(parent)?.name.clone();
+        if self.joints.iter().any(|j| &j.desc.name == name) {
+            return err("a joint already has this name");
+        }
+        finite_frame(&d.on, "the joint's frame `on`")?;
+        if !d.axis.is_finite() {
+            return Err(ModelError::BadValue(format!("joint {name:?}'s axis")));
+        }
+        if self.under(parent, child) {
+            return err(&format!(
+                "its parent {pn:?} is {cn:?} or inside it; hang it on the part it moves on"
+            ));
+        }
+        if let Some(j) = self.joints.iter().find(|j| j.child == child)
+            && j.parent != parent
+        {
+            return err(&format!(
+                "{cn:?} already hangs on {:?}; every joint of one child hangs on the same parent",
+                self.nodes[j.parent.0 as usize].name
+            ));
+        }
+        // No cycle: walk up from the parent's body through the joints.
+        let mut b = self.body(parent);
+        let mut seen = BTreeSet::new();
+        while let Some(x) = b {
+            let above = self.joints.iter().find(|j| j.child == x).map(|j| j.parent);
+            if self.under(x, child) || above.is_some_and(|p| self.under(p, child)) {
+                return err(&format!("{pn:?} already hangs on {cn:?}: a cycle"));
+            }
+            if !seen.insert(x) {
+                break;
+            }
+            b = above.and_then(|p| self.body(p));
+        }
+        let kind = d.kind;
+        let free = matches!(kind, JointKind::Fixed | JointKind::Floating);
+        if free && (d.axis != DVec3::ZERO || d.range.is_some() || d.mimic.is_some()) {
+            return err("fixed and floating joints take no axis, range or mimic");
+        }
+        let axis = if free {
+            None
+        } else if d.axis == DVec3::ZERO {
+            Some(d.on.z)
+        } else {
+            Some(
+                d.axis
+                    .try_normalize()
+                    .ok_or_else(|| ModelError::Joint(name.clone(), "its axis is zero".into()))?,
+            )
+        };
+        if let Some(m) = &d.mimic {
+            if d.range.is_some() {
+                return err("a follower takes no range: its range is its leader's × multiplier");
+            }
+            if !m.multiplier.is_finite() || m.multiplier == 0.0 {
+                return err("the mimic's multiplier must be finite and not 0");
+            }
+            let l = self.joint_index(&m.joint)?;
+            if matches!(
+                self.joints[l].desc.kind,
+                JointKind::Fixed | JointKind::Floating
+            ) {
+                return err("it follows a fixed or floating joint, which has no value");
+            }
+            if kind == JointKind::Prismatic && self.endless(l) {
+                return err("a slide that follows an endless turn would slide without end");
+            }
+        } else {
+            match (kind, d.range) {
+                (JointKind::Revolute | JointKind::Prismatic, None) => {
+                    return err(
+                        "a revolute or prismatic joint needs a range (continuous turns without end)",
+                    );
+                }
+                (JointKind::Continuous, Some(_)) => {
+                    return err("a continuous joint turns without end: it takes no range");
+                }
+                (_, Some((lo, hi))) => {
+                    if !(lo.is_finite() && hi.is_finite()) {
+                        return Err(ModelError::BadValue(format!("joint {name:?}'s range")));
+                    }
+                    if !(lo < hi && lo <= 0.0 && 0.0 <= hi) {
+                        return err("its range must run from low to high and contain 0, the rest");
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.joints.push(JointRec {
+            child,
+            parent,
+            desc: d.clone(),
+            axis,
+            value: 0.0,
+        });
+        Ok(())
+    }
+
+    /// Poses joint `name` at `value` (radians for turns, the unit for
+    /// slides), within its range. Followers move with it; 0 is the rest.
+    /// Geometry is still read at rest; export and preview show the pose.
+    pub fn pose(&mut self, name: &str, value: f64) -> Result<(), ModelError> {
+        let k = self.joint_index(name)?;
+        if !value.is_finite() {
+            return Err(ModelError::BadValue(format!("pose {name:?}")));
+        }
+        let j = &self.joints[k];
+        if let Some(m) = &j.desc.mimic {
+            return Err(ModelError::Joint(
+                name.into(),
+                format!("it follows {:?}: pose that one", m.joint),
+            ));
+        }
+        if matches!(j.desc.kind, JointKind::Fixed | JointKind::Floating) {
+            return Err(ModelError::Joint(
+                name.into(),
+                "a fixed or floating joint has no value to pose".into(),
+            ));
+        }
+        if let Some((lo, hi)) = j.desc.range {
+            let slack = 1e-9 * lo.abs().max(hi.abs()).max(1.0);
+            if !(lo - slack <= value && value <= hi + slack) {
+                return Err(ModelError::OutOfRange {
+                    joint: name.into(),
+                    value,
+                    range: (lo, hi),
+                });
+            }
+        }
+        self.joints[k].value = value;
+        Ok(())
+    }
+
+    /// The joints' names, in declaration order.
+    pub fn joint_names(&self) -> Vec<String> {
+        self.joints.iter().map(|j| j.desc.name.clone()).collect()
+    }
+
+    // ── building ─────────────────────────────────────────────────────────────
+
+    /// Every live part in the world at rest, in id order.
+    fn parts(&self) -> Vec<Id> {
+        (0..self.nodes.len() as u32)
+            .map(Id)
+            .filter(|&i| {
+                let n = &self.nodes[i.0 as usize];
+                !n.used_up && n.solid.is_some()
+            })
+            .collect()
+    }
+
+    /// Measures of every part in the world at rest, in id order.
+    pub fn measure(&self) -> Result<Vec<PartMeasures>, ModelError> {
+        self.parts()
+            .into_iter()
+            .map(|i| {
+                Ok(PartMeasures {
+                    name: self.nodes[i.0 as usize].name.clone(),
+                    measures: self.world_solid(i)?.measure(),
+                })
+            })
+            .collect()
+    }
+
+    /// The scene part a joint hanging on node `p` hangs on: a part's own,
+    /// a jointed group's link, or the body it moves with ("" for the
+    /// root).
+    fn representative(&self, p: Id) -> String {
+        let n = &self.nodes[p.0 as usize];
+        if n.solid.is_some() || self.joints.iter().any(|j| j.child == p) {
+            return n.name.clone();
+        }
+        match self.body(p) {
+            Some(b) => self.nodes[b.0 as usize].name.clone(),
+            None => String::new(),
+        }
+    }
+
+    /// The model as an export scene: every live part in the world at rest
+    /// (millimetres), each hanging on the body it moves with.
+    ///
+    /// - A jointed part carries its joint; a jointed group becomes a
+    ///   part with no mesh, named after it, which its parts hang on.
+    /// - A child with several joints gets one link per joint before the
+    ///   last, named `<child>:<joint>` and with no mesh, chained from the
+    ///   parent, the first nearest it.
+    /// - Joint values are the pose; a follower's comes from its leader.
+    pub fn build(&self) -> Result<Built, ModelError> {
+        let k = self.unit.millimetres();
+        let mm = |f: &Frame| Frame {
+            origin: f.origin * k,
+            ..*f
+        };
+        // (name, solid, material, the name it hangs on, joint).
+        type Item = (String, Solid, Material, String, Option<shape_tools::Joint>);
+        let to_scene = |j: &JointRec| -> shape_tools::Joint {
+            let pivot = mm(&j.desc.on);
+            let si = |kind: JointKind| if kind == JointKind::Prismatic { k } else { 1.0 };
+            let s = si(j.desc.kind);
+            shape_tools::Joint {
+                name: j.desc.name.clone(),
+                kind: j.desc.kind,
+                pivot,
+                axis: j.axis.map_or(DVec3::ZERO, |a| pivot.vector_to_local(a)),
+                value: j.value * s,
+                range: j.desc.range.map(|(lo, hi)| (lo * s, hi * s)),
+                mimic: j.desc.mimic.as_ref().map(|m| {
+                    let lead = self
+                        .joints
+                        .iter()
+                        .find(|l| l.desc.name == m.joint)
+                        .map_or(JointKind::Revolute, |l| l.desc.kind);
+                    Mimic {
+                        joint: m.joint.clone(),
+                        multiplier: m.multiplier * s / si(lead),
+                    }
+                }),
+            }
+        };
+        // Every scene entry with the name of the entry it hangs on, then
+        // ordered parents first by passes in a fixed order.
+        let mut entries: Vec<Item> = Vec::new();
+        let mut bodies: Vec<Id> = self.joints.iter().map(|j| j.child).collect();
+        bodies.sort();
+        bodies.dedup();
+        for &b in &bodies {
+            let chain: Vec<&JointRec> = self.joints.iter().filter(|j| j.child == b).collect();
+            let bn = self.nodes[b.0 as usize].name.clone();
+            let mut hang = self.representative(chain[0].parent);
+            for (i, j) in chain.iter().enumerate() {
+                let last = i + 1 == chain.len();
+                let (name, solid, material) = if last {
+                    let solid = if self.nodes[b.0 as usize].solid.is_some() {
+                        self.scaled(b, k)?
+                    } else {
+                        Solid::default()
+                    };
+                    (bn.clone(), solid, self.material_of(b))
+                } else {
+                    (
+                        format!("{bn}:{}", j.desc.name),
+                        Solid::default(),
+                        Material::default(),
+                    )
+                };
+                entries.push((name.clone(), solid, material, hang, Some(to_scene(j))));
+                hang = name;
+            }
+        }
+        for p in self.parts() {
+            if bodies.contains(&p) {
+                continue;
+            }
+            let above = self
+                .body(p)
+                .map(|x| self.nodes[x.0 as usize].name.clone())
+                .unwrap_or_default();
+            entries.push((
+                self.nodes[p.0 as usize].name.clone(),
+                self.scaled(p, k)?,
+                self.material_of(p),
+                above,
+                None,
+            ));
+        }
+        let mut out: Vec<Item> = Vec::with_capacity(entries.len());
+        let mut emitted: BTreeSet<String> = BTreeSet::new();
+        let mut left: Vec<Option<Item>> = entries.into_iter().map(Some).collect();
+        while out.len() < left.len() {
+            let before = out.len();
+            for slot in &mut left {
+                let ready = slot
+                    .as_ref()
+                    .is_some_and(|e| e.3.is_empty() || emitted.contains(&e.3));
+                if ready && let Some(e) = slot.take() {
+                    emitted.insert(e.0.clone());
+                    out.push(e);
+                }
+            }
+            if out.len() == before {
+                return Err(ModelError::Joint(
+                    String::new(),
+                    "the joints hang parts on each other in a cycle".into(),
+                ));
+            }
+        }
+        Ok(Built {
+            name: self.name.clone(),
+            parts: out,
+        })
+    }
+
+    fn scaled(&self, id: Id, k: f64) -> Result<Solid, ModelError> {
+        let mut s = self.world_solid(id)?;
+        if k != 1.0 {
+            s.map_positions(|p| p * k, false);
+        }
+        Ok(s)
+    }
+
+    /// The model as GLB, posed (`shape_tools::glb`): metres, Y up, joints
+    /// as `s3d_joint` extras.
+    pub fn glb(&self) -> Result<Vec<u8>, ModelError> {
+        Ok(shape_tools::glb(&self.build()?.scene())?)
+    }
+
+    /// The model's meshes as OBJ text, at rest.
+    pub fn obj(&self) -> Result<String, ModelError> {
+        Ok(shape_tools::obj(&self.build()?.scene())?)
+    }
+
+    /// The model's meshes as binary STL, at rest.
+    pub fn stl(&self) -> Result<Vec<u8>, ModelError> {
+        Ok(shape_tools::stl(&self.build()?.scene())?)
+    }
+
+    /// A turntable of the posed model (`shape_tools::preview`).
+    pub fn preview(&self, d: &Preview) -> Result<Vec<Image>, ModelError> {
+        Ok(shape_tools::preview(&self.build()?.scene(), d)?)
+    }
+}

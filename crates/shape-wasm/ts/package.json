@@ -1,0 +1,18 @@
+{
+  "name": "og-shape",
+  "version": "0.0.0",
+  "private": true,
+  "description": "TypeScript binding over og-shape's wasm build, for this repository's tests and examples. After the merge the binding is generated from the engine's IDL as og.shape.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "../build.sh",
+    "test": "bun test test/",
+    "washing-machine": "bun examples/washing_machine.ts",
+    "check-three": "bun tools/check_three.ts"
+  },
+  "devDependencies": {
+    "three": "0.186.1"
+  }
+}

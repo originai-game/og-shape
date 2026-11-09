@@ -94,19 +94,42 @@ A change that moves a hash says why in its commit and changelog.
   exports a GLB that three.js loads with working joints. Its preview
   renders with no GPU.
 
-## Phase 5: mesh tools for the platform
+## Phase 5: mesh tools
 
 - import (glb/gltf/obj; fbx if a Rust-only path exists);
 - repair (weld, floaters, degenerate faces, transforms, triangulate, join);
 - decimate with LODs (meshoptimizer-rs);
 - UV unwrap;
 - measure.
+- A skinned input is refused by any tool that would break its skin
+  (phase 5b makes them carry it).
 - **Acceptance:**
-  - Re-check the phase 0 boolean decision on real provider outputs.
-  - Take provider outputs (Meshy, Tripo, Hunyuan), run the full chain
-    `import → repair → decimate → unwrap → measure → preview → export`, and
-    meet the Hunyuan texturing input contract (`docs/research.md` §3).
-  - Everything the platform's `asset_process` does today is covered.
+  - Meshes from outside the kernel go through the full chain
+    `import → repair → decimate → unwrap → measure → preview → export`:
+    - scans and models like Thingi10K's;
+    - the synthetic generated-mesh defects of phase 0;
+    - other tools' GLB.
+    
+    They come out closed, joined, triangulated, under a triangle budget,
+    and unwrapped.
+  - Re-check the phase 0 boolean decision on outside meshes.
+  - Every tool of `docs/research.md` §3.1's Blender pipeline has an
+    equivalent here.
+
+## Phase 5b: skinning
+
+- Skin in the data model (`docs/design.md` §4): bones, inverse bind
+  matrices, four weights per vertex.
+- Bones from the program: parts and named regions become bones, joints
+  become pivots, and weights blend across the seams the program names.
+- Imported skins are kept through repair, decimation, unwrap and export;
+  decimation interpolates weights and keeps bone-influence borders.
+- GLB export of a glTF skin; the preview poses it.
+- **Acceptance:**
+  - A stylised figure (body, limbs, head) written as a program exports a
+    skinned GLB that three.js loads and poses without tearing.
+  - An imported skinned GLB comes back out with the same bones and its
+    weights, after decimation to half.
 
 ## Phase 6: the authoring guide
 
@@ -131,7 +154,9 @@ drop Blender from the asset image.
 |---|---|
 | Research | Done (2026-11-09): `docs/research.md` |
 | 0 | Done (2026-11-09): gate on four targets; booleans: og-geom's CSG (`docs/research.md` §5) |
-| 1 | Done (2026-11-09): ten sand3d programs rebuilt and previewed (`docs/previews/phase1/`). Gaps found (loft sections with holes, +y revolve axis, no placement layer, body, wire, knurl) in `docs/research.md` §6.4 |
+| 1 | Done (2026-11-09): ten sand3d programs rebuilt and previewed (`docs/previews/phase1/`). The gaps they found (§6.4) are closed: placement (stream E), loft holes and splines, +z axes, body, wire, knurl, gear solid (stream F, §10) |
 | 2 | Done (2026-11-09): named `boolean`, operand validation, broad phase, `fuse`, the CSG rounding fixes; split, hole (counterbore, countersink), pocket, seat, shell, dent, merge in `shape-edit`; sand3d's edit cases rebuilt as tests, shell walls exact. A single surface folded through itself is refused; repairing it is phase 5's |
 | 3 | Done (2026-11-09): `shape-bevel` fillet, chamfer, soften; sand3d's bracket, washer and enclosure corners closed with all-quad patches. Left: UVs (Solid has none yet), arc and patch mitres, pipe joints, loop slide (`docs/research.md` §7) |
-| 4 | In progress: export (GLB, OBJ, STL) and CPU preview done. Left: parts, groups, assemblies, joints, materials API, shape-cli, wasm build and TypeScript binding, the washing-machine acceptance |
+| 4 | Done (2026-11-09): export, preview, `shape-model` (parts, groups, placement, joints, pose, materials), `shape-cli`, `shape-wasm` and the TypeScript binding; sand3d's washing machine rebuilt in TypeScript, GLB with joints, preview (`docs/previews/phase4/`). Gaps in `docs/research.md` §8.5 |
+| 5 | In progress: stream D, `claude/mesh-tools` |
+| 5b | Not started |

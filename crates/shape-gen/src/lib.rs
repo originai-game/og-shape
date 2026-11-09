@@ -14,21 +14,30 @@
 //! [`Mesh`] into a renderer geometry (og-runtime's `geometry.rs`), the cook
 //! into a model (`type model`).
 //!
+//! The named generators (sand3d's, `docs/design.md` §2) return a
+//! [`shape_mesh::Solid`]: [`solids`], [`paths`], [`loft`], [`body`],
+//! [`wire`] and [`parts`].
+//!
 //! uvs follow og-render's convention: v runs down the image (glTF's), so
 //! where three.js writes `v` this crate writes `1 - v`.
 
+pub mod body;
 pub mod earcut;
 pub mod extrude;
 pub mod frames;
 pub mod lathe;
+pub mod loft;
 pub mod merge;
+pub mod parts;
 pub mod path2;
 pub mod paths;
 pub mod polyhedron;
 pub mod shape;
 pub mod solids;
+pub mod spline;
 pub mod sweep;
 pub mod trig;
+pub mod wire;
 
 pub use extrude::{Extrude, extrude};
 pub use frames::{Frame, frenet_frames};

@@ -50,5 +50,9 @@ jobs:
       - if: contains(matrix.steps, 'wasm')
         uses: taiki-e/install-action@v2
         with:
-          tool: wasmtime
+          tool: wasmtime,wasm-bindgen@0.2.130
+      - if: contains(matrix.steps, 'wasm')
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
       - run: scripts/check.sh ${{ matrix.steps }}

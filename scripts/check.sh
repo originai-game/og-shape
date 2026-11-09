@@ -5,8 +5,10 @@
 #   scripts/check.sh <step>...  only the steps named
 #   scripts/check.sh bless      rewrite golden/hashes.txt from this host
 #
-# Steps: lint, test, golden, wasm. CI runs lint once and test, golden and
-# wasm on every target.
+# Steps: lint, test, golden, wasm (which ends with binding: the
+# TypeScript binding's tests, when wasm-bindgen and bun are installed).
+# CI runs lint once, test and golden on every target, and wasm on x86-64
+# Linux.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -44,8 +46,10 @@ golden() {
 }
 
 wasm() {
-  # The library must also build for the browser target.
+  # The library must also build for the browser target, and so must the
+  # binding's module (crates/shape-wasm).
   cargo build --release --locked --target wasm32-unknown-unknown -p shape-core
+  cargo build --release --locked --target wasm32-unknown-unknown -p shape-wasm
   cargo build --release --locked --target wasm32-wasip1 -p shape-golden
   if ! command -v wasmtime >/dev/null; then
     echo "wasmtime is missing: https://wasmtime.dev" >&2
@@ -54,6 +58,18 @@ wasm() {
   mkdir -p "$OUT"
   wasmtime run target/wasm32-wasip1/release/shape-golden.wasm > "$OUT/wasm32.txt"
   compare wasm32 "$OUT/wasm32.txt"
+  binding
+}
+
+binding() {
+  # The TypeScript binding over the browser build: its tests compare the
+  # washing machine's GLB and PNG with golden/hashes.txt.
+  if ! command -v wasm-bindgen >/dev/null || ! command -v bun >/dev/null; then
+    echo "binding: NOT RUN: needs wasm-bindgen-cli 0.2.130 and bun" >&2
+    return 0
+  fi
+  crates/shape-wasm/build.sh
+  (cd crates/shape-wasm/ts && bun test test/)
 }
 
 bless() {
@@ -68,7 +84,7 @@ if [ ${#steps[@]} -eq 0 ]; then
 fi
 for step in "${steps[@]}"; do
   case "$step" in
-    lint | test | golden | wasm | bless) echo "== $step"; "$step" ;;
+    lint | test | golden | wasm | binding | bless) echo "== $step"; "$step" ;;
     *) echo "unknown step: $step" >&2; exit 2 ;;
   esac
 done
