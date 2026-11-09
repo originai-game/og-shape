@@ -625,3 +625,127 @@ fit. Blender clamps it silently. `fillet(2)` there succeeds.
 Every output hash is the same natively (x86-64) and as wasm32-wasip1
 under wasmtime (golden cases `bevel.box`, `bevel.curved`, `bevel.sand3d`,
 `bevel.adj`).
+
+## 10. The generator gaps of §6.4 (stream F, 2026-11-09)
+
+Read at sand3d `84c980a` (Apache-2.0): `src/sand3d/solids.py` (`revolve`,
+`wire`, `_filleted`, `loft`, `_through`, `body`, `_view`, the
+primitives), `src/sand3d/parts/gear.py`, `src/sand3d/parts/turned.py`
+(`knurl`, `_lathe`) and `_core.py` (`Builder.finish`, the edge-naming
+rule). All new code is in `shape-gen`: `loft.rs`, `spline.rs`, `body.rs`,
+`wire.rs`, `parts.rs`, and the axis in `solids.rs`. No dependency was
+added. Golden cases: `gen2.loft.holes`, `gen2.loft.spline`,
+`gen2.axis.z`, `gen2.body`, `gen2.wire`, `gen2.knurl`, `gen2.gear`; every
+earlier hash is unchanged, natively and under wasmtime. Every output is
+closed, with no degenerate triangle, and canonical. Previews:
+`docs/previews/gen2/`.
+
+### 10.1 Decisions
+
+- **Desc fields, not new signatures.** `Loft` gains `curve`, `Revolve`
+  gains `axis`; both default to the old behaviour, so the old hashes stay.
+  `sphere`, `torus` and `dome` take bare numbers, so they gain desc
+  siblings instead (`sphere_desc`, `torus_desc`, `dome_desc`); the old
+  functions are unchanged. At the merge the IDL can expose only the desc
+  forms.
+- **Axis.** `Axis::Z` builds about +y as before and turns the result by
+  `(x, y, z) → (x, −z, y)`, a negation and a swap, so it is exact and the
+  volume is the +y solid's to rounding of the sum. The round primitives
+  then rest on z = 0 as sand3d's do (sphere centre at `r`, torus at
+  `tube_radius`). `DomeDesc::height` is sand3d's `dome(d, h)` spherical
+  cap; above `radius` it is more than half a sphere.
+- **Loft through holes.** Each section is one region; every section has
+  as many holes, else `GenError::Invalid`. Each hole slot is matched to
+  the next section's hole with the nearest centroid, greedily in slot
+  order (deterministic, ties to the lower index). Every contour is
+  resampled as the outline is (evenly by length from its largest-x
+  point), to `samples` or the largest count that slot has. Hole walls
+  are `side` + `inner`, one surface per hole; caps are regions with the
+  resampled holes. sand3d refuses holes in a loft section (it lofts the
+  outline and cuts the bore); the rebuilds' gap was exactly that.
+- **Loft curves.** `Spline` is sand3d's `_through`: a natural cubic
+  spline per point and coordinate, parameter = section height (sand3d's
+  chord length between origins, which for sections stacked on z is the
+  height). z runs linearly, so every ring stays flat. With `steps` 0 it
+  takes sand3d's step rule (one step for two sections, else
+  `max(2, round(6 · span / mean span))`). sand3d's corner-to-corner
+  correspondence (`_correspond`, matching shifts and directions) is not
+  ported: sections still start at their largest-x point.
+- **Body.** As sand3d's `body`: views are numbers or `(y, value)` points,
+  straight or smooth; sections at every view point, plus 48
+  cosine-spaced ones when a view is smooth or `n` varies; a step (two
+  points at one y) is two sections 0.05 mm apart; an end where both views
+  close is a point, any other end a flat cap; one view closing alone is an
+  error. A smooth view here is a natural cubic spline in y between steps,
+  not sand3d's 2D `spline` path read along y, so it cannot overshoot back
+  along y (sand3d's `SPLINE_BACK` tolerance is not needed), but a nose
+  whose width has a vertical tangent is only approximated. Every section
+  has one point count, from the widest by the chord rule.
+- **Wire.** sand3d's `_filleted`: duplicate points merge keeping the
+  larger radius; a bend's setback is `r tan(θ/2)`; a radius under the
+  wire's own, a turn of 180°, or setbacks longer than a side are
+  `GenError::Invalid`. Unlike sand3d, a corner with no fillet is mitred:
+  the ring lies in the plane normal to `u + v` and each point moves along
+  the run onto it, which keeps the circle's area times the centre line's
+  length exactly (checked to 1e-9). The runs meeting at a mitre are
+  separate surfaces, so the mitre ring is a real edge, named `seam`
+  (sand3d's kind for swept solids). Rings are carried from run to run by
+  two reflections (normal `u + v`, then `v`), the discrete
+  rotation-minimizing frame; a closed wire spreads the angle it gains
+  round the loop over its length (`atan2` from `trig`). The cap rims are
+  `start` and `end`.
+- **Knurl.** sand3d's `_lathe` and V-wave radius, from the same counts
+  (`π d / pitch` teeth, at least 6; four points per tooth round; four
+  rows per 30° helix lead, or one row per pitch for straight ridges).
+  sand3d splits every grid quad along one diagonal, so one helix's
+  creases cross the triangles and the diamonds shade as stripes; here
+  each quad is split along the diagonal whose midpoint radius is nearer
+  the radius at the quad's centre. Straight ridges tie and keep the
+  default diagonal. No boolean is needed.
+- **Gear solid.** `gear_solid` extrudes the `shape-2d` involute outline
+  with a `bore` and a `hub` (diameters, as sand3d's `bore`). No boolean:
+  every cap is a `Region` whose hole is the exact ring the walls use, so
+  caps and walls share points bit for bit. The bore must be narrower than
+  the hub (or the root circle), the hub narrower than the root circle.
+  Faces: `bottom`, `top`, `side`; the hub's wall `side` + `hub`, its top
+  `top` + `hub`; the bore `side` + `inner` + `bore`. Hub rims carry `top`
+  + `hub`.
+- **Errors.** `GenError::Invalid(String)` is new, for inputs that cannot
+  make a solid, with the place and the reason in sand3d's words.
+
+### 10.2 Measurements
+
+| case | measured | analytic | note |
+|---|---|---|---|
+| loft, square frame 20/10 to itself, 16 samples | 3 000 | 3 000 | exact (corners on samples) |
+| loft, frame 20/10 to 10/4, 6 high | prismatoid | `h(a₀² + a₀a₁ + a₁²)/3` per square | within 1e-9 |
+| spline loft through four squares of half-width `5 + z/10` | frustum | 2 906.67 | relative 1e-12: a natural spline of linear data is that line |
+| gear 20 × m2, width 8, bore 6, hub 20 × 5 | polygon areas × heights | same | within 1e-9 |
+| straight knurl d 10, h 6, pitch 1 | star polygon area × 6 | same | within 1e-9 |
+| diamond knurl d 16, h 12 | 2 218.07 | between 2 120.58 (root) and 2 412.74 (crest) | 11 596 triangles |
+| mitred wire, three runs, d 6 | 24-gon area × centre length | same | within 1e-9 |
+| sand3d's stool leg, d 33, fillet 60 | 744 787.29 | 744 819.54 (polygon area × centre length) | −4.3e-5: the bend's chords |
+| body, constant views | 24-gon ellipse area × 100 | same | within 1e-9 |
+| body, linear views from a point | ellipse polygon × L / 3 | same | within 1e-9 |
+| dome cap (4, 2), (3, 3), (3, 5) | −3.7 %, −2.8 %, −2.6 % | `π h²(3R − h)/3` | the chord rule's 24-a-turn floor on small radii |
+
+### 10.3 Gaps and what is untested
+
+- Loft: no `follow` or `loop` (sand3d's), no placed (non-z) sections, no
+  corner-to-corner correspondence; holes that swap places between sections
+  are matched by centre only. Sections with more than one region are
+  refused.
+- Body: the smooth views are splines in y, not sand3d's 2D splines; no
+  per-section frame (it always runs along +y; turn it with the placement
+  layer, stream E).
+- Wire: a mitre at a very sharp turn on short runs can fold the tube
+  through itself; it is not detected. Paths given as splines, arcs or
+  helices (sand3d accepts them) are points here: flatten them first
+  (`helix` gives points).
+- Knurl: the grid is sand3d's; the diamond tips are sampled, not exact.
+  No knurl on a non-cylindrical surface.
+- Gear: the hub is on the top face only, and round; no keyway, no hub on
+  both sides. Teeth are `shape-2d`'s outline (8 flank points), not
+  sand3d's (6).
+- Every new hash is checked natively (x86-64) and as wasm32 under
+  wasmtime here; aarch64 and Windows run in CI only.

@@ -96,7 +96,10 @@ pub fn cases() -> Vec<Case> {
                     h,
                     revolve(
                         &plate().translate(DVec2::new(30.0, 0.0)),
-                        &Revolve { angle: 2.0 },
+                        &Revolve {
+                            angle: 2.0,
+                            ..Default::default()
+                        },
                     ),
                 )
             },
@@ -200,6 +203,7 @@ pub fn cases() -> Vec<Case> {
                         sections: vec![(sq.clone(), 0.0), (ci, 8.0), (sq, 16.0)],
                         samples: 40,
                         steps: 3,
+                        ..Default::default()
                     }),
                 )
             },

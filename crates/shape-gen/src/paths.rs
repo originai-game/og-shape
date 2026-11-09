@@ -1,4 +1,4 @@
-//! Generators along paths: [`sweep`], [`loft`], [`helix`], [`thread`].
+//! Generators along paths: [`sweep`], [`loft`] (in [`crate::loft`]), [`helix`], [`thread`].
 //!
 //! | generator | faces | edges |
 //! |---|---|---|
@@ -12,6 +12,8 @@ use shape_core::{DVec2, DVec3, trig};
 use shape_mesh::Solid;
 
 use crate::solids::GenError;
+
+pub use crate::loft::{Loft, LoftCurve, loft};
 
 /// Rotation-minimizing frames along a polyline by double reflection
 /// (Wang, Jüttler, Zheng, Liu, TOG 2008): `(tangent, normal)` per point.
@@ -276,163 +278,6 @@ pub fn thread(d: &Thread) -> Result<Solid, GenError> {
     Ok(s)
 }
 
-/// A loft through sections stacked along +z.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Loft {
-    /// The sections: a single-contour profile and its height, bottom
-    /// first, heights increasing.
-    pub sections: Vec<(Profile, f64)>,
-    /// Points each section is resampled to; 0 for the most any has.
-    pub samples: u32,
-    /// Rings between consecutive sections (0 for 1). With more than one,
-    /// the surface follows a Catmull-Rom curve through the sections.
-    pub steps: u32,
-}
-
-/// Resamples a closed contour to `n` points evenly by length, starting at
-/// the point with the largest x (then the smallest y).
-fn resample(c: &Contour, n: usize) -> Vec<DVec2> {
-    let m = c.points.len();
-    let start = (0..m)
-        .max_by(|&a, &b| {
-            let (p, q) = (c.points[a], c.points[b]);
-            p.x.total_cmp(&q.x).then(q.y.total_cmp(&p.y))
-        })
-        .unwrap_or(0);
-    let pts: Vec<DVec2> = (0..=m).map(|i| c.points[(start + i) % m]).collect();
-    let mut acc = vec![0.0];
-    for w in pts.windows(2) {
-        acc.push(acc.last().copied().unwrap_or(0.0) + (w[1] - w[0]).length());
-    }
-    let total = *acc.last().unwrap_or(&0.0);
-    let mut out = Vec::with_capacity(n);
-    let mut seg = 0;
-    for k in 0..n {
-        let target = total * (k as f64 / n as f64);
-        while seg + 1 < acc.len() - 1 && acc[seg + 1] < target {
-            seg += 1;
-        }
-        let len = acc[seg + 1] - acc[seg];
-        let f = if len > 0.0 {
-            (target - acc[seg]) / len
-        } else {
-            0.0
-        };
-        out.push(pts[seg] + (pts[seg + 1] - pts[seg]) * f);
-    }
-    out
-}
-
-/// A surface through the sections, capped `bottom` and `top`.
-pub fn loft(d: &Loft) -> Result<Solid, GenError> {
-    let k = d.sections.len();
-    if k < 2 {
-        return Err(GenError::Profile(ProfileError::TooFewPoints(k)));
-    }
-    let mut outlines = Vec::with_capacity(k);
-    for (p, z) in &d.sections {
-        if p.regions.len() != 1 || !p.regions[0].holes.is_empty() {
-            return Err(GenError::Profile(ProfileError::Empty));
-        }
-        if !z.is_finite() {
-            return Err(GenError::NotFinite("height"));
-        }
-        outlines.push(&p.regions[0].outer);
-    }
-    if d.sections.windows(2).any(|w| w[1].1 <= w[0].1) {
-        return Err(GenError::NotPositive("height step"));
-    }
-    let n = if d.samples >= 3 {
-        d.samples as usize
-    } else {
-        outlines.iter().map(|c| c.points.len()).max().unwrap_or(3)
-    };
-    let rings2: Vec<Vec<DVec2>> = outlines.iter().map(|c| resample(c, n)).collect();
-    let steps = d.steps.max(1) as usize;
-    // Ring j of the result at parameter u in [0, k-1].
-    let at = |sec: usize, f: f64, j: usize| -> DVec3 {
-        let get = |i: isize| {
-            let i = i.clamp(0, k as isize - 1) as usize;
-            (rings2[i][j], d.sections[i].1)
-        };
-        let i = sec as isize;
-        let (p0, z0) = get(i - 1);
-        let (p1, z1) = get(i);
-        let (p2, z2) = get(i + 1);
-        let (p3, z3) = get(i + 2);
-        if steps == 1 {
-            let p = p1 + (p2 - p1) * f;
-            return DVec3::new(p.x, p.y, z1 + (z2 - z1) * f);
-        }
-        let cr = |a: f64, b: f64, c: f64, e: f64| {
-            let (f2, f3) = (f * f, f * f * f);
-            0.5 * (2.0 * b
-                + (c - a) * f
-                + (2.0 * a - 5.0 * b + 4.0 * c - e) * f2
-                + (3.0 * b - a - 3.0 * c + e) * f3)
-        };
-        DVec3::new(
-            cr(p0.x, p1.x, p2.x, p3.x),
-            cr(p0.y, p1.y, p2.y, p3.y),
-            cr(z0, z1, z2, z3),
-        )
-    };
-    let mut s = Solid::default();
-    let mut rings: Vec<Vec<u32>> = Vec::new();
-    for sec in 0..k - 1 {
-        for st in 0..steps {
-            let f = st as f64 / steps as f64;
-            rings.push((0..n).map(|j| s.push_vertex(at(sec, f, j))).collect());
-        }
-    }
-    rings.push(
-        (0..n)
-            .map(|j| {
-                s.push_vertex(DVec3::new(
-                    rings2[k - 1][j].x,
-                    rings2[k - 1][j].y,
-                    d.sections[k - 1].1,
-                ))
-            })
-            .collect(),
-    );
-    for w in rings.windows(2) {
-        for j in 0..n {
-            let j1 = (j + 1) % n;
-            s.push_triangle([w[0][j], w[0][j1], w[1][j1]], 2, &["side"]);
-            s.push_triangle([w[0][j], w[1][j1], w[1][j]], 2, &["side"]);
-        }
-    }
-    for (ring, (name, surface, z)) in [
-        (&rings[0], ("bottom", 0, d.sections[0].1)),
-        (&rings[rings.len() - 1], ("top", 1, d.sections[k - 1].1)),
-    ] {
-        let pts: Vec<DVec2> = ring
-            .iter()
-            .map(|&v| s.positions[v as usize].truncate())
-            .collect();
-        let cap = Profile::from_contour(Contour::smooth(pts.clone()));
-        let fill = cap.triangulate()?;
-        let ids: Vec<u32> = fill
-            .points
-            .iter()
-            .map(|p| s.push_vertex(p.extend(z)))
-            .collect();
-        for t in &fill.triangles {
-            let t = if name == "bottom" {
-                [t[0], t[2], t[1]]
-            } else {
-                *t
-            };
-            s.push_triangle(t.map(|i| ids[i as usize]), surface, &[name]);
-        }
-        for j in 0..n {
-            s.tag_edge(ring[j], ring[(j + 1) % n], &[name]);
-        }
-    }
-    finish(s)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,31 +350,5 @@ mod tests {
         let m = th.measure();
         assert!(m.closed, "{m:?}");
         assert!(m.volume > 0.0);
-    }
-
-    #[test]
-    fn a_loft_from_square_to_circle_is_closed() {
-        let sq = rect(&Rect {
-            width: 10.0,
-            height: 10.0,
-            radius: 0.0,
-        })
-        .unwrap();
-        let ci = circle(&Circle {
-            radius: 4.0,
-            segments: 0,
-        })
-        .unwrap();
-        for steps in [1, 4] {
-            let s = loft(&Loft {
-                sections: vec![(sq.clone(), 0.0), (ci.clone(), 10.0), (sq.clone(), 20.0)],
-                samples: 32,
-                steps,
-            })
-            .unwrap();
-            let m = s.measure();
-            assert!(m.closed, "{m:?}");
-            assert!(!s.faces(&["top"]).unwrap().is_empty());
-        }
     }
 }
