@@ -625,3 +625,192 @@ fit. Blender clamps it silently. `fillet(2)` there succeeds.
 Every output hash is the same natively (x86-64) and as wasm32-wasip1
 under wasmtime (golden cases `bevel.box`, `bevel.curved`, `bevel.sand3d`,
 `bevel.adj`).
+
+## 9. Phase 5: mesh tools for the platform (stream D, 2026-11-09)
+
+### 9.1 What the platform's `asset_process` does, and where it is now
+
+| `asset_process` (Blender, §3.1) | og-shape (`shape-tools`) |
+|---|---|
+| import glb / gltf | `import_gltf`: GLB, `.gltf` with `data:` or external buffers (a `Resolve` callback, no file system in the kernel), all accessor types, normalized and quantized attributes, sparse accessors, strips and fans, the scene's node tree |
+| import obj | `import_obj`: `o`/`g` parts, `usemtl` surfaces, n-gons, negative indices, `vt`, MTL texture maps |
+| import fbx | `import_fbx`: FBX 7.x binary and ASCII (§9.3) |
+| weld | `weld` (`Weld`: distance; cracks only, or every vertex) |
+| collapse decimation to a ratio or a target | `decimate` (`Decimate`: ratio, target, error limit, locked borders) |
+| export up to 4 LODs | `lods`: any number of levels, each from the last |
+| smart-project UVs | `unwrap` (`Unwrap`: angle, resolution, padding) |
+| measure triangles and texture memory | `measure` → `MeshMeasures::to_json` (§9.5) |
+| Eevee turntable | `preview` (phase 4's CPU rasterizer) |
+| export | `glb` (parts, joints) and `glb_plain` (the texturing contract) |
+
+Added beyond it, for generated meshes (§3.4 item 2): degenerate and
+duplicate triangles, floaters, consistent orientation, small holes, apply
+transforms, join, self-union of interpenetrating shells, exact
+self-intersection and UV overlap counts.
+
+### 9.2 Decisions
+
+- **Everything in `shape-tools`, new modules only:** `import.rs`,
+  `fbx.rs`, `jsonread.rs`, `image.rs`, `polygon.rs`, `repair.rs`,
+  `intersect.rs`, `decimate.rs`, `unwrap.rs`, `measure.rs`,
+  `meshglb.rs`. The only change to an existing module is two variants
+  (`Null`, `Bool`) on the JSON writer's value.
+- **The data.** Import gives `ImportedPart`s: a `Solid` in the part's own
+  coordinates (kernel units: mm, Z up), an `Affine` that places it, UVs
+  per triangle corner as the file has them, the material's name. Faces
+  carry the part's name; each glTF primitive, OBJ material run and FBX
+  material is a surface. Triangles stay in file order and nothing is
+  welded on import, so UVs line up; repair welds and canonicalizes.
+  `Solid` has no UVs, so UVs live beside it (`Uvs`, per corner) and
+  `glb_plain` writes them.
+- **Axes and units.** glTF is metres, Y up by its specification; OBJ is
+  read the same way unless `Import` says otherwise (`unit_mm`, `z_up`);
+  FBX by its `GlobalSettings` (axes, `UnitScaleFactor` in cm). The axis
+  change is a signed permutation, applied to transforms by conjugation
+  (signs and swaps only) and to translations with the unit, so no
+  rounding enters there.
+- **No JSON or glTF crate in the kernel.** A 300-line JSON reader whose
+  numbers go through `core`'s correctly rounded `f64` parser. `gltf` stays
+  a dev-dependency (it reads `glb_plain`'s output back in a test).
+- **Images are measured, never decoded:** sizes from PNG, JPEG, WebP and
+  KTX2 headers. "Texture memory once decoded" is width × height × 4
+  (RGBA8), and with a full mip chain.
+- **Repair never guesses silently.** Every step reports what it changed
+  (`RepairReport`), and what it could not do is a count, not a hidden
+  best effort:
+  - `weld` merges, by default, only vertices on open edges: it closes the
+    cracks a seam-split or soup export leaves, and never pinches a closed
+    surface. With a 1 µm weld of every vertex, Thingi10K #42545 (closed)
+    got 4 non-manifold edges from two vertices of separate sheets; the
+    crack-only weld leaves it closed. `weld_all` is Blender's merge by
+    distance, for parity.
+  - Kept vertices never move (each joins the nearest kept one within
+    reach, visited in position order), so the result depends only on the
+    positions.
+  - Degenerate means exactly zero area: all three coordinate-plane
+    projections collinear by `orient2d`.
+  - `orient` propagates winding across manifold edges, then turns each
+    piece over if its signed volume about its own centre is negative.
+  - `close_holes` traces rims along open edges; a rim that passes a vertex
+    twice (two holes touching at a corner) is cut there into simple
+    loops. The fill is the least-area triangulation of the rim (O(n³)
+    dynamic programming); a chord that already exists in the mesh is not
+    allowed, and when no fill avoids one (holes next to holes), the rim is
+    fanned from a new centre vertex, whose edges are all new. Fills are
+    named `fill` plus the names around the hole. Before both fixes, 107
+    of 1 525 holes on a 146k-triangle sphere stayed open; after, none.
+  - `fuse` (shape-bool's self-union of closed shells) is taken only when
+    its result is closed. og-geom's union of two copies of a Thingi10K
+    mesh can touch along edges (2 and 5 103 non-manifold edges on #128482
+    and #472050); the shells are then kept apart, and the report says why.
+- **Decimation is written here: QEM in f64, not meshoptimizer-rs.**
+  `meshoptimizer-rs` 0.2.19 (2026-11-06) *is* pure Rust (MIT; a port of
+  meshoptimizer 1.3; dependencies `libm` and optional `rayon`; SIMD only
+  in its codecs, behind a feature) and it builds for wasm32. It was wired
+  in first. On the closed 145 760-triangle marching-tetrahedra sphere of
+  phase 0 it left non-manifold edges and self-intersections:
+
+  | target | meshoptimizer-rs: non-manifold / self-intersecting | og-shape QEM: closed, self-intersecting |
+  |---|---|---|
+  | 100 000 | 1 / 0 | closed, 0 |
+  | 70 000 | 5 / 2 | closed, 0 |
+  | 40 000 | 3 / 2 | closed, 0 |
+  | 20 000 | 1 / 0 | closed, 0 |
+  | 5 000 | 0 / 0 | closed, 0 |
+
+  Its simplifier has no link-condition check, and the texturing contract
+  needs closed output, so it was dropped. The decimator here: area-weighted
+  plane quadrics; borders and features (surfaces, face names, named
+  edges) as lines with heavy quadrics of the plane square to the face;
+  line vertices slide only along their line, corners stay; a collapse goes
+  to the kept end, or for two interior vertices to the cheaper of the two
+  ends and the midpoint; refused if it breaks the link condition, turns a
+  triangle by more than 90° or empties it, or exceeds `max_error`;
+  cheapest first, ties by edge key, then vertex. Every triangle left is
+  an input triangle with moved corners, so names carry through.
+- **UV unwrap is written here, not a port of xatlas.** xatlas is MIT, so a
+  port is allowed, but it is about ten thousand lines of C++. Ours does
+  what `asset_process`'s smart project does, with guarantees:
+  - charts grow from the largest triangles across shared edges while the
+    normal stays within `angle` (66°, Blender's default) of the seed's;
+  - a triangle joins only if its projection overlaps no triangle already
+    in the chart, decided exactly (`orient2d` separating axes over a
+    grid), so no chart folds;
+  - each chart is projected along its seed's normal, turned to its
+    smallest box (rotating calipers on its exact hull), laid wide, and
+    packed tallest first by a bottom-left skyline at one texel density,
+    the largest that fits found by bisection, `padding` texels apart;
+  - the final UVs are checked exactly: rounding in the turn and the scale
+    can push two triangles that only touched (thin fans around a vertex,
+    collinear edges on CAD meshes) into an overlap of about 10⁻¹⁷; such a
+    triangle leaves for its own chart and the charts are repacked (after
+    three rounds both triangles of a pair leave, so it ends). Before this
+    check, 12 overlapping pairs were reported on Thingi10K #42545.
+- **Measures with no thresholds**, as JSON with keys in a fixed order:
+  counts, bounds and size, the pivot relative to the box's base centre,
+  area, signed volume, closed, open edges and their loops, non-manifold
+  and inconsistently wound edges, degenerate and duplicate triangles, the
+  pieces largest first (all but the first are floaters for the agent to
+  judge), exact self-intersecting pairs (triangles sharing no vertex that
+  meet, by `orient3d`, an x-sweep picking pairs), and for UVs the summed
+  area, coverage and overlap of texel centres (exact inside tests with a
+  top-left rule), exact overlapping pairs, flipped, zero-area and outside
+  triangles; texture memory per image and in total.
+
+### 9.3 FBX
+
+There is a pure-Rust, permissive path, so FBX is in:
+- `ufbx` (the crate) binds ufbx's C: excluded.
+- `fbxcel` 0.9.0 and `fbxcel-dom` 0.0.10 (MIT OR Apache-2.0, pure Rust)
+  parse FBX but have had no release since 2022/2023 and expose a low-level
+  tree. The tree is the small part, so the reader is written here (about
+  950 lines with its tests) on `miniz_oxide`, which the crate already
+  uses for PNG: binary 7.x (32- and 64-bit records, every property type,
+  zlib arrays) and ASCII 7.x. FBX 6 and older are `Unsupported`.
+- Read: `Geometry` meshes (polygons triangulated, the first UV layer,
+  per-polygon materials as surfaces), the model tree with FBX's full local
+  transform `T·Roff·Rp·Rpre·R·Rpost⁻¹·Rp⁻¹·Soff·Sp·S·Sp⁻¹` (all six Euler
+  orders) and the geometric transform, `GlobalSettings` axes and unit,
+  `Video` textures (embedded content, or files by the resolver). Skipped
+  and listed: deformers (skins, blend shapes: meshes stay in their bind
+  pose), NURBS and other geometry.
+- Checked on files not written here (three.js r160's examples, not
+  committed): `Samba Dancing.fbx` (binary 7.x from Mixamo, skinned) reads
+  as 2 parts, 55 320 triangles, a closed T-posed figure 1 803 mm tall and
+  1 947 mm across the arms, 95 pieces, in 133 ms; `stanford-bunny.fbx`
+  (ASCII 7.5) as 30 338 triangles with its 4 open rims, in 119 ms, at the
+  file's own scale (vertices ±250 cm under a `Lcl Scaling` of 100: 500 m
+  across; three.js's example scales it down itself); `nurbs.fbx` is
+  `Unsupported` (NURBS only). Their previews were inspected: both upright
+  and whole. A hand-written binary file (`tests/support/fbx.rs`: pivots,
+  Euler order 4, a parent, zlib arrays, two materials, an embedded PNG)
+  lands where the transform formula puts it, to the µm, and is a golden
+  case.
+
+### 9.4 Dependencies
+
+No new kernel dependency. `meshoptimizer-rs` was tried and removed
+(above). `shape-golden` gains `miniz_oxide` (already in the tree) to write
+its FBX case's compressed arrays. `bench/meshtools` is its own workspace,
+like `bench/booleans`.
+
+### 9.5 Acceptance (`bench/meshtools`)
+
+**No provider output was available.** The inputs stand in for them:
+- the synthetic AI-mesh shapes of phase 0 (`bench/booleans/src/suites.rs`:
+  sphere, rounded box, torus, blob, mug), polygonised at 96³ (82k–146k
+  triangles), and the 40 Thingi10K meshes of `thingi10k.txt` (fetched by
+  `fetch-thingi10k.sh`, not committed), subdivided once 1-to-4;
+- each given one defect at a time: clean, triangle soup, 1 % of triangles
+  removed, 2 % flipped, three floaters, and two overlapping copies written
+  as two nodes (interpenetrating parts);
+- each written as a GLB by og-shape's own exporter, then read back by the
+  importer: a GLB we export ourselves, not one a provider wrote.
+
+The chain per input: `import → join → repair (weld 1 µm, floaters below
+5 % of the largest piece, holes up to 64 edges, fuse) → decimate (target
+40 000) → unwrap → measure → preview (4 views, 256²) → glb_plain`. The
+contract is checked on the GLB bytes, read back: one node, one mesh, one
+triangle primitive, at most 40 000 triangles, closed, with UVs. After
+that, a boolean cut by phase 0's tilted cylinder re-checks §5.3's finding
+that AI meshes are a repair problem.

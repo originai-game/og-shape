@@ -53,7 +53,9 @@ pub struct Repair {
     /// Closes holes whose rim has at most this many edges (0: none).
     pub max_hole_edges: usize,
     /// Joins closed, interpenetrating shells into one by self-union
-    /// (`shape_bool::fuse`) once the rest is done and the result is closed.
+    /// (`shape_bool::fuse`) once the rest is done. A union that is not
+    /// closed (shells touching along an edge) is not taken: the shells are
+    /// kept, and the report says why.
     pub fuse: bool,
     /// Counts self-intersecting triangle pairs at the end (exact; costs a
     /// sweep over the triangles).
@@ -706,9 +708,17 @@ pub fn repair(s: &Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairErro
             s
         } else {
             match shape_bool::fuse(&s) {
-                Ok(f) => {
+                Ok(f) if f.measure().closed => {
                     r.fused = Some(Ok(n));
                     f
+                }
+                Ok(f) => {
+                    let m = f.measure();
+                    r.fused = Some(Err(format!(
+                        "the union is not closed ({} open, {} non-manifold edges); the shells are kept apart",
+                        m.boundary_edges, m.non_manifold_edges
+                    )));
+                    s
                 }
                 Err(e) => {
                     r.fused = Some(Err(e.to_string()));
