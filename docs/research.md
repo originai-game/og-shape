@@ -342,8 +342,13 @@ aarch64 Linux.
    (phase 5) runs before booleans on imported meshes. Phase 5 re-checks
    this decision on real provider outputs (`docs/plan.md`).
    **Partly done:** `fuse` joins the separate shells of a solid (`merge`
-   output, interpenetrating provider parts) before any boolean. A single
-   surface that folds through itself is still refused.
+   output, interpenetrating parts) before any boolean.
+   - A single closed surface that folds through itself passes the operand
+     check and used to give open output with no error (found by stream D).
+   - `boolean` now checks its result and returns `BoolError::OpenResult`
+     instead.
+   - Still to do: an exact self-intersection check on the operands, to
+     refuse up front, and a self-union to untangle such a surface.
 4. **Exact edge-on-edge crossings (found in phase 2).** The minimal case:
    `cuboid(40, 40, 10)` minus a centred `cylinder(r = 2, 24 segments)`
    through it gave an open result with 100 boundary edges; a blind one

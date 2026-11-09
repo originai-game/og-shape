@@ -51,6 +51,14 @@ pub enum BoolError {
     /// An operand is skinned ("target"/"tool"): booleans do not carry
     /// skins yet, and never drop one silently.
     Skinned(&'static str),
+    /// The result came out open: `boundary` edges are not matched the
+    /// other way. Both operands were closed and oriented, so one of them
+    /// most likely passes through itself (`docs/research.md` §5.4). The
+    /// open result is never returned.
+    OpenResult {
+        /// Directed edges with no twin.
+        boundary: usize,
+    },
 }
 
 impl std::fmt::Display for BoolError {
@@ -62,6 +70,10 @@ impl std::fmt::Display for BoolError {
             ),
             BoolError::NotFinite(w) => write!(f, "the {w} has a position that is not finite"),
             BoolError::Empty => f.write_str("the result is empty"),
+            BoolError::OpenResult { boundary } => write!(
+                f,
+                "the result is open ({boundary} unmatched edges): an operand most likely passes through itself; repair or fuse its parts first"
+            ),
             BoolError::Skinned(w) => write!(
                 f,
                 "the {w} is skinned; booleans do not carry skins yet: build the solid first, then skin it"
@@ -182,6 +194,12 @@ fn boolean_once(target: &Solid, tool: &Solid, d: &Boolean) -> Result<Solid, Bool
     if tris.is_empty() {
         return Err(BoolError::Empty);
     }
+    // Never return open output (`docs/design.md` §6): every directed edge,
+    // after welding by exact position, needs a twin the other way.
+    let boundary = open_edges(&points, &tris);
+    if boundary > 0 {
+        return Err(BoolError::OpenResult { boundary });
+    }
     let operands = [(target, d.target), (tool, d.tool)];
     let surface_offset = target.surfaces.iter().max().map_or(0, |s| s + 1);
     let mut out = Solid {
@@ -287,6 +305,36 @@ fn boolean_once(target: &Solid, tool: &Solid, d: &Boolean) -> Result<Solid, Bool
     out.canonicalize()
         .map_err(|_| BoolError::NotFinite("result"))?;
     Ok(out)
+}
+
+/// Directed edges, after welding by exact position, used more often one
+/// way than the other (zero-area triangles skipped).
+fn open_edges(points: &[DVec3], tris: &[[u32; 3]]) -> usize {
+    let mut id: BTreeMap<[u64; 3], u32> = BTreeMap::new();
+    let w: Vec<u32> = points
+        .iter()
+        .map(|p| {
+            let n = id.len() as u32;
+            *id.entry([
+                (p.x + 0.0).to_bits(),
+                (p.y + 0.0).to_bits(),
+                (p.z + 0.0).to_bits(),
+            ])
+            .or_insert(n)
+        })
+        .collect();
+    let mut directed: BTreeMap<(u32, u32), i64> = BTreeMap::new();
+    for t in tris {
+        let t = t.map(|v| w[v as usize]);
+        if t[0] == t[1] || t[1] == t[2] || t[0] == t[2] {
+            continue;
+        }
+        for k in 0..3 {
+            let (a, b) = (t[k], t[(k + 1) % 3]);
+            *directed.entry((a.min(b), a.max(b))).or_default() += if a < b { 1 } else { -1 };
+        }
+    }
+    directed.values().map(|n| n.unsigned_abs() as usize).sum()
 }
 
 /// Is `x` on the segment `p`–`q` (to 1e-9 of its length)?
@@ -399,6 +447,50 @@ mod tests {
         assert!(m.closed && m.components == 1);
         let want = 2.0 * 80.0 * 40.0 * 6.0 - 60.0 * 30.0 * 3.0;
         assert!((m.volume - want).abs() < 1e-6, "{}", m.volume);
+    }
+
+    #[test]
+    fn a_surface_folded_through_itself_never_gives_open_output() {
+        // A sphere with one vertex pulled through the far side: closed,
+        // oriented, one piece, and passing through itself.
+        let mut ball = shape_gen::solids::sphere(10.0).unwrap();
+        let dir = DVec3::new(-0.51, -0.38, 0.77);
+        let v = (0..ball.positions.len())
+            .max_by(|&a, &b| {
+                ball.positions[a]
+                    .dot(dir)
+                    .total_cmp(&ball.positions[b].dot(dir))
+            })
+            .unwrap();
+        ball.positions[v] = -ball.positions[v] * 1.5;
+        let mut bar = cuboid(&BoxDesc {
+            width: 10.0,
+            depth: 10.0,
+            height: 60.0,
+        })
+        .unwrap();
+        bar.map_positions(|p| p + DVec3::new(0.0, 0.0, -30.0), false);
+        let mut refused = 0;
+        for op in [BoolOp::Join, BoolOp::Cut, BoolOp::Intersect] {
+            match boolean(
+                &ball,
+                &bar,
+                &Boolean {
+                    op,
+                    ..Default::default()
+                },
+            ) {
+                Ok(s) => assert!(s.measure().closed, "{op:?} returned open output"),
+                Err(BoolError::OpenResult { .. }) => refused += 1,
+                Err(e) => panic!("{op:?}: {e:?}"),
+            }
+        }
+        // Before the check all three came back open with Ok
+        // (`docs/research.md` §9.6); the case must keep exercising it.
+        assert_eq!(
+            refused, 3,
+            "the folded sphere no longer exercises the check"
+        );
     }
 
     #[test]

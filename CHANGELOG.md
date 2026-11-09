@@ -207,3 +207,6 @@
   ten bones and posed with an elbow and a knee at 90°; previews in
   `docs/previews/phase5b/`. Golden cases `skin.weld`, `skin.weights`,
   `skin.pose` and `skin.glb` added; no existing hash moved.
+- `boolean` never returns open output: a result whose edges do not all
+  pair up is `BoolError::OpenResult`. A closed, oriented operand that
+  passes through itself used to give open output with no error.
