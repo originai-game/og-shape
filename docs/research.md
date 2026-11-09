@@ -850,3 +850,77 @@ What it cannot do:
   the bench's own 1-to-4 subdivision in f32 creates 14 (the raw mesh has
   none; its shortest edge is 0.4 µm at this scale), and the f32 GLB round
   trip 24. Repair does not add any.
+
+### 9.7 Acceptance results (x86-64, release, one thread)
+
+270 runs: 45 inputs (5 synthetic at 96³, 82k–161k triangles; 40
+Thingi10K, subdivided, 4k–67k) × 6 defects; up to 322k triangles in (two
+overlapping copies).
+
+| defect | runs | contract met | closed out | cut after repair ok | self-intersecting out |
+|---|---|---|---|---|---|
+| clean | 45 | 45 | 45 | 45 | 1 |
+| soup | 45 | 45 | 45 | 45 | 1 |
+| holes (1 %) | 45 | 45 | 45 | 45 | 3 |
+| flipped (2 %) | 45 | 45 | 45 | 45 | 1 |
+| floaters | 45 | 45 | 45 | 45 | 1 |
+| overlapping parts (two nodes) | 45 | 45 | 45 | 44 | 15 |
+
+- **The contract is met on all 270**: one node, one mesh, one triangle
+  primitive, ≤ 40 000 triangles, closed, with UVs, read back from the GLB.
+- **Holes:** 13 346 filled, none left. **Flips:** 26 967 triangles turned,
+  every run closed. **Soup:** welded and closed in every run.
+- **Floaters:** the three specks (13.9 mm diagonal) were dropped on 23
+  inputs and kept on 22, where 5 % of the largest piece's diagonal is
+  below 13.9 mm. Correct for the setting, and `measure` lists them
+  (`floaters`, `largest_pieces`); an agent sets `size` when it knows the
+  scale. A threshold is the guide's call, not the tool's.
+- **Overlapping parts:** fused into one closed solid on 44; on #472050
+  the union was not closed (5 102 non-manifold edges) and the two closed
+  shells were kept, with 5 835 intersecting pairs reported. 15 outputs
+  self-intersect: fused shells whose union kept some (og-geom's union of
+  near-coincident copies), and #472050.
+- **Booleans after repair (§5 re-check):** a cut by phase 0's tilted
+  cylinder gives a closed result on 269 of 270. Phase 0 had og-geom
+  wrong on every hole and flip case before repair; after repair they
+  pass. The one failure is #500114's overlapping copies, which fused
+  closed but still self-intersect; the cut returns open output there
+  without an error (§9.6's finding).
+- **Self-intersections out besides those:** #62593 (24, from the input:
+  §9.6, which also makes its holes run the third) and one fill each on
+  torus.holes and #500114.holes, where a least-area fill crosses a
+  nearby face.
+- **Decimation error** (largest per collapse): at most 0.014 mm on these
+  meshes (about 240 mm across), 0.0103 mm on the sphere from 146k to 40k.
+- **UVs:** 113 charts on average, coverage 0.11–0.79 (mean 0.50; low on
+  thin, many-chart Thingi parts), no overlapping, flipped or outside
+  triangles anywhere.
+- **Time**, all 270 runs: import 5.6 s, repair 89.3 s (max 4.1 s, the
+  fuse of two 161k-triangle copies), decimate 33.8 s (max 3.3 s), unwrap
+  32.7 s, measure 36.1 s (with exact self-intersections), preview 8.5 s,
+  export 2.5 s. Larger: the blob at 414k triangles runs repair 3.2 s,
+  decimate 3.6 s, the rest under 0.6 s; two copies (829k) repair in
+  11.2 s (fuse) and decimate in 4.6 s.
+- Previews of four runs are in `docs/previews/phase5/`.
+
+### 9.8 Gaps and what is untested
+
+- **No provider output was tried.** Meshy, Tripo and Hunyuan3D files were
+  not available here; everything above stands in for them. The phase 5
+  re-check of the boolean decision on real outputs is still open.
+- Not read: Draco and meshopt-compressed glTF (refused with a message),
+  FBX 6 and older, skins and blend shapes (bind pose only), FBX NURBS,
+  the second and later UV layers, vertex colours. Imported UVs and
+  textures are measured but not carried through repair and decimation:
+  the chain makes new UVs.
+- FBX was checked on two real files and hand-written ones, not on
+  provider FBX.
+- Hole fills are least-area, not fair: a large hole on a curved surface
+  closes flat. A fill can cross a nearby face (2 of 45 hole runs).
+- A single surface folded through itself is left as it is (§9.6); booleans
+  on it give open output silently, a shape-bool fix still to do.
+- The unwrap is planar per chart (smart project), not conformal: stretch
+  up to 1/cos 66° within a chart; no chart merging, so coverage on thin
+  parts is low. Decimation keeps no UVs (the chain unwraps after it).
+- Determinism was proven natively on x86-64 and as wasm32 under wasmtime
+  locally; x86-64 Windows and aarch64 Linux run in CI.
