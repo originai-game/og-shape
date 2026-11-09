@@ -256,3 +256,26 @@
   - Golden cases `meshtools.*` added; no existing hash moved. The
     acceptance chain is `bench/meshtools` (`--glb` runs other tools'
     files); `guides/meshtools.md` says what the measures mean.
+- `shape` CLI: the mesh tools. `shape import <mesh> [-o out]` reports the
+  parts, materials, UVs, bones, images and what was skipped;
+  `shape repair`, `shape decimate` (`--ratio` or `--target`, `--lods N`
+  writing `<stem>.lod<k>.<ext>`), `shape unwrap` and `shape process` (the
+  chain under `--budget`) report what they did and the measures after, and
+  write a plain GLB (OBJ, STL) with `-o`. `measure`, `preview` and
+  `export` also take a mesh file (glb, gltf, obj, fbx; OBJ with
+  `--unit-mm` and `--z-up`). The commands are now the `shape_cli`
+  library, one module each. `build`'s report escapes control characters
+  in names as serde_json does.
+- `shape-mcp`: an MCP server on stdio (`guides/mcp.md`). Tools `build`,
+  `preview` (PNG image content), `measure`, `export`, `import`, `repair`,
+  `decimate`, `unwrap`, `process` and `run_typescript` (a TypeScript
+  program run through the binding under bun; the program it records is
+  replayed natively). Resources: the program JSON, the TypeScript API and
+  the mesh tools guides. Paths are confined to `--root`; reads are capped
+  by `--max-bytes`.
+- Guides: `guides/program.md` (the program JSON and every operation),
+  `guides/typescript.md` (the binding's API), `guides/mcp.md` (building
+  and registering the server).
+- Golden case `mcp.process.ball_defects` (the `process` chain's report
+  and GLB on the committed `golden/meshes/ball_defects.obj`); no existing
+  hash moved.
