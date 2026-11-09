@@ -513,13 +513,20 @@ impl MeshMeasures {
                 "skin",
                 self.skin.as_ref().map_or(Json::Null, |k| {
                     Json::Obj(vec![
-                        ("name", Json::Str(k.name.clone())),
                         ("bones", count(k.bones.len())),
                         (
                             "bone_names",
-                            Json::Arr(k.bones.iter().map(|b| Json::Str(b.clone())).collect()),
+                            Json::Arr(k.bones.iter().map(|b| Json::Str(b.name.clone())).collect()),
                         ),
-                        ("weighted_vertices", count(k.weighted_vertices)),
+                        (
+                            "weighted_vertices",
+                            count(
+                                k.weights
+                                    .iter()
+                                    .filter(|w| w.pairs().next().is_some())
+                                    .count(),
+                            ),
+                        ),
                     ])
                 }),
             ),

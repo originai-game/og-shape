@@ -182,6 +182,31 @@
 - Golden cases added (no existing hash moved): `model.frame`,
   `model.place`, `model.joints.glb`, `model.joints.preview`,
   `model.washing_machine.glb`, `.png` and `.measure`.
+- Skins in the data model (phase 5b, part 1): `Solid` has an optional
+  `skin` (`shape_mesh::Skin`): named bones with a parent, a rest frame and
+  an inverse bind matrix, and up to four normalized `(bone, weight)` pairs
+  per vertex (`Weights`, with `from_raw` and `blend` for interpolation).
+  `canonicalize` carries weights through sorting; welded vertices take the
+  mean of their weights. An unskinned solid hashes as before.
+- Booleans (`boolean`, `fuse`), the `shape-edit` edits and the bevels
+  refuse a skinned solid with a new `Skinned` error; they never drop a
+  skin. `append` and `merge` keep a skin when the skeletons match, and
+  otherwise leave vertices unweighted for `Skin::check` to report.
+- `shape-skin`: `skin(solid, &Rig)` makes a bone of each named face region
+  and blends weights across the seams between regions over `blend`
+  millimetres of surface distance, splitting long edges in the band
+  first; `pose` (linear blend skinning from bone turns), `skin_matrices`,
+  and `measure_pose` (closed, inverted triangles with their area and best
+  shape, area and volume ratios). `docs/research.md` §11.
+- `glb` writes a skinned part's glTF skin: bone nodes under the part's
+  node, inverse bind matrices, `JOINTS_0` and `WEIGHTS_0`. A skinned part
+  on a joint is `ExportError::BadSkin`. Unskinned scenes write the same
+  bytes as before.
+- Phase 5b part 1 acceptance: a stylised figure (torso, head, arms, legs)
+  built from loft, sweep, sphere, cuboid and boolean joins, skinned with
+  ten bones and posed with an elbow and a knee at 90°; previews in
+  `docs/previews/phase5b/`. Golden cases `skin.weld`, `skin.weights`,
+  `skin.pose` and `skin.glb` added; no existing hash moved.
 - `shape-tools` mesh tools (phase 5) for meshes from outside the kernel
   (`docs/research.md` §9):
   - `import`, `import_gltf`, `import_obj`, `import_fbx`: glTF 2.0 (GLB,
@@ -191,15 +216,18 @@
     UVs, material name) and the textures' sizes (`ImageInfo`). Polygons
     are triangulated on the way in; faces carry their part's name.
     Draco and meshopt compression, and FBX 6, are `Unsupported` errors.
-  - Skinned inputs: a glTF skin (or `JOINTS_0`/`WEIGHTS_0`) and an FBX
-    skin deformer are read as `shape_mesh::Skin` on `Solid::skin` (name,
-    bone names, weighted vertices) and reported by `measure`. Every tool
-    that would break the skin refuses it with an error value:
-    `RepairError::Skinned` (repair's steps, `join`, `apply_transform`,
-    which now returns a `Result`), `DecimateError::Skinned`,
-    `PlainGlbError::Skinned`, and `ExportError::Skinned` from `glb`, `obj`
-    and `stl`. `unwrap` (which does not re-index), `measure` and
-    `preview` take it. Carrying skins through is phase 5b.
+  - Skinned inputs fill `shape_mesh::Skin` completely (`docs/research.md`
+    §11.4): glTF skin joints as bones, parents first, with world rest
+    frames and the file's inverse bind matrices, `JOINTS_0`/`WEIGHTS_0`
+    through `Weights::from_raw`; FBX skin deformers the same from their
+    clusters' `Transform`/`TransformLink`, `Indexes` and `Weights`. A bone
+    that is scaled or sheared (including through a scaled armature), or a
+    skin that does not check, is refused at import. `measure` reports
+    the skin. Repair's steps, `join`, `apply_transform` (now a `Result`),
+    `decimate`, `lods`, `collapse_short_edges` and `glb_plain` refuse a
+    skinned solid with an error value until part 2 carries skins through
+    them; `glb` writes the skin, and `unwrap`, `measure` and `preview`
+    take it.
   - `repair` with `Repair`: `weld` (closes cracks, or all vertices with
     `weld_all`), `remove_degenerate` (exact zero area, duplicates),
     `remove_floaters` (`Floaters` by size or fraction), `orient`

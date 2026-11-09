@@ -11,6 +11,8 @@ pub(crate) struct Split {
     pub positions: Vec<DVec3>,
     pub normals: Vec<DVec3>,
     pub indices: Vec<u32>,
+    /// Per split vertex, the solid's vertex it copies.
+    pub sources: Vec<u32>,
 }
 
 /// Splits `s` so that each surface has its own vertices. A vertex's normal
@@ -23,6 +25,7 @@ pub(crate) fn split(s: &Solid) -> Split {
         positions: Vec::new(),
         normals: Vec::new(),
         indices: Vec::with_capacity(s.triangles.len() * 3),
+        sources: Vec::new(),
     };
     for (i, t) in s.triangles.iter().enumerate() {
         let [a, b, c] = t.map(|v| s.positions[v as usize]);
@@ -35,6 +38,7 @@ pub(crate) fn split(s: &Solid) -> Split {
             if id == next {
                 out.positions.push(s.positions[v as usize]);
                 out.normals.push(DVec3::ZERO);
+                out.sources.push(v);
             }
             out.normals[id as usize] += n;
             out.indices.push(id);

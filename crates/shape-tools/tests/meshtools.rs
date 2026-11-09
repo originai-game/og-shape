@@ -313,27 +313,39 @@ fn binary_fbx_with_pivots_compressed_arrays_and_a_texture() {
 }
 
 #[test]
-fn a_skinned_glb_is_reported_and_never_broken_silently() {
+fn a_skinned_glb_is_read_whole_and_never_broken_silently() {
     use shape_tools::{
-        DecimateError, ExportError, PlainGlbError, RepairError, apply_transform,
-        collapse_short_edges, stl,
+        DecimateError, PlainGlbError, RepairError, apply_transform, collapse_short_edges,
     };
     let imported = import(&skinned::skinned_glb(true), &Import::default(), &no_files).unwrap();
     assert_eq!(imported.parts.len(), 1);
     let part = &imported.parts[0];
     let s = &part.solid;
-    let skin = s.skin.as_ref().expect("the skin is detected");
-    assert_eq!(skin.name, "rig");
-    assert_eq!(skin.bones, ["hip", "knee"]);
-    assert_eq!(skin.weighted_vertices, 4);
+    let skin = s.skin.as_ref().expect("the skin is read");
+    skin.check(s.positions.len()).unwrap();
+    // Bones, parents first, at their world rest frames (kernel: mm, Z up):
+    // the knee 0.25 m up glTF's +Y is 250 mm up +Z.
+    let names: Vec<&str> = skin.bones.iter().map(|b| b.name.as_str()).collect();
+    assert_eq!(names, ["hip", "knee"]);
+    assert_eq!(skin.bones[1].parent, Some(0));
+    assert_eq!(skin.bones[1].rest.origin, DVec3::new(0.0, 0.0, 250.0));
+    // The inverse bind matrix, as given, in kernel units: −250 mm in z.
+    assert_eq!(skin.bones[1].inverse_bind[14], -250.0);
+    // Weights follow JOINTS_0: the two low vertices on the hip, the two
+    // high ones on the knee.
+    for (p, w) in s.positions.iter().zip(&skin.weights) {
+        let bone = if p.z < 250.0 { 0 } else { 1 };
+        assert_eq!(*w, shape_mesh::Weights::single(bone), "{p:?}");
+    }
     // Measured, in its bind pose, with the skin reported.
     let json = measure(s, &Measure::default()).to_json();
-    assert!(json.contains(r#""skinned":true"#), "{json}");
     assert!(
-        json.contains(r#""bones":2,"bone_names":["hip","knee"]"#),
+        json.contains(
+            r#""skinned":true,"skin":{"bones":2,"bone_names":["hip","knee"],"weighted_vertices":4}"#
+        ),
         "{json}"
     );
-    // Every tool that would break the skin refuses it.
+    // Tools that cannot carry a skin yet refuse it.
     assert!(matches!(
         join(&imported.parts),
         Err(RepairError::Skinned(_))
@@ -359,36 +371,51 @@ fn a_skinned_glb_is_reported_and_never_broken_silently() {
         glb_plain(s, &PlainGlb::default()).unwrap_err(),
         PlainGlbError::Skinned
     );
+    // Unwrap does not re-index, and a preview shows the bind pose.
+    let uv = unwrap(s, &Unwrap::default()).unwrap();
+    assert_eq!(uv.corners.len(), s.triangles.len());
     let scene = Scene {
         name: "rig".into(),
         parts: vec![Part::new("legs", s)],
     };
-    let refused = Err(ExportError::Skinned("legs".into()));
-    assert_eq!(glb(&scene), refused);
-    assert_eq!(
-        obj(&scene).map(|_| ()),
-        refused.clone().map(|_: Vec<u8>| ())
-    );
-    assert_eq!(stl(&scene), refused);
-    // Unwrap does not re-index, and a preview shows the bind pose.
-    let uv = unwrap(s, &Unwrap::default()).unwrap();
-    assert_eq!(uv.corners.len(), s.triangles.len());
     let d = Preview {
         width: 32,
         views: 1,
         ..Default::default()
     };
     assert!(preview(&scene, &d).is_ok());
-    // Appending keeps the mark: a skinned solid cannot be laundered.
-    let mut other = Solid::default();
-    other.append(s);
-    assert_eq!(other.skin.as_ref(), Some(skin));
-    // Weights with no skin on the node: still skinned, with no bones.
+    // Round trip: glb writes the skin; reading it back gives the same
+    // bones and weights (to f32).
+    let bytes = glb(&scene).unwrap();
+    let back = import(&bytes, &Import::default(), &no_files).unwrap();
+    let b = &back.parts[0].solid;
+    let skin2 = b.skin.as_ref().expect("the skin comes back");
+    assert_eq!(skin2.bones.len(), skin.bones.len());
+    for (x, y) in skin.bones.iter().zip(&skin2.bones) {
+        assert_eq!((&x.name, x.parent), (&y.name, y.parent));
+        assert!((x.rest.origin - y.rest.origin).length() < 1e-3);
+        for k in 0..16 {
+            assert!((x.inverse_bind[k] - y.inverse_bind[k]).abs() < 1e-3, "{k}");
+        }
+    }
+    for (p, w) in b.positions.iter().zip(&skin2.weights) {
+        let i = s
+            .positions
+            .iter()
+            .position(|q| (*q - *p).length() < 1e-3)
+            .expect("same vertex");
+        let w0 = skin.weights[i];
+        assert_eq!(w.bones, w0.bones);
+        for k in 0..4 {
+            assert!((w.weights[k] - w0.weights[k]).abs() < 1e-6);
+        }
+    }
+    // Weights with no skin on the node: no skin, and the report says so.
     let bare = import(&skinned::skinned_glb(false), &Import::default(), &no_files).unwrap();
-    let skin = bare.parts[0]
-        .solid
-        .skin
-        .as_ref()
-        .expect("weights alone count");
-    assert!(skin.bones.is_empty() && skin.weighted_vertices == 4);
+    assert!(bare.parts[0].solid.skin.is_none());
+    assert!(
+        bare.skipped
+            .iter()
+            .any(|x| x.contains("bone weights with no skin"))
+    );
 }

@@ -22,8 +22,8 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use shape_core::{DVec2, DVec3};
-use shape_mesh::{Skin, Solid};
+use shape_core::{DVec2, DVec3, Frame};
+use shape_mesh::{Bone, Skin, Solid, Weights};
 
 use crate::image::ImageInfo;
 use crate::jsonread::{self, Value};
@@ -283,6 +283,9 @@ const SUPPORTED_EXTENSIONS: [&str; 6] = [
     "KHR_materials_unlit",
 ];
 
+/// Per vertex, its `(joint, weight)` pairs as the file has them.
+type RawWeights = Vec<Vec<(u32, f64)>>;
+
 struct Doc<'a> {
     json: Value,
     buffers: Vec<Vec<u8>>,
@@ -295,12 +298,16 @@ struct Doc<'a> {
 /// Read: triangle primitives (also strips and fans), `POSITION`,
 /// `TEXCOORD_0`, indices of every integer width, normalized and quantized
 /// attributes (`KHR_mesh_quantization`), sparse accessors, the default
-/// scene's node tree (matrices and TRS), and images' sizes. A skin (a
-/// node's `skin`, or `JOINTS_0`/`WEIGHTS_0` on its mesh) is described on
-/// the part's `Solid::skin`: bones and weighted vertices; the mesh is in
-/// its bind pose, and tools that would break the skin refuse it. Skipped
-/// and listed in [`Imported::skipped`]: points and lines and morph
-/// targets. A required extension the
+/// scene's node tree (matrices and TRS), and images' sizes. A node's
+/// skin becomes the part's `Solid::skin`: its joints as bones, parents
+/// first, with world rest frames and the file's inverse bind matrices,
+/// and `JOINTS_0`/`WEIGHTS_0` as weights (`docs/research.md` §11.4). The
+/// mesh is in its bind pose, at its node's origin (glTF does not use a
+/// skinned mesh's node transform). A bone that is scaled or sheared, or a
+/// skin that does not check (an unweighted vertex), is
+/// [`ImportError::Unsupported`]. Skipped and listed in
+/// [`Imported::skipped`]: points and lines, morph targets, and bone
+/// weights with no skin. A required extension the
 /// importer does not read (Draco, meshopt compression) is
 /// [`ImportError::Unsupported`].
 pub fn import_gltf(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportError> {
@@ -446,6 +453,7 @@ impl Doc<'_> {
             "VEC2" => 2,
             "VEC3" => 3,
             "VEC4" => 4,
+            "MAT4" => 16,
             t => return Err(fmt_err(format!("accessor {i} has type {t:?}"))),
         };
         let ct = a.get("componentType").index().unwrap_or(0);
@@ -630,39 +638,203 @@ impl Doc<'_> {
                 .or(mesh.get("name").str())
                 .map_or_else(|| format!("node{i}"), str::to_string);
             let name = unique(&name, &mut used);
-            let mut part = self.part(&name, mesh, &world, &mut out)?;
-            // A skin: the node's, or weights on the mesh with no skin.
-            let weighted = part.solid.skin.take().map_or(0, |s| s.weighted_vertices);
-            if let Some(k) = n.get("skin").index() {
-                let skin = self.json.get("skins").at(k);
-                let bones = skin
-                    .get("joints")
-                    .items()
-                    .iter()
-                    .map(|j| {
-                        let j = j.index().unwrap_or(usize::MAX);
-                        self.json
-                            .get("nodes")
-                            .at(j)
-                            .get("name")
-                            .str()
-                            .map_or_else(|| format!("node{j}"), str::to_string)
-                    })
-                    .collect();
-                part.solid.skin = Some(Skin {
-                    name: skin.get("name").str().unwrap_or("").to_string(),
-                    bones,
-                    weighted_vertices: weighted,
-                });
-            } else if weighted > 0 {
-                part.solid.skin = Some(Skin {
-                    weighted_vertices: weighted,
-                    ..Default::default()
-                });
+            let (mut part, raw) = self.part(&name, mesh, &world, &mut out)?;
+            let weighted = raw.iter().any(|r| r.iter().any(|p| p.1 > 0.0));
+            match n.get("skin").index() {
+                Some(k) => {
+                    let skin = self.skin(k, &name, &raw)?;
+                    // glTF: a skinned mesh's own node transform is not used;
+                    // its bones place it.
+                    if part.transform != Affine::IDENTITY {
+                        out.skipped.push(format!(
+                            "{name}: skinned, so its node transform is not used (glTF)"
+                        ));
+                    }
+                    part.transform = Affine::IDENTITY;
+                    part.solid.skin = Some(skin);
+                }
+                None if weighted => out
+                    .skipped
+                    .push(format!("{name}: bone weights with no skin on its node")),
+                None => {}
             }
             out.parts.push(part);
         }
         Ok(out)
+    }
+
+    /// Each node's parent, by index.
+    fn parents(&self) -> Vec<Option<usize>> {
+        let nodes = self.json.get("nodes").items();
+        let mut parent = vec![None; nodes.len()];
+        for (i, n) in nodes.iter().enumerate() {
+            for c in n.get("children").items() {
+                if let Some(c) = c.index().filter(|&c| c < nodes.len()) {
+                    parent[c] = Some(i);
+                }
+            }
+        }
+        parent
+    }
+
+    /// A node's world transform in glTF space.
+    fn world(&self, mut i: usize, parents: &[Option<usize>]) -> Affine {
+        let mut m = Affine::IDENTITY;
+        for _ in 0..=parents.len() {
+            m = self.local(self.json.get("nodes").at(i)).then(&m);
+            match parents.get(i).copied().flatten() {
+                Some(p) => i = p,
+                None => break,
+            }
+        }
+        m
+    }
+
+    /// Skin `k` for a mesh whose vertices carry `raw` (joint, weight)
+    /// pairs: its joints as bones, parents first, with their world rest
+    /// frames and the file's inverse bind matrices, in kernel space; the
+    /// weights through `Weights::from_raw`. A bone node that is not rigid
+    /// (scaled or sheared), or a skin that does not check, is an error.
+    fn skin(&self, k: usize, name: &str, raw: &[Vec<(u32, f64)>]) -> Result<Skin, ImportError> {
+        let skin = self.json.get("skins").at(k);
+        let joints: Vec<usize> = skin
+            .get("joints")
+            .items()
+            .iter()
+            .map(|j| {
+                j.index()
+                    .ok_or_else(|| fmt_err(format!("{name}: a skin joint is not a node")))
+            })
+            .collect::<Result<_, _>>()?;
+        if joints.is_empty()
+            || joints
+                .iter()
+                .any(|&j| self.json.get("nodes").at(j).is_null())
+        {
+            return Err(fmt_err(format!(
+                "{name}: its skin names no or missing joints"
+            )));
+        }
+        let ibm: Option<Vec<f64>> = match skin.get("inverseBindMatrices").index() {
+            Some(a) => {
+                let (m, w) = self.accessor(a)?;
+                if w != 16 || m.len() / 16 != joints.len() {
+                    return Err(fmt_err(format!(
+                        "{name}: its inverse bind matrices do not match its joints"
+                    )));
+                }
+                Some(m)
+            }
+            None => None,
+        };
+        let parents = self.parents();
+        // The bone each joint's nearest jointed ancestor is, and depth.
+        let joint_of = |node: usize| joints.iter().position(|&j| j == node);
+        let mut info: Vec<(usize, Option<usize>, usize)> = Vec::new();
+        for (ji, &node) in joints.iter().enumerate() {
+            let (mut at, mut depth, mut parent) = (node, 0, None);
+            while let Some(p) = parents[at] {
+                depth += 1;
+                if parent.is_none() {
+                    parent = joint_of(p);
+                }
+                at = p;
+                if depth > parents.len() {
+                    return Err(fmt_err(format!("{name}: the node tree loops")));
+                }
+            }
+            info.push((depth, parent, ji));
+        }
+        // Parents first: by depth, then file order.
+        let mut order: Vec<usize> = (0..joints.len()).collect();
+        order.sort_by_key(|&ji| (info[ji].0, ji));
+        let mut bone_of = vec![0u32; joints.len()];
+        for (b, &ji) in order.iter().enumerate() {
+            bone_of[ji] = b as u32;
+        }
+        let mut used = BTreeMap::new();
+        let mut bones = Vec::with_capacity(joints.len());
+        for &ji in &order {
+            let node = joints[ji];
+            let n = self.json.get("nodes").at(node);
+            let bone = unique(
+                &n.get("name")
+                    .str()
+                    .map_or_else(|| format!("node{node}"), str::to_string),
+                &mut used,
+            );
+            let w = conjugate(&self.world(node, &parents), 1000.0);
+            let rigid = [w.x, w.y, w.z]
+                .iter()
+                .all(|a| (a.length() - 1.0).abs() < 1e-9)
+                && w.x.dot(w.y).abs() < 1e-9
+                && w.y.dot(w.z).abs() < 1e-9
+                && w.x.dot(w.z).abs() < 1e-9
+                && w.determinant() > 0.0;
+            if !rigid {
+                return Err(ImportError::Unsupported(format!(
+                    "{name}: bone {bone:?} is scaled or sheared; a bone must be rigid"
+                )));
+            }
+            let rest = Frame {
+                origin: w.t,
+                x: w.x,
+                y: w.y,
+                z: w.z,
+            };
+            let inverse_bind = match &ibm {
+                Some(m) => {
+                    let m = &m[ji * 16..ji * 16 + 16];
+                    if m[3] != 0.0 || m[7] != 0.0 || m[11] != 0.0 || m[15] != 1.0 {
+                        return Err(ImportError::Unsupported(format!(
+                            "{name}: bone {bone:?}'s inverse bind matrix is projective"
+                        )));
+                    }
+                    let a = conjugate(
+                        &Affine {
+                            x: DVec3::new(m[0], m[1], m[2]),
+                            y: DVec3::new(m[4], m[5], m[6]),
+                            z: DVec3::new(m[8], m[9], m[10]),
+                            t: DVec3::new(m[12], m[13], m[14]),
+                        },
+                        1000.0,
+                    );
+                    [
+                        a.x.x, a.x.y, a.x.z, 0.0, a.y.x, a.y.y, a.y.z, 0.0, a.z.x, a.z.y, a.z.z,
+                        0.0, a.t.x, a.t.y, a.t.z, 1.0,
+                    ]
+                }
+                // No matrices: each is the identity (glTF).
+                None => [
+                    1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+                ],
+            };
+            bones.push(Bone {
+                name: bone,
+                parent: info[ji].1.map(|p| bone_of[p]),
+                rest,
+                inverse_bind,
+            });
+        }
+        let mut weights = Vec::with_capacity(raw.len());
+        for pairs in raw {
+            let mut mapped = Vec::with_capacity(4);
+            for &(j, w) in pairs {
+                if w > 0.0 {
+                    let b = *bone_of.get(j as usize).ok_or_else(|| {
+                        fmt_err(format!(
+                            "{name}: a vertex names joint {j}, which the skin lacks"
+                        ))
+                    })?;
+                    mapped.push((b, w));
+                }
+            }
+            weights.push(Weights::from_raw(mapped));
+        }
+        let skin = Skin { bones, weights };
+        skin.check(raw.len())
+            .map_err(|e| ImportError::Unsupported(format!("{name}: its skin: {e}")))?;
+        Ok(skin)
     }
 
     fn part(
@@ -671,12 +843,12 @@ impl Doc<'_> {
         mesh: &Value,
         world: &Affine,
         out: &mut Imported,
-    ) -> Result<ImportedPart, ImportError> {
+    ) -> Result<(ImportedPart, RawWeights), ImportError> {
         let mut solid = Solid::default();
         let mut uvs: Vec<[DVec2; 3]> = Vec::new();
         let mut all_uv = true;
         let mut material = String::new();
-        let mut weighted = 0;
+        let mut raw: Vec<Vec<(u32, f64)>> = Vec::new();
         for (pi, prim) in mesh.get("primitives").items().iter().enumerate() {
             let mode = prim.get("mode").index().unwrap_or(4);
             if !(4..=6).contains(&mode) {
@@ -689,20 +861,6 @@ impl Doc<'_> {
                     .push(format!("{name}: primitive {pi}'s morph targets"));
             }
             let attrs = prim.get("attributes");
-            if !attrs.get("JOINTS_0").is_null() || !attrs.get("WEIGHTS_0").is_null() {
-                weighted += attrs
-                    .get("POSITION")
-                    .index()
-                    .map(|a| {
-                        self.json
-                            .get("accessors")
-                            .at(a)
-                            .get("count")
-                            .index()
-                            .unwrap_or(0)
-                    })
-                    .unwrap_or(0);
-            }
             let Some(pa) = attrs.get("POSITION").index() else {
                 return Err(fmt_err(format!("{name}: primitive {pi} has no POSITION")));
             };
@@ -762,6 +920,30 @@ impl Doc<'_> {
                     .str()
                     .map_or_else(|| format!("material{mi}"), str::to_string);
             }
+            // Bone weights per vertex: (joint, weight) pairs, as the file has
+            // them; empty where the primitive has none.
+            match (
+                attrs.get("JOINTS_0").index(),
+                attrs.get("WEIGHTS_0").index(),
+            ) {
+                (Some(ja), Some(wa)) => {
+                    let (j, jw) = self.accessor(ja)?;
+                    let (w, ww) = self.accessor(wa)?;
+                    if jw != 4 || ww != 4 || j.len() / 4 != count || w.len() / 4 != count {
+                        return Err(fmt_err(format!(
+                            "{name}: JOINTS_0 or WEIGHTS_0 does not match POSITION"
+                        )));
+                    }
+                    for v in 0..count {
+                        raw.push(
+                            (0..4)
+                                .map(|k| (j[v * 4 + k] as u32, w[v * 4 + k]))
+                                .collect(),
+                        );
+                    }
+                }
+                _ => raw.extend((0..count).map(|_| Vec::new())),
+            }
             let base = solid.positions.len() as u32;
             for v in pos.as_chunks::<3>().0 {
                 let p = from_y_up(DVec3::new(v[0], v[1], v[2])) * 1000.0;
@@ -783,24 +965,20 @@ impl Doc<'_> {
                 }
             }
         }
-        if weighted > 0 {
-            // Read by the caller, which names the bones.
-            solid.skin = Some(Skin {
-                weighted_vertices: weighted,
-                ..Default::default()
-            });
-        }
-        Ok(ImportedPart {
-            name: name.to_string(),
-            solid,
-            transform: conjugate(world, 1000.0),
-            uvs: if all_uv && !uvs.is_empty() {
-                Some(uvs)
-            } else {
-                None
+        Ok((
+            ImportedPart {
+                name: name.to_string(),
+                solid,
+                transform: conjugate(world, 1000.0),
+                uvs: if all_uv && !uvs.is_empty() {
+                    Some(uvs)
+                } else {
+                    None
+                },
+                material,
             },
-            material,
-        })
+            raw,
+        ))
     }
 }
 

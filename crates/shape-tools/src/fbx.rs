@@ -10,15 +10,18 @@
 //! Euler order, scaling offset and pivot, scaling) and the geometric
 //! transform, the file's axes and unit (`GlobalSettings`), and texture
 //! images' sizes (embedded `Video` content or files through the
-//! resolver), and skins (a `Skin` deformer's clusters as bones, on the
-//! part's `Solid::skin`; the mesh is in its bind pose). Skipped and
-//! listed: blend shapes, NURBS and other geometry. FBX 6 and
+//! resolver), and skins: a `Skin` deformer's clusters as bones, parents
+//! first, their rest frames and inverse bind matrices from the clusters'
+//! `Transform` and `TransformLink`, their `Indexes` and `Weights` as
+//! weights, on the part's `Solid::skin` in the mesh's own coordinates (a
+//! bone scaled at bind time is refused). Skipped and listed: blend
+//! shapes, NURBS and other geometry. FBX 6 and
 //! older are [`ImportError::Unsupported`].
 
 use std::collections::BTreeMap;
 
-use shape_core::{DVec2, DVec3, trig};
-use shape_mesh::{Skin, Solid};
+use shape_core::{DVec2, DVec3, Frame, trig};
+use shape_mesh::{Bone, Skin, Solid, Weights};
 
 use crate::image::ImageInfo;
 use crate::import::{
@@ -678,49 +681,151 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
             "{shapes} blend-shape deformers: meshes read without them"
         ));
     }
-    // A geometry's skin: its Skin deformer's clusters, each a bone.
-    let skin_of = |g: &Node| -> Option<Skin> {
-        let gid = g.props.first().and_then(Prop::int)?;
+    // A geometry's skin: its Skin deformer's clusters, each a bone, with
+    // the bind matrices the clusters carry (`Transform`: the mesh at bind
+    // time; `TransformLink`: the bone), in the mesh's own coordinates.
+    let skin_of = |g: &Node, name: &str, vertices: usize| -> Result<Option<Skin>, ImportError> {
+        let Some(gid) = g.props.first().and_then(Prop::int) else {
+            return Ok(None);
+        };
         let class = |n: &Node| n.props.get(2).and_then(Prop::str).unwrap_or("").to_string();
-        let skin = children_of
-            .get(&gid)?
-            .iter()
+        let Some(skin) = children_of
+            .get(&gid)
+            .into_iter()
+            .flatten()
             .filter_map(|c| by_id.get(c))
-            .find(|n| n.name == "Deformer" && class(n) == "Skin")?;
-        let sid = skin.props.first().and_then(Prop::int)?;
-        let mut bones = Vec::new();
-        let mut weighted: Vec<i64> = Vec::new();
+            .find(|n| n.name == "Deformer" && class(n) == "Skin")
+        else {
+            return Ok(None);
+        };
+        let unsupported =
+            |why: String| ImportError::Unsupported(format!("{name}: its skin: {why}"));
+        let sid = skin.props.first().and_then(Prop::int).unwrap_or(0);
+        // (bone model id, name, cluster)
+        let mut clusters: Vec<(i64, String, &Node)> = Vec::new();
         for c in children_of.get(&sid).into_iter().flatten() {
             let Some(cluster) = by_id.get(c).filter(|n| class(n) == "Cluster") else {
                 continue;
             };
             let cid = cluster.props.first().and_then(Prop::int).unwrap_or(0);
-            let bone = children_of
+            let Some(bone) = children_of
                 .get(&cid)
                 .into_iter()
                 .flatten()
-                .filter_map(|b| by_id.get(b))
-                .find(|n| n.name == "Model")
-                .map_or_else(
-                    || object_name(cluster.props.get(1).and_then(Prop::str).unwrap_or("")),
-                    |b| object_name(b.props.get(1).and_then(Prop::str).unwrap_or("")),
-                );
-            bones.push(bone);
-            weighted.extend(
-                cluster
-                    .array("Indexes")
-                    .unwrap_or(&[])
-                    .iter()
-                    .map(|&v| v as i64),
-            );
+                .find(|b| by_id.get(b).is_some_and(|n| n.name == "Model"))
+            else {
+                return Err(unsupported("a cluster has no bone".into()));
+            };
+            let bname = object_name(by_id[bone].props.get(1).and_then(Prop::str).unwrap_or(""));
+            clusters.push((*bone, bname, cluster));
         }
-        weighted.sort_unstable();
-        weighted.dedup();
-        Some(Skin {
-            name: object_name(skin.props.get(1).and_then(Prop::str).unwrap_or("")),
+        if clusters.is_empty() {
+            return Err(unsupported("no clusters".into()));
+        }
+        let matrix = |c: &Node, key: &str| -> Result<Affine, ImportError> {
+            let m = c
+                .array(key)
+                .filter(|m| m.len() == 16)
+                .ok_or_else(|| unsupported(format!("a cluster has no {key}")))?;
+            Ok(conj(&Affine {
+                x: DVec3::new(m[0], m[1], m[2]),
+                y: DVec3::new(m[4], m[5], m[6]),
+                z: DVec3::new(m[8], m[9], m[10]),
+                t: DVec3::new(m[12], m[13], m[14]),
+            }))
+        };
+        let rigid = |a: &Affine| {
+            [a.x, a.y, a.z]
+                .iter()
+                .all(|v| (v.length() - 1.0).abs() < 1e-9)
+                && a.x.dot(a.y).abs() < 1e-9
+                && a.y.dot(a.z).abs() < 1e-9
+                && a.x.dot(a.z).abs() < 1e-9
+                && a.determinant() > 0.0
+        };
+        let inverse = |a: &Affine| {
+            let r = transpose(a);
+            Affine {
+                t: -r.rotate(a.t),
+                ..r
+            }
+        };
+        // Parents first: by depth in the model tree, then cluster order.
+        let ids: Vec<i64> = clusters.iter().map(|c| c.0).collect();
+        let mut info: Vec<(usize, Option<usize>)> = Vec::new();
+        for &id in &ids {
+            let (mut at, mut depth, mut parent) = (id, 0usize, None);
+            while let Some(&p) = parent_of.get(&at) {
+                if p == 0 || depth > 512 {
+                    break;
+                }
+                depth += 1;
+                if parent.is_none() {
+                    parent = ids.iter().position(|&x| x == p);
+                }
+                at = p;
+            }
+            info.push((depth, parent));
+        }
+        let mut order: Vec<usize> = (0..clusters.len()).collect();
+        order.sort_by_key(|&k| (info[k].0, k));
+        let mut bone_of = vec![0u32; clusters.len()];
+        for (b, &k) in order.iter().enumerate() {
+            bone_of[k] = b as u32;
+        }
+        let mut used = BTreeMap::new();
+        let mut bones = Vec::with_capacity(clusters.len());
+        for &k in &order {
+            let (_, bname, cluster) = &clusters[k];
+            let bname = unique(bname, &mut used);
+            let (mesh_bind, bone_bind) = (
+                matrix(cluster, "Transform")?,
+                matrix(cluster, "TransformLink")?,
+            );
+            if !rigid(&mesh_bind) || !rigid(&bone_bind) {
+                return Err(unsupported(format!(
+                    "bone {bname:?} or the mesh is scaled or sheared at bind time; a bone must be rigid"
+                )));
+            }
+            // The bone at rest in the mesh's coordinates, and its inverse.
+            let rest = inverse(&mesh_bind).then(&bone_bind);
+            let ibm = inverse(&rest);
+            bones.push(Bone {
+                name: bname,
+                parent: info[k].1.map(|p| bone_of[p]),
+                rest: Frame {
+                    origin: rest.t,
+                    x: rest.x,
+                    y: rest.y,
+                    z: rest.z,
+                },
+                inverse_bind: [
+                    ibm.x.x, ibm.x.y, ibm.x.z, 0.0, ibm.y.x, ibm.y.y, ibm.y.z, 0.0, ibm.z.x,
+                    ibm.z.y, ibm.z.z, 0.0, ibm.t.x, ibm.t.y, ibm.t.z, 1.0,
+                ],
+            });
+        }
+        let mut raw: Vec<Vec<(u32, f64)>> = vec![Vec::new(); vertices];
+        for (k, (_, _, cluster)) in clusters.iter().enumerate() {
+            let idx = cluster.array("Indexes").unwrap_or(&[]);
+            let w = cluster.array("Weights").unwrap_or(&[]);
+            for (&i, &x) in idx.iter().zip(w) {
+                let i = i as usize;
+                if i >= vertices {
+                    return Err(unsupported(
+                        "a cluster names a vertex that does not exist".into(),
+                    ));
+                }
+                raw[i].push((bone_of[k], x));
+            }
+        }
+        let skin = Skin {
             bones,
-            weighted_vertices: weighted.len(),
-        })
+            weights: raw.into_iter().map(Weights::from_raw).collect(),
+        };
+        skin.check(vertices)
+            .map_err(|e| unsupported(e.to_string()))?;
+        Ok(Some(skin))
     };
     // World transform of a model, by its parents.
     let world = |id: i64| -> Affine {
@@ -769,12 +874,28 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
         let geo = geometric(o);
         for g in geometries {
             let (mut solid, uvs, polys) = mesh(g, &name, &geo, unit, &to_kernel, p_det < 0.0)?;
-            solid.skin = skin_of(g);
+            solid.skin = skin_of(g, &name, solid.positions.len())?;
+            let mut transform = conj(&world(id));
+            if solid.skin.is_some() {
+                // The bones place a skinned mesh; its vertices and bones
+                // share the mesh's own coordinates.
+                if geo != Affine::IDENTITY || p_det < 0.0 {
+                    return Err(ImportError::Unsupported(format!(
+                        "{name}: a skinned mesh with a geometric transform or mirrored axes"
+                    )));
+                }
+                if transform != Affine::IDENTITY {
+                    out.skipped.push(format!(
+                        "{name}: skinned, so its model transform is not used (its bones place it)"
+                    ));
+                }
+                transform = Affine::IDENTITY;
+            }
             out.polygons_triangulated += polys;
             out.parts.push(ImportedPart {
                 name: name.clone(),
                 solid,
-                transform: conj(&world(id)),
+                transform,
                 uvs,
                 material: materials.first().cloned().unwrap_or_default(),
             });

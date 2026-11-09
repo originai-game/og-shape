@@ -267,24 +267,57 @@ fn skinned_refusals(parts: &[shape_tools::ImportedPart]) -> Result<String, Strin
     let half = Decimate { ratio: 0.5, ..Default::default() };
     check("decimate", decimate(s, &half).err().map(|e| e.to_string()));
     check("glb_plain", glb_plain(s, &PlainGlb::default()).err().map(|e| e.to_string()));
-    let scene = Scene { name: "s".into(), parts: vec![Part::new("p", s)] };
-    check("glb", glb(&scene).err().map(|e| e.to_string()));
     let text = refused.join(", ");
     if text.contains("ACCEPTED") || text.contains("other error") {
-        Err(text)
-    } else {
-        Ok(format!(
-            "skinned ({} bones, {} weighted vertices): refused by {text}",
-            skin.bones.len(),
-            skin.weighted_vertices
-        ))
+        return Err(text);
     }
+    // glb writes the skin; it must come back with the same bones and
+    // weighted vertices.
+    let scene = Scene { name: "s".into(), parts: vec![Part::new("p", s)] };
+    let bytes = glb(&scene).map_err(|e| format!("glb: {e}"))?;
+    let back = import(&bytes, &Import::default(), &no_files).map_err(|e| format!("re-import: {e}"))?;
+    let skin2 = back.parts[0].solid.skin.clone().ok_or("the skin did not come back")?;
+    let names = |k: &shape_mesh::Skin| k.bones.iter().map(|b| (b.name.clone(), b.parent)).collect::<Vec<_>>();
+    if names(&skin) != names(&skin2) {
+        return Err("the bones changed in the round trip".into());
+    }
+    Ok(format!(
+        "skinned ({} bones): refused by {text}; glb round trip keeps the bones",
+        skin.bones.len()
+    ))
 }
 
 fn chain(input: &str, defect: &str, bytes: &[u8], tool: Option<&Solid>, out: &Option<PathBuf>) -> Row {
     let mut times = [0.0; 7];
     let start = Instant::now();
-    let imported = import(bytes, &Import::default(), &no_files).expect("import");
+    let imported = match import(bytes, &Import::default(), &no_files) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("{input}: import refused: {e}");
+            return Row {
+                input: input.into(),
+                defect: "refused".into(),
+                tris_in: 0,
+                closed_in: false,
+                pieces_in: 0,
+                welded: 0,
+                flipped: 0,
+                floaters: 0,
+                holes: (0, 0),
+                fused: "-".into(),
+                tris_out: 0,
+                decimate_error: 0.0,
+                closed_out: false,
+                self_x: 0,
+                charts: 0,
+                uv_cover: 0.0,
+                uv_overlap: 0,
+                contract: Err(format!("import refused: {e}")),
+                cut: "-".into(),
+                ms: times,
+            };
+        }
+    };
     if imported.parts.iter().any(|p| p.solid.skin.is_some()) {
         let tris = imported.parts.iter().map(|p| p.solid.triangles.len()).sum();
         return Row {

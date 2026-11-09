@@ -7,7 +7,9 @@
 //! - [`glb`]: glTF 2.0 binary, written by hand: metres, Y up, normals smooth
 //!   within a surface and split at real edges, metallic-roughness
 //!   materials, joints in node extras as `s3d_joint`
-//!   (`docs/research.md` §1.5).
+//!   (`docs/research.md` §1.5). A skinned solid ([`shape_mesh::Skin`])
+//!   is written as a glTF skin: bone nodes under its part's node, inverse
+//!   bind matrices, JOINTS_0 and WEIGHTS_0 (`docs/research.md` §11).
 //! - [`obj`] and [`stl`]: meshes only, metres; OBJ Y up, STL Z up.
 //! - [`preview`]: a turntable of views from a deterministic rasterizer,
 //!   as RGBA [`Image`]s; [`png`] encodes one for a person to look at, and
@@ -48,6 +50,7 @@ mod png;
 mod polygon;
 mod preview;
 mod repair;
+mod skin;
 mod surface;
 mod unwrap;
 

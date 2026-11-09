@@ -51,6 +51,9 @@ pub enum BevelError {
     TooLarge(DVec3),
     /// A configuration this version does not bevel, at this vertex.
     Unsupported(DVec3, &'static str),
+    /// The solid is skinned: bevels do not carry skins yet, and never drop
+    /// one silently.
+    Skinned,
 }
 
 impl std::fmt::Display for BevelError {
@@ -72,6 +75,9 @@ impl std::fmt::Display for BevelError {
                 write!(f, "the bevel is larger than the faces allow at {p}")
             }
             BevelError::Unsupported(p, what) => write!(f, "at {p}: {what} is not supported"),
+            BevelError::Skinned => f.write_str(
+                "the solid is skinned; bevels do not carry skins yet: bevel first, then skin it",
+            ),
         }
     }
 }
@@ -157,6 +163,9 @@ fn select(s: &Solid, names: &[String], min_turn: f64) -> Result<Vec<EdgeKey>, Be
 /// Rounds the named edges with a superellipse profile (a circle by
 /// default). New faces are named `fillet`.
 pub fn fillet(s: &Solid, d: &Fillet) -> Result<Solid, BevelError> {
+    if s.skin.is_some() {
+        return Err(BevelError::Skinned);
+    }
     let r = positive(d.radius, "radius")?;
     let profile = if d.profile == 0.0 { 0.5 } else { d.profile };
     if !(profile.is_finite() && profile > 0.0 && profile < 1.0) {
@@ -177,6 +186,9 @@ pub fn fillet(s: &Solid, d: &Fillet) -> Result<Solid, BevelError> {
 
 /// Bevels the named edges flat. New faces are named `chamfer`.
 pub fn chamfer(s: &Solid, d: &Chamfer) -> Result<Solid, BevelError> {
+    if s.skin.is_some() {
+        return Err(BevelError::Skinned);
+    }
     let d1 = positive(d.distance, "distance")?;
     let offsets = if d.angle != 0.0 {
         let a = positive(d.angle, "angle")?;
@@ -205,6 +217,9 @@ pub fn chamfer(s: &Solid, d: &Chamfer) -> Result<Solid, BevelError> {
 /// A fillet of `radius` on every edge sharper than `angle` (or on the
 /// named ones). A solid with no such edge comes back unchanged.
 pub fn soften(s: &Solid, d: &Soften) -> Result<Solid, BevelError> {
+    if s.skin.is_some() {
+        return Err(BevelError::Skinned);
+    }
     let r = positive(d.radius, "radius")?;
     let angle = if d.angle == 0.0 {
         trig::to_radians(30.0)

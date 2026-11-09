@@ -19,7 +19,7 @@ fn main() {
             Ok(im) => {
                 for p in im.parts.iter().filter(|p| p.solid.skin.is_some()) {
                     let k = p.solid.skin.as_ref().unwrap();
-                    println!("  part {:?} is skinned: skin {:?}, {} bones, {} weighted vertices", p.name, k.name, k.bones.len(), k.weighted_vertices);
+                    println!("  part {:?} is skinned: {} bones, {} vertices", p.name, k.bones.len(), k.weights.len());
                 }
                 // A skinned part is refused by join: place the parts for
                 // looking at only, skin dropped.

@@ -15,10 +15,10 @@ import → join → repair → decimate → unwrap → measure → preview → e
    (`Imported::skipped`): points, lines, NURBS, morph targets and blend
    shapes are not read. A Draco- or meshopt-compressed glTF is refused:
    get an uncompressed one. A **skinned** mesh (bones and weights) is
-   read in its bind pose and marked (`measure` says `skinned`, and how
-   many bones): repair, join, decimate and export refuse it rather than
-   break the skin. Unwrap, measure and preview take it. Carrying skins
-   through the other tools comes later.
+   read whole, in its bind pose (`measure` says `skinned` and lists the
+   bones). Repair, join, decimate and `glb_plain` refuse it rather than
+   break the skin; `glb` writes it back, and unwrap, measure and preview
+   take it. A skeleton under a scaled armature is refused at import.
 2. **Join** the parts into one solid (`join`). Each part's faces keep its
    name, so a part can still be found after joining.
 3. **Repair** (`repair`). Settings that worked on the acceptance meshes
