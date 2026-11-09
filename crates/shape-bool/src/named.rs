@@ -48,6 +48,9 @@ pub enum BoolError {
     NotFinite(&'static str),
     /// The result has no triangles (e.g. an intersection of disjoint solids).
     Empty,
+    /// An operand is skinned ("target"/"tool"): booleans do not carry
+    /// skins yet, and never drop one silently.
+    Skinned(&'static str),
 }
 
 impl std::fmt::Display for BoolError {
@@ -59,6 +62,10 @@ impl std::fmt::Display for BoolError {
             ),
             BoolError::NotFinite(w) => write!(f, "the {w} has a position that is not finite"),
             BoolError::Empty => f.write_str("the result is empty"),
+            BoolError::Skinned(w) => write!(
+                f,
+                "the {w} is skinned; booleans do not carry skins yet: build the solid first, then skin it"
+            ),
         }
     }
 }
@@ -95,8 +102,11 @@ pub fn components(s: &Solid) -> Vec<Solid> {
     groups
         .into_values()
         .map(|tris| {
+            // The skin rides along whole; canonicalize keeps the weights
+            // of the vertices this piece uses.
             let mut c = Solid {
                 positions: s.positions.clone(),
+                skin: s.skin.clone(),
                 ..Default::default()
             };
             for i in tris {
@@ -118,6 +128,9 @@ pub fn components(s: &Solid) -> Vec<Solid> {
 /// interpenetrating parts) into one by joining them in turn. A solid of
 /// one piece comes back as it is.
 pub fn fuse(s: &Solid) -> Result<Solid, BoolError> {
+    if s.skin.is_some() {
+        return Err(BoolError::Skinned("target"));
+    }
     let mut parts = components(s).into_iter();
     let Some(mut acc) = parts.next() else {
         return Err(BoolError::Empty);
@@ -130,7 +143,15 @@ pub fn fuse(s: &Solid) -> Result<Solid, BoolError> {
 
 /// `target op tool`, with names carried through. An operand of several
 /// shells is fused first ([`fuse`]).
+///
+/// A skinned operand is refused ([`BoolError::Skinned`]).
 pub fn boolean(target: &Solid, tool: &Solid, d: &Boolean) -> Result<Solid, BoolError> {
+    if target.skin.is_some() {
+        return Err(BoolError::Skinned("target"));
+    }
+    if tool.skin.is_some() {
+        return Err(BoolError::Skinned("tool"));
+    }
     let fused = |s: &Solid| {
         if components(s).len() > 1 {
             fuse(s)

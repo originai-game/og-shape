@@ -6,9 +6,11 @@
 
 mod measure;
 mod names;
+pub mod skin;
 
 pub use measure::Measures;
 pub use names::{LookupError, Names, Tag};
+pub use skin::{Bone, Skin, SkinError, Weights};
 
 use std::collections::BTreeMap;
 
@@ -34,6 +36,8 @@ pub fn edge_key(a: u32, b: u32) -> EdgeKey {
 /// - `face_tags`: per triangle, the names of its face (sorted tag ids).
 /// - `edge_tags`: the names of real edges.
 /// - `names`: the strings behind the tag ids.
+/// - `skin`: optional bones and per-vertex weights ([`skin`]). `None`
+///   leaves every other part, and the hash, as it was before skins.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Solid {
     /// Vertex positions.
@@ -48,6 +52,8 @@ pub struct Solid {
     pub edge_tags: BTreeMap<EdgeKey, Vec<Tag>>,
     /// The strings behind the tags.
     pub names: Names,
+    /// Bones and per-vertex weights, if the solid is skinned.
+    pub skin: Option<Skin>,
 }
 
 impl Solid {
@@ -61,8 +67,15 @@ impl Solid {
         self.face_tags.push(ids);
     }
 
-    /// Appends a vertex and returns its index.
+    /// Appends a vertex and returns its index. On a skinned solid the
+    /// vertex has no weights until it is given some ([`Skin::check`]
+    /// reports it).
     pub fn push_vertex(&mut self, p: DVec3) -> u32 {
+        if let Some(skin) = &mut self.skin {
+            skin.weights
+                .resize(self.positions.len(), Weights::default());
+            skin.weights.push(Weights::default());
+        }
         self.positions.push(p);
         self.positions.len() as u32 - 1
     }
@@ -162,6 +175,11 @@ impl Solid {
     /// only on the geometry and names, never on the order things were
     /// built in (`docs/design.md` §6).
     ///
+    /// A skin's weights follow their vertices. Vertices welded into one
+    /// take the mean of their weights ([`Skin::weld`]: the copies sorted,
+    /// summed per bone, the four largest kept, normalized); a copy with no
+    /// weights does not count.
+    ///
     /// Fails on a NaN position.
     pub fn canonicalize(&mut self) -> Result<(), HashError> {
         if self.positions.iter().any(|p| p.is_nan()) {
@@ -180,6 +198,23 @@ impl Solid {
                 positions.push(p);
             }
             remap[old as usize] = positions.len() as u32 - 1;
+        }
+        if let Some(skin) = &mut self.skin {
+            skin.weights
+                .resize(self.positions.len(), Weights::default());
+            let mut welded = Vec::with_capacity(positions.len());
+            let mut copies: Vec<Weights> = Vec::new();
+            for (k, &old) in order.iter().enumerate() {
+                copies.push(skin.weights[old as usize]);
+                let last = order
+                    .get(k + 1)
+                    .is_none_or(|&next| remap[next as usize] != remap[old as usize]);
+                if last {
+                    welded.push(Skin::weld(&mut copies));
+                    copies.clear();
+                }
+            }
+            skin.weights = welded;
         }
         // 2. Triangles: renumbered, degenerate ones dropped, each rotated
         // to start at its smallest index (winding kept).
@@ -254,12 +289,57 @@ impl Solid {
             h.u64(tags.len() as u64);
             tags.iter().for_each(|&x| h.str(self.names.name(x)));
         }
+        // Only a skinned solid adds to the stream, so unskinned hashes stay
+        // as they were.
+        if let Some(skin) = &self.skin {
+            h.str("skin");
+            h.u64(skin.bones.len() as u64);
+            for b in &skin.bones {
+                h.str(&b.name);
+                h.u64(b.parent.map_or(0, |p| u64::from(p) + 1));
+                let f = &b.rest;
+                h.dvec3s(&[f.origin, f.x, f.y, f.z])?;
+                h.f64s(&b.inverse_bind)?;
+            }
+            h.u64(skin.weights.len() as u64);
+            for w in &skin.weights {
+                w.bones.iter().for_each(|&b| h.u64(u64::from(b)));
+                h.f64s(&w.weights)?;
+            }
+        }
         Ok(())
     }
 
     /// Appends another solid; its surfaces are renumbered after this one's.
+    ///
+    /// Skins: when both solids have the same skeleton, the weights are
+    /// appended with the vertices. Otherwise the result keeps this
+    /// solid's skeleton (or the other's, if this one has none) and the
+    /// vertices from the side without it have no weights, which
+    /// [`Skin::check`] reports: a skin is never dropped silently.
     pub fn append(&mut self, other: &Solid) {
         let base = self.positions.len() as u32;
+        if self.skin.is_some() || other.skin.is_some() {
+            let mine = self.skin.get_or_insert_with(|| Skin {
+                bones: other
+                    .skin
+                    .as_ref()
+                    .map(|s| s.bones.clone())
+                    .unwrap_or_default(),
+                weights: Vec::new(),
+            });
+            mine.weights.resize(base as usize, Weights::default());
+            match &other.skin {
+                Some(o) if o.bones == mine.bones => {
+                    let mut w = o.weights.clone();
+                    w.resize(other.positions.len(), Weights::default());
+                    mine.weights.extend(w);
+                }
+                _ => mine
+                    .weights
+                    .resize(base as usize + other.positions.len(), Weights::default()),
+            }
+        }
         let surface_base = self.surfaces.iter().max().map_or(0, |s| s + 1);
         self.positions.extend_from_slice(&other.positions);
         for (i, t) in other.triangles.iter().enumerate() {
@@ -276,7 +356,9 @@ impl Solid {
     }
 
     /// Every vertex mapped by `f`. A map that mirrors (`mirrors == true`)
-    /// reverses each triangle so it still faces out.
+    /// reverses each triangle so it still faces out. A skin's weights stay
+    /// with their vertices; its bones are not moved (`f` need not be
+    /// rigid), so place a solid before skinning it.
     pub fn map_positions(&mut self, f: impl Fn(DVec3) -> DVec3, mirrors: bool) {
         for p in &mut self.positions {
             *p = f(*p);
@@ -364,5 +446,61 @@ mod tests {
         s.canonicalize().unwrap();
         assert_eq!(s.triangles.len(), 4);
         assert!(s.faces(&["sliver"]).is_err());
+    }
+
+    #[test]
+    fn welding_averages_the_weights_of_merged_vertices() {
+        // Two copies of the tetrahedron's apex with different weights,
+        // built in either order, weld to one vertex with their mean.
+        let build = |swap: bool| {
+            let mut s = tetra(DVec3::ZERO, false);
+            s.skin = Some(Skin {
+                bones: vec![
+                    Bone::new("a", None, shape_core::Frame::IDENTITY),
+                    Bone::new("b", Some(0), shape_core::Frame::IDENTITY),
+                ],
+                weights: vec![Weights::single(0); 4],
+            });
+            let apex = s.push_vertex(DVec3::Z);
+            let (wa, wb) = (Weights::single(0), Weights::from_raw([(0, 1.0), (1, 1.0)]));
+            let skin = s.skin.as_mut().unwrap();
+            skin.weights[3] = if swap { wb } else { wa };
+            skin.weights[apex as usize] = if swap { wa } else { wb };
+            // One side face uses the copy.
+            s.triangles[1] = [0, 1, apex];
+            s.canonicalize().unwrap();
+            s
+        };
+        let (a, b) = (build(false), build(true));
+        assert_eq!(a, b);
+        let skin = a.skin.as_ref().unwrap();
+        assert_eq!(skin.weights.len(), a.positions.len());
+        skin.check(a.positions.len()).unwrap();
+        let apex = a.positions.iter().position(|p| *p == DVec3::Z).unwrap();
+        assert_eq!(skin.weights[apex].bones[..2], [0, 1]);
+        assert!((skin.weights[apex].weights[0] - 0.75).abs() < 1e-15);
+        assert!((skin.weights[apex].weights[1] - 0.25).abs() < 1e-15);
+        // Weights follow their vertices through sorting.
+        let base = a.positions.iter().position(|p| *p == DVec3::X).unwrap();
+        assert_eq!(skin.weights[base], Weights::single(0));
+    }
+
+    #[test]
+    fn appending_a_different_skeleton_leaves_vertices_unweighted() {
+        let mut a = tetra(DVec3::ZERO, false);
+        a.skin = Some(Skin {
+            bones: vec![Bone::new("a", None, shape_core::Frame::IDENTITY)],
+            weights: vec![Weights::single(0); 4],
+        });
+        let mut same = a.clone();
+        same.map_positions(|p| p + DVec3::X * 3.0, false);
+        let mut joined = a.clone();
+        joined.append(&same);
+        joined.skin.as_ref().unwrap().check(8).unwrap();
+        joined.append(&tetra(DVec3::Y * 5.0, false));
+        assert_eq!(
+            joined.skin.as_ref().unwrap().check(12),
+            Err(SkinError::Unweighted(8))
+        );
     }
 }
