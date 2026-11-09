@@ -2,13 +2,13 @@
  * The phase 6 evaluation's runner: builds one og-shape TypeScript program
  * through the binding and writes what an author reviews.
  *
- *   bun eval/phase6/run.ts <program.ts> <out dir> [--pose joint=value ...]
+ *   bun eval/phase6/run.ts <program.ts> <out dir> [--pose joint=value joint=value ...]
  *
  * Writes `<out>/program.json` (the recorded program), `<out>/preview.png`
  * (four views, at rest) and, with `--pose`, `<out>/posed.png` (the same
  * model with those joints posed: radians or millimetres). Prints the
  * measures an author checks: bounds, triangles, and per part closed,
- * components and triangles. Every run is appended to `<out>/runs.log`, so
+ * components, non-manifold edges, degenerate triangles and triangles. Every run is appended to `<out>/runs.log`, so
  * the review iterations can be counted. Needs the binding built
  * (`crates/shape-wasm/build.sh`).
  */
@@ -23,11 +23,14 @@ if (!programPath || !outDir) {
   process.exit(2);
 }
 const poses: [string, number][] = [];
-for (let i = 0; i < rest.length; i++) {
-  if (rest[i] === "--pose" && rest[i + 1]) {
-    const [j, v] = rest[++i].split("=");
-    poses.push([j, Number(v)]);
+for (const arg of rest) {
+  if (arg === "--pose") continue;
+  const [j, v] = arg.split("=");
+  if (!j || v === undefined || !Number.isFinite(Number(v))) {
+    console.error(`not a joint=value pose: ${arg}`);
+    process.exit(2);
   }
+  poses.push([j, Number(v)]);
 }
 mkdirSync(outDir, { recursive: true });
 const log = (line: string) => appendFileSync(`${outDir}/runs.log`, `${new Date().toISOString()} ${line}\n`);
@@ -54,6 +57,8 @@ const parts = m.parts.map((p: any) => ({
   name: p.name,
   closed: p.closed,
   components: p.components,
+  nonManifoldEdges: p.nonManifoldEdges,
+  degenerateTriangles: p.degenerateTriangles,
   triangles: p.triangles,
   boundsMin: p.boundsMin.map((v: number) => +v.toFixed(2)),
   boundsMax: p.boundsMax.map((v: number) => +v.toFixed(2)),
