@@ -144,7 +144,7 @@ walls by arc length round and along).
 | `attach` | `to`, `name`, `children` | |
 | `copy` | `id`, `name` | its joints come too, renamed `hinge.001`…, at the same pose |
 | `mirror` | `id`, `plane` (a frame; mirrors across its xy), `name` | joints too: the image of each motion; the same value poses the image |
-| `cut`, `join`, `intersect` | `target`, `tool`, `check`? | the tool is used up; answers `voids`, `touchingEdges`, `touching`, `facesWithoutUvs`; `check` first refuses an operand that passes through itself |
+| `cut`, `join`, `intersect` | `target`, `tool`, `check`? | the tool is used up; answers `voids`, `touchingEdges`, `touching`, `facesWithoutUvs`, `crossingPairs`; `check` first refuses an operand that passes through itself |
 | `merge` | `target`, `tool` | the tool's solid added as it is, no boolean; the tool is used up; refused when one has UVs and the other not |
 | `delete` | `id` | removes it and all under it, and joints hanging what goes |
 | `seat` | `host`, `part` | cuts `part`'s volume out of `host`; `part` stays |
@@ -181,7 +181,8 @@ model's OBJ and STL are written at the pose (the header ends `posed`);
 its GLB keeps rest meshes and the pose in its joint nodes.
 `build` also lists every boolean with the voids it left and the edges
 where its operands touch (`touchingEdges` > 0: not closed there;
-`touching`: faces lie on each other somewhere, not an error by itself).
+`touching`: faces lie on each other somewhere, not an error by itself;
+`crossingPairs` > 0: the result passes through itself there).
 A part with UVs adds `uv`: `coverage` and `overlap` (shares of the
 image, after `mapSize`), `flipped` and `zeroArea` (triangles mirrored or
 flat in UV), `outside`, `overlappingPairs`, `area`; the model,

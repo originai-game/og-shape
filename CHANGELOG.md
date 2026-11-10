@@ -977,3 +977,35 @@
   and checks every part closed with no crossing pair. Over every
   committed program, parts crossing themselves went from 7 to 2 (the
   octagonal cup's `shell`, §25.4).
+- `shell` no longer cuts with an inner solid that folds through itself.
+  Where a face is narrower than the wall (a chamfer, fillet or rounded
+  corner), the inner solid's offset folds over, and the cut kept the
+  fold: an octagonal cup chamfered 10 and hollowed 20 thick
+  (`eval/phase6/B/obj1_octagonal_cup`) had a lip 1.7 high crossing its
+  walls in 44 pairs, and 750 mm³ too much. The inner solid's outside
+  (`self_union`) is cut now, when that result is closed; otherwise the
+  folded one, as before. Swept over 7 220 shells: 950 crossed themselves
+  before, 76 after (`docs/research.md` §27); none that built before is
+  refused. No golden line moved.
+- `boolean` builds faces of the operands that lie within a rounding error
+  of each other, without being one plane, as one surface where cutting
+  them by each other leaves the result open, not manifold, or crossing
+  itself: such pairs of triangles are left uncut, and the result is taken
+  only if it is closed, manifold and crosses itself less
+  (`shape_bool::csg_points_repaired`, `docs/research.md` §27). Two
+  prisms on a tilted ring triangulated two ways now join and cut (both
+  were refused); the cut of a tilted ring with midpoints no longer
+  crosses itself (259 pairs). `bench/booleans`: verdicts and all 921
+  hashes unchanged.
+- `BoolReport::crossing_pairs`, shown as `crossingPairs` in a boolean's
+  answer, `shape build`, the MCP `build` tool and the binding's
+  `BoolReport`: pairs of the result's triangles that still cross after
+  the repair, a measurement (`docs/research.md` §27). Edits report it
+  too: `shape_edit::EditReport` from `hole_report`, `pocket_report`,
+  `seat_report`, `shell_report` and `dent_report`. Golden line
+  `rest.program.booleans` moved: it hashes the report's text. A result
+  that still crosses itself is not refused (`BoolError::CrossingResult`
+  stays off): 76 swept shells still do.
+- Test: every program of the evaluation's run B builds natively, every
+  part closed and none crossing itself (`shape-model`'s `phase6_b`).
+  Examples `shell_sweep` and `edit_sweep` (`shape-edit`).

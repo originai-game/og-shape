@@ -146,6 +146,10 @@ struct Csg {
     /// Per mesh, the triangles that meet the other surface: cut by it,
     /// touching it, or lying in one plane with one of its triangles.
     met: [BTreeSet<u32>; 2],
+    /// Triangles of each mesh left uncut against a triangle of the other
+    /// lying within the snap distance of it (`arrange`'s `flat`): regions
+    /// do not join them to the rest.
+    flat: [BTreeSet<u32>; 2],
 }
 
 fn c3(p: DVec3) -> Coord3D<f64> {
@@ -1485,7 +1489,7 @@ pub fn csg_traced(
     let mut at = BTreeMap::new();
     let sa = weld(a, pa, &mut points, &mut at).map_err(|e| format!("a: {e}"))?;
     let sb = weld(b, pb, &mut points, &mut at).map_err(|e| format!("b: {e}"))?;
-    let (c, kept) = arrange(points, sa, sb, op, false);
+    let (c, kept) = arrange(points, sa, sb, op, false, 0.0);
     // 4. What the operation keeps.
     let colors = !a.colors.is_empty() || !b.colors.is_empty();
     let mut out = Mesh::default();
@@ -1597,6 +1601,7 @@ impl Csg {
             merges: std::cell::RefCell::new(Vec::new()),
             chains: std::cell::RefCell::new(Vec::new()),
             met: [BTreeSet::new(), BTreeSet::new()],
+            flat: [BTreeSet::new(), BTreeSet::new()],
         }
     }
 
@@ -1633,6 +1638,9 @@ impl Csg {
                     continue;
                 }
                 match first.get(&(p.mesh, e.0, e.1)) {
+                    Some(&q)
+                        if self.flat[p.mesh as usize].contains(&p.tri)
+                            != self.flat[p.mesh as usize].contains(&pieces[q].tri) => {}
                     Some(&q) => {
                         let (r1, r2) = (find(&mut parent, pi), find(&mut parent, q));
                         if r1 != r2 {
@@ -1734,6 +1742,27 @@ impl Csg {
         None
     }
 
+    /// Whether the target's triangle `ia` and the tool's `ib` lie within
+    /// `tol` of each other's planes, every corner, without being exactly
+    /// in one plane: one surface placed by two rounded motions
+    /// (`docs/research.md` §27). A candidate only: a result built with
+    /// such pairs left uncut is kept or dropped by exact checks
+    /// ([`csg_points_repaired`]).
+    fn near_coplanar(&self, ia: u32, ib: u32, tol: f64) -> bool {
+        let ta = self.solids[0].tris[ia as usize].map(|v| self.p(v));
+        let tb = self.solids[1].tris[ib as usize].map(|v| self.p(v));
+        let o = |t: [DVec3; 3], q: DVec3| sgn(orient3d(c3(t[0]), c3(t[1]), c3(t[2]), c3(q)));
+        if ta.iter().all(|&q| o(tb, q) == 0) {
+            return false;
+        }
+        let within = |t: [DVec3; 3], u: [DVec3; 3]| {
+            let n = (t[1] - t[0]).cross(t[2] - t[0]);
+            let l = n.length();
+            l > 0.0 && u.iter().all(|&q| (n.dot(q - t[0])).abs() <= tol * l)
+        };
+        within(ta, tb) && within(tb, ta)
+    }
+
     /// The diagonal of both meshes' box.
     fn scale(&self) -> f64 {
         let lo = self.solids[0].min.min(self.solids[1].min);
@@ -1743,7 +1772,14 @@ impl Csg {
 }
 
 /// Steps 1 to 3 and the choice of step 4: which pieces `op` keeps.
-fn arrange(points: Vec<DVec3>, sa: Solid, sb: Solid, op: CsgOp, robust: bool) -> (Csg, Vec<Kept>) {
+fn arrange(
+    points: Vec<DVec3>,
+    sa: Solid,
+    sb: Solid,
+    op: CsgOp,
+    robust: bool,
+    flat: f64,
+) -> (Csg, Vec<Kept>) {
     let mut c = Csg::new(points, [sa, sb]);
     c.robust = robust;
     // 1. Every pair of triangles whose boxes overlap.
@@ -1761,6 +1797,11 @@ fn arrange(points: Vec<DVec3>, sa: Solid, sb: Solid, op: CsgOp, robust: bool) ->
     let near_a = near(&c, 0, box_b);
     let near_b = near(&c, 1, box_a);
     for (ia, ib) in candidate_pairs(&near_a, &near_b) {
+        if flat > 0.0 && c.near_coplanar(ia, ib, flat) {
+            c.flat[0].insert(ia);
+            c.flat[1].insert(ib);
+            continue;
+        }
         c.pair((0, ia), (1, ib));
     }
     // 2. The pieces.
@@ -2457,6 +2498,77 @@ pub struct CsgOutput {
     pub snapped: bool,
 }
 
+/// One pass of the arrangement (`robust`: the second, §5.4 item 5), with
+/// pairs of triangles within `flat` of each other's planes left uncut
+/// (0: none; [`csg_points_repaired`]).
+fn one_pass(
+    a: (&[DVec3], &[[u32; 3]]),
+    b: (&[DVec3], &[[u32; 3]]),
+    op: CsgOp,
+    robust: bool,
+    flat: f64,
+) -> Result<CsgOutput, OperandError> {
+    let mut points = Vec::new();
+    let mut at = BTreeMap::new();
+    let sa = weld64(0, false, a, &mut points, &mut at)?;
+    let sb = weld64(1, false, b, &mut points, &mut at)?;
+    let (c, kept) = arrange(points, sa, sb, op, robust, flat);
+    let (points, tris, origins, _) = emit(&c, &kept);
+    let w = weld_ids(&points);
+    // Zero-area triangles on one line (`sliver`): flipped away.
+    let (tris, origins): (Vec<[u32; 3]>, Vec<(u8, u32)>) = sliver::flip(&points, &w, &tris)
+        .into_iter()
+        .map(|(t, src)| (t, origins[src]))
+        .unzip();
+    let mut counts = edge_counts(&w, &tris, &origins);
+    let (tris, origins) = if counts.non_manifold + counts.touching > 0 {
+        let (t, o) = cancel_fins(&w, tris, origins);
+        counts = edge_counts(&w, &t, &o);
+        (t, o)
+    } else {
+        (tris, origins)
+    };
+    let source = |pairs: &[TriPair]| {
+        let mut v: Vec<(u32, u32)> = Vec::new();
+        for &((ma, ia), (_, ib)) in pairs {
+            let (sa, sb) = (
+                c.solids[0].source[ia as usize],
+                c.solids[1].source[ib as usize],
+            );
+            if ma == 0 && !v.contains(&(sa, sb)) {
+                v.push((sa, sb));
+            }
+        }
+        v
+    };
+    Ok(CsgOutput {
+        coplanar: source(&c.coplanar_pairs),
+        touching: source(&c.touch_pairs),
+        points,
+        tris,
+        origins,
+        second_pass: robust,
+        unmatched: counts.unmatched,
+        touching_edges: counts.touching,
+        non_manifold: counts.non_manifold,
+        snapped: false,
+    })
+}
+
+/// How far a result is from closed: its unmatched edges (a union of two
+/// closed solids is never empty: a region that leaked across the operands'
+/// seam can drop every piece and balance); then its edges not used once
+/// each way: where the operands touch along an edge, or a crack a
+/// rounding error wide.
+fn rank(o: &CsgOutput, op: CsgOp) -> (usize, usize) {
+    let open = if op == CsgOp::Union && o.tris.is_empty() {
+        usize::MAX
+    } else {
+        o.unmatched
+    };
+    (open, o.touching_edges + o.non_manifold)
+}
+
 /// [`csg_points`], with where the operands touch.
 ///
 /// The first pass is og-geom's arrangement. When its result is open
@@ -2478,66 +2590,9 @@ pub fn csg_points_traced(
     b: (&[DVec3], &[[u32; 3]]),
     op: CsgOp,
 ) -> Result<CsgOutput, OperandError> {
-    let pass = |robust: bool, b: (&[DVec3], &[[u32; 3]])| -> Result<CsgOutput, OperandError> {
-        let mut points = Vec::new();
-        let mut at = BTreeMap::new();
-        let sa = weld64(0, false, a, &mut points, &mut at)?;
-        let sb = weld64(1, false, b, &mut points, &mut at)?;
-        let (c, kept) = arrange(points, sa, sb, op, robust);
-        let (points, tris, origins, _) = emit(&c, &kept);
-        let w = weld_ids(&points);
-        // Zero-area triangles on one line (`sliver`): flipped away.
-        let (tris, origins): (Vec<[u32; 3]>, Vec<(u8, u32)>) = sliver::flip(&points, &w, &tris)
-            .into_iter()
-            .map(|(t, src)| (t, origins[src]))
-            .unzip();
-        let mut counts = edge_counts(&w, &tris, &origins);
-        let (tris, origins) = if counts.non_manifold + counts.touching > 0 {
-            let (t, o) = cancel_fins(&w, tris, origins);
-            counts = edge_counts(&w, &t, &o);
-            (t, o)
-        } else {
-            (tris, origins)
-        };
-        let source = |pairs: &[TriPair]| {
-            let mut v: Vec<(u32, u32)> = Vec::new();
-            for &((ma, ia), (_, ib)) in pairs {
-                let (sa, sb) = (
-                    c.solids[0].source[ia as usize],
-                    c.solids[1].source[ib as usize],
-                );
-                if ma == 0 && !v.contains(&(sa, sb)) {
-                    v.push((sa, sb));
-                }
-            }
-            v
-        };
-        Ok(CsgOutput {
-            coplanar: source(&c.coplanar_pairs),
-            touching: source(&c.touch_pairs),
-            points,
-            tris,
-            origins,
-            second_pass: robust,
-            unmatched: counts.unmatched,
-            touching_edges: counts.touching,
-            non_manifold: counts.non_manifold,
-            snapped: false,
-        })
-    };
-    // How far a result is from closed: its unmatched edges, and a union of
-    // two closed solids is never empty (a region that leaked across the
-    // operands' seam can drop every piece and balance).
-    let open = |o: &CsgOutput| {
-        if op == CsgOp::Union && o.tris.is_empty() {
-            usize::MAX
-        } else {
-            o.unmatched
-        }
-    };
-    // Then edges not used once each way: where the operands touch along
-    // an edge, or a crack a rounding error wide.
-    let rank = |o: &CsgOutput| (open(o), o.touching_edges + o.non_manifold);
+    let pass = |robust: bool, b: (&[DVec3], &[[u32; 3]])| one_pass(a, b, op, robust, 0.0);
+    let open = |o: &CsgOutput| rank(o, op).0;
+    let rank = |o: &CsgOutput| rank(o, op);
     let first = pass(false, b)?;
     // Operands that touch can make crossings a rounding error apart that
     // the first pass cannot keep apart; an open result there is built
@@ -2586,6 +2641,55 @@ pub fn csg_points_traced(
     } else {
         best
     })
+}
+
+/// [`csg_points_traced`], repaired as [`boolean`](crate::boolean) repairs
+/// it ([`uncross_output`]), with what the repair did.
+///
+/// Where the operands touch and that result is open, not manifold, or
+/// still crosses itself after the repair, faces of the operands may lie
+/// within a rounding error of each other without being one plane (two
+/// surfaces placed by different rounded motions), so each cuts the other
+/// into pieces that fold over one another. Both passes then run once more
+/// with each pair of triangles that lie within the snap distance of each
+/// other's planes, every corner, without being exactly one plane, left
+/// uncut (one surface; regions do not join such triangles to the rest).
+/// That result, repaired, is taken only if, by exact predicates, it is
+/// closed, manifold and crosses itself in fewer pairs; an open or
+/// non-manifold result is replaced only by one that does not cross itself
+/// at all (`docs/research.md` §27).
+pub fn csg_points_repaired(
+    a: (&[DVec3], &[[u32; 3]]),
+    b: (&[DVec3], &[[u32; 3]]),
+    op: CsgOp,
+) -> Result<(CsgOutput, crate::uncross::Uncrossed), OperandError> {
+    let built = csg_points_traced(a, b, op)?;
+    let closed = rank(&built, op) == (0, 0);
+    let (out, u) = uncross_output(a.0, b.0, built);
+    if (out.coplanar.is_empty() && out.touching.is_empty()) || (closed && u.after == 0) {
+        return Ok((out, u));
+    }
+    let tol = snap_distance(a.0, b.0);
+    let mut best: Option<(CsgOutput, crate::uncross::Uncrossed)> = None;
+    for robust in [false, true] {
+        let Ok(o) = one_pass(a, b, op, robust, tol) else {
+            continue;
+        };
+        if rank(&o, op) != (0, 0) || o.tris.is_empty() {
+            continue;
+        }
+        let (o, v) = uncross_output(a.0, b.0, o);
+        let bar = best
+            .as_ref()
+            .map_or(if closed { u.after } else { 1 }, |b| b.1.after);
+        if v.after < bar {
+            best = Some((o, v));
+        }
+        if v.after == 0 {
+            break;
+        }
+    }
+    Ok(best.unwrap_or((out, u)))
 }
 
 /// `out`, a result of `a op b`, with the triangles that cross by a
@@ -2716,6 +2820,17 @@ fn shell_count(points: &[DVec3], tris: &[[u32; 3]]) -> usize {
     roots.sort_unstable();
     roots.dedup();
     roots.len()
+}
+
+/// 2⁻⁴⁰ of the diagonal of the box around both operands' positions: the
+/// design's snap distance (`docs/design.md` §6).
+fn snap_distance(a: &[DVec3], b: &[DVec3]) -> f64 {
+    let (mut lo, mut hi) = (DVec3::INFINITY, DVec3::NEG_INFINITY);
+    for &p in a.iter().chain(b) {
+        lo = lo.min(p);
+        hi = hi.max(p);
+    }
+    (hi - lo).length() * (1.0 / (1u64 << 40) as f64)
 }
 
 /// The tool's positions `b` with each one that lies within 2⁻⁴⁰ of the

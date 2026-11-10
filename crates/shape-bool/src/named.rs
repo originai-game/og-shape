@@ -39,7 +39,7 @@ use std::collections::BTreeMap;
 use shape_core::{DVec2, DVec3};
 use shape_mesh::{EdgeKey, Solid, edge_key};
 
-use crate::csg::{CsgOp, OperandError, csg_points_traced, self_union_points, uncross_output};
+use crate::csg::{CsgOp, OperandError, csg_points_repaired, csg_points_traced, self_union_points};
 use crate::selfcheck;
 
 /// The operation.
@@ -186,6 +186,13 @@ pub struct BoolReport {
     /// operand without UVs while the other had them (0 when both or
     /// neither have UVs).
     pub faces_without_uvs: usize,
+    /// Pairs of the result's triangles that still cross after the repair
+    /// of rounding errors ([`uncross_output`](crate::uncross_output)), at
+    /// least one with a corner the boolean made: 0 for a result that does
+    /// not pass through itself where the operands meet. Pairs an operand
+    /// brought crossing are not counted ([`check_operands`] finds them). A
+    /// measurement, never a refusal (`docs/research.md` §27).
+    pub crossing_pairs: usize,
 }
 
 const CAPS: [&str; 4] = ["top", "bottom", "start", "end"];
@@ -446,8 +453,10 @@ pub fn check_operands(target: &Solid, tool: &Solid) -> Result<(), BoolError> {
 }
 
 /// Whether [`boolean`] repairs a result that crosses itself by a
-/// rounding error ([`uncross_output`]): on (`docs/research.md` §23.2). A
-/// result that does not cross itself is returned as built.
+/// rounding error ([`uncross_output`](crate::uncross_output)), and builds
+/// faces a rounding error apart as one surface where that leaves it
+/// crossing ([`csg_points_repaired`]): on (`docs/research.md` §23.2, §27).
+/// A result that does not cross itself is returned as built.
 const UNCROSS: bool = true;
 
 fn boolean_once(
@@ -460,22 +469,19 @@ fn boolean_once(
         BoolOp::Cut => CsgOp::Subtract,
         BoolOp::Intersect => CsgOp::Intersect,
     };
-    let out = csg_points_traced(
-        (&target.positions, &target.triangles),
-        (&tool.positions, &tool.triangles),
-        op,
-    )
+    let a = (&target.positions[..], &target.triangles[..]);
+    let b = (&tool.positions[..], &tool.triangles[..]);
+    let (out, crossing_pairs) = if UNCROSS {
+        csg_points_repaired(a, b, op).map(|(out, u)| (out, u.after))
+    } else {
+        csg_points_traced(a, b, op).map(|out| (out, 0))
+    }
     .map_err(|e| match e {
         OperandError::NotClosed(0) => BoolError::NotClosed("target"),
         OperandError::NotClosed(_) => BoolError::NotClosed("tool"),
         OperandError::NotFinite(0) => BoolError::NotFinite("target"),
         OperandError::NotFinite(_) => BoolError::NotFinite("tool"),
     })?;
-    let out = if UNCROSS {
-        uncross_output(&target.positions, &tool.positions, out).0
-    } else {
-        out
-    };
     let touching = !out.coplanar.is_empty() || !out.touching.is_empty();
     if out.tris.is_empty() {
         return Err(BoolError::Empty);
@@ -540,6 +546,7 @@ fn boolean_once(
             voids,
             touching,
             faces_without_uvs,
+            crossing_pairs,
         },
     ))
 }

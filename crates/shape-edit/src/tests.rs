@@ -262,6 +262,60 @@ fn shells_measure_their_walls() {
     ));
 }
 
+/// `eval/phase6/B/obj1_octagonal_cup`: an octagon turned π/8, its bottom
+/// chamfered 10, hollowed 20 thick, open at the top. The inner solid's
+/// chamfer, offset by more than its width, folds through the walls; the
+/// cut kept the fold, a lip 1.7 high crossing the walls in 44 pairs
+/// (`docs/research.md` §27). Its outside is cut now: the hollow is the
+/// octagonal prism 20 in from every face.
+#[test]
+fn a_chamfer_narrower_than_the_wall_does_not_fold_the_hollow() {
+    use shape_bevel::{Chamfer, chamfer};
+    let octagon = shape_2d::polygon(&shape_2d::Polygon {
+        sides: 8,
+        radius: 104.450847328216,
+        ..Default::default()
+    })
+    .unwrap()
+    .rotate(trig::PI / 8.0);
+    let cup = extrude(
+        &octagon,
+        &Extrude {
+            height: 137.0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let cup = chamfer(
+        &cup,
+        &Chamfer {
+            distance: 10.0,
+            edges: vec!["bottom".into()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (o, r) = shell_report(
+        &cup,
+        &Shell {
+            thickness: 20.0,
+            open: vec!["top".into()],
+        },
+    )
+    .unwrap();
+    assert_eq!(r.crossing_pairs, 0);
+    assert_eq!(shape_bool::crossing_pairs(&o), 0);
+    // The hollow: an octagon of apothem 96.5 − 20, from z = 20 to the top.
+    let apothem: f64 = 104.450847328216 * trig::cos(trig::PI / 8.0) - 20.0;
+    let hollow = 8.0 * apothem * apothem * trig::tan(trig::PI / 8.0) * (137.0 - 20.0);
+    let v = closed(&o);
+    let expected = cup.measure().volume - hollow;
+    assert!(
+        (v - expected).abs() < 1e-9 * expected,
+        "{v} against {expected}"
+    );
+}
+
 #[test]
 fn split_seat_merge_dent() {
     let b = boxed(20.0, 20.0, 20.0);

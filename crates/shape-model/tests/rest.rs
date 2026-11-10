@@ -214,7 +214,7 @@ fn booleans_answer_their_report_and_check_refuses_a_folded_operand() {
         .unwrap();
     assert_eq!(
         r,
-        json!({"voids": 1, "touchingEdges": 0, "touching": false, "facesWithoutUvs": 0})
+        json!({"voids": 1, "touchingEdges": 0, "touching": false, "facesWithoutUvs": 0, "crossingPairs": 0})
     );
     assert_eq!(s.model().booleans().len(), 1);
     // A wire whose path crosses itself passes through itself: `check`

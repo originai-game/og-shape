@@ -85,44 +85,54 @@ fn names(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
 }
 
-/// One ring, two triangulations, not one plane by ulps: the join and the
-/// cut are refused (open, naming the faces that touch; not manifold),
-/// never returned.
+/// Closed, of volume `v` to rounding, crossing nothing.
+fn sound(s: &shape_mesh::Solid, v: f64) {
+    let m = s.measure();
+    assert!(m.closed, "{m:?}");
+    assert!((m.volume - v).abs() < 1e-9 * v, "{} against {v}", m.volume);
+    assert_eq!(crossing_pairs(s), 0);
+}
+
+/// One ring, two triangulations, not one plane by ulps: the two caps are
+/// taken as one surface (`docs/research.md` §27), so the join is the two
+/// prisms whole and the cut the target as it was. Both were refused
+/// before (open, naming the faces that touch; not manifold).
 #[test]
-fn a_tilted_ring_fanned_two_ways_is_refused() {
+fn a_tilted_ring_fanned_two_ways_is_one_surface() {
     let a = tilted(prism(0.0, 10.0, [0, 0], false));
     let b = tilted(prism(10.0, 20.0, [5, 0], false));
+    let (va, vb) = (a.measure().volume, b.measure().volume);
+    let (s, r) = boolean_report(&a, &b, &op(BoolOp::Join)).unwrap();
+    sound(&s, va + vb);
+    assert!(r.touching && r.crossing_pairs == 0, "{r:?}");
+    sound(&boolean(&a, &b, &op(BoolOp::Cut)).unwrap(), va);
     assert_eq!(
-        boolean(&a, &b, &op(BoolOp::Join)),
-        Err(BoolError::OpenTouching {
-            boundary: 8,
-            target: names(&["side", "top"]),
-            tool: names(&["bottom", "side"]),
-        })
-    );
-    assert_eq!(
-        boolean(&a, &b, &op(BoolOp::Cut)),
-        Err(BoolError::NotManifold { edges: 1 })
+        boolean(&a, &b, &op(BoolOp::Intersect)),
+        Err(BoolError::Empty)
     );
 }
 
 /// The tool's bottom ring with a vertex at each edge's midpoint: flat, the
-/// join and the cut close, touching, crossing nothing; tilted, the join is
-/// refused, naming the faces that touch.
+/// join and the cut close, touching, crossing nothing; tilted, the cut is
+/// the target as it was (it came back crossing itself in 259 pairs, the
+/// top cap in 156 pieces folding over one another, §25.4), and the join
+/// is refused, naming the faces that touch.
 #[test]
-fn a_ring_with_midpoints_joins_flat_and_is_refused_tilted() {
+fn a_ring_with_midpoints_joins_flat_and_cuts_tilted() {
     let a = prism(0.0, 10.0, [0, 0], false);
     let b = prism(10.0, 20.0, [0, 0], true);
     let (va, vb) = (a.measure().volume, b.measure().volume);
     for (o, v) in [(BoolOp::Join, va + vb), (BoolOp::Cut, va)] {
         let (s, r) = boolean_report(&a, &b, &op(o)).unwrap();
-        let m = s.measure();
-        assert!(m.closed && r.touching, "{o:?} {r:?}");
+        assert!(r.touching, "{o:?} {r:?}");
         assert_eq!(r.touching_edges, 0, "{o:?}");
-        assert!((m.volume - v).abs() < 1e-9 * v, "{o:?} {}", m.volume);
-        assert_eq!(crossing_pairs(&s), 0, "{o:?}");
+        sound(&s, v);
     }
-    match boolean(&tilted(a), &tilted(b), &op(BoolOp::Join)) {
+    let (a, b) = (tilted(a), tilted(b));
+    let (s, r) = boolean_report(&a, &b, &op(BoolOp::Cut)).unwrap();
+    assert_eq!(r.crossing_pairs, 0, "{r:?}");
+    sound(&s, a.measure().volume);
+    match boolean(&a, &b, &op(BoolOp::Join)) {
         Err(BoolError::OpenTouching { target, tool, .. }) => {
             assert_eq!(target, names(&["side", "top"]));
             assert_eq!(tool, names(&["bottom", "side"]));
