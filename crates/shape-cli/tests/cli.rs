@@ -156,6 +156,9 @@ fn mesh_tools_run_on_a_mesh_file() {
     assert_eq!(levels.len(), 2);
     assert_eq!(levels[0]["decimate"]["triangles"], 990);
     assert_eq!(levels[1]["decimate"]["triangles_before"], 990);
+    // Each level halves the one before (a collapse removes two).
+    let second = levels[1]["decimate"]["triangles"].as_u64().unwrap();
+    assert!((494..=495).contains(&second), "{second}");
     assert!(std::fs::metadata(path("low.lod1.glb")).is_ok());
     assert!(std::fs::metadata(path("low.lod2.glb")).is_ok());
 
@@ -198,6 +201,63 @@ fn mesh_tools_run_on_a_mesh_file() {
         std::fs::metadata(path("m.stl")).unwrap().len(),
         84 + 50 * 1984
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A 12 × 12 grid of quads whose every triangle is its own UV chart, as
+/// some image-to-3D generators write them: seams everywhere.
+fn chart_per_triangle_grid() -> String {
+    let n = 12;
+    let mut obj = String::new();
+    for j in 0..=n {
+        for i in 0..=n {
+            obj += &format!("v {i} {j} 0\n");
+        }
+    }
+    let id = |i: usize, j: usize| j * (n + 1) + i + 1;
+    let mut t = 0;
+    for j in 0..n {
+        for i in 0..n {
+            for tri in [
+                [id(i, j), id(i + 1, j), id(i + 1, j + 1)],
+                [id(i, j), id(i + 1, j + 1), id(i, j + 1)],
+            ] {
+                // Each triangle its own corner of the square, apart.
+                let (u, v) = ((t % 24) as f64 / 24.0, (t / 24) as f64 / 24.0);
+                let d = 0.03;
+                obj += &format!("vt {u} {v}\nvt {} {v}\nvt {} {}\n", u + d, u + d, v + d);
+                obj += &format!(
+                    "f {}/{} {}/{} {}/{}\n",
+                    tri[0],
+                    3 * t + 1,
+                    tri[1],
+                    3 * t + 2,
+                    tri[2],
+                    3 * t + 3
+                );
+                t += 1;
+            }
+        }
+    }
+    obj
+}
+
+#[test]
+fn fresh_uvs_free_the_decimation_from_the_files_seams() {
+    let dir = std::env::temp_dir().join(format!("shape-cli-seams-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("grid.obj");
+    std::fs::write(&path, chart_per_triangle_grid()).unwrap();
+    let path = path.to_str().unwrap();
+    let out = dir.join("low.glb");
+    let out = out.to_str().unwrap();
+    // Keeping the file's UVs, the seams hold: hardly anything collapses.
+    let kept = report(&["process", path, "--budget", "50"]);
+    assert!(kept["decimate"]["triangles"].as_u64().unwrap() > 250);
+    // With fresh UVs the old seams are gone before decimation.
+    let fresh = report(&["process", path, "--budget", "50", "--unwrap", "-o", out]);
+    assert!(fresh["decimate"]["triangles"].as_u64().unwrap() <= 50);
+    assert!(std::fs::metadata(out).is_ok());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

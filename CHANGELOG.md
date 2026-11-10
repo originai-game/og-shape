@@ -965,3 +965,34 @@
   leave, each a solid swept along a helix: `gen2.sweep.ends`,
   `rest.program.glb`, `rest.program.measure`, `solid.sweep.helix`,
   `solid.thread`, `uvs.generators2`.
+- The importer says when it reads past vertex colours: glTF `COLOR_0`
+  and OBJ `v x y z r g b` are listed in `skipped` (they were dropped
+  silently; TripoSR, InstantMesh and Unique3D outputs carry their only
+  colour there, `docs/research.md` §28).
+- `repair`'s fuse step keeps the file's UVs on every vertex it keeps:
+  a corner on an input vertex takes that vertex's own UV, not the
+  boolean's interpolation, which rounded differently in each triangle
+  and made almost every edge a UV seam (on a 150 000-triangle Hunyuan3D
+  mesh, 31 611 seam edges for 6 237; decimation keeping the UVs then
+  stopped at 31 304 triangles for a budget of 2 000). No golden line
+  moved.
+- `shape process --unwrap` drops the file's UVs before decimating, so
+  their seams no longer hold the decimation above the budget.
+- `--unwrap` (`shape process`) and `--posed` (`shape measure`) took the
+  next argument as their value: `process m.glb --unwrap -o out.glb`
+  wrote nothing, and `measure p.json --posed --intersections` counted
+  no intersections.
+- `shape decimate --lods N` (and the MCP tool's `lods`): level k keeps
+  `ratio`^k of the triangles, or the target and then half the level
+  before. Every level had the same count.
+- `shape preview` of a mesh file welds its parts by exact position
+  first: the vertices a file splits at UV seams were drawn as edges and
+  shaded as creases.
+- `bench/generated`: 54 meshes from seven image-to-3D and text-to-3D
+  generators (a manifest and a fetch script, nothing committed), the
+  game chain at three budgets, LODs and booleans on them
+  (`docs/research.md` §28). `crates/shape-wasm/ts/tools/render_glb.ts`
+  renders mesh files side by side in three.js with all their maps.
+- `guides/meshtools.md`: a section on generated meshes (scale and
+  pivot, up axis, the UV-island floor of decimation, fills across seams,
+  what is not kept).

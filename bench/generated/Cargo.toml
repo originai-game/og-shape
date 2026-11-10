@@ -1,0 +1,20 @@
+[package]
+name = "bench-generated"
+description = "Stream AG: booleans on real image-to-3D and text-to-3D meshes after the mesh tools' chain (docs/research.md §28)."
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+# Its own workspace, like bench/booleans and bench/meshtools: it only measures.
+[workspace]
+
+[dependencies]
+shape-core = { path = "../../crates/shape-core" }
+shape-gen = { path = "../../crates/shape-gen" }
+shape-mesh = { path = "../../crates/shape-mesh" }
+shape-bool = { path = "../../crates/shape-bool" }
+shape-tools = { path = "../../crates/shape-tools" }
+
+[profile.release]
+debug = false

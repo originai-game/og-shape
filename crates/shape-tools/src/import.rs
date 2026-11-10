@@ -479,8 +479,9 @@ struct Doc<'a> {
 /// bone scaled unevenly or sheared, bones scaled differently, or a skin
 /// that does not check (an unweighted vertex), is
 /// [`ImportError::Unsupported`]. Skipped and listed in
-/// [`Imported::skipped`]: points and lines, morph targets, and bone
-/// weights with no skin. A required extension the
+/// [`Imported::skipped`]: points and lines, morph targets, vertex
+/// colours (`COLOR_0`), and bone weights with no skin. A required
+/// extension the
 /// importer does not read (Draco, meshopt compression) is
 /// [`ImportError::Unsupported`].
 pub fn import_gltf(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportError> {
@@ -1197,6 +1198,10 @@ impl Doc<'_> {
                     .push(format!("{name}: primitive {pi}'s morph targets"));
             }
             let attrs = prim.get("attributes");
+            if attrs.get("COLOR_0").index().is_some() {
+                out.skipped
+                    .push(format!("{name}: primitive {pi}'s vertex colours (COLOR_0)"));
+            }
             let Some(pa) = attrs.get("POSITION").index() else {
                 return Err(fmt_err(format!("{name}: primitive {pi} has no POSITION")));
             };
@@ -1462,7 +1467,7 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
         }
     };
     let mut cur: Option<Building> = None;
-    let (mut points, mut lines) = (0usize, 0usize);
+    let (mut points, mut lines, mut colours) = (0usize, 0usize, 0usize);
     let mut joined = String::new();
     for (ln, raw) in text.lines().enumerate() {
         // Backslash continues a line.
@@ -1489,6 +1494,10 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
                     return Err(ImportError::NotFinite("OBJ vertex".into()));
                 }
                 positions.push(p);
+                // `v x y z r g b`: a vertex colour, not read.
+                if tok.clone().nth(2).is_some() {
+                    colours += 1;
+                }
             }
             "vt" => {
                 let u = num(tok.next())?;
@@ -1624,6 +1633,10 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
     }
     if lines > 0 {
         out.skipped.push(format!("{lines} line elements"));
+    }
+    if colours > 0 {
+        out.skipped
+            .push(format!("{colours} vertex colours (v x y z r g b)"));
     }
     if out.parts.is_empty() {
         return Err(fmt_err("the file has no faces"));

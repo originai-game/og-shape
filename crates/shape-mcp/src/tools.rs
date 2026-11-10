@@ -588,7 +588,10 @@ fn decimate_schema() -> Value {
         ),
         (
             "lods",
-            int("Make this many levels, each decimated from the one before; 0 is one."),
+            int(
+                "Make this many levels, each decimated from the one before: level k keeps \
+                 ratio^k of the triangles, or the target and then half the level before; 0 is one.",
+            ),
         ),
     ]);
     schema(p, &["path"])

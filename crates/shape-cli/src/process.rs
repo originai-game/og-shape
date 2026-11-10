@@ -9,7 +9,8 @@
 //! A mesh that carries UVs from its file keeps them, and its base-colour
 //! texture (when its parts share one), through repair and decimation:
 //! the unwrap step is then skipped (`"unwrap": null`) unless `--unwrap`
-//! asks for fresh UVs, which drops the texture.
+//! asks for fresh UVs, which drops the old UVs before decimation (their
+//! seams no longer hold it back) and the texture.
 
 use std::path::PathBuf;
 
@@ -70,7 +71,12 @@ pub fn process_steps(
     let imported = report::imported(&mesh.format, &mesh.imported);
     let joined = mesh.joined()?;
     step(1)?;
-    let (fixed, r) = shape_tools::repair(&joined, &d.repair).map_err(failed)?;
+    let (mut fixed, r) = shape_tools::repair(&joined, &d.repair).map_err(failed)?;
+    if d.fresh_uvs {
+        // The file's UVs are replaced after decimation, so their seams
+        // must not hold the decimation back.
+        fixed.uvs = None;
+    }
     step(2)?;
     let (low, dec) = if d.budget > 0 && fixed.triangles.len() > d.budget {
         let (low, dr) = shape_tools::decimate(

@@ -1,6 +1,8 @@
 //! `shape preview <program.json | mesh> -o <out.png>`: a turntable of the
 //! posed model (or of a mesh file's parts, placed) from the CPU
-//! rasterizer, its views side by side in one PNG.
+//! rasterizer, its views side by side in one PNG. A mesh file's parts
+//! are welded by exact position first, so the seams a file splits its
+//! vertices at are not drawn as edges.
 
 use shape_tools::Preview;
 
@@ -23,7 +25,13 @@ pub fn render(source: &Source, d: &PreviewDesc) -> Result<Vec<u8>, Failure> {
     let views = match source {
         Source::Program(m) => m.preview(&d.preview).map_err(failed)?,
         Source::Mesh(mesh) => {
-            let placed = mesh.placed()?;
+            // A file splits vertices at UV seams and hard normals; welded
+            // by exact position, a seam is no open edge (drawn as a line)
+            // and no crease (shaded flat).
+            let mut placed = mesh.placed()?;
+            for (_, s) in &mut placed {
+                s.canonicalize().map_err(failed)?;
+            }
             shape_tools::preview(&scene(&mesh.name, &placed), &d.preview).map_err(failed)?
         }
     };

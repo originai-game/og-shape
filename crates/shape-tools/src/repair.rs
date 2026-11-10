@@ -26,7 +26,10 @@
 //! UVs (`Solid::uvs`, per triangle corner) are carried through every
 //! step: a kept triangle keeps its corners' UVs (welding moves positions,
 //! never UVs), a turned triangle turns its UVs with it, and the fuse step
-//! interpolates them on the faces it cuts (`shape_bool`). A hole fill
+//! interpolates them on the faces it cuts (`shape_bool`); a corner it
+//! leaves on an input vertex gets that vertex's own UV back (the nearest
+//! of its UVs, so a seam keeps its sides), not an interpolation, so
+//! neighbours agree and no seam appears where the file had none. A hole fill
 //! takes, at each rim vertex, the UV its rim triangle gives it, and its
 //! centre vertex (if any) their mean; a rim that crosses a UV seam gives
 //! a stretched fill, which [`RepairReport::uv_seam_fills`] counts.
@@ -933,6 +936,52 @@ fn fill(s: &Solid, rim: &[u32], edges: &BTreeMap<(u32, u32), u32>) -> Option<Vec
     Some(out)
 }
 
+/// After the fuse step: each corner of `after` on a vertex of `before`
+/// (the same position, exactly) takes the UV `before` gives that vertex,
+/// the nearest when it has several (one per side of a seam), in place of
+/// the boolean's interpolation. Interpolating rounds differently in each
+/// triangle around a vertex, which made every edge a UV seam: on an
+/// image-to-3D mesh of 150 000 triangles, 31 611 seam edges after fusing
+/// for 6 237 before, and decimation then stopped at 31 304 triangles for
+/// a target of 2 000 (`docs/research.md` §28).
+fn keep_input_uvs(before: &Solid, mut after: Solid) -> Result<Solid, RepairError> {
+    let (Some(old), Some(new)) = (&before.uvs, &mut after.uvs) else {
+        return Ok(after);
+    };
+    // `+ 0.0` makes −0 and 0 one key; positions are finite.
+    let key = |p: DVec3| [p.x + 0.0, p.y + 0.0, p.z + 0.0].map(f64::to_bits);
+    let mut at: BTreeMap<[u64; 3], Vec<DVec2>> = BTreeMap::new();
+    for (t, tri) in before.triangles.iter().enumerate() {
+        for (k, &v) in tri.iter().enumerate() {
+            at.entry(key(before.positions[v as usize]))
+                .or_default()
+                .push(old[t][k]);
+        }
+    }
+    for uvs in at.values_mut() {
+        uvs.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+        uvs.dedup();
+    }
+    for (t, tri) in after.triangles.iter().enumerate() {
+        for (k, &v) in tri.iter().enumerate() {
+            let Some(uvs) = at.get(&key(after.positions[v as usize])) else {
+                continue;
+            };
+            let here = new[t][k];
+            // The nearest; the first of equals in sorted order.
+            let mut best = uvs[0];
+            for &u in &uvs[1..] {
+                if u.distance_squared(here) < best.distance_squared(here) {
+                    best = u;
+                }
+            }
+            new[t][k] = best;
+        }
+    }
+    after.canonicalize()?;
+    Ok(after)
+}
+
 /// Runs the repair steps in order (weld, degenerate and duplicate
 /// triangles, floaters, orientation, holes, fuse, short edges) and reports
 /// what each changed. The result is in canonical order.
@@ -979,7 +1028,7 @@ pub fn repair(s: &Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairErro
             match shape_bool::fuse(&s) {
                 Ok(f) if f.measure().closed => {
                     r.fused = Some(Ok(n));
-                    f
+                    keep_input_uvs(&s, f)?
                 }
                 Ok(f) => {
                     let m = f.measure();
@@ -1096,6 +1145,56 @@ mod tests {
         let m = s.measure();
         assert!(m.closed && m.components == 2);
         assert!((m.volume - 2.0).abs() < 1e-12);
+    }
+
+    /// Edges whose two triangles give either end different UVs.
+    fn uv_seams(s: &Solid) -> usize {
+        let uvs = s.uvs.as_ref().unwrap();
+        let mut sides: BTreeMap<(u32, u32), Vec<[[u64; 2]; 2]>> = BTreeMap::new();
+        for (t, tri) in s.triangles.iter().enumerate() {
+            for k in 0..3 {
+                let (a, b) = (tri[k], tri[(k + 1) % 3]);
+                let (ua, ub) = (uvs[t][k], uvs[t][(k + 1) % 3]);
+                let bits = |u: DVec2| [u.x.to_bits(), u.y.to_bits()];
+                let side = if a < b {
+                    [bits(ua), bits(ub)]
+                } else {
+                    [bits(ub), bits(ua)]
+                };
+                sides.entry(edge_key(a, b)).or_default().push(side);
+            }
+        }
+        sides
+            .values()
+            .filter(|v| v.len() == 2 && v[0] != v[1])
+            .count()
+    }
+
+    #[test]
+    fn fuse_keeps_the_files_uvs_on_the_vertices_it_keeps() {
+        // Two textured balls apart: the union cuts nothing, so every
+        // corner is an input corner and the seams are the generator's.
+        let ball = shape_gen::solids::textured(&shape_gen::solids::Generator::Sphere(
+            shape_gen::solids::SphereDesc {
+                radius: 7.3,
+                ..Default::default()
+            },
+        ))
+        .unwrap();
+        let mut two = ball.clone();
+        let mut other = ball.clone();
+        for p in &mut other.positions {
+            *p += DVec3::new(31.7, 0.3, 0.0);
+        }
+        two.append(&other);
+        two.canonicalize().unwrap();
+        let d = Repair {
+            fuse: true,
+            ..Default::default()
+        };
+        let (out, r) = repair(&two, &d).unwrap();
+        assert_eq!(r.fused, Some(Ok(2)));
+        assert_eq!(uv_seams(&out), uv_seams(&two));
     }
 
     #[test]

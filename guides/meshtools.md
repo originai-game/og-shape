@@ -93,6 +93,23 @@ budget, one part, and `glb_plain`'s output (one node, one mesh, one
 triangle primitive with UVs). Every kernel solid is triangles, so
 "triangulated" always holds.
 
+## Generated meshes (image- and text-to-3D)
+
+Measured on 54 outputs of eight generators (`docs/research.md` §28):
+- Their scale and pivot are the generator's: 0.75–2 m whatever the
+  object, the origin at the box's centre. Read `pivot_from_base` and
+  `bounds`.
+- Read OBJ from TripoSR with `--z-up`. InstantMesh's OBJs are in
+  neither frame; look at the preview.
+- Keeping the file's UVs, decimation stops at about three triangles a
+  UV island (thousands on an atlas of 2 000 islands). Below that,
+  `--unwrap` reaches the budget and drops the texture.
+- A hole filled across UV seams can cover half the texture: compare
+  `uv.overlap` before and after repair.
+- Only the base colour is kept: metallic-roughness and normal maps,
+  vertex colours and the material's metallic and roughness factors
+  are not (`skipped` names the maps and the colours).
+
 ## What repair cannot do
 
 A single closed surface that folds through itself is untangled by

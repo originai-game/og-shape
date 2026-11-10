@@ -91,7 +91,7 @@ fn obj_round_trip_and_polygons() {
     assert!(s.measure().closed);
     // Quads and an n-gon, Z up, in centimetres, with vt and negative
     // indices, and a material library that cannot be read.
-    let quad = "mtllib missing.mtl\no plate\nv 0 0 0\nv 2 0 0\nv 2 1 0\nv 1 1 0\nv 1 2 0\nv 0 2 0\n\
+    let quad = "mtllib missing.mtl\no plate\nv 0 0 0 1 0.5 0\nv 2 0 0\nv 2 1 0\nv 1 1 0\nv 1 2 0\nv 0 2 0\n\
                 vt 0 0\nvt 1 0\nvt 1 0.5\nvt 0.5 0.5\nvt 0.5 1\nvt 0 1\n\
                 f -6/-6 -5/-5 -4/-4 -3/-3 -2/-2 -1/-1\nl 1 2\n";
     let d = Import {
@@ -100,7 +100,9 @@ fn obj_round_trip_and_polygons() {
     };
     let imported = import_obj(quad.as_bytes(), &d, &no_files).unwrap();
     assert_eq!(imported.polygons_triangulated, 1);
-    assert_eq!(imported.skipped.len(), 2);
+    // The library, the line and the vertex colour, which is not read.
+    assert_eq!(imported.skipped.len(), 3);
+    assert_eq!(imported.skipped[2], "1 vertex colours (v x y z r g b)");
     let p = &imported.parts[0];
     assert_eq!(p.name, "plate");
     assert_eq!(p.solid.triangles.len(), 4);
@@ -159,6 +161,15 @@ fn gltf_with_external_and_embedded_buffers() {
         r#""asset":{"version":"2.0"},"extensionsRequired":["KHR_draco_mesh_compression"]"#,
     );
     assert!(import_gltf(draco.as_bytes(), &files).is_err());
+    // Vertex colours are not read, and said so (image-to-3D outputs carry
+    // their colour there).
+    assert!(imported.skipped.is_empty());
+    let coloured = json.replace(r#""POSITION":0}"#, r#""POSITION":0,"COLOR_0":0}"#);
+    let imported = import_gltf(coloured.as_bytes(), &files).unwrap();
+    assert_eq!(
+        imported.skipped,
+        ["tri: primitive 0's vertex colours (COLOR_0)"]
+    );
 }
 
 /// A sphere with the defects meshes from outside the kernel have: split at seams, a

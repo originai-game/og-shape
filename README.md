@@ -36,9 +36,15 @@ Meshes from elsewhere go through the same kernel:
 | ![duck](docs/previews/uv/duck-full-half.png) | ![defects before](docs/previews/readme/mesh_before.png) | ![defects after](docs/previews/readme/mesh_after.png) |
 | Khronos's Duck, as imported and decimated to half, its texture kept (three.js render, `docs/research.md` §17). | `golden/meshes/ball_defects.obj` as it comes: open, in 2 pieces, 79 faces flipped. | After `shape process --budget 1500`: closed, 1 piece, 1 500 triangles, 6 UV charts with no overlap (the lines are chart seams). |
 
+| | |
+|---|---|
+| ![generated bear](docs/previews/generated/hunyuan-300.png) | ![generated barn](docs/previews/generated/meshy-barn.png) |
+| A Hunyuan3D-2 bear (150 000 triangles) as generated, at 10 000 and at 2 000, its texture kept; top `shape preview`, bottom three.js (`docs/research.md` §28). | A Meshy barn (37 000 triangles), the same way. Its metallic-roughness map is dropped: only the base colour is kept. |
+
 `docs/previews/` holds more: the bevel cases (`phase3/`), a skinned
 figure and Mixamo's Soldier posed (`phase5b/`), the models loaded and
-moved in three.js (`validate/`), UVs under a checker (`uv/`).
+moved in three.js (`validate/`), UVs under a checker (`uv/`), twelve
+generated meshes before and after the chain (`generated/`).
 
 ## What has been checked
 
@@ -54,6 +60,7 @@ Run on `main` on 2026-11-10; each line says where the numbers come from.
 | No part passes through itself | 139 of 140 built solids have no crossing triangle pair (exact predicates). One has 8: the mouse's shell, a `body` cut twice and filleted | `shape_bool::crossing_pairs` on every part |
 | Bevels never return a wrong result | 17 948 fillets and chamfers on generator and boolean solids: 16 648 built, 1 300 refused with an error value, none returned crossing itself | `cargo run --release -p shape-bevel --example scan` |
 | Booleans against outside meshes | 109 cases from sand3d, Thingi10K, synthetic defects and touching operands; no ok output crosses itself with the repair on | `bench/booleans` (`docs/research.md` §25.2) |
+| Real generated meshes | 54 files from 8 image- and text-to-3D generators (Hunyuan3D-2, TRELLIS, SPAR3D, TripoSR, InstantMesh, CRM, Unique3D, Meshy): within budget and closed keeping their UVs and texture 40, 49 and 50 at 2 000, 10 000 and 50 000 triangles, 50 at each with fresh UVs (the other 4 are open TRELLIS meshes); 132 of 154 booleans on the results closed, 19 refused with a cause, 3 missed | `bench/generated` (`docs/research.md` §28) |
 | The mesh chain on a damaged mesh | open, 2 pieces, 79 flipped faces → closed, 1 piece, on budget, unwrapped with no UV overlap | `shape process golden/meshes/ball_defects.obj` |
 | Outside files | glTF, OBJ and FBX from three.js's and Khronos's samples import; textured and skinned ones keep UVs, bones and weights through repair and decimation to half | `docs/research.md` §9, §11.5, §17 |
 | three.js reads the output | the washing machine's joints move and a skinned figure poses in headless Chromium; vertex positions match the kernel's own pose | `docs/research.md` §19 |
