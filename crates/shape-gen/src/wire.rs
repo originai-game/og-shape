@@ -12,6 +12,9 @@
 //! smallest rotation that turns one run's direction into the next
 //! (rotation-minimizing, two reflections), so the wire never twists; a
 //! closed wire spreads the turn it gains going round over its length.
+//! An open wire's end caps are square to `tangents` where given (the
+//! path's own direction at a curve's end), else to the first and last
+//! runs; such an end ring is placed as a mitre's is, in that plane.
 //! Straight runs meeting at a mitre are separate surfaces, so the mitre
 //! is a real edge, `seam`; bends are smooth.
 
@@ -39,6 +42,11 @@ pub struct Wire {
     /// Segments round the wire, and a bend's share of as many a turn; 0
     /// for the chord rule.
     pub segments: u32,
+    /// An open wire's direction at its start and at its end, which its end
+    /// caps are square to; zero for the first or last run's direction (a
+    /// path of points has no other). A path of curve pieces gives them
+    /// ([`crate::path3::Flat::tangents`]). Unused when `closed`.
+    pub tangents: [DVec3; 2],
 }
 
 /// Points nearer than this are one (millimetres).
@@ -211,6 +219,11 @@ pub(crate) fn wire_with(d: &Wire, uvs: bool) -> Result<Solid, GenError> {
     let (p, sharp) = bent(d, radius)?;
     let m = p.len();
     let sides = if d.closed { m } else { m - 1 };
+    let ends = if d.closed {
+        [None; 2]
+    } else {
+        crate::paths::end_tangents(&p, d.tangents)?
+    };
     let dirs: Vec<DVec3> = (0..sides)
         .map(|i| (p[(i + 1) % m] - p[i]).normalize())
         .collect();
@@ -265,7 +278,7 @@ pub(crate) fn wire_with(d: &Wire, uvs: bool) -> Result<Solid, GenError> {
             let t = if d.closed {
                 (dirs[sides - 1] + dirs[0]).normalize()
             } else {
-                dirs[0]
+                ends[0].unwrap_or(dirs[0])
             };
             return (dirs[0], normals[0], 0.0, t);
         }
@@ -273,7 +286,7 @@ pub(crate) fn wire_with(d: &Wire, uvs: bool) -> Result<Solid, GenError> {
         let t = if i < sides {
             (w + dirs[i]).normalize()
         } else {
-            w
+            ends[1].unwrap_or(w)
         };
         (w, r, twist, t)
     };

@@ -95,7 +95,10 @@ piece), `{"spline": {"points"}}` (smooth through them). Curves get the
 same segment rule as circles. Points are `[x, y]` in a profile's `path`
 and `stroke`, `[x, y, z]` in `sweep` and `wire`, which also take
 `{"helix": {"radius", "pitch", "turns"}}` (about +z from `[radius, 0,
-0]`). Three arc points on one line, or a tangent arc first, are errors.
+0]`). A `sweep` or `wire` ends square to the path: to the curve's tangent
+where an arc, a spline or the helix ends it, to the first or last
+segment where a point does (plain points carry no tangent). Three arc
+points on one line, or a tangent arc first, are errors.
 
 **Fonts.** No font ships. A `text` profile names a font file; `shape`
 and the MCP tools read it relative to the program file (the workspace

@@ -1093,8 +1093,10 @@ fn generate(a: &Args, uvs: bool) -> Result<shape_mesh::Solid, ModelError> {
         }
         "sweep" => {
             let p = a.profile("profile")?;
+            let route = a.route("path")?;
             let d = Sweep {
-                path: a.route("path")?.points,
+                path: route.points,
+                tangents: route.tangents,
                 up: match a.opt("up") {
                     Some(_) => a.vec3("up")?,
                     None => DVec3::ZERO,
@@ -1188,6 +1190,7 @@ fn generate(a: &Args, uvs: bool) -> Result<shape_mesh::Solid, ModelError> {
                 fillet: if fillets.is_empty() { fillet } else { 0.0 },
                 fillets,
                 segments: segments()?,
+                tangents: route.tangents,
             };
             pick!(G::Wire(&d), shape_gen::wire::wire(&d))
         }

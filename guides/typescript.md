@@ -48,7 +48,8 @@ op, its index, the part and your line.
   }`. `og.path` makes a profile of one. `sweep` and `wire` take the
   list itself in 3D (`path: [[0, 0, 0], { arc: { through, to } }]`, not
   `og.path`), or `og.helix({ radius, pitch, turns })` (about +z from
-  `[radius, 0, 0]`).
+  `[radius, 0, 0]`). Their ends sit square to the path: to a curve's
+  tangent, or, on a plain point, to the segment that ends there.
 - Fonts: `og.model({ name, fonts: { "fonts/a.ttf": bytes } })`; `text`
   names one. Name it by its path relative to the program, so `shape`
   replays it; `og.replay(program, { fonts })`.
@@ -83,7 +84,7 @@ part's x, y.
 | `loft({ sections: [{ profile, z }], samples?, steps?, curve? })` | `z` in its own space; straight between sections; `steps` > 1 curves (`curve: "spline"` through every section), and can overshoot: a surface that passes through itself is refused, naming the sections. Polygon corners stay samples and run corner to corner |
 | `sphere({ radius, axis? })` | centred |
 | `revolve({ profile, angle?, axis? })`, `dome({ radius, height?, axis? })`, `torus({ radius, tube, angle?, tubeSegments?, axis? })` | about **+y**, or `axis: "+Z"` (profile y up; a sphere, dome or torus rests on z = 0, a torus's centre at z = `tube`); profile x is the radius (≥ 0); a part `angle` turns from +x toward −z; a dome `height` makes a cap |
-| `sweep({ profile, path, up?, twist?, scaleEnd? })` | the profile (its y toward `up`, `[x, y, z]`) along a path; corners mitred, ends square to the path. An end on an arc tilts by half a segment (a known gap): start and end on a straight piece a tenth of the profile's width or longer. A hollow bent pipe is a ring (`og.subtract` of two circles) swept |
+| `sweep({ profile, path, up?, twist?, scaleEnd? })` | the profile (its y toward `up`, `[x, y, z]`) along a path; corners mitred, ends square to the path. A hollow bent pipe is a ring (`og.subtract` of two circles) swept |
 | `wire({ path, diameter, fillet?, fillets?, closed? })` | a round rod along a path; corners between pieces bent round `fillet` (≥ diameter / 2), else mitred |
 | `body({ plan, top, bottom, n? })` | along +y: `plan` the full width, `top` and `bottom` the z lines, `n` the squareness (2 round); each a number, `[[y, v], …]` or `{ points, smooth: true }` (smooth can overshoot its points, like a curved loft: add points). An end closes to a point only where `plan` and the height both reach 0; else it is flat |
 | `gear({ teeth, module, width, bore?, hub?, hubHeight? })`, `knurl({ diameter, height, pitch?, straight? })` | about +z from z = 0; `bore`, `hub` diameters |
