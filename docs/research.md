@@ -5538,4 +5538,7 @@ tangent.
 
 - A spline's and a tangent arc's end tangent are checked through the
   golden case and the cap angles above, not by a dedicated test.
-- aarch64 and Windows: CI only.
+- Gate run here: lint (fmt, clippy, cargo-deny), test, golden (native)
+  and wasm (the wasm32 builds, the golden run as wasm32-wasip1 under
+  wasmtime 50.0.1, the binding under bun and node), all green. aarch64
+  and Windows: CI only.
