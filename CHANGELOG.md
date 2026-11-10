@@ -540,3 +540,33 @@
   one line per bevel, so two runs compare line by line.
 - Previews of the §7.6 cases in `docs/previews/phase3/` (`wide_bore`,
   `wide_hole_rim`, `wide_cylinder_slice`, `wide_twisted_top`).
+
+- `shape-bool`: booleans whose operands lie a few ulps apart without being
+  exactly one surface (elbows of tori turned about their axis, the tool
+  brought to the target's frame through the world) join closed instead of
+  `OpenTouching`. When both passes leave a result open, or closed with
+  edges used four times, the tool's vertices within 2⁻⁴⁰ of the operands'
+  size of a target vertex are snapped onto it (`docs/design.md` §6) and
+  the passes run again; the snapped result is taken only if cleaner
+  (`CsgOutput::snapped`). A union that the second pass left empty is no
+  longer taken (it answered `Empty`). Every result that was closed is
+  unchanged (`docs/research.md` §18.1).
+- `shape-bool`: a countersink whose narrow end is the bore's own polygon,
+  cut after the bore, was refused as "a position that is not finite" (a
+  crossing computed as 0/0); it now closes in either order
+  (`docs/research.md` §18.4).
+- `shape-bool`: `self_union` (and so `fuse`, repair's fuse step and the
+  bench's untangled engine) classifies regions with a hierarchical
+  winding number with a rigorous bound, falling back to the direct sum
+  where the bound leaves a decision in doubt: the same output, untangling
+  5–9× faster on heavy noise (`docs/research.md` §18.3, §18.7).
+- `measure` (the program's measures) counts a triangle as degenerate only
+  when its corners are exactly in line, as the mesh tools' measure does;
+  a needle whose f64 cross product rounds to zero is no longer counted
+  (`docs/research.md` §18.6).
+- Golden: `touching.program.elbows_turned` moved, from hashing the
+  `OpenTouching` refusal to the closed join. New cases
+  `touching.elbows.turned` and `touching.countersink.ring`. No other line
+  moved.
+- `bench/booleans --crossings`: counts the pairs of triangles of each
+  og-shape output that cross within one shell, outside the timing.

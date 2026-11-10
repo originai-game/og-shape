@@ -33,10 +33,10 @@
 //! triangle out exactly where its rounded outline is not simple, makes
 //! points at one position one point, and classifies faces lying on the
 //! other operand by orientation (`docs/research.md` §5.4, item 5). When
-//! both leave it open, the tool's vertices within 2⁻⁴⁰ of the operands'
-//! size of a target vertex are snapped onto it and both passes run again
-//! (faces a few ulps apart, placed by different rounded motions;
-//! `docs/research.md` §18).
+//! the result is still open, or has edges used other than once each way,
+//! the tool's vertices within 2⁻⁴⁰ of the operands' size of a target
+//! vertex are snapped onto it and both passes run again (faces a few ulps
+//! apart, placed by different rounded motions; `docs/research.md` §18).
 
 use glam::{DVec2, DVec3};
 use robust::{Coord, Coord3D, orient2d, orient3d};
@@ -2369,8 +2369,9 @@ pub struct CsgOutput {
     /// Other edges used other than once each way.
     pub non_manifold: usize,
     /// Whether the result was built with the tool's vertices snapped onto
-    /// the target's within a rounding error (both passes on the operands
-    /// as given came out open; `docs/research.md` §18).
+    /// the target's within a rounding error: the operands as given came
+    /// out open or not manifold, and the snapped ones closer to closed
+    /// (`docs/research.md` §18).
     pub snapped: bool,
 }
 
