@@ -7,7 +7,10 @@
 //! [`Model::bbox`], [`Model::local`], and the distributors in [`place`]),
 //! edits them (booleans, holes, pockets, fillets…), groups them and
 //! declares joints, then exports or previews the posed model through
-//! `shape-tools` ([`Model::build`]).
+//! `shape-tools` ([`Model::build`]). Frames are read at rest: a read of
+//! a part a posed joint moves is refused ([`ModelError::Posed`]);
+//! [`Model::measure_posed`] and [`Model::seating`] measure the pose and
+//! how each joint holds.
 //!
 //! - [`place`]: frames on boxes, faces and edges, and grids, rings,
 //!   paths and snaps of frames.
@@ -28,8 +31,8 @@ pub mod program;
 
 pub use checked::loft;
 pub use error::ModelError;
-pub use model::{BoolRecord, Built, Combine, Id, JointDesc, Model, PartMeasures, Unit};
+pub use model::{BoolRecord, Built, Combine, Id, JointDesc, Model, PartMeasures, Seating, Unit};
 pub use place::Path;
 pub use shape_bool::{BoolOp, BoolReport};
 pub use shape_core::Frame;
-pub use shape_tools::{Interfering, JointKind, Material, Mimic, Preview};
+pub use shape_tools::{Interfering, JointKind, Material, Mimic, Placement, Preview};

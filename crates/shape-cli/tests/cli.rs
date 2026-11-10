@@ -41,6 +41,24 @@ fn subcommands_match_the_library() {
         text.trim(),
         shape_model::program::measures_json(&model).unwrap()
     );
+    // The washing machine is posed: OBJ is written at the pose, and the
+    // report says so.
+    let obj = dir.join("m.obj");
+    let out = shape(&["export", PROGRAM, "-o", obj.to_str().unwrap()]);
+    assert!(
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .contains("\"geometry\":\"posed\"")
+    );
+    assert_eq!(
+        std::fs::read(&obj).unwrap(),
+        model.obj().unwrap().into_bytes()
+    );
+    let out = shape(&["measure", PROGRAM, "--posed"]);
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap().trim(),
+        shape_model::program::posed_json(&model).unwrap()
+    );
     let png = dir.join("m.png");
     let out = shape(&[
         "preview",

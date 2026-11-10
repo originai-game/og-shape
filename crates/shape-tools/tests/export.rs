@@ -4,7 +4,9 @@
 use shape_core::{DVec3, Frame};
 use shape_gen::solids::{BoxDesc, CylinderDesc, cuboid, cylinder};
 use shape_mesh::Solid;
-use shape_tools::{Joint, JointKind, Material, Mimic, Part, Scene, glb, obj, stl};
+use shape_tools::{
+    Joint, JointKind, Material, Mimic, Part, Placement, Scene, glb, obj, obj_at, stl, stl_at,
+};
 
 fn solids() -> (Solid, Solid) {
     let base = cuboid(&BoxDesc {
@@ -201,6 +203,57 @@ fn obj_and_stl_layouts() {
     let count = u32::from_le_bytes(bin[80..84].try_into().unwrap()) as usize;
     assert_eq!(count, faces);
     assert_eq!(bin.len(), 84 + 50 * count);
+}
+
+#[test]
+fn obj_and_stl_at_the_pose_move_only_what_the_joints_move() {
+    let (base, wheel) = solids();
+    let mut s = scene(&base, &wheel);
+    // At rest, Pose and Rest write the same vertices; only the header says.
+    let rest = obj(&s).unwrap();
+    let still = obj_at(&s, Placement::Pose).unwrap();
+    assert!(still.starts_with("# cart - written by og-shape, metres, Y up, posed\n"));
+    assert_eq!(
+        rest.split_once('\n').unwrap().1,
+        still.split_once('\n').unwrap().1
+    );
+    // A quarter turn about the wheel's pivot (30, 0, 20), +Z: the wheel's
+    // point at (45, 0, 25) goes to (30, 15, 25); the nub follows by a
+    // slide of π/2 × 10 mm along X. The base does not move.
+    s.parts[1].joint.as_mut().unwrap().value = core::f64::consts::FRAC_PI_2;
+    let posed = obj_at(&s, Placement::Pose).unwrap();
+    let blocks: Vec<&str> = posed.split("\no ").collect();
+    let rest_blocks: Vec<&str> = rest.split("\no ").collect();
+    assert_eq!(blocks[1], rest_blocks[1], "the base moved");
+    assert_ne!(blocks[2], rest_blocks[2], "the wheel stayed at rest");
+    let vs = |b: &str| -> Vec<[f32; 3]> {
+        b.lines()
+            .filter_map(|l| l.strip_prefix("v "))
+            .map(|l| {
+                let v: Vec<f32> = l.split(' ').map(|x| x.parse().unwrap()).collect();
+                [v[0], v[1], v[2]]
+            })
+            .collect()
+    };
+    // OBJ is Y up: kernel (x, y, z) is (x, z, −y). The quarter turn
+    // about kernel +Z through (30, 0, 20) mm takes OBJ (X, Y, Z) to
+    // (0.03 + Z, Y, 0.03 − X); the nub first slides by s along kernel X
+    // (OBJ X), then turns with the wheel.
+    let slide = core::f64::consts::FRAC_PI_2 * 10.0 * 0.001;
+    for (b, s) in [(2, 0.0), (3, slide)] {
+        let (before, after) = (vs(rest_blocks[b]), vs(blocks[b]));
+        assert_eq!(before.len(), after.len());
+        for (p, q) in before.iter().zip(&after) {
+            let (x, y, z) = (f64::from(p[0]) + s, f64::from(p[1]), f64::from(p[2]));
+            let want = [0.03 + z, y, 0.03 - x];
+            for k in 0..3 {
+                assert!((f64::from(q[k]) - want[k]).abs() < 1e-6, "{p:?} → {q:?}");
+            }
+        }
+    }
+    let bin = stl_at(&s, Placement::Pose).unwrap();
+    assert!(bin.starts_with(b"cart - written by og-shape, metres, Z up, posed"));
+    assert_ne!(bin[84..], stl(&s).unwrap()[84..]);
 }
 
 #[test]

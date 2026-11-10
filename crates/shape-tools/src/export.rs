@@ -879,32 +879,100 @@ fn vec3(v: DVec3) -> Json {
     nums(&[v.x, v.y, v.z])
 }
 
+/// Where [`obj_at`] and [`stl_at`] put jointed parts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Placement {
+    /// As built: every joint at 0, whatever its value (the zero value).
+    #[default]
+    Rest,
+    /// Moved by the joints' values (followers by their leaders'), as the
+    /// GLB's nodes and the preview place them. The file's header says
+    /// `posed`.
+    Pose,
+}
+
 /// A part's name, its positions in metres (kernel axes) and its triangles.
 type Metres<'s> = (&'s str, Vec<DVec3>, &'s [[u32; 3]]);
 
-/// Every part's triangles, after the scene's checks.
-fn meshes<'s>(scene: &'s Scene) -> Result<Vec<Metres<'s>>, ExportError> {
-    check(scene)?;
+/// Each part's motion from rest at `at`, after the scene's checks: `None`
+/// where no non-zero joint value moves it (at rest, every part).
+fn motions(scene: &Scene, at: Placement) -> Result<Vec<Option<Rigid>>, ExportError> {
+    let checked = check_joints(scene)?;
+    let mut moved: BTreeMap<&str, Option<Rigid>> = BTreeMap::new();
+    let mut out = Vec::with_capacity(scene.parts.len());
+    for (p, (c, _)) in scene.parts.iter().zip(&checked) {
+        let above = moved.get(p.parent.as_str()).copied().flatten();
+        let mine = match c {
+            Some(c) if at == Placement::Pose && c.value != 0.0 => Some(
+                above
+                    .unwrap_or(Rigid::IDENTITY)
+                    .then(&c.node)
+                    .then(&c.inverse),
+            ),
+            _ => above,
+        };
+        moved.insert(p.name.as_str(), mine);
+        out.push(mine);
+    }
+    Ok(out)
+}
+
+/// Each part's solid at the scene's pose (millimetres, kernel axes), as
+/// [`obj_at`] with [`Placement::Pose`] places it: a part that no non-zero
+/// joint value moves is its solid, bit for bit; the others are moved as
+/// the preview moves them (names, surfaces and tags kept).
+///
+/// Errors as [`glb`] does on an invalid scene.
+pub fn posed(scene: &Scene) -> Result<Vec<Solid>, ExportError> {
     Ok(scene
         .parts
         .iter()
-        .map(|p| {
-            (
-                p.name.as_str(),
-                p.solid.positions.iter().map(|&v| v * METRES).collect(),
-                p.solid.triangles.as_slice(),
-            )
+        .zip(motions(scene, Placement::Pose)?)
+        .map(|(p, m)| {
+            let mut s = p.solid.clone();
+            if let Some(m) = m {
+                s.map_positions(|v| m.apply(v), false);
+            }
+            s
         })
         .collect())
 }
 
-/// The scene's meshes as Wavefront OBJ text: one `o` per part, in metres,
-/// Y up (the GLB's axes), coordinates as f32. No normals, materials or
-/// joints.
+/// Every part's triangles in metres, after the scene's checks, at `at`.
+fn meshes<'s>(scene: &'s Scene, at: Placement) -> Result<Vec<Metres<'s>>, ExportError> {
+    Ok(scene
+        .parts
+        .iter()
+        .zip(motions(scene, at)?)
+        .map(|(p, m)| {
+            let positions = p
+                .solid
+                .positions
+                .iter()
+                .map(|&v| m.map_or(v, |m| m.apply(v)) * METRES)
+                .collect();
+            (p.name.as_str(), positions, p.solid.triangles.as_slice())
+        })
+        .collect())
+}
+
+/// The scene's meshes as Wavefront OBJ text, at rest: [`obj_at`] with
+/// [`Placement::Rest`].
 pub fn obj(scene: &Scene) -> Result<String, ExportError> {
-    let mut out = format!("# {} - written by og-shape, metres, Y up\n", scene.name);
+    obj_at(scene, Placement::Rest)
+}
+
+/// The scene's meshes as Wavefront OBJ text: one `o` per part, in metres,
+/// Y up (the GLB's axes), coordinates as f32, placed at `at`. No normals,
+/// materials or joints.
+pub fn obj_at(scene: &Scene, at: Placement) -> Result<String, ExportError> {
+    let posed = if at == Placement::Pose { ", posed" } else { "" };
+    let mut out = format!(
+        "# {} - written by og-shape, metres, Y up{posed}\n",
+        scene.name
+    );
     let mut base = 1u64;
-    for (name, pos, tris) in meshes(scene)? {
+    for (name, pos, tris) in meshes(scene, at)? {
         out.push_str(&format!("o {name}\n"));
         for p in &pos {
             let q = y_up(*p);
@@ -923,14 +991,22 @@ pub fn obj(scene: &Scene) -> Result<String, ExportError> {
     Ok(out)
 }
 
+/// The scene's meshes as binary STL, at rest: [`stl_at`] with
+/// [`Placement::Rest`].
+pub fn stl(scene: &Scene) -> Result<Vec<u8>, ExportError> {
+    stl_at(scene, Placement::Rest)
+}
+
 /// The scene's meshes as binary STL: an 80-byte header, the triangle
 /// count, then per triangle its unit normal and corners, in metres, Z up
-/// (as slicers expect).
-pub fn stl(scene: &Scene) -> Result<Vec<u8>, ExportError> {
-    let parts = meshes(scene)?;
+/// (as slicers expect), placed at `at`.
+pub fn stl_at(scene: &Scene, at: Placement) -> Result<Vec<u8>, ExportError> {
+    let parts = meshes(scene, at)?;
     let count: usize = parts.iter().map(|p| p.2.len()).sum();
     let mut out = Vec::with_capacity(84 + 50 * count);
-    let mut header = format!("{} - written by og-shape, metres, Z up", scene.name).into_bytes();
+    let posed = if at == Placement::Pose { ", posed" } else { "" };
+    let mut header =
+        format!("{} - written by og-shape, metres, Z up{posed}", scene.name).into_bytes();
     header.truncate(80);
     header.resize(80, b' ');
     out.extend_from_slice(&header);

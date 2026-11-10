@@ -131,8 +131,8 @@ the bytes under that name (`guides/typescript.md`).
 | `group` | `name`, `children` (ids) | |
 | `assembly` | `name`, `children`, `anchors`? (`{name: frame}`) | |
 | `attach` | `to`, `name`, `children` | |
-| `copy` | `id`, `name` | |
-| `mirror` | `id`, `plane` (a frame; mirrors across its xy), `name` | |
+| `copy` | `id`, `name` | its joints come too, renamed `hinge.001`…, at the same pose |
+| `mirror` | `id`, `plane` (a frame; mirrors across its xy), `name` | joints too: the image of each motion; the same value poses the image |
 | `cut`, `join`, `intersect` | `target`, `tool`, `check`? | the tool is used up; answers `voids`, `touchingEdges`, `touching`; `check` first refuses an operand that passes through itself |
 | `merge` | `target`, `tool` | the tool's solid added as it is, no boolean; the tool is used up |
 | `delete` | `id` | removes it and all under it, and joints hanging what goes |
@@ -141,21 +141,32 @@ the bytes under that name (`guides/typescript.md`).
 | `hole` | `id`, `diameter`, `at` (frames above the part, +z out of the material), `depth`? (0: through), `counterbore`? `[d, depth]`, `countersink`? `[d, full angle]` | drills along −z |
 | `pocket` | `id`, `profile`, `depth`?, `at`? (frames) | |
 | `split` | `id`, `frame`, `keep`? (`"above"`, `"below"`) | |
-| `shell` | `id`, `thickness`, `open`? (face names) | hollows it |
+| `shell` | `id`, `thickness`, `open`? (face names, or `"+z"`… along the part's own axes, as built) | hollows it |
 | `dent` | `id`, `at` (points), `radius`, `depth` | |
 | `fillet` | `id`, `radius`, `edges`?, `segments`?, `profile`? | rounds edges |
 | `chamfer` | `id`, `distance`, `distance2`?, `angle`?, `edges`?, `segments`? | |
 | `soften` | `id`, `radius`, `angle`? (30° by default), `edges`?, `segments`? | rounds every edge sharper than `angle` |
 | `material` | `ids`, `name`?, `color`? (`"#rrggbb"` or `[r, g, b]`), `metalness`?, `roughness`?, `emissive`?, `opacity`? | glTF metallic-roughness |
 | `joint` | `child`, `parent`, `name`, `kind`? (`revolute`, `continuous`, `prismatic`, `fixed`, `floating`), `on` (the pivot frame), `axis`? (`"+X"`… or `[x, y, z]`; `on`'s z by default), `range`? `[lo, hi]`, `mimic`? `{"joint", "multiplier"}` | revolute and prismatic need a range containing 0 |
-| `pose` | `joint`, `value` | posed in export and preview only |
+| `pose` | `joint`, `value` | posed in export, preview and `measure` with `posed` |
 
 ## What comes back
 
 `build` reports every part (name, parent, joint, triangles). `measure`
 reports per part and for the model: `triangles`, `vertices`,
 `boundsMin`/`boundsMax`, `area`, `volume`, `closed`, `boundaryEdges`,
-`nonManifoldEdges`, `degenerateTriangles`, `components`, and the joints.
+`nonManifoldEdges`, `degenerateTriangles`, `components`, and the joints,
+at rest. `{"op": "measure", "posed": true}` (`shape measure --posed`)
+measures at the pose and adds `pose`, `posed`, `joints` (per joint
+`pivotToParent`, `pivotToChild`: the pivot's distance to each side's
+surface; `parentMoved`, `parentTurned`: how far the parent has moved off
+the pivot since the joint was declared) and `interference` at the pose
+(`asBuilt: false` pairs move under different joints; a flush contact
+there can read as crossing by rounding). Frames (`face`, `bbox`, `edge`,
+`snap`, `placement`, `local`, `anchor`) are read at rest only: on a part
+a posed joint moves they are refused; read before `pose`. A posed
+model's OBJ and STL are written at the pose (the header ends `posed`);
+its GLB keeps rest meshes and the pose in its joint nodes.
 `build` also lists every boolean with the voids it left and the edges
 where its operands touch (`touchingEdges` > 0: not closed there).
 Want `closed: true` and no non-manifold edges on every part. An error

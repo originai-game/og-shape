@@ -139,8 +139,9 @@ before joining: after a join, `edges: "top"` takes every operand's.
 - **Kinds**: `revolute` (hinge), `continuous` (wheel, knob), `prismatic`
   (slide, mm), `fixed`.
 - A **chain** is each segment jointed on the one before (groups may be
-  parents). Several joints on one child compose in order. `mirror` and
-  `copy` carry no joints: declare the copy's, axis mirrored.
+  parents). Several joints on one child compose in order. `copy` and
+  `mirror` bring the joints along (`hinge.001`); a mirrored door opens
+  the mirror way for the same value.
 
 ## 7. Materials and budgets
 
@@ -165,8 +166,10 @@ An error names the op, its part and your line; fix it there.
    parts. For a small or hidden feature, preview from its side
    (`azimuth`, `elevation`), alone, or check its measures.
 3. **Pose each joint** near its range's ends: it moves the right way and
-   clears its parent (a continuous joint may pass through). Take the
-   pose out.
+   clears its parent (a continuous joint may pass through):
+   `s.measure({ posed: true })` lists the parts that meet at the pose,
+   and `joints` shows a pivot far from its parent's surface. Read frames
+   before posing. Take the pose out.
 4. **Fix the program**, one cause at a time, until every measure holds
    and the preview matches the reference.
 

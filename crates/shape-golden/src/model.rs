@@ -44,6 +44,18 @@ pub fn cases() -> Vec<Case> {
             },
         },
         Case {
+            name: "model.joints.obj",
+            run: |h| model_bytes(h, |m| m.obj().map(String::into_bytes)),
+        },
+        Case {
+            name: "model.joints.stl",
+            run: |h| model_bytes(h, |m| m.stl()),
+        },
+        Case {
+            name: "model.joints.copies",
+            run: |h| model_bytes(h, |m| copies(m).and_then(|m| m.glb())),
+        },
+        Case {
             name: "model.washing_machine.glb",
             run: |h| washing_machine(h, |m| m.glb()),
         },
@@ -59,6 +71,10 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "model.washing_machine.measure",
             run: |h| washing_machine(h, |m| program::measures_json(m).map(String::into_bytes)),
+        },
+        Case {
+            name: "model.washing_machine.posed",
+            run: |h| washing_machine(h, |m| program::posed_json(m).map(String::into_bytes)),
         },
     ]
 }
@@ -271,6 +287,27 @@ fn jointed() -> Result<Model, shape_model::ModelError> {
     m.pose("hinge", 1.2)?;
     m.pose("lift", 2.5)?;
     m.pose("spin", -0.7)?;
+    Ok(m)
+}
+
+/// The jointed cabinet with its door copied (moved aside, posed its own
+/// way) and mirrored across the cabinet's side, its knob mirrored too:
+/// joints through copies (`docs/research.md` §20).
+fn copies(m: &Model) -> Result<Model, shape_model::ModelError> {
+    let mut m = m.clone();
+    let door = m.find("door").ok_or(shape_model::ModelError::EmptyName)?;
+    let knob = m.find("knob").ok_or(shape_model::ModelError::EmptyName)?;
+    let twin = m.copy(door, "twin")?;
+    m.transform(twin, &Frame::IDENTITY.translate(0.0, 0.0, 60.0))?;
+    m.pose("hinge.001", 0.4)?;
+    let side = Frame::facing(DVec3::new(25.0, 0.0, 0.0), DVec3::X).ok_or(
+        shape_model::ModelError::BadValue("the mirror's plane".into()),
+    )?;
+    m.mirror(door, &side, "door_r")?;
+    m.mirror(knob, &side, "knob_r")?;
+    m.pose("hinge.002", 0.9)?;
+    m.pose("lift.001", 1.5)?;
+    m.pose("spin.001", 2.0)?;
     Ok(m)
 }
 

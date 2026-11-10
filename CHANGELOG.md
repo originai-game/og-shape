@@ -571,3 +571,63 @@
   item 15).
 - Golden cases `rest.program.glb`, `rest.program.measure`,
   `rest.program.booleans`; no existing hash moved.
+- The preview blends transparent materials (`docs/research.md` §20):
+  opaque parts are drawn first; then the triangles of parts with
+  `opacity` below 1, back to front by the sum of their corners' depths
+  (ties to the earlier part, then the earlier triangle), blended over the
+  pixel and tested against the opaque depth.
+  `opacity` 0 is not drawn. The shadow under a transparent part is lighter
+  by its opacity. The washing machine's glass is now see-through.
+- The preview shades smooth only across facets of one surface that meet
+  at less than 35° (`shape_tools::preview::CREASE_DEGREES`): a hexagonal
+  loft shows its facets, a 12-sided or finer turn stays round. The GLB's
+  normals are unchanged.
+- Golden hashes moved, all three preview lines and nothing else:
+  `tools.preview` and `tools.preview.png` (the wheel's material has
+  opacity 0.8, now blended; the twisted riser's facets past 35° now
+  flat), `model.washing_machine.png` (the glass at opacity 0.4 is
+  blended, and facets of one surface meeting at 35° or more are flat). `model.joints.preview` held:
+  its boxes and cylinders shade the same under the crease rule, and it
+  has no transparent part. New cases: `tools.preview.facets`,
+  `model.joints.obj`, `model.joints.stl`, `model.joints.copies`,
+  `model.washing_machine.posed`.
+- Previews regenerated under `docs/previews/`: `phase4/washing_machine.png`;
+  in `phase1/` the binocular, keyboard and gear transfer; in `phase3/`
+  ten bevel cases; `phase5b/bend.png` and `wave.png`; `gen2/`. The
+  others render the same bytes. `phase1/bevel_to_spur_transfer.png` was
+  already stale on `main`. `phase5/` was not regenerated (it needs the
+  mesh-tools bench's external inputs).
+- `copy` and `mirror` bring the joints of what they copy, named with a
+  free suffix (`hinge.001`), at the same pose; a copied part hangs on its
+  parent's copy when the parent was copied too, a follower follows its
+  leader's copy. A mirrored joint moves as the image of the original's
+  motion: pivot mirrored (z the cross product of its mirrored x and y),
+  a slide's axis mirrored, a turn's axis mirrored and negated; ranges,
+  values and mimics kept, so the same value poses the image.
+- Frames are read at rest only: `face`, `bbox`, `edge`, `snap`,
+  `placement`, `local` and `anchor` of a part that a posed joint moves are
+  refused with `ModelError::Posed` (the read, the part, the joint and its
+  value). Parts the pose does not move read as before.
+- `Model::obj` and `Model::stl` write the pose when any joint has a value
+  other than 0 (the header ends `, posed`), at rest otherwise; parts no
+  joint moves keep their rest positions bit for bit. GLB is unchanged:
+  rest meshes, the pose in the joint nodes. `shape_tools::obj_at`,
+  `stl_at` (`Placement::Rest` or `Pose`) and `posed`; `obj` and `stl`
+  still write the rest. `Model::mesh_placement`, `Model::posed`,
+  `Model::pose_values`.
+- `shape export` prints its report; for a program it says `geometry`:
+  `"posed"` or `"rest"` (the MCP `export` tool's report gains the field).
+- Measures at the pose: `Model::measure_posed`, `Model::seating`
+  (per joint, at rest: the pivot's distance to the parent's and the
+  child's surfaces, and how far the parent has moved and turned off the
+  pivot since the joint was declared), `program::posed_json`, the
+  `measure` reader's `posed: true`, `shape measure --posed` and the
+  binding's `measure({ posed: true })`: `measures_json`'s fields at the
+  pose, with `pose`, `posed`, `joints` and `interference` at the pose.
+  `measures_json` and `report_json` are unchanged.
+- `Interfering::as_built`: whether a pair was compared where built (both
+  parts moved by the very same motion) or posed, where faces flush under
+  different joints can read as crossing by rounding.
+- Guides: `shell`'s `open` directions are the part's own axes, as built;
+  copies and mirrors carry joints; reads before posing; the posed
+  measure.
