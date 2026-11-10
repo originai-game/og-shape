@@ -6,6 +6,12 @@ generated, middle `shape process --budget 10000`, right `--budget 2000`,
 the file's UVs and texture kept. For a person to look at, never compared
 by pixel.
 
+`place-*` (`docs/research.md` §31): top row the file read plainly (Y
+up), bottom row after `shape place` with the generator's `up` and
+`front`, `--pivot base` and a real size, beside a post 0.1, 1 or 10 m
+tall; three views each, from the front round to the back
+(`bench/generated/src/bin/place_previews.rs`).
+
 Renders of meshes others generated and published:
 - `hunyuan-*`, `trellis-*`, `spar3d-*`, `triposr-*`, `instantmesh-*`,
   `crm-*`, `unique3d-*`: Hi3DBench (3DTopia, MIT),

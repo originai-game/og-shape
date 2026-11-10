@@ -37,6 +37,11 @@
 //! - [`unwrap()`]: charts, planar projection, packing; [`Uvs`] per
 //!   corner.
 //! - [`measure()`]: [`MeshMeasures`] and their JSON, no thresholds.
+//! - [`place()`]: [`Place`] turns a mesh so a stated axis is up and
+//!   another faces front (one of the 24 exact axis turns, then any turn
+//!   about up), scales it uniformly to a size, and moves its origin to
+//!   its base or centre; [`axis_measures`] reports the numbers that tell
+//!   which way it stands.
 //! - [`glb_plain`]: one node, one mesh, positions, normals and UVs.
 //! - [`interference()`]: which parts of a posed scene pass through,
 //!   touch, or hold each other wholly inside ([`Interfering`]).
@@ -52,6 +57,7 @@ mod json;
 mod jsonread;
 mod measure;
 mod meshglb;
+mod place;
 mod png;
 mod polygon;
 mod preview;
@@ -74,6 +80,9 @@ pub use import::{
 pub use interference::{Interfering, interference};
 pub use measure::{Measure, MeshMeasures, Piece, TextureMeasures, UvMeasures, measure};
 pub use meshglb::{PlainGlb, PlainGlbError, glb_plain};
+pub use place::{
+    Axis, AxisMeasures, Pivot, Place, PlaceError, PlaceReport, Size, axis_measures, place,
+};
 pub use png::png;
 pub use preview::{Image, Preview, preview, sheet};
 pub use repair::{

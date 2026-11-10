@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use shape_tools::Import;
+use shape_tools::{Axis, Import};
 
 use crate::{Failure, Input};
 
@@ -16,7 +16,7 @@ pub struct Args {
 }
 
 /// Flags that take no value.
-const SWITCHES: [&str; 10] = [
+const SWITCHES: [&str; 11] = [
     "--uvs",
     "--unwrap",
     "--posed",
@@ -27,6 +27,7 @@ const SWITCHES: [&str; 10] = [
     "--lock-border",
     "--intersections",
     "--z-up",
+    "--axes",
 ];
 
 impl Args {
@@ -67,12 +68,20 @@ impl Args {
         }
     }
 
-    /// How to read an OBJ file: `--unit-mm` and `--z-up`.
+    /// How to read a mesh file: `--unit-mm` (OBJ), and `--z-up`, `--up`
+    /// and `--front` (OBJ and glTF).
     pub fn import(&self) -> Result<Import, Failure> {
         Ok(Import {
             unit_mm: self.number("--unit-mm")?.unwrap_or(0.0),
             z_up: self.switch("--z-up"),
+            up: self.axis("--up")?,
+            front: self.axis("--front")?,
         })
+    }
+
+    /// An axis option: `+x`, `-x`, `+y`, `-y`, `+z` or `-z`.
+    pub fn axis(&self, name: &str) -> Result<Option<Axis>, Failure> {
+        self.value(&[name])?.map(|v| axis(name, v)).transpose()
     }
 
     /// The value of `--name` (or its short form), if given.
@@ -126,7 +135,16 @@ impl Args {
 }
 
 /// The options every command that reads a mesh takes.
-pub const IMPORT_OPTIONS: [&str; 2] = ["--unit-mm", "--z-up"];
+pub const IMPORT_OPTIONS: [&str; 4] = ["--unit-mm", "--z-up", "--up", "--front"];
+
+/// An axis named `+x`, `-x`, `+y`, `-y`, `+z` or `-z` (`x` is `+x`).
+pub fn axis(what: &str, v: &str) -> Result<Axis, Failure> {
+    Axis::parse(v).ok_or_else(|| {
+        Failure::Usage(format!(
+            "{what}: {v:?} is not an axis: +x, -x, +y, -y, +z or -z"
+        ))
+    })
+}
 
 #[cfg(test)]
 mod tests {

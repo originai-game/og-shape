@@ -97,6 +97,7 @@ fn obj_round_trip_and_polygons() {
     let d = Import {
         unit_mm: 10.0,
         z_up: true,
+        ..Default::default()
     };
     let imported = import_obj(quad.as_bytes(), &d, &no_files).unwrap();
     assert_eq!(imported.polygons_triangulated, 1);

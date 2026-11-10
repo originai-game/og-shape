@@ -19,7 +19,7 @@ use crate::{Failure, Files};
 pub struct ImportDesc {
     /// The mesh file.
     pub input: Input,
-    /// How to read an OBJ file.
+    /// How to read the mesh file: its unit (OBJ) and axes.
     pub import: Import,
     /// Where to write the parts, if anywhere.
     pub out: Option<PathBuf>,
@@ -38,7 +38,9 @@ pub fn import(files: &dyn Files, d: &ImportDesc) -> Result<String, Failure> {
 
 /// The command line.
 pub fn run(a: &Args) -> Result<String, Failure> {
-    a.only(&["-o", "--out", IMPORT_OPTIONS[0], IMPORT_OPTIONS[1]])?;
+    let mut known = vec!["-o", "--out"];
+    known.extend(IMPORT_OPTIONS);
+    a.only(&known)?;
     import(
         &Local,
         &ImportDesc {

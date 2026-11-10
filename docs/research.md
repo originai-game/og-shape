@@ -6531,3 +6531,181 @@ ordinary cases.
   Stable Fast 3D (its outputs' terms), FBX or Draco outputs (none of
   these generators write them), skinned generated characters (none
   here are rigged).
+
+## 31. Pivot, size and up axis (stream AJ, 2026-11-10)
+
+Base 64af70c. §28.7's first gap: all 54 generated meshes have the
+origin at the box's centre and a size the generator chose (0.75–2 m
+whatever the object), and 12 need more than the default reading to
+stand up. `place` puts a mesh where a game wants it; `measure --axes`
+gives the numbers for choosing.
+
+### 31.1 Decisions
+
+- **One tool, three optional steps, in a fixed order:** turn, size,
+  pivot (`shape_tools::place`, `Place`, zero value changes nothing;
+  `shape place`, MCP `place`, and `process`'s place options).
+- **The turn is one of the 24 axis-aligned turns**, given as the input
+  axis that is up and the one that is front (`Axis`: `+x` … `-z`). Up
+  goes to +Z and front to −Y, the kernel's front (the side `preview`
+  draws first, `docs/design.md` §4); the third axis is `up × front`, so
+  the turn never mirrors. It moves and negates coordinates and rounds
+  nothing (`AxisTurn`; the default OBJ reading through it gives the same
+  bits as before, signed zeros included, so no golden line moved). One
+  axis alone takes the smallest turn that brings it home (`up +y` alone
+  is glTF's `front +z`; `up +z` alone is the identity). A further `turn`
+  about up in degrees: a multiple of 90 joins the exact turn, any other
+  angle goes through `trig::sin_cos`.
+- **Sizes are uniform**: the longest side, the height (Z), width (X) or
+  depth (Y) of the turned box to a length, or a factor. There is no way
+  to stretch. Lengths are millimetres in the library, as every
+  kernel length is; the CLI and MCP take them with a unit (`0.9m`,
+  `90cm`, `900mm`) and refuse a bare number, so a height of 900 cannot
+  be read as 900 m.
+- **Pivot**: `base` (the centre of the bottom face of the box after the
+  turn and scale, so "down" is the new −Z), `center`, or a point of the
+  input in the coordinates `measure` reports. The base's z is
+  subtracted from itself, so the output's lowest z is exactly 0.
+- **Skins** (§11.5's rule: bones stay rigid): with the placement
+  `A = T · s · R`, bone rest frames become `A · rest · S⁻¹` (axes turned,
+  origin moved and scaled) and inverse bind matrices `S · IBM · A⁻¹`, so
+  `rest · IBM` is unchanged and every vertex, in a bone's coordinates,
+  is `s` times where it was. A skinned part is never refused.
+- **Normals**: a solid stores none (export makes them from the
+  positions), so they follow. UVs, surfaces and face names are untouched.
+- **Several parts are placed as one model**: one box over all, the same
+  motion for every part; the GLB keeps parts, skins and textures.
+- **Import's axes**: `Import::up` and `front` name the file's own axes
+  (OBJ and glTF); `z_up` stays as `up +z, front -y` and is refused next
+  to them; FBX says its axes in the file and refuses them. For glTF the
+  turn is applied after reading, to each part's transform (a skinned
+  part's mesh and bones, its transform conjugated). `shape place` and
+  `process` read the file plainly and pass the same turn to `place`
+  (`Import::as_turn`), so the report has a before and an after; the
+  report's `up` and `front` are the plain reading's kernel axes.
+- **`process` places last**, after repair and decimation: placed first,
+  `ball_defects.obj`'s floaters, dropped by the repair, left the output's
+  box 760 mm left and 236 mm right of the origin for a 1 m height.
+  Repair and decimation lengths therefore stay the file's.
+- **`measure --axes` and `place`'s report, no verdict**
+  (`AxisMeasures`): extents, `pivot_from_base`, the longest and
+  shortest axis, the fraction of area facing each way (each triangle
+  counted for the axis its normal leans along most) and where the mass
+  sits in the box per axis (centre of volume when every part is closed
+  with a positive volume, of area otherwise). The fields are added only
+  when asked, so `measure`'s and `process`'s reports are as they were.
+- **No pivot option on a program's export.** A program places its own
+  parts in millimetres, Z up, and is exported in metres: its origin is
+  where its author put it. Moving it at export would also move every
+  joint's frame and bone, a second way of saying what the program says,
+  in `shape-model` and the binding (not this stream's). Recorded in
+  `guides/meshtools.md`.
+
+### 31.2 The generators' frames
+
+Found by previewing the cabinet (120), the horse (420) and the armchair
+(480) of each generator in each of the six up axes, then the fronts:
+the side the prompt image shows is the front.
+
+| generator | up | front | as §28.2 says |
+|---|---|---|---|
+| Hunyuan3D-2, TRELLIS, Unique3D, Meshy | +y | +z | glTF's own |
+| SPAR3D, CRM | +y | −z | face away from +Z |
+| TripoSR (OBJ) | +z | +x | Z up (`--z-up` stands them up, side-on) |
+| InstantMesh (OBJ) | −z | +x | neither: Y up lays them down, `--z-up` turns them over |
+
+The prompt images show the horse from its side, so the horses face
+front side-on in every frame; a `turn` of ±90 points the head forward.
+Meshy's are users' text-to-3D files, one frame for all, but a few face
+sideways (the chair, the cat).
+
+### 31.3 The 54 placed
+
+`bun bench/generated/place.ts DIR OUT`: per file `shape place` with the
+generator's frame, `--pivot base` and the object's real size from a
+table in the script (by prompt for Hi3DBench: a house 6 m tall, four
+mugs 0.1 m, a cabinet 1.2 m, a sitting bear 0.35 m, a galloping horse
+2 m, an armchair 1.2 m; by name for Meshy, e.g. a sword 1 m long, a
+school bus 11 m long), then `shape measure --axes` of the GLB written.
+x86-64, release.
+
+| generator | files | frame (up, front) | longest side before (m) | origin above base before (of the height as read) | origin from base after, read back from the GLB (mm) | size asked = size after (files; worst relative error) |
+|---|---|---|---|---|---|---|
+| Hunyuan3D-2 | 6 | +y, +z | 1.94–2.00 | 0.50–0.51 | 0 | 6; 4e-8 |
+| TRELLIS | 6 | +y, +z | 0.92–1.00 | 0.50–0.51 | 0 | 6; 4e-8 |
+| SPAR3D | 6 | +y, −z | 0.94–1.03 | 0.48–0.53 | 0 | 6; 4e-8 |
+| TripoSR | 6 | +z, +x | 0.75–1.02 | 0.48–0.56 | 0 | 6; 4e-8 |
+| InstantMesh | 6 | −z, +x | 1.56–1.97 | 0.46–0.53 | 0 | 6; 4e-8 |
+| CRM | 6 | +y, −z | 1.31–1.91 | 0.48–0.63 | 0 | 6; 4e-8 |
+| Unique3D | 2 | +y, +z | 1.30–1.32 | 0.50–0.51 | 0 | 2; 4e-8 |
+| Meshy | 16 | +y, +z | 1.00–1.20 | 0.50 | 0 | 16; 4e-8 |
+
+All 54 stand on z = 0 with the origin at the base's centre, exactly
+(the GLB's f32 keeps 0 and the symmetric x and y), at the size asked to
+f32's rounding (4e-8). Sizes asked by the longest side give the other
+extents the generator's proportions: Meshy's police car is 4.8 m long
+and 3.1 m tall, its bus 11 m and 5.5 m (both chunky, toy-like
+shapes); a game would ask those by height. Time: median 87 ms a file
+(import, place, write), 2.7 s for Unique3D's 16 MB GLBs.
+
+### 31.4 Would the numbers stand them up?
+
+For each file read plainly (Y up), three simple readings of
+`measure --axes`, each naming an up, against the up the generator's
+frame gives:
+
+| reading | right (of 54) | Hunyuan3D-2 | TRELLIS | SPAR3D | TripoSR | InstantMesh | CRM | Unique3D | Meshy |
+|---|---|---|---|---|---|---|---|---|---|
+| the mass sits low (up away from the side the mass is nearest, on the axis it is most off-centre) | 22 | 2/6 | 3/6 | 2/6 | 2/6 | 3/6 | 2/6 | 0/2 | 8/16 |
+| most area faces down | 9 | 0/6 | 1/6 | 0/6 | 1/6 | 1/6 | 0/6 | 0/2 | 6/16 |
+| the flattest side faces down (most area facing one way over its opposite) | 21 | 1/6 | 3/6 | 2/6 | 1/6 | 1/6 | 2/6 | 1/2 | 10/16 |
+| as read (Y up) | 42 | 6/6 | 6/6 | 6/6 | 0/6 | 0/6 | 6/6 | 2/2 | 16/16 |
+
+The test cases, TripoSR's and InstantMesh's horses and chairs:
+
+| file | true up (as read) | mass low | most area down | flattest side down | mass in box (x, y, z) |
+|---|---|---|---|---|---|
+| triposr-420 (horse) | −y | −z | +x | −y | 0.47, 0.47, 0.60 |
+| triposr-480 (chair) | −y | +x | +x | +x | 0.45, 0.53, 0.47 |
+| instantmesh-420 (horse) | +y | −z | +z | +z | 0.56, 0.55, 0.60 |
+| instantmesh-480 (chair) | +y | +y | −x | +z | 0.45, 0.42, 0.49 |
+
+None of the readings beats the format's own axes (42) or the
+generator's frame (54); on the four test cases each is right once at
+most. The mass of these objects sits within 0.10 of the box's middle
+on every axis, and a horse's or a chair's base is four small feet. So
+the tool reports the numbers and does not choose: the agent knows the
+generator, or previews and looks (§31.2 took 6 previews per
+generator).
+
+### 31.5 Seen
+
+`docs/previews/generated/place-*.png`, 12 files, 600 × 400: top row the
+file read plainly, bottom row placed, beside a post one decade of
+metres tall (0.1, 1 or 10 m, the tallest not above the object), each
+three views from the front round to the back
+(`cargo run --release --bin place_previews` in `bench/generated`).
+TripoSR's and InstantMesh's horses and chairs lie or hang upside down
+before and stand after; SPAR3D's chair and CRM's cabinet turn from
+showing their back to showing their front; Hunyuan3D's horse and
+TRELLIS's cabinet are already upright and only gain a base and a size;
+Meshy's sword, burger and police car, Unique3D's bear stand at their
+sizes.
+
+### 31.6 Golden
+
+No existing line moved. New: `place.turn` (one axis, both, a refusal,
+quarter turns, 30°), `place.pivot` (base, centre, a point after a
+turn), `place.size` (each size, a factor, a zero length refused),
+`place.skinned` (the skinned tube of §11.5 stood up, scaled to 1.7 m,
+on its base: mesh, bones and inverse bind matrices), `place.import.axes`
+(an OBJ in InstantMesh's frame, Z up by words and by switch, both
+refused together, a GLB read Z up) and `place.command`, `place.process`
+(the CLI's report and GLB on `golden/meshes/ball_defects.obj`).
+
+### 31.7 Not done
+
+- Choosing up for the author: §31.4 says why not.
+- A pivot option on a program's export (§31.1).
+- Front per object: the frames are per generator; an object the prompt
+  shows from its side (the horses) needs a `turn` the agent picks.

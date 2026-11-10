@@ -67,12 +67,17 @@ Tools (arguments are in each tool's schema):
 |---|---|---|
 | `build` | `program` (JSON) or `path` (.json) | parts, joints, measures |
 | `preview` | a program or a mesh file; `views`, `width`, `height`, `columns`, `elevation` (over 0, up to π/2), `azimuth` (radians), `no_edges`, `no_ground`, `pose`?, `out`? | a PNG (image content) |
-| `measure` | a program or a mesh file; `intersections`, `posed`, `pose`? | measures, no thresholds |
+| `measure` | a program or a mesh file; `intersections`, `posed`, `pose`?, `axes` | measures, no thresholds; `axes`: a mesh's extents, area facing each way, where its mass sits |
 | `export` | a program or a mesh file; `out` (.glb, .obj, .stl), `pose`? | the file |
 | `import` | a mesh file; `out`? | parts, materials, UVs, bones, images, what was skipped |
 | `repair`, `decimate`, `unwrap` | a mesh file and the tool's settings; `out`? | what changed, measures after |
-| `process` | a mesh file; `budget`, `repair`, `unwrap`, `out`? | the whole chain's report |
+| `place` | a mesh file; `up`, `front`, `turn`, one of `longest`, `height`, `width`, `depth` (`"0.9m"`) or `scale`, `pivot` (`"base"`), `out`? | what was done, and the axis measures before and after |
+| `process` | a mesh file; `budget`, `repair`, `unwrap`, `place`?, `out`? | the whole chain's report |
 | `run_typescript` | `source` or `path` (a .ts file already there); `program_out`? | parts, measures, the recorded program, `console.log` output as `logs` |
+
+Every tool that reads a mesh file takes `unit_mm` (OBJ), and `up` and
+`front` (OBJ and glTF: the file's own axes that are the object's up and
+front, `"+x"` … `"-z"`) or `z_up`.
 
 `pose` (`{"lid_hinge": 1.2}`: radians, or mm for a slide) poses a
 program's joints for that call only; the program stays as it is.

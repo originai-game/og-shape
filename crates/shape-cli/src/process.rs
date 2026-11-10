@@ -1,7 +1,11 @@
 //! `shape process <mesh> --budget N [-o out.glb]`: the mesh tools'
 //! chain on one file (`guides/meshtools.md`): import → join → repair →
-//! decimate to the triangle budget → unwrap → measure → export, as one
-//! JSON report of every step. The output is a plain GLB with the UVs
+//! decimate to the triangle budget → place → unwrap → measure → export,
+//! as one JSON report of every step. The place step (turn, size, pivot:
+//! `shape place`) runs only when asked, and only then has a `place` key
+//! in the report; it comes after the steps that drop or move vertices,
+//! so the output stands on the base it reports. The repair's and the
+//! decimation's lengths are the file's. The output is a plain GLB with the UVs
 //! (one node, one mesh), or OBJ or STL without them. Repair and unwrap
 //! take their zero values unless set, as in `shape repair` and
 //! `shape unwrap`.
@@ -14,7 +18,7 @@
 
 use std::path::PathBuf;
 
-use shape_tools::{Decimate, Import, Measure, Repair, Unwrap};
+use shape_tools::{Decimate, Import, Measure, Place, Repair, Unwrap};
 
 use crate::args::{Args, IMPORT_OPTIONS};
 use crate::export::write_solid;
@@ -28,8 +32,11 @@ use crate::{Failure, Files, failed};
 pub struct ProcessDesc {
     /// The mesh file.
     pub input: Input,
-    /// How to read an OBJ file.
+    /// How to read the mesh file: its unit (OBJ) and axes.
     pub import: Import,
+    /// The placement after decimation; the zero value skips it. Its `up`
+    /// and `front` are kernel axes; the file's go in `import`.
+    pub place: Place,
     /// The repair.
     pub repair: Repair,
     /// Decimate to at most this many triangles; 0 skips decimation, and
@@ -67,7 +74,17 @@ pub fn process_steps(
     step: &mut dyn FnMut(usize) -> Result<(), Failure>,
 ) -> Result<String, Failure> {
     step(0)?;
-    let mesh = load_mesh(files, &d.input, &d.import)?;
+    let placing = d.place != Place::default();
+    let (import, place) = if placing {
+        let format = match &d.input {
+            Input::Path(p) => crate::source::extension(p),
+            _ => String::new(),
+        };
+        crate::place::plain_and_place(&format, &d.import, &d.place)?
+    } else {
+        (d.import, d.place)
+    };
+    let mesh = load_mesh(files, &d.input, &import)?;
     let imported = report::imported(&mesh.format, &mesh.imported);
     let joined = mesh.joined()?;
     step(1)?;
@@ -92,7 +109,15 @@ pub fn process_steps(
         (fixed, "null".to_string())
     };
     step(3)?;
-    let mut low = low;
+    // Placed last of the steps that move vertices, so the box it stands
+    // on is the output's.
+    let (mut low, placed) = if placing {
+        let (mut out, r) =
+            shape_tools::place(std::slice::from_ref(&low), &place).map_err(failed)?;
+        (out.pop().unwrap_or_default(), Some(r.to_json()))
+    } else {
+        (low, None)
+    };
     let (unwrapped, map) = if low.uvs.is_none() || d.fresh_uvs {
         let uvs = shape_tools::unwrap(&mut low, &d.unwrap).map_err(failed)?;
         (report::unwrap(&uvs), None)
@@ -110,14 +135,20 @@ pub fn process_steps(
     );
     step(5)?;
     let output = write_solid(files, &mesh.name, &low, map, d.out.as_deref())?;
-    Ok(object(&[
+    let mut fields = vec![
         ("import", imported),
         ("repair", report::repair(&r)),
         ("decimate", dec),
+    ];
+    if let Some(p) = placed {
+        fields.push(("place", p));
+    }
+    fields.extend([
         ("unwrap", unwrapped),
         ("measures", m.to_json()),
         ("output", output),
-    ]))
+    ]);
+    Ok(object(&fields))
 }
 
 /// The command line.
@@ -126,6 +157,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
     known.extend(IMPORT_OPTIONS);
     known.extend(crate::repair::OPTIONS);
     known.extend(crate::unwrap::OPTIONS);
+    known.extend(crate::place::OPTIONS);
     a.only(&known)?;
     let mut repair = crate::repair::options(a)?;
     repair.check_intersections = false;
@@ -134,6 +166,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         &ProcessDesc {
             input: a.input()?,
             import: a.import()?,
+            place: crate::place::options(a)?,
             repair,
             budget: a.number("--budget")?.unwrap_or(0),
             unwrap: crate::unwrap::options(a)?,

@@ -10,7 +10,7 @@
 //! `notifications/cancelled` ([`serve`] says how).
 //!
 //! - [`tools`]: build, preview, measure, export, import, repair,
-//!   decimate, unwrap, process and run_typescript, each calling the
+//!   decimate, unwrap, place, process and run_typescript, each calling the
 //!   `shape_cli` command of the same name.
 //! - [`resources`]: the authoring guides (`guides/`).
 //! - [`Workspace`]: every path is confined to the root given at start,
@@ -57,8 +57,8 @@ const INSTRUCTIONS: &str = "og-shape: 3D modeling for LLMs. Write a model as a p
 (read resource og-shape://guides/shape.md first, then og-shape://guides/program.md \
 for the JSON form or og-shape://guides/typescript.md for TypeScript), then `build` or `run_typescript` it, \
 `preview` it and look, `measure` it, and `export` GLB, OBJ or STL. Meshes from elsewhere \
-(glb, gltf, obj, fbx) go through `import`, `repair`, `decimate`, `unwrap`, or the whole \
-chain with `process` (og-shape://guides/meshtools.md). Paths are relative to the \
+(glb, gltf, obj, fbx) go through `import`, `repair`, `decimate`, `unwrap`, `place` (up, \
+real size, base pivot), or the whole chain with `process` (og-shape://guides/meshtools.md). Paths are relative to the \
 workspace root. Tools report measurements, never verdicts: you judge them.";
 
 /// A JSON-RPC error.
