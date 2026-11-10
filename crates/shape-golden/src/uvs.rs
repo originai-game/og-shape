@@ -33,6 +33,18 @@ pub fn cases() -> Vec<Case> {
             name: "uvs.glb",
             run: glb_case,
         },
+        Case {
+            name: "uvs.generators2",
+            run: generators2,
+        },
+        Case {
+            name: "uvs.edits",
+            run: edits,
+        },
+        Case {
+            name: "uvs.program",
+            run: program,
+        },
     ]
 }
 
@@ -213,5 +225,200 @@ fn glb_case(h: &mut OutputHash) -> Result<(), HashError> {
         h.bytes(p.map.as_ref().map_or(&[][..], |t| &t.bytes));
         p.solid.hash_into(h)?;
     }
+    Ok(())
+}
+
+/// The generators stream Y gave UVs (`docs/research.md` §21.1).
+fn generators2(h: &mut OutputHash) -> Result<(), HashError> {
+    use shape_gen::body::{Body, View};
+    use shape_gen::parts::{GearDesc, Knurl};
+    use shape_gen::paths::{Loft, Sweep, Thread};
+    use shape_gen::wire::Wire;
+    let bar = rounded_bar()?;
+    let disc = shape_2d::circle(&shape_2d::Circle {
+        radius: 6.0,
+        segments: 20,
+    })
+    .map_err(fail)?;
+    let loft = Loft {
+        sections: vec![
+            (bar.clone(), 0.0),
+            (disc.clone(), 15.0),
+            (bar.clone(), 30.0),
+        ],
+        steps: 3,
+        ..Default::default()
+    };
+    let sweep = Sweep {
+        path: vec![
+            DVec3::ZERO,
+            DVec3::new(0.0, 0.0, 20.0),
+            DVec3::new(15.0, 0.0, 30.0),
+        ],
+        twist: 0.3,
+        scale_end: 0.6,
+        ..Default::default()
+    };
+    let wire = Wire {
+        path: vec![
+            DVec3::ZERO,
+            DVec3::new(30.0, 0.0, 0.0),
+            DVec3::new(30.0, 20.0, 5.0),
+        ],
+        diameter: 3.0,
+        fillet: 5.0,
+        segments: 12,
+        ..Default::default()
+    };
+    let ring = Wire {
+        closed: true,
+        fillet: 0.0,
+        ..wire.clone()
+    };
+    let body = Body {
+        plan: View::spline(&[[0.0, 4.0], [20.0, 10.0], [50.0, 6.0]]),
+        top: View::constant(6.0),
+        bottom: View::constant(-4.0),
+        ..Default::default()
+    };
+    let gens = [
+        Generator::Loft(&loft),
+        Generator::Sweep(&disc, &sweep),
+        Generator::Thread(Thread {
+            radius: 4.0,
+            pitch: 1.0,
+            length: 4.0,
+            depth: 0.0,
+        }),
+        Generator::Wire(&wire),
+        Generator::Wire(&ring),
+        Generator::Body(&body),
+        Generator::Knurl(Knurl {
+            diameter: 10.0,
+            height: 6.0,
+            pitch: 1.0,
+            straight: false,
+        }),
+        Generator::Gear(GearDesc {
+            teeth: 10,
+            module: 2.0,
+            width: 4.0,
+            bore: 4.0,
+            hub: 8.0,
+            hub_height: 2.0,
+            ..Default::default()
+        }),
+        Generator::Wedge(10.0, 6.0, 4.0),
+    ];
+    for g in &gens {
+        textured(g).map_err(fail)?.hash_into(h)?;
+    }
+    Ok(())
+}
+
+/// A textured plate through every edit and bevel that carries UVs.
+fn edits(h: &mut OutputHash) -> Result<(), HashError> {
+    use shape_core::Frame;
+    let plate = textured(&Generator::Extrude(
+        &rounded_bar()?,
+        Extrude {
+            height: 8.0,
+            ..Default::default()
+        },
+    ))
+    .map_err(fail)?;
+    let above = |x: f64| Frame {
+        origin: DVec3::new(x, 0.0, 20.0),
+        ..Frame::IDENTITY
+    };
+    let holed = shape_edit::hole(
+        &plate,
+        &shape_edit::Hole {
+            diameter: 4.0,
+            at: vec![above(-8.0)],
+            counterbore: (6.0, 2.0),
+            ..Default::default()
+        },
+    )
+    .map_err(fail)?;
+    holed.hash_into(h)?;
+    let pocketed = shape_edit::pocket(
+        &holed,
+        &shape_edit::Pocket {
+            profile: shape_2d::rect(&shape_2d::Rect {
+                width: 6.0,
+                height: 4.0,
+                radius: 0.0,
+            })
+            .map_err(fail)?,
+            depth: 3.0,
+            at: vec![above(7.0)],
+        },
+    )
+    .map_err(fail)?;
+    pocketed.hash_into(h)?;
+    let filleted = shape_bevel::fillet(
+        &plate,
+        &shape_bevel::Fillet {
+            radius: 0.8,
+            edges: vec!["bottom".into()],
+            ..Default::default()
+        },
+    )
+    .map_err(fail)?;
+    filleted.hash_into(h)?;
+    let chamfered = shape_bevel::chamfer(
+        &plate,
+        &shape_bevel::Chamfer {
+            distance: 1.0,
+            edges: vec!["top".into()],
+            ..Default::default()
+        },
+    )
+    .map_err(fail)?;
+    chamfered.hash_into(h)?;
+    let shelled = shape_edit::shell(
+        &plate,
+        &shape_edit::Shell {
+            thickness: 1.0,
+            open: vec!["top".into()],
+        },
+    )
+    .map_err(fail)?;
+    shelled.hash_into(h)?;
+    let dented = shape_edit::dent(
+        &plate,
+        &shape_edit::Dent {
+            at: vec![DVec3::new(0.0, 0.0, 8.0)],
+            radius: 4.0,
+            depth: 1.0,
+        },
+    )
+    .map_err(fail)?;
+    dented.hash_into(h)?;
+    let split = shape_edit::split(
+        &plate,
+        &Frame {
+            origin: DVec3::new(0.0, 0.0, 3.0),
+            ..Frame::IDENTITY
+        },
+        shape_edit::Keep::Below,
+    )
+    .map_err(fail)?;
+    split.hash_into(h)
+}
+
+const UV_PLATE: &str = include_str!("../../../golden/programs/uv_plate.json");
+const CHECKER: &[u8] = include_bytes!("../../../golden/programs/checker.png");
+
+/// The acceptance program (`golden/programs/uv_plate.json`, recorded by
+/// `crates/shape-wasm/ts/examples/uv_plate.ts`): its GLB and measures.
+fn program(h: &mut OutputHash) -> Result<(), HashError> {
+    use shape_model::program::{Fonts, run_files};
+    let mut textures = Fonts::new();
+    textures.insert("checker.png".into(), CHECKER.to_vec());
+    let m = run_files(UV_PLATE, &Fonts::new(), &textures).map_err(fail)?;
+    h.bytes(&m.glb().map_err(fail)?);
+    h.str(&shape_model::program::measures_json(&m).map_err(fail)?);
     Ok(())
 }

@@ -148,6 +148,12 @@ before joining: after a join, `edges: "top"` takes every operand's.
 - Give every part `s.material(part, { color: "#rrggbb", metalness?,
   roughness? })` once, before copying. A group's material reaches parts
   with none; `join` keeps the target's, so join only one colour.
+- **UVs** only when the asset will be textured: ask first
+  (`og.model({ uvs: true })`), so every part, cut and fillet has them.
+  Then `measure` each part's `uv`: `flipped` 0 (a `mirror`'s copy reads
+  mirrored), `zeroArea` near 0, `facesWithoutUvs` 0 on every boolean.
+  `coverage` and `overlap` are of the image after `mapSize`: UVs repeat,
+  so overlap is expected.
 - **Triangles**: the task's budget; without one, a few thousand for a
   prop and under about 20 000 for a large object. Round things cost most
   (24 to 64 segments a turn by size); give small or many round parts

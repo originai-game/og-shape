@@ -17,10 +17,11 @@ use std::collections::BTreeMap;
 
 use robust::{Coord3D, orient3d};
 use shape_2d::Profile;
-use shape_bool::{BoolError, BoolOp, Boolean, boolean};
+use shape_bool::{BoolError, BoolOp, Boolean, boolean, boolean_report};
+use shape_core::DVec2;
 use shape_core::{DVec3, Frame};
-use shape_gen::solids::{Extrude, GenError, extrude};
-use shape_mesh::{Solid, edge_key};
+use shape_gen::solids::{Extrude, GenError, Generator, extrude, textured};
+use shape_mesh::{CornerUvs, Solid, edge_key};
 
 /// Why an edit could not be honoured.
 #[derive(Clone, Debug, PartialEq)]
@@ -53,6 +54,10 @@ pub enum EditError {
     /// The solid is skinned: edits do not carry skins yet, and never drop
     /// one silently.
     Skinned,
+    /// The solid has UVs and the part it is cut with has none (the part
+    /// named), so the cut's new faces would have none: give the part UVs
+    /// too, or neither.
+    NoUvs(String),
 }
 
 impl From<BoolError> for EditError {
@@ -95,6 +100,11 @@ impl std::fmt::Display for EditError {
             EditError::Skinned => f.write_str(
                 "the solid is skinned; edits do not carry skins yet: edit first, then skin it",
             ),
+            EditError::NoUvs(what) => write!(
+                f,
+                "the solid has UVs and {what} has none, so the faces it cuts would have none: \
+                 give {what} UVs too (`uvs`), or neither"
+            ),
         }
     }
 }
@@ -112,6 +122,49 @@ fn unskinned(solids: &[&Solid]) -> Result<(), EditError> {
 /// Finite and above zero (NaN fails).
 fn positive(v: f64) -> bool {
     v.is_finite() && v > 0.0
+}
+
+/// A boolean of `s` with a tool, UVs kept as `s` has them: a tool's
+/// UVs are dropped when `s` has none (the result has none either), and a
+/// tool without UVs on a solid with them is refused ([`EditError::NoUvs`],
+/// naming `what`), never cut in with none.
+fn uv_boolean(s: &Solid, tool: &Solid, d: &Boolean, what: &str) -> Result<Solid, EditError> {
+    if s.uvs.is_none() && tool.uvs.is_some() {
+        let mut bare = tool.clone();
+        bare.uvs = None;
+        return Ok(boolean(s, &bare, d)?);
+    }
+    let (out, report) = if d.op == BoolOp::Cut {
+        boolean_report(s, &cut_tool_uvs(tool), d)?
+    } else {
+        boolean_report(s, tool, d)?
+    };
+    if report.faces_without_uvs > 0 {
+        return Err(EditError::NoUvs(what.into()));
+    }
+    Ok(out)
+}
+
+/// A cut turns the tool's faces inside out, and with them their UVs,
+/// which would then read mirrored seen from the cavity: the tool's u is
+/// negated first, so they read as the tool's own did from outside.
+pub fn cut_tool_uvs(tool: &Solid) -> Solid {
+    let mut t = tool.clone();
+    if let Some(uvs) = &mut t.uvs {
+        for q in uvs.iter_mut().flatten() {
+            q.x = -q.x;
+        }
+    }
+    t
+}
+
+/// An extrusion for a tool, with UVs when the solid it cuts has them.
+fn tool_extrude(profile: &shape_2d::Profile, d: &Extrude, uvs: bool) -> Result<Solid, GenError> {
+    if uvs {
+        textured(&Generator::Extrude(profile, *d))
+    } else {
+        extrude(profile, d)
+    }
 }
 
 fn size(s: &Solid) -> f64 {
@@ -214,17 +267,24 @@ pub fn split(s: &Solid, frame: &Frame, keep: Keep) -> Result<Solid, EditError> {
     unskinned(&[s])?;
     let l = 4.0 * size(s)
         + 4.0 * (frame.origin - s.positions.first().copied().unwrap_or_default()).length();
-    let half = shape_gen::solids::cuboid(&shape_gen::solids::BoxDesc {
+    let desc = shape_gen::solids::BoxDesc {
         width: 2.0 * l,
         depth: 2.0 * l,
         height: l,
-    })?;
+    };
+    // With UVs, the cut face takes the box's bottom: planar, in mm on the
+    // plane's own x and y.
+    let half = if s.uvs.is_some() {
+        textured(&Generator::Box(desc))?
+    } else {
+        shape_gen::solids::cuboid(&desc)?
+    };
     let tool = placed(half, frame);
     let op = match keep {
         Keep::Above => BoolOp::Intersect,
         Keep::Below => BoolOp::Cut,
     };
-    Ok(boolean(
+    uv_boolean(
         s,
         &tool,
         &Boolean {
@@ -232,7 +292,8 @@ pub fn split(s: &Solid, frame: &Frame, keep: Keep) -> Result<Solid, EditError> {
             target: "",
             tool: "split",
         },
-    )?)
+        "the split",
+    )
 }
 
 // ── hole ────────────────────────────────────────────────────────────────────
@@ -273,19 +334,21 @@ fn bore(
     depth: f64,
     over: f64,
     n: u32,
+    uvs: bool,
 ) -> Result<Solid, EditError> {
     let circle = shape_2d::circle(&shape_2d::Circle {
         radius: r_bottom,
         segments: n,
     })
     .map_err(GenError::from)?;
-    let c = extrude(
+    let c = tool_extrude(
         &circle,
         &Extrude {
             height: depth + over,
             taper: 1.0 - r_top / r_bottom,
             ..Default::default()
         },
+        uvs,
     )?;
     let f = Frame {
         origin: entry - axis.z * depth,
@@ -318,7 +381,8 @@ pub fn hole(s: &Solid, d: &Hole) -> Result<Solid, EditError> {
         // narrow end is the bore's own polygon.
         let widest = r.max(d.counterbore.0 / 2.0).max(d.countersink.0 / 2.0);
         let n = shape_2d::curve::segments(widest, shape_core::trig::TAU);
-        let mut tools = vec![bore(e, &axis, 0.0, r, r, depth, over, n)?];
+        let uvs = s.uvs.is_some();
+        let mut tools = vec![bore(e, &axis, 0.0, r, r, depth, over, n, uvs)?];
         let (cb_d, cb_depth) = d.counterbore;
         if cb_d > 0.0 && cb_depth > 0.0 {
             tools.push(bore(
@@ -330,6 +394,7 @@ pub fn hole(s: &Solid, d: &Hole) -> Result<Solid, EditError> {
                 cb_depth,
                 over,
                 n,
+                uvs,
             )?);
         }
         let (cs_d, cs_angle) = d.countersink;
@@ -352,10 +417,11 @@ pub fn hole(s: &Solid, d: &Hole) -> Result<Solid, EditError> {
                 h,
                 over,
                 n,
+                uvs,
             )?);
         }
         for t in tools {
-            out = boolean(
+            out = uv_boolean(
                 &out,
                 &t,
                 &Boolean {
@@ -363,6 +429,7 @@ pub fn hole(s: &Solid, d: &Hole) -> Result<Solid, EditError> {
                     target: "",
                     tool: "hole",
                 },
+                "the hole",
             )?;
         }
     }
@@ -398,18 +465,19 @@ pub fn pocket(s: &Solid, d: &Pocket) -> Result<Solid, EditError> {
         let axis = Frame::from_normal(DVec3::ZERO, f.z, f.x).ok_or(EditError::NoDirection("at"))?;
         let e = entry_of(&out, f, &axis, span)?;
         let depth = if d.depth > 0.0 { d.depth } else { 4.0 * span };
-        let tool = extrude(
+        let tool = tool_extrude(
             &d.profile,
             &Extrude {
                 height: depth + over,
                 ..Default::default()
             },
+            s.uvs.is_some(),
         )?;
         let frame = Frame {
             origin: e - axis.z * depth,
             ..axis
         };
-        out = boolean(
+        out = uv_boolean(
             &out,
             &placed(tool, &frame),
             &Boolean {
@@ -417,6 +485,7 @@ pub fn pocket(s: &Solid, d: &Pocket) -> Result<Solid, EditError> {
                 target: "",
                 tool: "pocket",
             },
+            "the pocket",
         )?;
     }
     Ok(out)
@@ -442,7 +511,7 @@ pub fn seat(host: &Solid, part: &Solid, part_name: &str) -> Result<Solid, EditEr
         Ok(v) if v.measure().volume <= 0.0 => return Err(EditError::NoOverlap),
         Ok(_) => {}
     }
-    Ok(boolean(
+    uv_boolean(
         host,
         part,
         &Boolean {
@@ -450,7 +519,8 @@ pub fn seat(host: &Solid, part: &Solid, part_name: &str) -> Result<Solid, EditEr
             target: "",
             tool: part_name,
         },
-    )?)
+        &format!("the part {part_name:?}"),
+    )
 }
 
 // ── shell ───────────────────────────────────────────────────────────────────
@@ -629,10 +699,12 @@ pub fn shell(s: &Solid, d: &Shell) -> Result<Solid, EditError> {
     for (i, tri) in s.triangles.iter().enumerate() {
         inner.push_triangle(*tri, s.surfaces[i], &["wall"]);
     }
+    // The inner walls take the outer ones' UVs, corner for corner.
+    inner.uvs.clone_from(&s.uvs);
     inner
         .canonicalize()
         .map_err(|_| EditError::NotPositive("thickness"))?;
-    Ok(boolean(
+    uv_boolean(
         s,
         &inner,
         &Boolean {
@@ -640,7 +712,8 @@ pub fn shell(s: &Solid, d: &Shell) -> Result<Solid, EditError> {
             target: "",
             tool: "shell",
         },
-    )?)
+        "the shell",
+    )
 }
 
 // ── dent ────────────────────────────────────────────────────────────────────
@@ -702,7 +775,15 @@ pub fn dent(s: &Solid, d: &Dent) -> Result<Solid, EditError> {
                 .collect();
             let m = [0, 1, 2].map(|k| split_at.get(&edge_key(t[k], t[(k + 1) % 3])).copied());
             for tri in split_triangle(*t, m) {
-                next.push_triangle(tri, out.surfaces[i], &tags);
+                match &out.uvs {
+                    // Each piece's corners are its triangle's corners or
+                    // midpoints of its edges: their UVs, or the means.
+                    Some(uvs) => {
+                        let uv = piece_uvs(*t, &uvs[i], tri, &split_at);
+                        next.push_triangle_uv(tri, out.surfaces[i], &tags, uv);
+                    }
+                    None => next.push_triangle(tri, out.surfaces[i], &tags),
+                }
             }
         }
         // Named edges: each half keeps the name.
@@ -754,6 +835,24 @@ pub fn dent(s: &Solid, d: &Dent) -> Result<Solid, EditError> {
     Ok(out)
 }
 
+/// The UVs of a piece of triangle `t` (UVs `uv`) whose corners are
+/// `t`'s corners or the midpoints `mid` gives of its edges.
+fn piece_uvs(
+    t: [u32; 3],
+    uv: &CornerUvs,
+    piece: [u32; 3],
+    mid: &BTreeMap<(u32, u32), u32>,
+) -> CornerUvs {
+    piece.map(|v| {
+        if let Some(k) = t.iter().position(|&x| x == v) {
+            return uv[k];
+        }
+        (0..3)
+            .find(|&k| mid.get(&edge_key(t[k], t[(k + 1) % 3])) == Some(&v))
+            .map_or(DVec2::ZERO, |k| (uv[k] + uv[(k + 1) % 3]) / 2.0)
+    })
+}
+
 /// A triangle with some edges split at the given midpoints, as 1 to 4
 /// triangles with the same winding.
 fn split_triangle(t: [u32; 3], m: [Option<u32>; 3]) -> Vec<[u32; 3]> {
@@ -782,7 +881,10 @@ fn split_triangle(t: [u32; 3], m: [Option<u32>; 3]) -> Vec<[u32; 3]> {
 /// One solid holding all the given ones, untouched: no boolean. Shells
 /// that touch stay separate; a later boolean fuses them first. Skins
 /// follow [`Solid::append`]: kept when every solid has the same skeleton,
-/// otherwise reported by [`shape_mesh::Skin::check`].
+/// otherwise reported by [`shape_mesh::Skin::check`]. UVs too: kept, and
+/// a solid without them among solids with them gets (0, 0) at every
+/// corner (zero-area UV triangles, which `measure` counts); `shape-model`
+/// refuses such a merge.
 pub fn merge(solids: &[&Solid]) -> Solid {
     let mut out = Solid::default();
     for s in solids {

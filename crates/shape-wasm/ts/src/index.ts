@@ -10,7 +10,9 @@
  * `og.rect`, `og.circle` and the others. A font for `og.text` is the
  * caller's: its bytes go to `og.model({ fonts })` under the name the
  * profile gives (for `shape build` to replay it, the font's path relative
- * to the program).
+ * to the program). Textures likewise: a material's `map` names an image
+ * whose bytes go to `og.model({ textures })`. UVs are asked for with
+ * `og.model({ uvs: true })` (every part) or `uvs: true` on a part.
  *
  * A desc field the kernel does not take is an error that names it and
  * lists the ones it takes. Every error thrown names the operation, its
@@ -66,6 +68,8 @@ export interface BoolReport {
   touchingEdges: number;
   /** Whether faces of one operand lie on or meet faces of the other. */
   touching: boolean;
+  /** Faces left without UVs: from the operand that had none, when the other had some. */
+  facesWithoutUvs: number;
 }
 
 /** A view of a `body`: one value, `[y, value]` points, or points on a spline. */
@@ -176,6 +180,8 @@ export class Frame implements FrameData {
 interface Placed {
   name: string;
   on?: FrameData;
+  /** UVs on this part (in the model's unit on the surface), or none; the model's `uvs` by default. */
+  uvs?: boolean;
 }
 
 export interface MaterialDesc {
@@ -189,6 +195,10 @@ export interface MaterialDesc {
   emissive?: string | Vec3;
   /** 1 by default; below 1 the material blends. */
   opacity?: number;
+  /** A base-colour image (PNG or JPEG) by the name its bytes were given to `og.model({ textures })`; the parts need UVs. */
+  map?: string;
+  /** Units of the parts' UVs (the model's unit) the map spans each way; 1 by default. */
+  mapSize?: number;
 }
 
 export type JointKind = "revolute" | "continuous" | "prismatic" | "fixed" | "floating";
@@ -562,10 +572,19 @@ function caller(m: WasmModel): Call {
 
 /** The loaded kernel. */
 export interface Og {
-  /** A new, empty model; `fonts` are font files' bytes under the names `og.text` gives. */
-  model(d: { name: string; units?: "mm" | "cm" | "m"; fonts?: Record<string, Uint8Array> }): Shape;
-  /** A model replayed from a recorded program, with the fonts it names. */
-  replay(program: string, d?: { fonts?: Record<string, Uint8Array> }): Shape;
+  /**
+   * A new, empty model; `fonts` are font files' bytes under the names `og.text` gives, `textures`
+   * images' bytes under the names materials' `map`s give; `uvs: true` gives every part UVs.
+   */
+  model(d: {
+    name: string;
+    units?: "mm" | "cm" | "m";
+    uvs?: boolean;
+    fonts?: Record<string, Uint8Array>;
+    textures?: Record<string, Uint8Array>;
+  }): Shape;
+  /** A model replayed from a recorded program, with the fonts and textures it names. */
+  replay(program: string, d?: { fonts?: Record<string, Uint8Array>; textures?: Record<string, Uint8Array> }): Shape;
   /** A frame at `origin` looking along `normal` (face axes), or with Y toward `up`. */
   frame(d: { origin?: Vec3; normal?: Vec3; up?: Vec3 }): Frame;
   /** The world frame. */
@@ -626,17 +645,21 @@ export async function load(wasm?: BufferSource | WebAssembly.Module): Promise<Og
   const call = caller(frames);
   const og: Og = {
     model(d) {
-      only("model", d, ["name", "units", "fonts"]);
+      only("model", d, ["name", "units", "uvs", "fonts", "textures"]);
       const m = new WasmModel(d.name);
       for (const [name, bytes] of Object.entries(d.fonts ?? {})) m.font(name, bytes);
+      for (const [name, bytes] of Object.entries(d.textures ?? {})) m.texture(name, bytes);
       const shape = new Shape(m, caller(m));
       if (d.units !== undefined) caller(m)("units", { unit: d.units });
+      if (d.uvs === true) caller(m)("uvs", {});
+      else if (d.uvs !== undefined && d.uvs !== false) located(new Error("model: uvs is true or false"));
       return shape;
     },
     replay(program, d = {}) {
-      only("replay", d, ["fonts"]);
+      only("replay", d, ["fonts", "textures"]);
       const m = new WasmModel("replay");
       for (const [name, bytes] of Object.entries(d.fonts ?? {})) m.font(name, bytes);
+      for (const [name, bytes] of Object.entries(d.textures ?? {})) m.texture(name, bytes);
       try {
         m.replay_into(program);
       } catch (e) {

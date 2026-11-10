@@ -11,7 +11,7 @@ use shape_2d::{Contour, Profile, ProfileError};
 use shape_core::{DVec2, DVec3, trig};
 use shape_mesh::Solid;
 
-use crate::solids::GenError;
+use crate::solids::{GenError, RingUvs, finish, push};
 
 pub use crate::loft::{Loft, LoftCurve, loft};
 
@@ -81,6 +81,14 @@ pub struct Sweep {
 /// Sweeps `profile` (in its xy plane, y towards `up`) along `d.path` with
 /// rotation-minimizing frames. The ends are capped `start` and `end`.
 pub fn sweep(profile: &Profile, d: &Sweep) -> Result<Solid, GenError> {
+    sweep_with(profile, d, false)
+}
+
+/// [`sweep`], with UVs when `uvs`: walls by [`RingUvs`] (u round each
+/// section, v along the path; the seam along the contour's first point),
+/// caps planar in the section's own placed coordinates (twisted and
+/// scaled as the section is there).
+pub(crate) fn sweep_with(profile: &Profile, d: &Sweep, uvs: bool) -> Result<Solid, GenError> {
     if profile.regions.is_empty() {
         return Err(ProfileError::Empty.into());
     }
@@ -96,11 +104,14 @@ pub fn sweep(profile: &Profile, d: &Sweep) -> Result<Solid, GenError> {
         along[i] = along[i - 1] + (d.path[i] - d.path[i - 1]).length();
     }
     let total = along[n - 1].max(f64::MIN_POSITIVE);
-    let place = |p: DVec2, i: usize| {
+    let local = |p: DVec2, i: usize| {
         let f = along[i] / total;
         let (s, c) = trig::sin_cos(d.twist * f);
         let k = 1.0 + (end_scale - 1.0) * f;
-        let q = DVec2::new(c * p.x - s * p.y, s * p.x + c * p.y) * k;
+        DVec2::new(c * p.x - s * p.y, s * p.x + c * p.y) * k
+    };
+    let place = |p: DVec2, i: usize| {
+        let q = local(p, i);
         let (t, r) = frames[i];
         let b = t.cross(r);
         // Profile x along the binormal, y along the normal.
@@ -118,13 +129,29 @@ pub fn sweep(profile: &Profile, d: &Sweep) -> Result<Solid, GenError> {
                     .collect()
             })
             .collect();
+        let grid = RingUvs::new(&s.positions, &rings, false);
         for (a, b) in contour_runs(c) {
             for j in a..b {
                 let (j0, j1) = (j % m, (j + 1) % m);
                 for i in 0..n - 1 {
                     let (p, q) = (&rings[i], &rings[i + 1]);
-                    s.push_triangle([p[j0], p[j1], q[j1]], surface, &["side"]);
-                    s.push_triangle([p[j0], q[j1], q[j0]], surface, &["side"]);
+                    let uv = |i: usize, j: usize| grid.at(i, j);
+                    push(
+                        &mut s,
+                        uvs,
+                        [p[j0], p[j1], q[j1]],
+                        surface,
+                        &["side"],
+                        [uv(i, j0), uv(i, j0 + 1), uv(i + 1, j0 + 1)],
+                    );
+                    push(
+                        &mut s,
+                        uvs,
+                        [p[j0], q[j1], q[j0]],
+                        surface,
+                        &["side"],
+                        [uv(i, j0), uv(i + 1, j0 + 1), uv(i + 1, j0)],
+                    );
                 }
             }
             surface += 1;
@@ -151,16 +178,23 @@ pub fn sweep(profile: &Profile, d: &Sweep) -> Result<Solid, GenError> {
         .map(|p| s.push_vertex(place(*p, n - 1)))
         .collect();
     for t in &fill.triangles {
-        s.push_triangle(
-            [
-                first[t[0] as usize],
-                first[t[2] as usize],
-                first[t[1] as usize],
-            ],
+        let b = [t[0], t[2], t[1]];
+        push(
+            &mut s,
+            uvs,
+            b.map(|i| first[i as usize]),
             0,
             &["start"],
+            b.map(|i| local(fill.points[i as usize], 0)),
         );
-        s.push_triangle(t.map(|i| last[i as usize]), 1, &["end"]);
+        push(
+            &mut s,
+            uvs,
+            t.map(|i| last[i as usize]),
+            1,
+            &["end"],
+            t.map(|i| local(fill.points[i as usize], n - 1)),
+        );
     }
     finish(s)
 }
@@ -177,17 +211,6 @@ fn contour_runs(c: &Contour) -> Vec<(usize, usize)> {
             (a, if b > a { b } else { b + n })
         })
         .collect()
-}
-
-fn finish(mut s: Solid) -> Result<Solid, GenError> {
-    if s.measure().volume < 0.0 {
-        for t in &mut s.triangles {
-            t.swap(1, 2);
-        }
-    }
-    s.canonicalize()
-        .map_err(|_| GenError::NotFinite("positions"))?;
-    Ok(s)
 }
 
 /// A helix about +z, starting at (radius, 0, 0), counter-clockwise seen
@@ -238,6 +261,11 @@ pub struct Thread {
 /// sinking 0.1 × depth below the root radius so a boolean join with a
 /// core of `radius - depth` fuses cleanly. Faces carry `thread` too.
 pub fn thread(d: &Thread) -> Result<Solid, GenError> {
+    thread_with(d, false)
+}
+
+/// [`thread`], with UVs when `uvs` (as [`sweep_with`] gives them).
+pub(crate) fn thread_with(d: &Thread, uvs: bool) -> Result<Solid, GenError> {
     if !(d.radius > 0.0 && d.pitch > 0.0 && d.length > 0.0) {
         return Err(GenError::NotPositive("radius, pitch, length"));
     }
@@ -264,13 +292,14 @@ pub fn thread(d: &Thread) -> Result<Solid, GenError> {
         DVec2::new(0.0, 1.1 * depth),
     ]));
     let start_radial = DVec3::X;
-    let mut s = sweep(
+    let mut s = sweep_with(
         &tri,
         &Sweep {
             path,
             up: start_radial,
             ..Default::default()
         },
+        uvs,
     )?;
     s.tag_all_faces("thread");
     s.canonicalize()

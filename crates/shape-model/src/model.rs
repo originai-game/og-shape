@@ -80,8 +80,9 @@ struct Node {
     placement: Frame,
     /// The group it is in.
     parent: Option<Id>,
-    /// Its own material, if one was set on it.
-    material: Option<Material>,
+    /// Its own material, if one was set on it, with the size (in the
+    /// model's unit) its map spans.
+    material: Option<(Material, f64)>,
     /// Named frames an assembly publishes, in the world.
     anchors: BTreeMap<String, Frame>,
     used_up: bool,
@@ -193,6 +194,7 @@ pub struct Model {
     nodes: Vec<Node>,
     joints: Vec<JointRec>,
     booleans: Vec<BoolRecord>,
+    uvs: bool,
 }
 
 /// How [`Model::combine`] runs a boolean: a zero-value desc (a join, not
@@ -784,6 +786,26 @@ impl Model {
     /// `material` on each node: a group's reaches every part under it
     /// that names none of its own (the nearest wins).
     pub fn material(&mut self, ids: &[Id], material: &Material) -> Result<(), ModelError> {
+        self.material_mapped(ids, material, 1.0)
+    }
+
+    /// [`Model::material`] with its map (`material.map`, a base-colour
+    /// texture) spanning `map_size` units of the parts' UVs, which are in
+    /// the model's unit: export and measure divide the UVs of the parts
+    /// it reaches by `map_size`, so the image covers that many units each
+    /// way and repeats beyond. Refused: a size that is not positive, or a
+    /// map on a part with no UVs.
+    pub fn material_mapped(
+        &mut self,
+        ids: &[Id],
+        material: &Material,
+        map_size: f64,
+    ) -> Result<(), ModelError> {
+        if !(map_size.is_finite() && map_size > 0.0) {
+            return Err(ModelError::BadValue(
+                "mapSize (the units the map spans; positive)".into(),
+            ));
+        }
         let m = material;
         for v in m
             .color
@@ -801,13 +823,33 @@ impl Model {
         for &id in ids {
             self.node(id)?;
         }
+        if m.map.is_some() {
+            for &id in ids {
+                for i in self.subtree(id) {
+                    let n = &self.nodes[i.0 as usize];
+                    if n.solid.as_ref().is_some_and(|s| s.uvs.is_none()) {
+                        return Err(ModelError::Refused(
+                            n.name.clone(),
+                            "a material with a map needs UVs on the parts it reaches: give the \
+                             part `uvs: true` (or the model `uvs`) when it is made"
+                                .into(),
+                        ));
+                    }
+                }
+            }
+        }
         for &id in ids {
-            self.nodes[id.0 as usize].material = Some(material.clone());
+            self.nodes[id.0 as usize].material = Some((material.clone(), map_size));
         }
         Ok(())
     }
 
     fn material_of(&self, id: Id) -> Material {
+        self.mapped_of(id).0
+    }
+
+    /// The nearest material and the size its map spans.
+    fn mapped_of(&self, id: Id) -> (Material, f64) {
         let mut at = Some(id);
         while let Some(i) = at {
             let n = &self.nodes[i.0 as usize];
@@ -816,7 +858,48 @@ impl Model {
             }
             at = n.parent;
         }
-        Material::default()
+        (Material::default(), 1.0)
+    }
+
+    /// Asks for UVs on every part made from now on (`docs/design.md` §4):
+    /// generators give them in the model's unit on the surface. Refused
+    /// while a part without UVs exists: give it `uvs` itself when it is
+    /// made, or ask first.
+    pub fn ask_uvs(&mut self) -> Result<(), ModelError> {
+        if let Some(n) = self
+            .nodes
+            .iter()
+            .find(|n| !n.used_up && n.solid.as_ref().is_some_and(|s| s.uvs.is_none()))
+        {
+            return Err(ModelError::Refused(
+                n.name.clone(),
+                "it was made without UVs: ask for UVs before the first part, or give each part \
+                 `uvs: true`"
+                    .into(),
+            ));
+        }
+        self.uvs = true;
+        Ok(())
+    }
+
+    /// Whether parts get UVs unless they say otherwise ([`Model::ask_uvs`]).
+    pub fn wants_uvs(&self) -> bool {
+        self.uvs
+    }
+
+    /// UV measures of part `name` as exported: its UVs divided by its
+    /// material's map size (`shape_tools::measure`). `None` for a part
+    /// without UVs or no such part.
+    pub fn uv_measures(&self, name: &str) -> Option<shape_tools::UvMeasures> {
+        let id = self.find(name)?;
+        let mut s = self.solid_of(id).ok()?.clone();
+        let (material, size) = self.mapped_of(id);
+        if material.map.is_some() && size != 1.0 {
+            for q in s.uvs.as_mut()?.iter_mut().flatten() {
+                *q /= size;
+            }
+        }
+        shape_tools::measure(&s, &shape_tools::Measure::default()).uv
     }
 
     // ── edits ────────────────────────────────────────────────────────────────
@@ -882,7 +965,12 @@ impl Model {
         self.solid_of(target)?;
         self.solid_of(tool)?;
         self.usable(tool, target)?;
-        let t = self.tool_in(tool, target)?;
+        let mut t = self.tool_in(tool, target)?;
+        if d.op == BoolOp::Cut {
+            // The cut turns the tool's faces inside out; its UVs would
+            // read mirrored from the cavity (`shape_edit::cut_tool_uvs`).
+            t = shape_edit::cut_tool_uvs(&t);
+        }
         let (tn, un) = (
             self.nodes[target.0 as usize].name.clone(),
             self.nodes[tool.0 as usize].name.clone(),
@@ -964,6 +1052,14 @@ impl Model {
         self.solid_of(tool)?;
         self.usable(tool, target)?;
         let t = self.tool_in(tool, target)?;
+        if t.uvs.is_some() != self.solid_of(target)?.uvs.is_some() {
+            let without = if t.uvs.is_none() { tool } else { target };
+            return Err(ModelError::Refused(
+                self.nodes[without.0 as usize].name.clone(),
+                "it has no UVs and the part it would merge with has: give both UVs, or neither"
+                    .into(),
+            ));
+        }
         self.edit(target, |s, _| Ok(shape_edit::merge(&[s, &t])))?;
         self.nodes[tool.0 as usize].used_up = true;
         Ok(())
@@ -1650,6 +1746,16 @@ impl Model {
         let mut s = self.world_solid(id)?;
         if k != 1.0 {
             s.map_positions(|p| p * k, false);
+        }
+        // A map spanning `size` units: UVs in images, not units.
+        let (material, size) = self.mapped_of(id);
+        if material.map.is_some()
+            && size != 1.0
+            && let Some(uvs) = &mut s.uvs
+        {
+            for q in uvs.iter_mut().flatten() {
+                *q /= size;
+            }
         }
         Ok(s)
     }

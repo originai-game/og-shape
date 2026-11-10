@@ -11,7 +11,7 @@ use shape_tools::Measure;
 
 use crate::args::{Args, IMPORT_OPTIONS};
 use crate::report::{array, object, string};
-use crate::source::{Local, Mesh, Source, load};
+use crate::source::{Local, Mesh, Source, load_uvs};
 use crate::{Failure, failed};
 
 /// What to measure besides the defaults. The zero value skips the exact
@@ -85,8 +85,9 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         IMPORT_OPTIONS[1],
         "--intersections",
         "--posed",
+        "--uvs",
     ])?;
-    let source = load(&Local, &a.input()?, &a.import()?)?;
+    let source = load_uvs(&Local, &a.input()?, &a.import()?, a.switch("--uvs"))?;
     if a.switch("--posed") {
         return measure_posed(&source);
     }

@@ -95,9 +95,13 @@ atlas packing. Each can be added later without changing the API.
     with its vertex, on its own side of any seam.
   - Booleans interpolate UVs inside each source face, so cut faces keep
     their mapping; faces from an operand without UVs are counted.
-  - Generators give UVs in millimetres on request (caps planar, walls by
-    arc length and height). Bevels refuse a solid with UVs until they
-    interpolate them (mean-value coordinates from the boundary).
+  - Generators give UVs in the model's unit on request (caps planar,
+    walls by arc length round and along); a program asks with `uvs`.
+    Bevels re-fit trimmed faces and give new faces the map of the old
+    face each faces most (`docs/research.md` §21).
+  - Edits build their tools with UVs; a tool without them on a solid
+    with them is refused, and a cut's tool UVs are mirrored so the
+    cavity reads right.
   - A tool that cannot keep UVs refuses or reports; it never drops them
     silently.
 - **Names.** Every face and edge carries a set of tags. sand3d's rules are

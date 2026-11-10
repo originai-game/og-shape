@@ -21,7 +21,7 @@ use shape_2d::{Contour, Profile, Superellipse, superellipse};
 use shape_core::{DVec2, DVec3, trig};
 use shape_mesh::Solid;
 
-use crate::solids::{GenError, finish};
+use crate::solids::{GenError, RingUvs, finish, push};
 use crate::spline;
 
 /// One view of a [`Body`]: a value along the body's length.
@@ -205,6 +205,13 @@ impl Reader {
 
 /// A solid along +y from its views; see the module.
 pub fn body(d: &Body) -> Result<Solid, GenError> {
+    body_with(d, false)
+}
+
+/// [`body`], with UVs when `uvs`: the wall by [`RingUvs`] (u round each
+/// section from its point at +x, v along the body; the seam runs along
+/// +x), flat ends planar in the section's own (x, z − centre).
+pub(crate) fn body_with(d: &Body, uvs: bool) -> Result<Solid, GenError> {
     let plan = Reader::new(&d.plan, "plan")?;
     let top = Reader::new(&d.top, "top")?;
     let bottom = Reader::new(&d.bottom, "bottom")?;
@@ -345,12 +352,28 @@ pub fn body(d: &Body) -> Result<Solid, GenError> {
         }
     }
     let n = count as usize;
-    for w in rings.windows(2) {
+    let grid = RingUvs::new(&s.positions, &rings, false);
+    for (i, w) in rings.windows(2).enumerate() {
         let (lo, hi) = (&w[0], &w[1]);
         for k in 0..n {
             let k1 = (k + 1) % n;
-            s.push_triangle([lo[k], hi[k1], lo[k1]], 2, &["side"]);
-            s.push_triangle([lo[k], hi[k], hi[k1]], 2, &["side"]);
+            let uv = |x: usize, y: usize| grid.at(i + x, k + y);
+            push(
+                &mut s,
+                uvs,
+                [lo[k], hi[k1], lo[k1]],
+                2,
+                &["side"],
+                [uv(0, 0), uv(1, 1), uv(0, 1)],
+            );
+            push(
+                &mut s,
+                uvs,
+                [lo[k], hi[k], hi[k1]],
+                2,
+                &["side"],
+                [uv(0, 0), uv(1, 0), uv(1, 1)],
+            );
         }
     }
     // Flat ends: the section filled, `start` facing −y, `end` facing +y.
@@ -368,7 +391,15 @@ pub fn body(d: &Body) -> Result<Solid, GenError> {
         for t in &fill.triangles {
             // Counter-clockwise in (x, z) faces −y.
             let t = if i == 0 { *t } else { [t[0], t[2], t[1]] };
-            s.push_triangle(t.map(|v| ids[v as usize]), surface, &[name]);
+            let uv = t.map(|v| fill.points[v as usize]);
+            push(
+                &mut s,
+                uvs,
+                t.map(|v| ids[v as usize]),
+                surface,
+                &[name],
+                uv,
+            );
         }
         let ring = &rings[i];
         for k in 0..n {

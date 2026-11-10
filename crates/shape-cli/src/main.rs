@@ -22,7 +22,9 @@
 //!
 //! An input is a program (the JSON a binding records,
 //! `shape_model::program`) or a mesh file (`.glb`, `.gltf`, `.obj`,
-//! `.fbx`; OBJ with `--unit-mm MM` and `--z-up`). Reports go to stdout
+//! `.fbx`; OBJ with `--unit-mm MM` and `--z-up`). `--uvs` on `build`,
+//! `export`, `measure` and `preview` replays a program as if it began
+//! with the `uvs` operation, so every part it makes has UVs. Reports go to stdout
 //! as JSON with no thresholds; errors go to stderr with exit status 1 (2
 //! for a usage error). Each subcommand is one module of the `shape_cli`
 //! library, which the MCP server (`shape-mcp`) calls too.
@@ -34,7 +36,8 @@ use shape_cli::args::Args;
 
 const USAGE: &str = "usage: shape <command> <input> [options]
   an input is a program (.json) or a mesh file (.glb .gltf .obj .fbx);
-  OBJ takes --unit-mm MM (default metres) and --z-up
+  OBJ takes --unit-mm MM (default metres) and --z-up; a program takes --uvs
+  (build, export, measure, preview): every part it makes gets UVs
   build    <program.json>                       report the built model as JSON
   export   <input> -o <out.glb|obj|stl>         write the posed model or the mesh;
                                                 OBJ and STL at the pose if one is set

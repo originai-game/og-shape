@@ -109,6 +109,7 @@ the bytes under that name (`guides/typescript.md`).
 | op | fields | does |
 |---|---|---|
 | `units` | `unit`: `"mm"`, `"cm"`, `"m"` | the model's unit |
+| `uvs` | | every part made after it gets UVs; refused once a part without them exists |
 | `box` | `name`, `width` (x), `depth` (y), `height` (z), `on`? | centred in x and y, from z = 0 up |
 | `cylinder` | `name`, `radius`, `height`, `radiusTop`?, `segments`?, `on`? | on z = 0 about z; `radiusTop` makes a frustum |
 | `cone` | `name`, `radius`, `height`, `segments`?, `on`? | |
@@ -126,6 +127,13 @@ the bytes under that name (`guides/typescript.md`).
 | `body` | `name`, `plan`, `top`, `bottom`, `n`?, `on`? | along +y from views: a number, `[[y, v], …]`, or `{"points", "smooth"}` |
 | `knurl` | `name`, `diameter`, `height`, `pitch`?, `straight`?, `on`? | a grip about +z |
 | `gear` | `name`, `teeth`, `module`, `width`, `pressureAngle`?, `bore`?, `hub`?, `hubHeight`?, `on`? | a spur gear about +z; `bore`, `hub` diameters |
+
+Every generator also takes `uvs`? (`true` or `false`; the `uvs` op's
+choice by default): UVs in the model's unit on the surface (caps flat,
+walls by arc length round and along).
+
+| op | fields | does |
+|---|---|---|
 | `at` | `id`, `frame` | puts the part's own space on `frame` |
 | `transform` | `id`, `frame` | moves it by a rigid motion of the world |
 | `group` | `name`, `children` (ids) | |
@@ -133,8 +141,8 @@ the bytes under that name (`guides/typescript.md`).
 | `attach` | `to`, `name`, `children` | |
 | `copy` | `id`, `name` | its joints come too, renamed `hinge.001`…, at the same pose |
 | `mirror` | `id`, `plane` (a frame; mirrors across its xy), `name` | joints too: the image of each motion; the same value poses the image |
-| `cut`, `join`, `intersect` | `target`, `tool`, `check`? | the tool is used up; answers `voids`, `touchingEdges`, `touching`; `check` first refuses an operand that passes through itself |
-| `merge` | `target`, `tool` | the tool's solid added as it is, no boolean; the tool is used up |
+| `cut`, `join`, `intersect` | `target`, `tool`, `check`? | the tool is used up; answers `voids`, `touchingEdges`, `touching`, `facesWithoutUvs`; `check` first refuses an operand that passes through itself |
+| `merge` | `target`, `tool` | the tool's solid added as it is, no boolean; the tool is used up; refused when one has UVs and the other not |
 | `delete` | `id` | removes it and all under it, and joints hanging what goes |
 | `seat` | `host`, `part` | cuts `part`'s volume out of `host`; `part` stays |
 | `scale` | `id`, `x`?, `y`?, `z`? | along its own axes about its own origin; 0 keeps 1 |
@@ -146,7 +154,7 @@ the bytes under that name (`guides/typescript.md`).
 | `fillet` | `id`, `radius`, `edges`?, `segments`?, `profile`? | rounds edges |
 | `chamfer` | `id`, `distance`, `distance2`?, `angle`?, `edges`?, `segments`? | |
 | `soften` | `id`, `radius`, `angle`? (30° by default), `edges`?, `segments`? | rounds every edge sharper than `angle` |
-| `material` | `ids`, `name`?, `color`? (`"#rrggbb"` or `[r, g, b]`), `metalness`?, `roughness`?, `emissive`?, `opacity`? | glTF metallic-roughness |
+| `material` | `ids`, `name`?, `color`? (`"#rrggbb"` or `[r, g, b]`), `metalness`?, `roughness`?, `emissive`?, `opacity`?, `map`? (an image's file name, PNG or JPEG, read beside the program; the parts need UVs), `mapSize`? (units the image spans; 1) | glTF metallic-roughness |
 | `joint` | `child`, `parent`, `name`, `kind`? (`revolute`, `continuous`, `prismatic`, `fixed`, `floating`), `on` (the pivot frame), `axis`? (`"+X"`… or `[x, y, z]`; `on`'s z by default), `range`? `[lo, hi]`, `mimic`? `{"joint", "multiplier"}` | revolute and prismatic need a range containing 0 |
 | `pose` | `joint`, `value` | posed in export, preview and `measure` with `posed` |
 
@@ -169,6 +177,11 @@ model's OBJ and STL are written at the pose (the header ends `posed`);
 its GLB keeps rest meshes and the pose in its joint nodes.
 `build` also lists every boolean with the voids it left and the edges
 where its operands touch (`touchingEdges` > 0: not closed there).
+A part with UVs adds `uv`: `coverage` and `overlap` (shares of the
+image, after `mapSize`), `flipped` and `zeroArea` (triangles mirrored or
+flat in UV), `outside`, `overlappingPairs`, `area`; the model,
+`uvCoverage` and `uvOverlap`. A boolean's `facesWithoutUvs` counts faces
+from an operand made without UVs.
 Want `closed: true` and no non-manifold edges on every part. An error
 names the operation's index, its verb and part (`op 3 fillet "lid": …`)
 and what was wrong.

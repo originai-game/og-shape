@@ -248,3 +248,26 @@ fn operations_that_do_not_carry_skins_refuse_them() {
     assert_eq!(pieces.len(), 1);
     assert_eq!(pieces[0], s);
 }
+
+#[test]
+fn refining_a_band_keeps_uvs_on_their_surface() {
+    // The arm with UVs as an affine function of position on each face:
+    // every corner the refinement adds must carry that function's value
+    // (a midpoint of its triangle's edge).
+    let mut a = arm();
+    let f = |p: DVec3| shape_core::DVec2::new(p.x + 0.5 * p.z, p.y - 0.25 * p.z);
+    a.uvs = Some(
+        a.triangles
+            .iter()
+            .map(|t| t.map(|v| f(a.positions[v as usize])))
+            .collect(),
+    );
+    let s = skin(&a, &rig(20.0)).unwrap();
+    assert!(s.triangles.len() > a.triangles.len());
+    let uvs = s.uvs.as_ref().unwrap();
+    for (t, uv) in s.triangles.iter().zip(uvs) {
+        for k in 0..3 {
+            assert!((uv[k] - f(s.positions[t[k] as usize])).length() < 1e-9);
+        }
+    }
+}

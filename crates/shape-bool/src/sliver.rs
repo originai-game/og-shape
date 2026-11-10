@@ -136,7 +136,8 @@ pub(crate) fn flip(points: &[DVec3], w: &[u32], tris: &[[u32; 3]]) -> Vec<([u32;
 
 /// Removes `s`'s slivers (the module's rule): each half keeps its
 /// triangle's surface and face names, and a name on a split edge goes to
-/// both its pieces. Returns whether anything changed; the solid is
+/// both its pieces, and UVs are interpolated in each piece's triangle.
+/// Returns whether anything changed; the solid is
 /// untouched when nothing did. Vertices are not renumbered, so call
 /// [`Solid::canonicalize`] after if order matters.
 pub fn drop_slivers(s: &mut Solid) -> bool {
@@ -208,6 +209,20 @@ pub fn drop_slivers(s: &mut Solid) -> bool {
             }
         }
     }
+    // UVs: each piece lies in its source triangle; a corner is one of
+    // its corners or a point on one of its edges, interpolated there.
+    if s.uvs.is_some() {
+        let uvs: Vec<_> = out
+            .iter()
+            .map(|&(t, src)| {
+                t.map(|v| {
+                    s.uv_at(src, s.positions[v as usize])
+                        .unwrap_or(s.uvs.as_ref().map_or(Default::default(), |u| u[src][0]))
+                })
+            })
+            .collect();
+        s.uvs = Some(uvs);
+    }
     s.surfaces = out.iter().map(|&(_, src)| s.surfaces[src]).collect();
     s.face_tags = out
         .iter()
@@ -244,6 +259,14 @@ mod tests {
         s.push_triangle([a, b, m], 1, &["front"]);
         let tag = s.names.intern("rim");
         s.edge_tags.insert((a.min(b), a.max(b)), vec![tag]);
+        // UVs an affine function of position: the halves keep it.
+        let f = |p: DVec3| glam::DVec2::new(p.x + 2.0 * p.z, p.y - p.x);
+        s.uvs = Some(
+            s.triangles
+                .iter()
+                .map(|t| t.map(|v| f(s.positions[v as usize])))
+                .collect(),
+        );
         let before = s.measure();
         assert!(before.closed && before.degenerate_triangles == 1);
         assert!(drop_slivers(&mut s));
@@ -252,6 +275,11 @@ mod tests {
         assert_eq!(s.triangles.len(), 6);
         assert_eq!(after.volume, before.volume);
         assert_eq!(s.edge_tags.len(), 2);
+        for (t, uv) in s.triangles.iter().zip(s.uvs.as_ref().unwrap()) {
+            for k in 0..3 {
+                assert_eq!(uv[k], f(s.positions[t[k] as usize]));
+            }
+        }
         assert!(!drop_slivers(&mut s));
     }
 }

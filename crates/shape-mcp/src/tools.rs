@@ -20,7 +20,7 @@ use shape_cli::preview::{PreviewDesc, render};
 use shape_cli::process::{ProcessDesc, STEPS, process_steps};
 use shape_cli::repair::{RepairDesc, repair};
 use shape_cli::report::{object, string};
-use shape_cli::source::{Source, load};
+use shape_cli::source::{Source, load, load_uvs};
 use shape_cli::unwrap::{UnwrapDesc, unwrap};
 use shape_cli::{Failure, Files, Input};
 use shape_tools::{Decimate, Floaters, Import, Preview, Repair, Unwrap};
@@ -43,7 +43,8 @@ const TOOLS: [Tool; 10] = [
     Tool {
         name: "build",
         description: "Build a model program (the JSON form of resource og-shape://guides/program.md) \
-            and report its parts, joints, booleans (voids left, edges where operands touch) and \
+            and report its parts, joints, booleans (voids left, edges where operands touch, faces \
+            left without UVs) and \
             measures (counts, bounds, area, volume, closed, non-manifold edges; no thresholds). \
             Give `program` inline or a `.json` `path` in the workspace; fonts that `text` \
             profiles name are read relative to the program (the workspace root for an inline \
@@ -384,6 +385,14 @@ fn program_props() -> Vec<(&'static str, Value)> {
                  (.glb, .gltf, .obj, .fbx).",
             ),
         ),
+        (
+            "uvs",
+            boolean(
+                "A program: every part it makes gets UVs, as if it began with the `uvs` \
+                 operation (og-shape://guides/program.md). Textures a material's `map` names \
+                 are read relative to the program.",
+            ),
+        ),
     ]
 }
 
@@ -625,7 +634,7 @@ fn ts_schema() -> Value {
 // ── handlers ──
 
 fn loaded(server: &Server, a: &Args) -> Result<Source, Failure> {
-    load(&server.ws, &a.input(server)?, &a.import()?)
+    load_uvs(&server.ws, &a.input(server)?, &a.import()?, a.flag("uvs")?)
 }
 
 fn build_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {

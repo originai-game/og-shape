@@ -19,7 +19,7 @@ use shape_2d::{Contour, Profile};
 use shape_core::{DVec2, DVec3, trig};
 use shape_mesh::Solid;
 
-use crate::solids::{GenError, count, finish, positive, segments_field};
+use crate::solids::{GenError, RingUvs, count, finish, positive, push, segments_field};
 
 /// A round wire along a path.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -197,6 +197,15 @@ fn carry(r: DVec3, u: DVec3, v: DVec3) -> DVec3 {
 
 /// A round wire of `diameter` along `path`; see the module.
 pub fn wire(d: &Wire) -> Result<Solid, GenError> {
+    wire_with(d, false)
+}
+
+/// [`wire`], with UVs when `uvs`: the wall by [`RingUvs`] (u round the
+/// wire from the ring's first point, v along it; the seam runs along the
+/// first point, and a closed wire has a second across its first ring),
+/// the end caps planar in the ring's own circle (x along the run's
+/// normal, y along its binormal).
+pub(crate) fn wire_with(d: &Wire, uvs: bool) -> Result<Solid, GenError> {
     let radius = positive(d.diameter, "diameter")? / 2.0;
     segments_field(d.segments, "segments")?;
     let (p, sharp) = bent(d, radius)?;
@@ -282,6 +291,7 @@ pub fn wire(d: &Wire) -> Result<Solid, GenError> {
     let total_sharp = sharp.iter().skip(1).filter(|&&f| f).count();
     let mut sid = 0;
     let n = n as usize;
+    let grid = RingUvs::new(&s.positions, &rings, d.closed);
     for i in 0..sides {
         if i > 0 && sharp[i] {
             sid += 1;
@@ -294,8 +304,23 @@ pub fn wire(d: &Wire) -> Result<Solid, GenError> {
         let (a, b) = (&rings[i], &rings[(i + 1) % m]);
         for k in 0..n {
             let k1 = (k + 1) % n;
-            s.push_triangle([a[k], a[k1], b[k1]], surface, &["side"]);
-            s.push_triangle([a[k], b[k1], b[k]], surface, &["side"]);
+            let uv = |x: usize, y: usize| grid.at(i + x, k + y);
+            push(
+                &mut s,
+                uvs,
+                [a[k], a[k1], b[k1]],
+                surface,
+                &["side"],
+                [uv(0, 0), uv(0, 1), uv(1, 1)],
+            );
+            push(
+                &mut s,
+                uvs,
+                [a[k], b[k1], b[k]],
+                surface,
+                &["side"],
+                [uv(0, 0), uv(1, 1), uv(1, 0)],
+            );
         }
     }
     for (i, ring) in rings.iter().enumerate() {
@@ -320,7 +345,15 @@ pub fn wire(d: &Wire) -> Result<Solid, GenError> {
                 } else {
                     *tri
                 };
-                s.push_triangle(tri.map(|i| ids[i as usize]), surface, &[name]);
+                let uv = tri.map(|i| fill.points[i as usize]);
+                push(
+                    &mut s,
+                    uvs,
+                    tri.map(|i| ids[i as usize]),
+                    surface,
+                    &[name],
+                    uv,
+                );
             }
             let ring = &rings[end];
             for k in 0..n {
