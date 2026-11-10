@@ -99,6 +99,9 @@ pub(crate) fn flip(points: &[DVec3], w: &[u32], tris: &[[u32; 3]]) -> Vec<([u32;
         }
         i += 1;
     }
+    if halves.is_empty() {
+        return out;
+    }
     // A half facing the other way on another triangle's corners: a fin.
     let key = |t: [u32; 3]| {
         let t = wid(t);
@@ -137,6 +140,13 @@ pub(crate) fn flip(points: &[DVec3], w: &[u32], tris: &[[u32; 3]]) -> Vec<([u32;
 /// untouched when nothing did. Vertices are not renumbered, so call
 /// [`Solid::canonicalize`] after if order matters.
 pub fn drop_slivers(s: &mut Solid) -> bool {
+    let any = s.triangles.iter().any(|t| {
+        let p = t.map(|v| s.positions[v as usize]);
+        p[0] != p[1] && p[1] != p[2] && p[0] != p[2] && on_line(p)
+    });
+    if !any {
+        return false;
+    }
     let mut at: BTreeMap<[u64; 3], u32> = BTreeMap::new();
     let w: Vec<u32> = s
         .positions
