@@ -5889,3 +5889,123 @@ clean now). Not turned on; its cost is §5.2's.
 - The tilted cut of §25.4 is found, not refused or fixed.
 - Every new hash is checked natively (x86-64) and as wasm32 under
   wasmtime by the gate here; aarch64 and Windows run in CI only.
+
+## 26. The built part that crossed itself (stream AE)
+
+Base 514c386. Every side is still decided by `orient3d` and `orient2d`;
+the one distance used is the boolean's snap distance (2⁻⁴⁰ of the box
+diagonal, §18.1, §23.2), and only to decide where to look.
+
+### 26.1 The mouse's shell
+
+`eval/phase6/Z/Z1/sim2_mouse_and_pad`'s `mouse_shell` (a `body` placed at
+(10, 15, 4), cut by a box and by an extruded ellipse) was returned with 8
+crossing pairs. Replayed op by op (the part's world solid after each op):
+`body` 0, `box` 0, the first `cut` (the wheel slot) **8**, every later op
+8. The same three ops with every frame moved back by (10, 15, 4), so the
+part is built at the world's origin: the cut gives 0 pairs (2 904
+triangles). So the cut is clean in the part's own frame. The **move into
+the world** (`shape-model`'s `placed`) folds it, not `body`, the boolean,
+or the bevel. The later `fillet` is on another part.
+
+**The pairs.** All lie in the slot's end wall, the plane y = 35, which
+the move keeps exact. Two cut points on the shell's top edge, at x ≈
+11.888 and z ≈ 36.320, lie 3.6·10⁻¹⁵ apart (one ulp in x; in z the move
+rounded them equal). The needles between them, two triangles with an
+edge 3.6·10⁻¹⁵ long, turn over their neighbours: a sliver of the top
+surface lying in the wall's plane (6.3 long, 6·10⁻⁵ wide) and the wall's
+triangle to the slot's corner (13.75, 35, 25.5). This is rounding scale,
+not real geometry. The move also merged one other pair of points
+(`canonicalize`, 1 454 → 1 453 vertices).
+
+**The smallest program** is the shell's `body`, the slot's `box` and one
+`cut`: `golden/programs/placed_slot.json`.
+
+### 26.2 `placed`, and the cup of §25.3
+
+A motion (`at`, an `on` frame, a turn) rounds every position. Two points
+a rounding error apart cannot keep their relative position through it,
+so a needle between them can turn over. `placed` already dropped needles
+rounded exactly onto one line (`drop_slivers`, §15.4: each is flipped
+away, exactly). Now it also repairs the near ones:
+
+- **Where it looks.** Only where the moved solid has a triangle that
+  rounding can turn over: an edge shorter than the snap distance, or a
+  corner within it of the opposite (longest) edge's line. A fold of
+  triangles that share an edge or a vertex needs one of the two. On such
+  a solid its crossing pairs are counted (`crossing_pairs`, exact).
+- **The repair** is the boolean's (`shape_bool::uncross_output`, §23.2),
+  through its public signature, with every point free to move (the box's
+  corners stand in for the operands: they set the snap distance). Points
+  closer than the snap distance are merged, needles are split away, and
+  each change is kept only if the solid stays closed and crosses itself
+  strictly less. The kept triangles keep their source's surface, names
+  and UVs (interpolated at a moved corner). A named edge keeps its names
+  on what it became (or on both pieces of a split). A skinned vertex
+  keeps its weights. A solid it cannot improve is returned as moved.
+- **Also routed through it:** `mirror`'s image (a reflection rounds
+  in the same way) and the unit scale on the way to the scene (`cm`,
+  `m`).
+
+`shape-bool` was not edited.
+
+| part | before | after |
+|---|---|---|
+| `mouse_shell` (Z1 `sim2_mouse_and_pad`, and `placed_slot`) | 3 086 triangles, 8 pairs | 3 084, 0; volume 161 530.313364027 and area equal to every digit printed |
+| §25.3's cup (`touching_rim.json`, turned 22.5°) | 330, 5 pairs (its top face) | 328, 0; volume equal to 9·10⁻¹¹ mm³ of 152 031, area equal |
+| `uvs.rs`'s mirror image `b` (a seated plate mirrored about x = 30) | 216, 8 pairs (found here) | 212, 0; the same UV area |
+
+The face names are the same sets, minus the needles. On the mouse, the
+`wheel_slot` seam loses two tagged edges and the two odd-degree seam
+vertices at the fold, so it is more of a loop than before. Two odd ones
+remain at y = 55, from the boolean's seam naming. They do not cross.
+
+Over every committed program (`eval/phase6/**`, `golden/programs/`; 580
+built parts), parts crossing themselves go from 7 to 2. Fixed besides
+the above: `T/art2_telescoping_slide`'s `outer_channel` (3 pairs) and
+`U/auto1_curved_tubes`'s `middle_tube` (6), the same kind. **Left:** the
+octagonal cup's `cup` in `A/` and `B/obj1_octagonal_cup` (44 pairs). That
+is the boolean's leftover crossings after its repair, inside `shell`
+(§25.4), which stream AF owns. Building all of them took 34.9 s before
+and 34.2 s after (release; the check runs only on thin solids).
+
+### 26.3 Golden
+
+- `touching.program.rim` moved. This is the cup of §25.3: before, it
+  crossed itself by 5 pairs; now it does not. It has two needle triangles
+  fewer, and the same volume (to 10⁻¹⁶ relative), area and names. No
+  other line moved, `mirror`'s included.
+- New: `model.placed.slot`, the reduced mouse shell's world solid, hashed
+  in f64. A GLB rounds to f32, where such a change can hide (§25.3).
+
+### 26.4 Tests
+
+- `crates/shape-model/tests/built_parts.rs`:
+  `every_part_of_the_evaluation_programs_is_closed_and_uncrossed` builds
+  all 20 `eval/phase6/Z/Z1` programs (140 scene entries, 119 with a mesh)
+  and asserts each closed with no crossing pair. Its list of known
+  exceptions is empty. With the repair off it fails, naming
+  `sim2_mouse_and_pad mouse_shell: 8 crossing pairs`. It takes 1.4 s in
+  release and 12 s in debug (`check.sh test` runs debug), most of it
+  building the programs.
+- `a_part_moved_into_the_world_does_not_cross_itself`: the reduction,
+  built in its own frame and moved (0 and 0), and the cup.
+- `uvs.rs`'s `every_edit_carries_uvs`: its mirror check counted the
+  image triangle for triangle. It now allows the repaired needles (at
+  most 8 fewer, never more), and it asserts that the image does not
+  cross itself.
+
+### 26.5 What is untested
+
+- Two sheets of one solid a rounding error apart, not sharing a vertex,
+  could be folded by a move without any thin triangle. The trigger would
+  not look there. No case is known.
+- The repair is checked through UVs and names on the cases above, not
+  through a skinned part that crosses itself (none is known).
+- The Z1 test covers the evaluation's 20 programs only. §26.2's count
+  over every program was run once, by hand.
+- Gate run here: lint (fmt, clippy, cargo-deny), test, golden (native),
+  and the wasm32 builds (`shape-core`, `shape-wasm`, `shape-golden` for
+  wasip1). wasmtime and wasm-bindgen were not available, so the wasm32
+  golden run and the binding's tests were not run. The two new hashes
+  are unchecked as wasm32, and aarch64 and Windows run in CI only.

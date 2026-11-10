@@ -14,6 +14,7 @@ use shape_model::{
 use crate::cases::Case;
 
 const WASHING_MACHINE: &str = include_str!("../../../golden/programs/washing_machine.json");
+const PLACED_SLOT: &str = include_str!("../../../golden/programs/placed_slot.json");
 
 pub fn cases() -> Vec<Case> {
     vec![
@@ -24,6 +25,20 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "model.place",
             run: placement,
+        },
+        Case {
+            // The mouse's shell, cut in its own frame and moved into the
+            // world, where rounding folded a needle (`docs/research.md`
+            // §26): its world solid in f64, not rounded to f32 as in GLB.
+            name: "model.placed.slot",
+            run: |h| {
+                let m = program::run(PLACED_SLOT).map_err(|e| {
+                    eprintln!("{e}");
+                    HashError::NaN
+                })?;
+                let id = m.find("mouse_shell").ok_or(HashError::NaN)?;
+                m.world_solid(id).map_err(|_| HashError::NaN)?.hash_into(h)
+            },
         },
         Case {
             name: "model.joints.glb",
