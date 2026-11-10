@@ -102,6 +102,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         "--target",
         "--max-error",
         "--lock-border",
+        "--merge-charts",
         "--lods",
         IMPORT_OPTIONS[0],
         IMPORT_OPTIONS[1],
@@ -111,6 +112,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         target: a.number("--target")?.unwrap_or(0),
         max_error: a.number("--max-error")?.unwrap_or(0.0),
         lock_border: a.switch("--lock-border"),
+        merge_charts: a.number("--merge-charts")?.unwrap_or(0.0),
         ..Default::default()
     };
     if dec.ratio == 0.0 && dec.target == 0 {

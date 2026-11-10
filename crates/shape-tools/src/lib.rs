@@ -62,7 +62,8 @@ mod surface;
 mod unwrap;
 
 pub use decimate::{
-    Blocked, Decimate, DecimateError, DecimateReport, collapse_short_edges, decimate, lods,
+    Blocked, Decimate, DecimateError, DecimateReport, Rigid, collapse_short_edges, decimate, lods,
+    merge_charts,
 };
 pub use export::{
     ExportError, Joint, JointKind, Material, Mimic, Part, Placement, Scene, glb, obj, obj_at,

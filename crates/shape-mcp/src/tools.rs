@@ -594,6 +594,7 @@ fn decimate_schema() -> Value {
             "lock_border",
             boolean("Never move vertices on open borders."),
         ),
+        ("merge_charts", merge_charts_prop()),
         (
             "lods",
             int(
@@ -611,6 +612,13 @@ fn unwrap_schema() -> Value {
     schema(p, &["path"])
 }
 
+fn merge_charts_prop() -> Value {
+    num(
+        "UV islands that meet along an edge and agree there up to a rigid move in UV space \
+         (within this distance, UV units) are one chart for decimation's seam rule; 0 is off.",
+    )
+}
+
 fn process_schema() -> Value {
     let mut p = mesh_props("Write the result here: .glb (plain, with UVs), .obj or .stl.");
     p.extend([
@@ -618,6 +626,7 @@ fn process_schema() -> Value {
             "budget",
             int("Decimate to at most this many triangles; 0 does not decimate."),
         ),
+        ("merge_charts", merge_charts_prop()),
         (
             "repair",
             json!({
@@ -807,6 +816,7 @@ fn decimate_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec
             target: a.uint("target")? as usize,
             max_error: a.num("max_error")?,
             lock_border: a.flag("lock_border")?,
+            merge_charts: a.num("merge_charts")?,
             ..Default::default()
         },
         lods: a.u32("lods")?,
@@ -833,6 +843,7 @@ fn process_tool(server: &Server, a: &Args, p: &mut dyn Progress) -> Result<Vec<V
         import: a.import()?,
         repair: a.sub("repair")?.as_ref().unwrap_or(&none).repair()?,
         budget: a.uint("budget")? as usize,
+        merge_charts: a.num("merge_charts")?,
         unwrap: a.sub("unwrap")?.as_ref().unwrap_or(&none).unwrap()?,
         intersections: a.flag("intersections")?,
         fresh_uvs: a.flag("fresh_uvs")?,

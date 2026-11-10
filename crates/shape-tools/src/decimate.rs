@@ -91,6 +91,13 @@ pub struct Decimate {
     /// anywhere (off by default: removing a vertex whose weights differ
     /// from a neighbour's costs extra, so joints keep their rows).
     pub cross_bone_borders: bool,
+    /// On a solid with UVs: UV islands that meet along an edge and agree
+    /// there up to a rigid move in UV space (a rotation and a translation,
+    /// not a mirror), within this distance in UV units, are one chart for
+    /// the seam rule ([`merge_charts`]): their shared seam is not a
+    /// feature line, and a corner across it gets its UV through the move.
+    /// The texture is not rewritten. 0: off, every seam stays.
+    pub merge_charts: f64,
 }
 
 /// What a decimation did.
@@ -105,6 +112,12 @@ pub struct DecimateReport {
     /// The largest error of a collapse taken, mm (root-mean-square
     /// distance to the planes the collapsed vertices stood for).
     pub error: f64,
+    /// UV islands (triangles joined across edges whose two sides give
+    /// both ends the same UVs), and the charts they make with
+    /// `merge_charts` (the same count without it). 0 without UVs.
+    pub uv_islands: usize,
+    /// See `uv_islands`.
+    pub uv_charts: usize,
     /// Collapses not taken because the surface would have passed through
     /// itself (each attempt counts; an edge can be tried again after its
     /// neighbourhood changes).
@@ -175,6 +188,11 @@ fn target_of(d: &Decimate, n: usize) -> Result<usize, DecimateError> {
     if !(d.max_error >= 0.0 && d.max_error.is_finite()) {
         return Err(DecimateError::BadDesc(
             "max_error must be finite and >= 0".into(),
+        ));
+    }
+    if !(d.merge_charts >= 0.0 && d.merge_charts.is_finite()) {
+        return Err(DecimateError::BadDesc(
+            "merge_charts must be finite and >= 0".into(),
         ));
     }
     let by_ratio = (d.ratio > 0.0).then(|| (d.ratio * n as f64).ceil() as usize);
@@ -331,6 +349,9 @@ struct Mesh {
     bend: f64,
     /// Per triangle, its corners' UVs, on a solid with UVs.
     uvs: Option<Vec<[DVec2; 3]>>,
+    /// Per triangle, its chart and the move from its UVs to the chart's
+    /// frame, when charts are merged; and the tolerance.
+    charts: Option<(Vec<u32>, Vec<Rigid>, f64)>,
 }
 
 /// A corner's new UV: triangle, corner, UV.
@@ -342,6 +363,205 @@ enum Refusal {
     Link,
     Turn,
     Uv,
+}
+
+/// A rigid move of the UV plane: `p ↦ R p + t`, `R` the rotation with
+/// cosine `c` and sine `s`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rigid {
+    /// The rotation's cosine.
+    pub c: f64,
+    /// The rotation's sine.
+    pub s: f64,
+    /// The translation.
+    pub t: DVec2,
+}
+
+impl Rigid {
+    /// The identity.
+    pub const IDENTITY: Rigid = Rigid {
+        c: 1.0,
+        s: 0.0,
+        t: DVec2::ZERO,
+    };
+
+    fn rotate(&self, p: DVec2) -> DVec2 {
+        DVec2::new(self.c * p.x - self.s * p.y, self.s * p.x + self.c * p.y)
+    }
+
+    /// The image of `p`.
+    pub fn apply(&self, p: DVec2) -> DVec2 {
+        self.rotate(p) + self.t
+    }
+
+    /// The point whose image is `q`.
+    pub fn unapply(&self, q: DVec2) -> DVec2 {
+        let d = q - self.t;
+        DVec2::new(self.c * d.x + self.s * d.y, -self.s * d.x + self.c * d.y)
+    }
+
+    /// `self ∘ o`: `o` first.
+    fn after(&self, o: &Rigid) -> Rigid {
+        Rigid {
+            c: self.c * o.c - self.s * o.s,
+            s: self.s * o.c + self.c * o.s,
+            t: self.rotate(o.t) + self.t,
+        }
+    }
+
+    fn inverse(&self) -> Rigid {
+        let r = Rigid {
+            c: self.c,
+            s: -self.s,
+            t: DVec2::ZERO,
+        };
+        Rigid {
+            t: -r.rotate(self.t),
+            ..r
+        }
+    }
+
+    /// The move taking `a0 → a1` and `b0 → b1`, if the two segments have
+    /// the same length within `tol` (and are not points).
+    fn between(a0: DVec2, b0: DVec2, a1: DVec2, b1: DVec2, tol: f64) -> Option<Rigid> {
+        let (u, v) = (b0 - a0, b1 - a1);
+        let (lu, lv) = (u.length(), v.length());
+        if !(lu > 0.0 && lv > 0.0) || (lu - lv).abs() > tol {
+            return None;
+        }
+        let r = Rigid {
+            c: u.dot(v) / (lu * lv),
+            s: u.perp_dot(v) / (lu * lv),
+            t: DVec2::ZERO,
+        };
+        Some(Rigid {
+            t: a1 - r.rotate(a0),
+            ..r
+        })
+    }
+
+    fn near(&self, o: &Rigid, tol: f64) -> bool {
+        (self.c - o.c).abs() <= tol && (self.s - o.s).abs() <= tol && (self.t - o.t).length() <= tol
+    }
+}
+
+/// The UV charts of `s` for the seam rule (`Decimate::merge_charts`):
+/// per triangle, its chart and the rigid move from its UVs to its chart's
+/// frame; and the number of islands. Islands are triangles joined across
+/// edges whose two sides give both ends the same UVs. Two islands join
+/// when every seam edge between them gives one rigid move from one's UVs
+/// to the other's (a rotation and a translation, within `tol`: the edge's
+/// two lengths agree, and the moves agree), and the move puts the two
+/// triangles at each such edge on opposite sides of it (no mirror, no
+/// overlap there). Pairs of islands are taken in order, each chart framed
+/// by its lowest island; the result depends only on the input.
+pub fn merge_charts(s: &Solid, tol: f64) -> Option<(Vec<u32>, Vec<Rigid>, usize)> {
+    let uvs = s.uvs.as_ref()?;
+    let n = s.triangles.len();
+    let at = |t: usize, v: u32| {
+        let k = s.triangles[t].iter().position(|&w| w == v).unwrap_or(0);
+        uvs[t][k]
+    };
+    let mut users: BTreeMap<EdgeKey, Vec<u32>> = BTreeMap::new();
+    for (i, t) in s.triangles.iter().enumerate() {
+        for k in 0..3 {
+            users
+                .entry(edge_key(t[k], t[(k + 1) % 3]))
+                .or_default()
+                .push(i as u32);
+        }
+    }
+    fn root(p: &mut [u32], mut i: u32) -> u32 {
+        while p[i as usize] != i {
+            p[i as usize] = p[p[i as usize] as usize];
+            i = p[i as usize];
+        }
+        i
+    }
+    let mut parent: Vec<u32> = (0..n as u32).collect();
+    let mut seams: Vec<(u32, u32, usize, usize)> = Vec::new();
+    for (&(a, b), ts) in &users {
+        if ts.len() != 2 {
+            continue;
+        }
+        let (x, y) = (ts[0] as usize, ts[1] as usize);
+        if at(x, a) == at(y, a) && at(x, b) == at(y, b) {
+            let (rx, ry) = (root(&mut parent, x as u32), root(&mut parent, y as u32));
+            if rx != ry {
+                parent[rx.max(ry) as usize] = rx.min(ry);
+            }
+        } else {
+            seams.push((a, b, x, y));
+        }
+    }
+    let island: Vec<u32> = (0..n as u32).map(|t| root(&mut parent, t)).collect();
+    let islands = (0..n).filter(|&t| island[t] == t as u32).count();
+    // Per pair of islands (lower, higher): the move from the lower's UVs
+    // to the higher's that each seam between them gives, if any.
+    let mut between: BTreeMap<(u32, u32), Vec<Option<Rigid>>> = BTreeMap::new();
+    for &(a, b, x, y) in &seams {
+        let (ix, iy) = (island[x], island[y]);
+        if ix == iy {
+            continue;
+        }
+        let (x, y) = if ix < iy { (x, y) } else { (y, x) };
+        let m = Rigid::between(at(x, a), at(x, b), at(y, a), at(y, b), tol).filter(|m| {
+            // The two triangles on opposite sides of the edge after the
+            // move.
+            let third = |t: usize| {
+                let tri = s.triangles[t];
+                let v = tri[(0..3).find(|&k| tri[k] != a && tri[k] != b).unwrap_or(0)];
+                at(t, v)
+            };
+            let (pa, pb) = (at(y, a), at(y, b));
+            let sx = orient2d(pa, pb, m.apply(third(x)));
+            let sy = orient2d(pa, pb, third(y));
+            sx.is_ne() && sy.is_ne() && sx != sy
+        });
+        between.entry((ix.min(iy), ix.max(iy))).or_default().push(m);
+    }
+    // Charts: islands joined, each with its move into the chart's frame.
+    let mut chart: Vec<u32> = (0..n as u32).collect();
+    let mut frame: Vec<Rigid> = vec![Rigid::IDENTITY; n];
+    let mut members: BTreeMap<u32, Vec<u32>> = (0..n as u32)
+        .filter(|&t| island[t as usize] == t)
+        .map(|t| (t, vec![t]))
+        .collect();
+    for (&(i, j), moves) in &between {
+        let Some(Some(m)) = moves.first() else {
+            continue;
+        };
+        if !moves.iter().all(|x| x.is_some_and(|x| x.near(m, tol))) {
+            continue;
+        }
+        let (ci, cj) = (chart[i as usize], chart[j as usize]);
+        if ci == cj {
+            continue;
+        }
+        // Reframe the smaller chart into the larger's frame (ties: j's
+        // into i's).
+        let (keep, gone, to_keep) = if members[&cj].len() <= members[&ci].len() {
+            // j-raw → chart i: frame[i] ∘ m⁻¹; then chart j → j-raw.
+            let f = frame[i as usize]
+                .after(&m.inverse())
+                .after(&frame[j as usize].inverse());
+            (ci, cj, f)
+        } else {
+            let f = frame[j as usize]
+                .after(m)
+                .after(&frame[i as usize].inverse());
+            (cj, ci, f)
+        };
+        let moved = members.remove(&gone).unwrap_or_default();
+        for &k in &moved {
+            frame[k as usize] = to_keep.after(&frame[k as usize]);
+            chart[k as usize] = keep;
+        }
+        members.entry(keep).or_default().extend(moved);
+    }
+    let tri_chart = (0..n).map(|t| chart[island[t] as usize]).collect();
+    let tri_frame = (0..n).map(|t| frame[island[t] as usize]).collect();
+    Some((tri_chart, tri_frame, islands))
 }
 
 /// A triangle's box.
@@ -679,19 +899,43 @@ impl Mesh {
         let midpoint = p != self.pos[to as usize];
         let mut moves: Vec<UvMove> = Vec::new();
         // One end's UV mapped to the other's, if exactly one pairing has
-        // it.
-        let other = |u: DVec2, from_end: bool| -> Option<DVec2> {
+        // it; `Err` if two disagree.
+        let other = |u: DVec2, from_end: bool| -> Result<Option<DVec2>, ()> {
             let mut found: Option<DVec2> = None;
             for &(a, b) in &pairs {
                 let (mine, theirs) = if from_end { (a, b) } else { (b, a) };
                 if mine == u {
                     if found.is_some_and(|f| f != theirs) {
-                        return None;
+                        return Err(());
                     }
                     found = Some(theirs);
                 }
             }
-            found
+            Ok(found)
+        };
+        // A corner across a merged seam: through the charts' frames, from
+        // an edge triangle of the same chart whose corner at `v` is the
+        // same point of the chart (within the tolerance). The corner's
+        // new UV in the chart's frame: the other end's (or the midpoint),
+        // moved back into the corner's own UVs.
+        let across = |t: u32, u: DVec2, v: u32, w: u32| -> Option<DVec2> {
+            let (chart, frame, tol) = self.charts.as_ref()?;
+            let e = self.around[from as usize]
+                .iter()
+                .copied()
+                .find(|&e| corner(e, to).is_some() && chart[e as usize] == chart[t as usize])?;
+            let (fe, ft) = (frame[e as usize], frame[t as usize]);
+            let uv = uvs[e as usize];
+            let (mine, theirs) = (uv[corner(e, v)?], uv[corner(e, w)?]);
+            if (fe.apply(mine) - ft.apply(u)).length() > *tol {
+                return None;
+            }
+            let goal = if midpoint {
+                (fe.apply(mine) + fe.apply(theirs)) * 0.5
+            } else {
+                fe.apply(theirs)
+            };
+            Some(ft.unapply(goal))
         };
         for (v, w, from_end) in [(from, to, true), (to, from, false)] {
             if !from_end && !midpoint {
@@ -703,11 +947,13 @@ impl Mesh {
                 }
                 let k = corner(t, v)?;
                 let u = uvs[t as usize][k];
-                let o = other(u, from_end)?;
-                let new = match (midpoint, from_end) {
-                    (false, _) => o,
-                    (true, true) => (u + o) * 0.5,
-                    (true, false) => (o + u) * 0.5,
+                let new = match other(u, from_end).ok()? {
+                    Some(o) => match (midpoint, from_end) {
+                        (false, _) => o,
+                        (true, true) => (u + o) * 0.5,
+                        (true, false) => (o + u) * 0.5,
+                    },
+                    None => across(t, u, v, w)?,
                 };
                 moves.push((t, k, new));
             }
@@ -966,6 +1212,8 @@ fn collapse(
         error: 0.0,
         folds_refused: 0,
         blocked: Blocked::default(),
+        uv_islands: 0,
+        uv_charts: 0,
     };
     if n <= target && max_len == 0.0 {
         return Ok((s.clone(), report));
@@ -1001,7 +1249,21 @@ fn collapse(
             }
         },
         uvs: s.uvs.clone(),
+        charts: None,
     };
+    if s.uvs.is_some() {
+        let tol = d.merge_charts;
+        if let Some((chart, frame, islands)) = merge_charts(s, tol) {
+            report.uv_islands = islands;
+            let mut roots: Vec<u32> = chart.clone();
+            roots.sort_unstable();
+            roots.dedup();
+            report.uv_charts = if tol > 0.0 { roots.len() } else { islands };
+            if tol > 0.0 {
+                m.charts = Some((chart, frame, tol));
+            }
+        }
+    }
     let mut users: BTreeMap<EdgeKey, Vec<u32>> = BTreeMap::new();
     let mut total_area = 0.0;
     for (i, t) in s.triangles.iter().enumerate() {
@@ -1035,13 +1297,23 @@ fn collapse(
         let feature = ts.len() == 2 && {
             let (x, y) = (ts[0] as usize, ts[1] as usize);
             s.surfaces[x] != s.surfaces[y] || s.face_tags[x] != s.face_tags[y] || {
-                // A UV seam: either end has different UVs on the two sides.
+                // A UV seam: either end has different UVs on the two sides,
+                // unless the two sides are one merged chart and agree in
+                // its frame.
                 s.uvs.as_ref().is_some_and(|u| {
                     let at = |t: usize, v: u32| {
                         let k = s.triangles[t].iter().position(|&w| w == v).unwrap_or(0);
                         u[t][k]
                     };
-                    at(x, a) != at(y, a) || at(x, b) != at(y, b)
+                    let differ = at(x, a) != at(y, a) || at(x, b) != at(y, b);
+                    differ
+                        && !m.charts.as_ref().is_some_and(|(chart, frame, tol)| {
+                            chart[x] == chart[y]
+                                && [a, b].iter().all(|&v| {
+                                    (frame[x].apply(at(x, v)) - frame[y].apply(at(y, v))).length()
+                                        <= *tol
+                                })
+                        })
                 })
             }
         };
@@ -1372,6 +1644,75 @@ mod tests {
         )
         .unwrap();
         assert!(crossings(&low) <= before, "{before} {r:?}");
+    }
+
+    #[test]
+    fn islands_a_rigid_move_apart_are_one_chart() {
+        // A flat 6 × 6 grid; its right half's UVs are its left half's
+        // turned a quarter and moved: two islands, one rigid move apart
+        // along the middle column.
+        let mut g = Solid {
+            uvs: Some(Vec::new()),
+            ..Default::default()
+        };
+        for y in 0..=6 {
+            for x in 0..=6 {
+                g.push_vertex(DVec3::new(f64::from(x), f64::from(y), 0.0));
+            }
+        }
+        let uv = |x: u32, y: u32, right: bool| {
+            let (x, y) = (f64::from(x) * 0.125, f64::from(y) * 0.125);
+            if right {
+                DVec2::new(2.0 - y, x)
+            } else {
+                DVec2::new(x, y)
+            }
+        };
+        for y in 0..6u32 {
+            for x in 0..6u32 {
+                let right = x >= 3;
+                let v = |x: u32, y: u32| y * 7 + x;
+                for t in [[(x, y), (x + 1, y), (x + 1, y + 1)], [(x, y), (x + 1, y + 1), (x, y + 1)]] {
+                    g.push_triangle_uv(
+                        t.map(|(x, y)| v(x, y)),
+                        0,
+                        &["grid"],
+                        t.map(|(x, y)| uv(x, y, right)),
+                    );
+                }
+            }
+        }
+        g.canonicalize().unwrap();
+        let run = |merge_charts: f64| {
+            decimate(
+                &g,
+                &Decimate {
+                    target: 2,
+                    max_error: 1e-6,
+                    merge_charts,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        };
+        let (apart, a) = run(0.0);
+        let (one, b) = run(1e-9);
+        assert_eq!((a.uv_islands, a.uv_charts), (2, 2));
+        assert_eq!((b.uv_islands, b.uv_charts), (2, 1));
+        assert!(one.triangles.len() < apart.triangles.len(), "{a:?} {b:?}");
+        // Every corner still lies on the texture as the grid put it: its
+        // UV is the left half's mapping of its position, or the right
+        // half's.
+        let uvs = one.uvs.as_ref().unwrap();
+        for (t, tri) in one.triangles.iter().enumerate() {
+            for k in 0..3 {
+                let p = one.positions[tri[k] as usize] * 0.125;
+                let u = uvs[t][k];
+                let left = (u - DVec2::new(p.x, p.y)).length();
+                let right = (u - DVec2::new(2.0 - p.y, p.x)).length();
+                assert!(left.min(right) < 1e-12, "{t} {k} {u:?} {p:?}");
+            }
+        }
     }
 
     /// The box with its top's first triangle split at a point 1e-5 mm

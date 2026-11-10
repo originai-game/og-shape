@@ -87,6 +87,8 @@ pub fn decimate(r: &DecimateReport) -> String {
         ("target", r.target.to_string()),
         ("error", Value::from(r.error).to_string()),
         ("folds_refused", r.folds_refused.to_string()),
+        ("uv_islands", r.uv_islands.to_string()),
+        ("uv_charts", r.uv_charts.to_string()),
         ("blocked", blocked(&r.blocked)),
     ])
 }

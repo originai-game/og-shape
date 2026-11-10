@@ -35,6 +35,10 @@ pub struct ProcessDesc {
     /// Decimate to at most this many triangles; 0 skips decimation, and
     /// so does a mesh already within it.
     pub budget: usize,
+    /// `Decimate::merge_charts`: UV islands that agree across a seam up
+    /// to a rigid move within this distance are one chart for the seam
+    /// rule; 0 is off.
+    pub merge_charts: f64,
     /// The unwrap.
     pub unwrap: Unwrap,
     /// Unwrap even a mesh that carries UVs (its texture is then not
@@ -83,6 +87,7 @@ pub fn process_steps(
             &fixed,
             &Decimate {
                 target: d.budget,
+                merge_charts: d.merge_charts,
                 ..Default::default()
             },
         )
@@ -122,7 +127,14 @@ pub fn process_steps(
 
 /// The command line.
 pub fn run(a: &Args) -> Result<String, Failure> {
-    let mut known = vec!["-o", "--out", "--budget", "--intersections", "--unwrap"];
+    let mut known = vec![
+        "-o",
+        "--out",
+        "--budget",
+        "--merge-charts",
+        "--intersections",
+        "--unwrap",
+    ];
     known.extend(IMPORT_OPTIONS);
     known.extend(crate::repair::OPTIONS);
     known.extend(crate::unwrap::OPTIONS);
@@ -136,6 +148,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
             import: a.import()?,
             repair,
             budget: a.number("--budget")?.unwrap_or(0),
+            merge_charts: a.number("--merge-charts")?.unwrap_or(0.0),
             unwrap: crate::unwrap::options(a)?,
             fresh_uvs: a.switch("--unwrap"),
             intersections: a.switch("--intersections"),

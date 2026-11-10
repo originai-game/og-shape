@@ -13,11 +13,11 @@
 //!                [--floater-size MM] [--non-manifold] [--holes N] [--fuse]
 //!                [--min-edge MM] [--intersections]
 //! shape decimate <mesh> (--ratio R | --target N) [--max-error MM]
-//!                [--lock-border] [--lods N] [-o out]
+//!                [--lock-border] [--merge-charts UV] [--lods N] [-o out]
 //! shape unwrap   <mesh> [-o out.glb] [--angle DEG] [--resolution PX]
 //!                [--padding TEXELS]
-//! shape process  <mesh> [--budget N] [-o out.glb] [repair and unwrap
-//!                options] [--intersections]
+//! shape process  <mesh> [--budget N] [--merge-charts UV] [-o out.glb]
+//!                [repair and unwrap options] [--intersections]
 //! ```
 //!
 //! An input is a program (the JSON a binding records,
@@ -50,9 +50,10 @@ const USAGE: &str = "usage: shape <command> <input> [options]
            [--floater-size MM] [--non-manifold] [--holes N] [--fuse] [--min-edge MM]
            [--intersections]
   decimate <mesh> (--ratio R | --target N) [--max-error MM] [--lock-border]
-           [--lods N] [-o out]
+           [--merge-charts UV] [--lods N] [-o out]
   unwrap   <mesh> [-o out.glb] [--angle DEG] [--resolution PX] [--padding TEXELS]
-  process  <mesh> [--budget N] [-o out.glb] [repair and unwrap options] [--intersections]";
+  process  <mesh> [--budget N] [--merge-charts UV] [-o out.glb] [repair and unwrap options]
+           [--intersections]";
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
