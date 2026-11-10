@@ -2,7 +2,9 @@
 //! the file's parts joined and decimated (`shape_tools::decimate`), as
 //! JSON: per level, the decimation's report and the measures after. With
 //! `--lods N`, N levels, each decimated from the one before
-//! (`shape_tools::lods`), written as `<out stem>.lod1.<ext>` … With `-o`,
+//! (`shape_tools::lods`): level k keeps `ratio`^k of the triangles, or,
+//! with a target, level 1 keeps `target` and each next level half the
+//! one before. They are written as `<out stem>.lod1.<ext>` … With `-o`,
 //! writes each level (a plain GLB, OBJ or STL).
 
 use std::path::{Path, PathBuf};
@@ -25,7 +27,9 @@ pub struct DecimateDesc {
     /// The decimation of each level (a ratio or a triangle target).
     pub decimate: Decimate,
     /// Levels of detail, each from the one before; 0 is one level
-    /// written to `out` itself.
+    /// written to `out` itself. Level k keeps `ratio`^k of the
+    /// triangles; with a `target`, level 1 keeps it and each next level
+    /// half the level before.
     pub lods: u32,
     /// Where to write the result, if anywhere.
     pub out: Option<PathBuf>,
@@ -37,6 +41,25 @@ pub fn lod_path(out: &Path, k: u32) -> PathBuf {
     out.with_file_name(format!("{stem}.lod{k}.{}", extension(out)))
 }
 
+/// The levels of [`DecimateDesc::lods`]: `ratio`^k, or the target
+/// halved at each level after the first. (Repeating one desc gave every
+/// level the same count, since `shape_tools::lods` takes a ratio of the
+/// input.)
+fn lod_levels(d: &Decimate, n: u32) -> Vec<Decimate> {
+    let mut levels = Vec::new();
+    let (mut ratio, mut target) = (d.ratio, d.target);
+    for _ in 0..n {
+        levels.push(Decimate {
+            ratio,
+            target,
+            ..*d
+        });
+        ratio *= d.ratio;
+        target = target.div_ceil(2);
+    }
+    levels
+}
+
 /// The decimation report: `triangles_in` and `levels`, each with
 /// `decimate`, `measures` and `output`.
 pub fn decimate(files: &dyn Files, d: &DecimateDesc) -> Result<String, Failure> {
@@ -45,7 +68,7 @@ pub fn decimate(files: &dyn Files, d: &DecimateDesc) -> Result<String, Failure> 
     let levels = if d.lods == 0 {
         vec![shape_tools::decimate(&joined, &d.decimate).map_err(failed)?]
     } else {
-        lods(&joined, &vec![d.decimate; d.lods as usize]).map_err(failed)?
+        lods(&joined, &lod_levels(&d.decimate, d.lods)).map_err(failed)?
     };
     let mut list = Vec::new();
     for (k, (s, r)) in levels.iter().enumerate() {
