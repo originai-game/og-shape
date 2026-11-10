@@ -22,7 +22,7 @@ use crate::{Failure, Files, failed};
 pub struct DecimateDesc {
     /// The mesh file.
     pub input: Input,
-    /// How to read an OBJ file.
+    /// How to read the mesh file: its unit (OBJ) and axes.
     pub import: Import,
     /// The decimation of each level (a ratio or a triangle target).
     pub decimate: Decimate,
@@ -105,6 +105,8 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         "--lods",
         IMPORT_OPTIONS[0],
         IMPORT_OPTIONS[1],
+        IMPORT_OPTIONS[2],
+        IMPORT_OPTIONS[3],
     ])?;
     let dec = Decimate {
         ratio: a.number("--ratio")?.unwrap_or(0.0),

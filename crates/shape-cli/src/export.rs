@@ -128,7 +128,9 @@ pub fn write_solid(
 
 /// The command line.
 pub fn run(a: &Args) -> Result<String, Failure> {
-    a.only(&["-o", "--out", "--uvs", IMPORT_OPTIONS[0], IMPORT_OPTIONS[1]])?;
+    let mut known = vec!["-o", "--out", "--uvs"];
+    known.extend(IMPORT_OPTIONS);
+    a.only(&known)?;
     let out = a.out()?;
     if !["glb", "obj", "stl"].contains(&extension(&out).as_str()) {
         return Err(bad_extension(&out));

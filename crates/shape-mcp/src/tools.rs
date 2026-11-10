@@ -16,6 +16,7 @@ use shape_cli::decimate::{DecimateDesc, decimate};
 use shape_cli::export::{export, written};
 use shape_cli::import::{ImportDesc, import};
 use shape_cli::measure::{MeasureDesc, measure, measure_posed};
+use shape_cli::place::{PlaceDesc, length, pivot, place};
 use shape_cli::preview::{PreviewDesc, render};
 use shape_cli::process::{ProcessDesc, STEPS, process_steps};
 use shape_cli::repair::{RepairDesc, repair};
@@ -23,7 +24,7 @@ use shape_cli::report::{object, string};
 use shape_cli::source::{Source, load, load_uvs};
 use shape_cli::unwrap::{UnwrapDesc, unwrap};
 use shape_cli::{Failure, Files, Input, failed};
-use shape_tools::{Decimate, Floaters, Import, Preview, Repair, Unwrap};
+use shape_tools::{Decimate, Floaters, Import, Place, Preview, Repair, Size, Unwrap};
 
 use crate::Server;
 use crate::ts::{TsSource, run_polled as run_ts};
@@ -39,7 +40,7 @@ struct Tool {
     handler: Handler,
 }
 
-const TOOLS: [Tool; 10] = [
+const TOOLS: [Tool; 11] = [
     Tool {
         name: "build",
         description: "Build a model program (the JSON form of resource og-shape://guides/program.md) \
@@ -108,11 +109,23 @@ const TOOLS: [Tool; 10] = [
         handler: unwrap_tool,
     },
     Tool {
+        name: "place",
+        description: "Put a mesh file where a game wants it: turn it so the file's `up` axis is \
+            up and its `front` axis faces front (exact axis turns, then `turn` degrees about up), \
+            scale it uniformly to a real size (`longest`, `height`, `width` or `depth`, a length \
+            with its unit such as \"0.9m\", or a `scale` factor), and move its origin (`pivot`: \
+            \"base\" to stand on z = 0, \"center\", or a point). Skins, UVs and textures are \
+            kept. Reports what was done and, before and after, the extents, pivot, the area \
+            facing each way and where the mass sits; it does not guess which way is up.",
+        schema: place_schema,
+        handler: place_tool,
+    },
+    Tool {
         name: "process",
         description: "The mesh tools' chain on one file: import → join → repair → decimate to \
-            `budget` triangles → unwrap → measure → export (`out`, a plain GLB with UVs). One \
-            report of every step. A mesh that carries UVs keeps them and its texture, and is not \
-            unwrapped unless `fresh_uvs` is set.",
+            `budget` triangles → place (only if `place` is given) → unwrap → measure → export \
+            (`out`, a plain GLB with UVs). One report of every step. A mesh that carries \
+            UVs keeps them and its texture, and is not unwrapped unless `fresh_uvs` is set.",
         schema: process_schema,
         handler: process_tool,
     },
@@ -282,6 +295,47 @@ impl Args<'_> {
         Ok(Import {
             unit_mm: self.num("unit_mm")?,
             z_up: self.flag("z_up")?,
+            up: self.axis("up")?,
+            front: self.axis("front")?,
+        })
+    }
+
+    fn axis(&self, k: &str) -> Result<Option<shape_tools::Axis>, Failure> {
+        self.string(k)?
+            .map(|v| shape_cli::args::axis(k, v))
+            .transpose()
+    }
+
+    /// The placement: `turn`, one size, `pivot`.
+    fn place(&self) -> Result<Place, Failure> {
+        let mut sizes = Vec::new();
+        for (k, size) in [
+            ("longest", Size::Longest as fn(f64) -> Size),
+            ("height", Size::Height),
+            ("width", Size::Width),
+            ("depth", Size::Depth),
+        ] {
+            if let Some(v) = self.string(k)? {
+                sizes.push(size(length(k, v)?));
+            }
+        }
+        if let Some(f) = self.opt_num("scale")? {
+            sizes.push(Size::Scale(f));
+        }
+        if sizes.len() > 1 {
+            return Err(Failure::Usage(
+                "one size: longest, height, width, depth or scale".into(),
+            ));
+        }
+        Ok(Place {
+            turn: self.num("turn")?,
+            size: sizes.pop().unwrap_or_default(),
+            pivot: self
+                .string("pivot")?
+                .map(pivot)
+                .transpose()?
+                .unwrap_or_default(),
+            ..Default::default()
         })
     }
 
@@ -419,7 +473,63 @@ fn obj_props() -> Vec<(&'static str, Value)> {
             "unit_mm",
             num("OBJ only: millimetres per file unit; 0 reads metres (1000), as glTF."),
         ),
-        ("z_up", boolean("OBJ only: the file is Z up already.")),
+        (
+            "z_up",
+            boolean("OBJ and glTF: the file is Z up and faces -Y already (up +z, front -y)."),
+        ),
+        (
+            "up",
+            axis_prop(
+                "OBJ and glTF: the file's axis that is the object's up; default +y (glTF's).",
+            ),
+        ),
+        (
+            "front",
+            axis_prop(
+                "OBJ and glTF: the file's axis the object faces; default +z (glTF's), or what \
+                 the smallest turn from `up` gives.",
+            ),
+        ),
+    ]
+}
+
+fn axis_prop(description: &str) -> Value {
+    json!({
+        "type": "string",
+        "enum": ["+x", "-x", "+y", "-y", "+z", "-z"],
+        "description": description,
+    })
+}
+
+fn place_props() -> Vec<(&'static str, Value)> {
+    let len = |what: &str| {
+        json!({
+            "type": "string",
+            "description": format!("Scale uniformly so the {what} is this length, with its unit: \"0.9m\", \"90cm\", \"900mm\". One size at most."),
+        })
+    };
+    vec![
+        (
+            "turn",
+            num("Then turn about up, degrees, counter-clockwise seen from above (90s are exact)."),
+        ),
+        ("longest", len("box's longest side")),
+        ("height", len("box's height (Z, after the turn)")),
+        ("width", len("box's width (X, after the turn)")),
+        (
+            "depth",
+            len("box's depth (Y, front to back, after the turn)"),
+        ),
+        ("scale", num("Instead of a length: scale by this factor.")),
+        (
+            "pivot",
+            json!({
+                "type": "string",
+                "description": "Where the origin goes: \"base\" (the centre of the box's bottom \
+                    face: stands on z = 0), \"center\", or a point of the input \"x,y,z\" with \
+                    a unit (\"0,0,-480mm\", in the coordinates `measure` reports). Absent keeps it.",
+            }),
+        ),
     ]
 }
 
@@ -538,6 +648,13 @@ fn measure_schema() -> Value {
             ),
         ),
         pose_prop(),
+        (
+            "axes",
+            boolean(
+                "Meshes: add `axes` to each part and the whole file: extents, longest and \
+                 shortest axis, the area facing each way, where the mass sits in the box.",
+            ),
+        ),
     ]);
     p.extend(obj_props());
     schema(p, &[])
@@ -603,6 +720,14 @@ fn unwrap_schema() -> Value {
     schema(p, &["path"])
 }
 
+fn place_schema() -> Value {
+    let mut p = mesh_props(
+        "Write the parts placed here: .glb (skins, UVs and textures kept), .obj or .stl.",
+    );
+    p.extend(place_props());
+    schema(p, &["path"])
+}
+
 fn process_schema() -> Value {
     let mut p = mesh_props("Write the result here: .glb (plain, with UVs), .obj or .stl.");
     p.extend([
@@ -625,6 +750,17 @@ fn process_schema() -> Value {
                 "type": "object",
                 "description": "The unwrap, as the `unwrap` tool takes it.",
                 "properties": Value::Object(unwrap_props().into_iter().map(|(k, v)| (k.to_string(), v)).collect()),
+                "additionalProperties": false,
+            }),
+        ),
+        (
+            "place",
+            json!({
+                "type": "object",
+                "description": "Place the mesh after decimation, as the `place` tool takes \
+                    it (minus path, out and the file's axes, which are `up` and `front` here). \
+                    Absent: not placed, and no `place` in the report.",
+                "properties": Value::Object(place_props().into_iter().map(|(k, v)| (k.to_string(), v)).collect()),
                 "additionalProperties": false,
             }),
         ),
@@ -756,6 +892,7 @@ fn preview_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<
 fn measure_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
     let d = MeasureDesc {
         intersections: a.flag("intersections")?,
+        axes: a.flag("axes")?,
     };
     let source = loaded(server, a)?;
     if a.flag("posed")? || a.sub("pose")?.is_some() {
@@ -817,12 +954,23 @@ fn unwrap_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<V
     Ok(vec![text(unwrap(&server.ws, &d)?)])
 }
 
+fn place_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
+    let d = PlaceDesc {
+        input: a.mesh_input()?,
+        import: a.import()?,
+        place: a.place()?,
+        out: a.path("out")?,
+    };
+    Ok(vec![text(place(&server.ws, &d)?)])
+}
+
 fn process_tool(server: &Server, a: &Args, p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
     let empty = Map::new();
     let none = Args { o: &empty };
     let d = ProcessDesc {
         input: a.mesh_input()?,
         import: a.import()?,
+        place: a.sub("place")?.as_ref().unwrap_or(&none).place()?,
         repair: a.sub("repair")?.as_ref().unwrap_or(&none).repair()?,
         budget: a.uint("budget")? as usize,
         unwrap: a.sub("unwrap")?.as_ref().unwrap_or(&none).unwrap()?,

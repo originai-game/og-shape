@@ -16,13 +16,18 @@
 //!                [--lock-border] [--lods N] [-o out]
 //! shape unwrap   <mesh> [-o out.glb] [--angle DEG] [--resolution PX]
 //!                [--padding TEXELS]
-//! shape process  <mesh> [--budget N] [-o out.glb] [repair and unwrap
-//!                options] [--intersections]
+//! shape place    <mesh> [-o out] [--up AXIS] [--front AXIS] [--turn DEG]
+//!                [--longest L | --height L | --width L | --depth L | --scale F]
+//!                [--pivot base|center|X,Y,Z]
+//! shape process  <mesh> [--budget N] [-o out.glb] [repair, unwrap and
+//!                place options] [--intersections]
 //! ```
 //!
 //! An input is a program (the JSON a binding records,
 //! `shape_model::program`) or a mesh file (`.glb`, `.gltf`, `.obj`,
-//! `.fbx`; OBJ with `--unit-mm MM` and `--z-up`). `--uvs` on `build`,
+//! `.fbx`; OBJ with `--unit-mm MM`; OBJ and glTF with `--up AXIS` and
+//! `--front AXIS`, the file's axes that are the object's up and front,
+//! or `--z-up` for `--up +z --front -y`). `--uvs` on `build`,
 //! `export`, `measure` and `preview` replays a program as if it began
 //! with the `uvs` operation, so every part it makes has UVs. Reports go to stdout
 //! as JSON with no thresholds; errors go to stderr with exit status 1 (2
@@ -36,13 +41,18 @@ use shape_cli::args::Args;
 
 const USAGE: &str = "usage: shape <command> <input> [options]
   an input is a program (.json) or a mesh file (.glb .gltf .obj .fbx);
-  OBJ takes --unit-mm MM (default metres) and --z-up; a program takes --uvs
+  OBJ takes --unit-mm MM (default metres); OBJ and glTF take --up AXIS and
+  --front AXIS (+x -x +y -y +z -z: the file's axes that are the object's up and
+  front; default up +y, front +z) or --z-up (up +z, front -y); a program takes --uvs
   (build, export, measure, preview): every part it makes gets UVs
   build    <program.json>                       report the built model as JSON
   export   <input> -o <out.glb|obj|stl>         write the posed model or the mesh;
                                                 OBJ and STL at the pose if one is set
-  measure  <input> [--intersections] [--posed]  measures as JSON; --posed: a program
-                                                at its pose, its joints and interference
+  measure  <input> [--intersections] [--posed] [--axes]
+                                                measures as JSON; --posed: a program
+                                                at its pose, its joints and interference;
+                                                --axes: a mesh's extents, area facing
+                                                each way and where its mass sits
   preview  <input> -o <out.png> [--views N] [--width PX] [--height PX]
            [--columns N] [--elevation RAD] [--azimuth RAD] [--no-edges] [--no-ground]
   import   <mesh> [-o out.glb|obj|stl]          parts, images and what was skipped
@@ -51,7 +61,12 @@ const USAGE: &str = "usage: shape <command> <input> [options]
   decimate <mesh> (--ratio R | --target N) [--max-error MM] [--lock-border]
            [--lods N] [-o out]
   unwrap   <mesh> [-o out.glb] [--angle DEG] [--resolution PX] [--padding TEXELS]
-  process  <mesh> [--budget N] [-o out.glb] [repair and unwrap options] [--intersections]";
+  place    <mesh> [-o out] [--up AXIS] [--front AXIS] [--turn DEG]
+           [--longest L | --height L | --width L | --depth L | --scale F]
+           [--pivot base|center|X,Y,Z]      turn, size (L with a unit: 1.2m, 90cm,
+                                                900mm) and origin, before and after
+  process  <mesh> [--budget N] [-o out.glb] [repair, unwrap and place options]
+           [--intersections]";
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -67,6 +82,7 @@ fn main() -> ExitCode {
                 "repair" => shape_cli::repair::run(&a),
                 "decimate" => shape_cli::decimate::run(&a),
                 "unwrap" => shape_cli::unwrap::run(&a),
+                "place" => shape_cli::place::run(&a),
                 "process" => shape_cli::process::run(&a),
                 "help" | "-h" | "--help" => {
                     println!("{USAGE}");

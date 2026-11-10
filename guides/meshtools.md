@@ -8,7 +8,7 @@ what to look for.
 ## The chain
 
 ```text
-import → join → repair → decimate → unwrap → measure → preview → export
+import → join → repair → decimate → place → unwrap → measure → preview → export
 ```
 
 1. **Import** the file (`import`). Read what was skipped
@@ -24,6 +24,13 @@ import → join → repair → decimate → unwrap → measure → preview → e
    UVs (the first set) and the base-colour texture (`map`) are kept
    too, and carried by every step below; `skipped` names the other
    material maps (normal, emissive, ...), which are not.
+   The axes: glTF is Y up and faces +Z by its specification, and OBJ is
+   read the same way. When a file is in another frame, say which of its
+   own axes is up and which way the object faces: `up` and `front`
+   (`+x`, `-x`, `+y`, `-y`, `+z`, `-z`; give one and the other follows
+   by the smallest turn). `z_up` is `up +z, front -y`. The turn is a
+   permutation of coordinates with signs: nothing is rounded. FBX says
+   its axes in the file and takes none of these.
 2. **Join** the parts into one solid (`join`). Each part's faces keep its
    name, so a part can still be found after joining. Skinned parts share
    one skeleton, merged by bone name; bones of one name that disagree, a
@@ -49,19 +56,34 @@ import → join → repair → decimate → unwrap → measure → preview → e
    price is a little more surface error elsewhere at the same count
    (`docs/research.md` §11.5). `cross_bone_borders` turns this off for a
    mesh that will not be posed.
-5. **Unwrap** (`unwrap`) only when the mesh has no UVs, or you will paint
+5. **Place** (`place`), for a mesh that goes into a game as it is:
+   - **turn** it so its up is +Z and its front faces −Y (the side
+     `preview` shows first): `up` and `front` as at import, then `turn`
+     degrees about up (a multiple of 90 is exact);
+   - **size** it uniformly, never stretched: `longest`, `height` (Z),
+     `width` (X) or `depth` (Y) to a length with its unit (`0.9m`,
+     `90cm`, `900mm`), or a `scale` factor;
+   - **pivot**: `base` (the centre of the box's bottom face, after the
+     turn) stands a prop or a character on z = 0; `center`; or a point of
+     the input, in the millimetres `measure` reports.
+   The report gives what was done and, before and after, the axis
+   measures below. A skin moves with the mesh: bones turn and move, and
+   a scale moves their origins, never their axes. UVs and textures are
+   untouched. `process` takes the same options and places last, after
+   repair and decimation, so the output stands on the base it reports.
+6. **Unwrap** (`unwrap`) only when the mesh has no UVs, or you will paint
    a new texture: unwrapping replaces the file's UVs, and its texture no
    longer fits. Raise `resolution` to the texture size you will bake at,
    so the padding is in its texels. `shape process` keeps a textured
    mesh's UVs unless given `--unwrap`.
-6. **Measure** (`measure`) with the images and `intersections`; it
+7. **Measure** (`measure`) with the images and `intersections`; it
    measures the UVs the mesh carries. After repair, look at
    `uv_seam_fills` in its report: those hole fills stretch the texture
    across a seam. After decimation, `uv.overlapping_pairs` and
    `uv.flipped` should be what they were before (a file's own mirrored
    charts count as flipped).
-7. **Preview** and look at it.
-8. **Export** `glb_plain` for texturing (with `map` to keep the file's
+8. **Preview** and look at it.
+9. **Export** `glb_plain` for texturing (with `map` to keep the file's
    texture), or `glb` for parts, joints and skins (a part's
    `material.map`). To check a decimated skin, pose both meshes the same way
    (`shape-skin`'s `pose`) and compare them: the posed error should be no
@@ -80,10 +102,25 @@ import → join → repair → decimate → unwrap → measure → preview → e
 | `shortest_edge` | in mm; below about 1e-5 mm, f32 export merges vertices | well above 1e-5 |
 | `triangles` | the budget | at most the budget (a texturing tool's input limit is often about 40 000) |
 | `skinned`, `skin.bones` | the mesh has a skin | know it before `glb_plain`, which refuses it |
-| `pivot_from_base` | where the origin sits relative to the base's centre | 0 for props that stand on the ground |
+| `pivot_from_base` | where the origin sits relative to the base's centre | 0 for props that stand on the ground (`place --pivot base`) |
 | `uv.overlapping_pairs`, `uv.flipped`, `uv.outside` | UV faces over each other, mirrored, or outside the square | 0 for baking and painting |
 | `uv.coverage` | how much of the square the charts fill | the higher the better; 0.1–0.8 on the acceptance meshes, 0.5 on average, lowest on thin parts |
 | `texture.decoded_bytes_with_mips` | GPU memory the textures take | within the game's budget |
+
+## Which way is up
+
+`measure --axes` (MCP `axes`) and `place`'s report give, for the mesh
+as it is: `size` (the box's extents), `pivot_from_base`, the `longest`
+and `shortest` axis, `facing` (the fraction of the area whose normal
+leans most along each of `+x` … `-z`) and `mass.in_box` (where the
+centre of volume, or of area for an open mesh, sits in the box per
+axis: 0 low, 0.5 middle, 1 high). They are numbers, not a guess. On
+the 54 generated meshes (`docs/research.md` §31) no simple reading of
+them stood the objects up more often than the files' own frame did:
+"the mass sits low" was right for 22, "the flattest side faces down"
+for 21, "most area faces down" for 9; reading every file as its format
+says (Y up) was right for 42, and the generator's frame (below) for all
+54. Know the generator's frame, or preview the mesh and look.
 
 ## A budget, for example a texturing tool's input
 
@@ -97,10 +134,13 @@ triangle primitive with UVs). Every kernel solid is triangles, so
 
 Measured on 54 outputs of eight generators (`docs/research.md` §28):
 - Their scale and pivot are the generator's: 0.75–2 m whatever the
-  object, the origin at the box's centre. Read `pivot_from_base` and
-  `bounds`.
-- Read OBJ from TripoSR with `--z-up`. InstantMesh's OBJs are in
-  neither frame; look at the preview.
+  object, the origin at the box's centre. `place` with `--pivot base`
+  and the object's real height (or longest side) puts them right.
+- Their frames, as `up` and `front`: Hunyuan3D-2, TRELLIS, Unique3D and
+  Meshy glTF's own (`+y`, `+z`); SPAR3D and CRM `+y`, `-z`; TripoSR's
+  OBJ `+z`, `+x`; InstantMesh's OBJ `-z`, `+x`. The front is the side
+  the prompt image shows: a horse photographed from its side faces
+  front side-on, and a `turn` of 90 or -90 points its head forward.
 - Keeping the file's UVs, decimation stops at about three triangles a
   UV island (thousands on an atlas of 2 000 islands). Below that,
   `--unwrap` reaches the budget and drops the texture.
@@ -109,6 +149,15 @@ Measured on 54 outputs of eight generators (`docs/research.md` §28):
 - Only the base colour is kept: metallic-roughness and normal maps,
   vertex colours and the material's metallic and roughness factors
   are not (`skipped` names the maps and the colours).
+
+## Models from a program
+
+`place` is for meshes from elsewhere. A program places its own parts:
+it is written in millimetres, Z up, front −Y, and exported in metres,
+so its origin is wherever the author put it (build the model standing
+on z = 0 and it stands there in the GLB). There is no pivot option on a
+program's export: moving the origin there would move its joints' and
+bones' frames too, which the program states itself.
 
 ## What repair cannot do
 

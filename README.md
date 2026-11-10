@@ -61,6 +61,7 @@ Run on `main` on 2026-11-10; each line says where the numbers come from.
 | Bevels never return a wrong result | 17 948 fillets and chamfers on generator and boolean solids: 16 648 built, 1 300 refused with an error value, none returned crossing itself | `cargo run --release -p shape-bevel --example scan` |
 | Booleans against outside meshes | 109 cases from sand3d, Thingi10K, synthetic defects and touching operands; no ok output crosses itself with the repair on | `bench/booleans` (`docs/research.md` §25.2) |
 | Real generated meshes | 54 files from 8 image- and text-to-3D generators (Hunyuan3D-2, TRELLIS, SPAR3D, TripoSR, InstantMesh, CRM, Unique3D, Meshy): within budget and closed keeping their UVs and texture 40, 49 and 50 at 2 000, 10 000 and 50 000 triangles, 50 at each with fresh UVs (the other 4 are open TRELLIS meshes); 132 of 154 booleans on the results closed, 19 refused with a cause, 3 missed | `bench/generated` (`docs/research.md` §28) |
+| Generated meshes placed for a game | all 54 stand on z = 0 with the origin at the base's centre, at the size asked to 4e-8, facing front, with each generator's frame given as `up` and `front` (TripoSR `+z`/`+x`, InstantMesh `-z`/`+x`, SPAR3D and CRM `+y`/`-z`); no simple reading of the axis measures stands more than 22 up | `bench/generated/place.ts` (`docs/research.md` §31) |
 | The mesh chain on a damaged mesh | open, 2 pieces, 79 flipped faces → closed, 1 piece, on budget, unwrapped with no UV overlap | `shape process golden/meshes/ball_defects.obj` |
 | Outside files | glTF, OBJ and FBX from three.js's and Khronos's samples import; textured and skinned ones keep UVs, bones and weights through repair and decimation to half | `docs/research.md` §9, §11.5, §17 |
 | three.js reads the output | the washing machine's joints move and a skinned figure poses in headless Chromium; vertex positions match the kernel's own pose | `docs/research.md` §19 |
@@ -84,6 +85,10 @@ silent returns a result with no error:
   draws no textures.
 - Not read: Draco and meshopt-compressed glTF, morph targets, vertex
   colours. No USD or URDF export.
+- `place` turns, sizes and moves a mesh to its base, but does not
+  choose its up or front: the author says them, per generator
+  (`guides/meshtools.md`). A program's export has no pivot option; the
+  program places its own parts.
 - The declarative `.ogt` source and `og cook` belong to the merge.
 
 ## Use it
@@ -98,7 +103,7 @@ claude mcp add og-shape -- "$PWD/target/release/shape-mcp" --root /path/to/works
 The agent then has `build`, `preview`, `measure` and `export` for model
 programs, `run_typescript` for TypeScript ones (with bun and
 `crates/shape-wasm/build.sh`), and `import`, `repair`, `decimate`,
-`unwrap` and `process` for meshes from elsewhere. It reads how to write a
+`unwrap`, `place` and `process` for meshes from elsewhere. It reads how to write a
 program from the server's resources (`guides/`).
 
 From a shell, the same commands (`cargo run -p shape-cli -- help`):

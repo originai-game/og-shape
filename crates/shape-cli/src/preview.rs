@@ -59,6 +59,8 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         "--uvs",
         IMPORT_OPTIONS[0],
         IMPORT_OPTIONS[1],
+        IMPORT_OPTIONS[2],
+        IMPORT_OPTIONS[3],
     ])?;
     let out = a.out()?;
     let d = PreviewDesc {

@@ -19,7 +19,7 @@ use crate::{Failure, Files, failed};
 pub struct UnwrapDesc {
     /// The mesh file.
     pub input: Input,
-    /// How to read an OBJ file.
+    /// How to read the mesh file: its unit (OBJ) and axes.
     pub import: Import,
     /// The unwrap.
     pub unwrap: Unwrap,

@@ -31,6 +31,7 @@ use shape_mesh::{Bone, Skin, Solid, Weights};
 
 use crate::image::{ImageInfo, Texture};
 use crate::jsonread::{self, Value};
+use crate::place::{Axis, AxisTurn, turned};
 use crate::polygon::triangulate;
 
 /// An affine map in kernel space: `p ↦ x·p.x + y·p.y + z·p.z + t`.
@@ -85,13 +86,76 @@ impl Affine {
 
 /// How to read a file. The zero value reads every format by its own
 /// convention.
+///
+/// `up` and `front` (OBJ and glTF) name the file's own axes that are the
+/// object's up and the way it faces; they become the kernel's +Z and −Y
+/// by one of the 24 exact axis turns (`crate::place`), through
+/// [`import`]. Give one and the
+/// other follows by the smallest turn. Without either, the file is read
+/// Y up and facing +Z, as glTF says (`z_up`: Z up and facing −Y). FBX
+/// says its axes in its `GlobalSettings`, and takes none of these.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Import {
     /// OBJ only: millimetres per file unit; 0 reads metres (1000), as
     /// glTF is.
     pub unit_mm: f64,
-    /// OBJ only: the file is Z up already (no axis change).
+    /// OBJ and glTF: the file is Z up already (no axis change); the same
+    /// as `up` +z and `front` −y, and not given with them.
     pub z_up: bool,
+    /// OBJ and glTF: the file's axis that is up.
+    pub up: Option<Axis>,
+    /// OBJ and glTF: the file's axis the object faces.
+    pub front: Option<Axis>,
+}
+
+impl Import {
+    /// The turn from the file's axes to the kernel's, or why the options
+    /// disagree.
+    fn axes(&self) -> Result<AxisTurn, ImportError> {
+        let given = self.up.is_some() || self.front.is_some();
+        if self.z_up && given {
+            return Err(ImportError::Unsupported(
+                "z_up together with up or front: z_up is up +z, front -y; give one or the other"
+                    .into(),
+            ));
+        }
+        if self.z_up {
+            return Ok(AxisTurn::IDENTITY);
+        }
+        let (up, front) = if given {
+            (self.up, self.front)
+        } else {
+            (Some(Axis::PosY), None)
+        };
+        AxisTurn::new(up, front).map_err(ImportError::Unsupported)
+    }
+
+    /// The same reading as a plain read and a turn after it: these
+    /// options without `z_up`, `up` and `front`, and the kernel axes, of
+    /// the file read so, that the options make up and front (for
+    /// [`crate::Place`]'s `up` and `front`; `None` when they turn
+    /// nothing). For OBJ and glTF; FBX takes no axes.
+    pub fn as_turn(&self) -> Result<(Import, Option<Axis>, Option<Axis>), ImportError> {
+        let plain = Import {
+            unit_mm: self.unit_mm,
+            ..Default::default()
+        };
+        if !self.turns() {
+            return Ok((plain, None, None));
+        }
+        let y_up = AxisTurn::new(Some(Axis::PosY), None).map_err(ImportError::Unsupported)?;
+        let back = y_up.then(&self.axes()?.inverse());
+        Ok((
+            plain,
+            Some(back.image(Axis::PosZ)),
+            Some(back.image(Axis::NegY)),
+        ))
+    }
+
+    /// Whether the options ask for other axes than the format's own.
+    pub fn turns(&self) -> bool {
+        self.z_up || self.up.is_some() || self.front.is_some()
+    }
 }
 
 /// One placed piece of an imported model.
@@ -342,11 +406,41 @@ pub fn import(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported, Im
     let head = &bytes[..bytes.len().min(4096)];
     let ascii_fbx = head.windows(18).any(|w| w == b"FBXHeaderExtension");
     if bytes.starts_with(b"glTF") || first == Some(&b'{') {
-        import_gltf(bytes, resolve)
+        let mut m = import_gltf(bytes, resolve)?;
+        if d.turns() {
+            // From glTF's Y up to the file's own axes, as the kernel
+            // reads them.
+            let y_up = AxisTurn::new(Some(Axis::PosY), None).map_err(ImportError::Unsupported)?;
+            let c = d.axes()?.then(&y_up.inverse());
+            for p in &mut m.parts {
+                turn_part(p, &c);
+            }
+        }
+        Ok(m)
     } else if bytes.starts_with(b"Kaydara FBX Binary") || ascii_fbx {
+        if d.turns() {
+            return Err(ImportError::Unsupported(
+                "up, front or z_up for FBX: its GlobalSettings say its axes; turn it with `place`"
+                    .into(),
+            ));
+        }
         crate::fbx::import_fbx(bytes, resolve)
     } else {
         import_obj(bytes, d, resolve)
+    }
+}
+
+/// A part turned by an axis turn of kernel space: an unskinned part's
+/// transform is turned after; a skinned part's mesh and bones are turned
+/// (`apply_transform` and `Mesh::placed` take it as it is), and its
+/// transform conjugated, so either way it lands turned.
+fn turn_part(p: &mut ImportedPart, c: &AxisTurn) {
+    if p.solid.skin.is_some() {
+        p.solid = turned(&p.solid, c);
+        let back = c.inverse().after(&Affine::IDENTITY);
+        p.transform = c.after(&p.transform.then(&back));
+    } else {
+        p.transform = c.after(&p.transform);
     }
 }
 
@@ -1416,6 +1510,7 @@ impl Doc<'_> {
 pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported, ImportError> {
     let text = String::from_utf8_lossy(bytes);
     let unit = if d.unit_mm > 0.0 { d.unit_mm } else { 1000.0 };
+    let axes = d.axes()?;
     let has_o = text.lines().any(|l| l.trim_start().starts_with("o "));
     let mut out = Imported::default();
     let mut positions: Vec<DVec3> = Vec::new();
@@ -1489,7 +1584,7 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
         match key {
             "v" => {
                 let p = DVec3::new(num(tok.next())?, num(tok.next())?, num(tok.next())?);
-                let p = if d.z_up { p } else { from_y_up(p) } * unit;
+                let p = axes.apply(p) * unit;
                 if !p.is_finite() {
                     return Err(ImportError::NotFinite("OBJ vertex".into()));
                 }

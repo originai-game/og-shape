@@ -14,6 +14,7 @@
 //! - [`export`]: GLB, OBJ or STL.
 //! - [`import`]: what a mesh file holds, and what was skipped.
 //! - [`repair`], [`decimate`], [`unwrap`]: the mesh tools on a mesh file.
+//! - [`place`]: a mesh file turned, sized and moved to a base pivot.
 //! - [`process`]: the chain import → repair → decimate → unwrap →
 //!   measure → export under a triangle budget.
 //!
@@ -26,6 +27,7 @@ pub mod decimate;
 pub mod export;
 pub mod import;
 pub mod measure;
+pub mod place;
 pub mod preview;
 pub mod process;
 pub mod repair;

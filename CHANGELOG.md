@@ -1050,3 +1050,23 @@
   texture. `guides/meshtools.md` told authors to read it, and the report
   left it out. Golden line `mcp.process.ball_defects` moved for the new
   field (its value there is 0), with the owner's leave.
+- `place` (stream AJ, `docs/research.md` §31): `shape place <mesh>`, the
+  MCP tool `place` and `shape_tools::place` (`Place`, zero value changes
+  nothing) turn a mesh so a stated axis is up and another faces front
+  (one of the 24 exact axis turns, then `--turn DEG` about up), scale it
+  uniformly (`--longest`, `--height`, `--width`, `--depth` with a unit,
+  `1.2m`, or `--scale`), and move its origin (`--pivot base`, `center`
+  or a point). Skins move with the mesh (bones rigid, inverse bind
+  matrices `S · IBM · A⁻¹`); UVs and textures are kept. The report gives
+  what was done and the axis measures before and after. `process` takes
+  the same options (MCP `place`) and places after decimation; the
+  report has `place` only when asked.
+- `measure --axes` (MCP `axes`): a mesh's extents, `pivot_from_base`,
+  longest and shortest axis, the area facing each way and where its
+  mass sits in the box (`shape_tools::axis_measures`); added only when
+  asked.
+- Import: `up` and `front` (`--up`, `--front`, MCP `up`, `front`) name
+  an OBJ's or glTF's own axes that are up and front, so InstantMesh's
+  OBJs (`--up -z --front +x`) can be read. `z_up` now applies to glTF
+  too and is refused together with `up` or `front`; FBX refuses all
+  three (it says its axes). No golden line moved; new cases `place.*`.

@@ -5,7 +5,8 @@
 //! interference at the pose (`shape_model::program::posed_json`); a mesh
 //! file gives every part placed, and the parts joined
 //! (`shape_tools::MeshMeasures`, null for a skinned file, which cannot be
-//! joined).
+//! joined). With `--axes`, a mesh's report adds `axes`
+//! (`shape_tools::AxisMeasures`) to each part and for the whole file.
 
 use shape_tools::Measure;
 
@@ -21,6 +22,11 @@ pub struct MeasureDesc {
     /// Meshes only: count self-intersecting triangle pairs (exact; costs a
     /// sweep over the triangles).
     pub intersections: bool,
+    /// Meshes only: add `axes` to each part's and the whole's measures
+    /// (`shape_tools::AxisMeasures`: extents, the longest and shortest
+    /// axis, the area facing each way, where the mass sits), the numbers
+    /// for choosing up and front.
+    pub axes: bool,
 }
 
 /// The measures of a program or a mesh.
@@ -54,7 +60,14 @@ fn mesh_measures(mesh: &Mesh, d: &MeasureDesc) -> Result<String, Failure> {
                     ..Default::default()
                 },
             );
-            object(&[("name", string(name)), ("measures", m.to_json())])
+            let mut fields = vec![("name", string(name)), ("measures", m.to_json())];
+            if d.axes {
+                fields.push((
+                    "axes",
+                    shape_tools::axis_measures(std::slice::from_ref(s)).to_json(),
+                ));
+            }
+            object(&fields)
         })
         .collect();
     let whole = if mesh.skinned() {
@@ -70,23 +83,25 @@ fn mesh_measures(mesh: &Mesh, d: &MeasureDesc) -> Result<String, Failure> {
         )
         .to_json()
     };
-    Ok(object(&[
+    let mut fields = vec![
         ("name", string(&mesh.name)),
         ("format", string(&mesh.format)),
         ("parts", array(&parts)),
         ("whole", whole),
-    ]))
+    ];
+    if d.axes {
+        // Every part placed, taken together: a skinned file too.
+        let solids: Vec<_> = placed.into_iter().map(|(_, s)| s).collect();
+        fields.push(("axes", shape_tools::axis_measures(&solids).to_json()));
+    }
+    Ok(object(&fields))
 }
 
 /// The command line.
 pub fn run(a: &Args) -> Result<String, Failure> {
-    a.only(&[
-        IMPORT_OPTIONS[0],
-        IMPORT_OPTIONS[1],
-        "--intersections",
-        "--posed",
-        "--uvs",
-    ])?;
+    let mut known = vec!["--intersections", "--posed", "--uvs", "--axes"];
+    known.extend(IMPORT_OPTIONS);
+    a.only(&known)?;
     let source = load_uvs(&Local, &a.input()?, &a.import()?, a.switch("--uvs"))?;
     if a.switch("--posed") {
         return measure_posed(&source);
@@ -95,6 +110,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         &source,
         &MeasureDesc {
             intersections: a.switch("--intersections"),
+            axes: a.switch("--axes"),
         },
     )
 }

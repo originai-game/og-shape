@@ -149,6 +149,7 @@ fn tools_resources_and_the_workspace() {
         "repair",
         "decimate",
         "unwrap",
+        "place",
         "process",
         "run_typescript",
     ] {
