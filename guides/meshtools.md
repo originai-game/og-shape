@@ -139,6 +139,11 @@ Measured on 54 outputs of eight generators (`docs/research.md` §28):
   a median 1–1.6° after repair alone and 2.6–6° after decimation to
   10 000 triangles (`docs/research.md` §29.4); mirrored UV charts keep
   their handedness.
+- Hard colour borders are kept by decimation as UV seams are. Fusing a
+  vertex-coloured mesh that crosses itself joins sheets of different
+  colour, and each meeting edge is a border: Unique3D's chair gets 8 699
+  and stops at 10 294 triangles for a budget of 10 000. Compare
+  `colors.borders` before and after repair.
 
 ## What repair cannot do
 

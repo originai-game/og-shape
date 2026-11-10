@@ -6742,3 +6742,144 @@ the texels; PIL 12.3 (libjpeg) decodes the same files:
 - Time (x86-64, release): median 33 ms at 1024², 115 ms at 2048², 518
   ms at 4096².
 
+### 29.6 The bench, before and after
+
+`bench/generated/look.ts` runs `shape process FILE --budget 10000`
+(the guide's repair, keeping UVs) and reads the output GLB's material,
+maps and `COLOR_0` against the input's (glTF's defaults applied, or the
+MTL's); `look-table.ts` prints the table. Before: the binary at 64af70c.
+Budgeted: this one with `--texture-max 1024`. x86-64, release, one run
+each.
+
+| generator | files | factors kept (before → after) | maps kept | vertex colours kept | maps in (median MiB with mips) | out | out, `--texture-max 1024` | time (median s; before → after → budgeted) |
+|---|---|---|---|---|---|---|---|---|
+| Hunyuan3D-2 | 6 | 0 → 6 | 6 → 6 of 6 | – | 5.3 | 5.3 | 5.3 | 6.0 → 4.7 → 4.9 |
+| TRELLIS | 6 | 0 → 6 | 6 → 6 of 6 | – | 5.3 | 5.3 | 5.3 | 1.1 → 0.9 → 0.9 |
+| SPAR3D | 6 | 0 → 6 | 0 → 6 of 6 | – | 10.7 | 10.7 | 10.7 | 0.9 → 0.7 → 0.8 |
+| TripoSR | 6 | 6 → 6 | – | 0 → 6 of 6 | 0 | 0 | 0 | 3.7 → 3.5 → 4.4 |
+| InstantMesh | 6 | 6 → 6 | – | 0 → 6 of 6 | 0 | 0 | 0 | 3.6 → 3.4 → 5.3 |
+| CRM | 6 | 6 → 6 | 6 → 6 of 6 | – | 5.3 | 5.3 | 5.3 | 1.1 → 1.1 → 1.8 |
+| Unique3D | 2 | 0 → 2 | – | 0 → 2 of 2 | 0 | 0 | 0 | 92 → 115 → 96 |
+| Meshy | 16 | 0 → 16 | 1 → 16 of 16 | – | 42.7 | 42.7 | 10.7 | 0.7 → 0.7 → 2.2 |
+| all | 54 | 18 → 54 | 19 → 40 of 40 | 0 → 14 of 14 | 5.3 | 5.3 | 5.3 | 1.1 → 1.1 → 2.2 |
+
+- **Factors**: all 54 outputs now have the input's base colour,
+  metallic, roughness, emissive, alpha mode and double-sidedness. Before,
+  only the 18 whose input material is the default (TripoSR, InstantMesh,
+  CRM's `Kd 1 1 1`) matched, by accident: Hunyuan3D lost its unset
+  (metal) `metallicFactor` and its roughness, TRELLIS and Meshy their
+  metallic 1, SPAR3D its own values, Unique3D and Meshy's robot their
+  `doubleSided`.
+- **Maps**: 40 of 40 textured files keep every map (19 before, the ones
+  with a base colour only). **Colours**: 14 of 14 (none before).
+- **Texture budget** at 1024 (per kind, over the 54 files):
+
+  | kind | maps | resized | MiB with mips in → out (total) | file MiB in → out (total) | not decoded |
+  |---|---|---|---|---|---|
+  | base colour | 40 | 16 | 661 → 213 | 30.4 → 46.9 | 0 |
+  | metallic-roughness | 15 | 15 | 512 → 80 | 5.2 → 7.1 | 0 |
+  | normal | 6 | 0 | 32 → 32 | 0.8 → 0.8 | 0 |
+
+  Files over 16 MiB of texture with mips: 16 → 0 (the largest 171 →
+  10.7 MiB, Meshy's 4096² pair). The PNGs are larger on disk than the
+  JPEGs they replace (+54 % for base colour): the budget is GPU memory,
+  and PNG is the only format written. It costs Meshy's files 1.7–3.9 s
+  (decode, filter, deflate at level 9), median 2.2 s against 0.7.
+- **Time** otherwise unchanged at the median. The before column ran
+  beside other work for its first half; the Unique3D chair's 92 → 115 s
+  is the fuse step carrying colours on 618k triangles.
+
+`run.ts` again with this binary (all 54, three budgets, keep and fresh):
+every row of §28.3's tables is the same except where the Unique3D chair
+enters it. Six files without vertex colours, and TripoSR's and
+InstantMesh's, checked one by one: the same decimation report and the
+same OBJ bytes as before. The chair (619k triangles, crossing itself in
+3 688 pairs, §28.2) now stops at 10 294 triangles for a budget of 2 000
+or 10 000, keep and fresh alike (was within both), and its reported
+error is 215 mm (2.0 mm before). Its fused surface has 8 699 colour
+borders: the self-union joins sheets of different colour where they
+cross, each such edge is a feature line, and decimation keeps them as it
+keeps UV seams (§28.3's island floor). The bear (one of the 2) has 237
+and still reaches every budget. Rows that moved: within budget at keep
+2k 41 → 40 and keep 10k 53 → 52, fresh 2k and 10k 54 → 53; Unique3D 2 / 2 → 1 / 2 at 2k, 10k
+and fresh 2k; the medians of error at 2k and 10k (17.8 → 18.4, 3.2 →
+3.5 mm), the maxima of fresh (1.16 → 10.5 %); the times, taken with
+other work running, are not compared.
+
+Two things measured and changed on the way:
+
+- **No colour-smear penalty.** A first version penalised removing a
+  vertex whose colour differs from its ring, as a bone border is. On
+  three vertex-coloured files at 10k (`bench/generated/src/bin/colors.rs`:
+  each output corner's colour against the input's at the nearest
+  point) it raised the surface error (InstantMesh 30: 3.47 → 4.46 mm;
+  300: 4.01 → 4.84; TripoSR 30: 1.44 → 1.68) and the colour error too
+  (p95 0.015 → 0.021, 0.042 → 0.047, 0.010 → 0.014 in 0..=1), since a
+  surface moved further samples its colour further away. Dropped.
+  Without it these files decimate to the same bytes as before colours
+  existed, with colour p95 0.010–0.042 and p99 0.025–0.07.
+- **Rounding at cut vertices.** The fuse step interpolates a cut-line
+  vertex once per source triangle around it; the roundings differ, and
+  each difference was a colour border (20 on two overlapping boxes of
+  one affine colour). Corners
+  of one cut vertex closer than half an 8-bit step (1/512) now take
+  their mean; the test fails without it.
+
+### 29.7 Golden lines
+
+- **Moved**: `mcp.process.ball_defects`, for new report fields only:
+  `import.parts[].colors` and `look`, `material`, `textures`,
+  `measures.texture.materials` and `by_kind`. Its GLB is the same bytes
+  (checked against the 64af70c binary on the same input).
+- **Kept**: `rest.program.booleans` hashes `{:?}` of the boolean
+  reports; `BoolReport`'s `Debug` leaves `faces_without_colors` out when
+  it is 0, so it did not move. No other line moved.
+- **New**: `meshtools.look.import` (a coloured, textured sphere with a
+  full material through `glb` and back; a hand-written glTF with unorm8
+  RGBA and float RGB colours, two primitives, unset factors, emissive
+  strength; an OBJ with colours and an MTL with maps), `meshtools.look.chain`
+  (a coloured soup with a hole repaired, decimated, written with its
+  material, measured; a coloured block cut by a pin and its report),
+  `meshtools.look.texture` (the JPEG fixture decoded; it and a PNG
+  shrunk as colour and data), `mcp.process.look` (`process` of a GLB
+  with a material and colours, maps shrunk to 2 texels; then `--unwrap`
+  to OBJ, with every map dropped and the not-written list).
+- Run natively on x86-64 here. The wasm32 run and `cargo deny` could not
+  run in this container (no wasmtime or cargo-deny installed, and
+  installing them was not allowed); the gate's CI runs them. No crate
+  was added to the kernel (`serde_json` only in the bench's own
+  workspace).
+
+### 29.8 Gaps, and for the orchestrator
+
+- **Decide:** the Unique3D chair (1 of 54) no longer reaches 2k or 10k
+  because its fused colour borders are kept (§29.6). Options: keep
+  borders (as now; the colour stays sharp where the sheets cross), add
+  a `Decimate` switch to cross colour borders (as `cross_bone_borders`),
+  or treat a border as a feature only above some colour step. The
+  number to beat is the chair's 2.0 mm at 10k without colours.
+- **Normals of imported meshes** are recomputed: the main cause of a
+  normal map's shading change after repair (§29.4). Carrying the file's
+  normals needs a per-corner normal on the solid, like UVs, and a rule
+  for decimation.
+- Not read: FBX vertex colours (listed), a second UV set, MTL's separate
+  `map_Pr`/`map_Pm` (glTF needs them combined), samplers other than
+  repeat (listed; written as repeat), `KHR_texture_transform` (listed,
+  not applied). Progressive JPEG is not decoded (none in the bench).
+- The texture budget writes PNG only; KTX2/Basis would cut file size and
+  GPU memory further and is a larger piece of work (an encoder).
+- One material per plain GLB: parts with different materials get the
+  default one (reported in `material.dropped`); `glb` of an imported
+  file keeps each part's.
+- Other crates that rebuild solids (`shape-edit`'s `dent` and `split`,
+  `shape-skin`'s refinement, `shape-model`'s placement) are not audited
+  for colours, as §17.6 says for UVs; nothing coloured reaches them
+  today.
+- Edits outside this stream's files, each the least that compiles or
+  reports: `crates/shape-bool/src/{named,sliver}.rs` (colours through
+  booleans, `faces_without_colors`), one `..Default::default()` in
+  `crates/shape-model/src/program.rs`, `ImportedPart::map` →
+  `material.map` in `crates/shape-model/tests/uvs.rs`, the golden
+  crate's cases, a short note in `docs/design.md` §4, `guides/mcp.md`'s
+  `process` row, and `crates/shape-mcp/tests/long_calls.rs` (the step
+  count is `STEPS.len()`).
