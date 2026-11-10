@@ -15,6 +15,7 @@
 
 use std::collections::BTreeMap;
 
+use robust::{Coord3D, orient3d};
 use shape_2d::Profile;
 use shape_bool::{BoolError, BoolOp, Boolean, boolean};
 use shape_core::{DVec3, Frame};
@@ -32,8 +33,17 @@ pub enum EditError {
     NotPositive(&'static str),
     /// An axis or normal of zero length (the field named).
     NoDirection(&'static str),
-    /// The axis from this point does not meet the solid.
-    Misses(DVec3),
+    /// The axis through a frame's origin, along its −z (into the part),
+    /// meets no face: it runs past the part, or inside an opening through
+    /// it (a through hole on the same axis).
+    Misses {
+        /// The frame's origin, as given.
+        origin: DVec3,
+        /// The axis's direction into the part (the frame's −z).
+        direction: DVec3,
+        /// The distance from the axis to the nearest edge of the solid.
+        clearance: f64,
+    },
     /// Nothing named so (the names that exist follow).
     NoSuchFace(Vec<String>, Vec<String>),
     /// A face to open is not flat: cut it flat first.
@@ -64,7 +74,16 @@ impl std::fmt::Display for EditError {
             EditError::Gen(e) => write!(f, "{e}"),
             EditError::NotPositive(n) => write!(f, "{n} must be positive"),
             EditError::NoDirection(n) => write!(f, "{n} has no direction"),
-            EditError::Misses(p) => write!(f, "the axis from {p} does not meet the solid"),
+            EditError::Misses {
+                origin,
+                direction,
+                clearance,
+            } => write!(
+                f,
+                "the axis through {origin} along {direction} meets no face of the solid: \
+                 its nearest edge is {clearance} away from it (an axis inside a through \
+                 hole meets nothing)"
+            ),
             EditError::NoSuchFace(m, a) => write!(
                 f,
                 "no face is named {}; names: {}",
@@ -106,31 +125,33 @@ fn placed(mut tool: Solid, frame: &Frame) -> Solid {
 }
 
 /// Where the line through `origin` along `-dir` first enters the solid
-/// from the `dir` side: the hit farthest along `dir` (Möller–Trumbore).
-fn entry(s: &Solid, origin: DVec3, dir: DVec3) -> Option<DVec3> {
-    let mut best: Option<f64> = None;
+/// from the `dir` side: the hit farthest along `dir`. Whether the line
+/// meets a triangle is decided exactly: the line, through `origin` and
+/// `origin - dir`, meets it when `orient3d` of the line with each of its
+/// edges has one sign or is zero, so a line through an edge or a corner
+/// meets every triangle there (`docs/research.md` §13.6, item 13). A
+/// triangle the line lies in is skipped. `Err` gives the distance from the
+/// line to the nearest edge when it meets none.
+fn entry(s: &Solid, origin: DVec3, dir: DVec3) -> Result<DVec3, f64> {
+    let c3 = |p: DVec3| Coord3D {
+        x: p.x,
+        y: p.y,
+        z: p.z,
+    };
     let d = -dir;
+    let (p0, p1) = (c3(origin), c3(origin + d));
+    let mut best: Option<f64> = None;
     for t in &s.triangles {
         let [a, b, c] = t.map(|v| s.positions[v as usize]);
-        let (e1, e2) = (b - a, c - a);
-        let p = d.cross(e2);
-        let det = e1.dot(p);
-        if det == 0.0 {
-            continue;
-        }
-        let inv = 1.0 / det;
-        let o = origin - a;
-        let u = o.dot(p) * inv;
-        let q = o.cross(e1);
-        let v = d.dot(q) * inv;
-        if u < 0.0 || v < 0.0 || u + v > 1.0 {
+        let side = [(a, b), (b, c), (c, a)].map(|(x, y)| orient3d(p0, p1, c3(x), c3(y)));
+        if side.iter().any(|&x| x > 0.0) && side.iter().any(|&x| x < 0.0) {
             continue;
         }
         // Distance along -dir from the triangle's plane equation, which is
         // exact for axis-aligned faces (the hit point lands on the face).
-        let n = e1.cross(e2);
+        let n = (b - a).cross(c - a);
         let nd = n.dot(d);
-        if nd == 0.0 {
+        if side == [0.0; 3] || nd == 0.0 {
             continue;
         }
         let dist = n.dot(a - origin) / nd;
@@ -139,6 +160,41 @@ fn entry(s: &Solid, origin: DVec3, dir: DVec3) -> Option<DVec3> {
         }
     }
     best.map(|dist| origin + d * dist)
+        .ok_or_else(|| clearance(s, origin, dir))
+}
+
+/// The distance from the line through `origin` along `dir` to the nearest
+/// edge of `s` (infinite for a solid with no triangles).
+fn clearance(s: &Solid, origin: DVec3, dir: DVec3) -> f64 {
+    let u = dir.normalize_or_zero();
+    let off = |v: DVec3| v - u * v.dot(u);
+    let mut near = f64::INFINITY;
+    for t in &s.triangles {
+        for k in 0..3 {
+            let (a, b) = (
+                s.positions[t[k] as usize],
+                s.positions[t[(k + 1) % 3] as usize],
+            );
+            let (w, e) = (off(a - origin), off(b - a));
+            let ee = e.dot(e);
+            let f = if ee > 0.0 {
+                (-w.dot(e) / ee).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            near = near.min((w + e * f).length());
+        }
+    }
+    near
+}
+
+/// The entry point of frame `f`'s axis, or [`EditError::Misses`].
+fn entry_of(s: &Solid, f: &Frame, axis: &Frame, span: f64) -> Result<DVec3, EditError> {
+    entry(s, f.origin + axis.z * 2.0 * span, axis.z).map_err(|clearance| EditError::Misses {
+        origin: f.origin,
+        direction: -axis.z + DVec3::ZERO,
+        clearance,
+    })
 }
 
 // ── split ───────────────────────────────────────────────────────────────────
@@ -247,8 +303,7 @@ pub fn hole(s: &Solid, d: &Hole) -> Result<Solid, EditError> {
     let mut out = s.clone();
     for f in &d.at {
         let axis = Frame::from_normal(DVec3::ZERO, f.z, f.x).ok_or(EditError::NoDirection("at"))?;
-        let probe = f.origin + axis.z * 2.0 * span;
-        let e = entry(&out, probe, axis.z).ok_or(EditError::Misses(f.origin))?;
+        let e = entry_of(&out, f, &axis, span)?;
         let depth = if d.depth > 0.0 { d.depth } else { 4.0 * span };
         let r = d.diameter / 2.0;
         // One segment count for every tool of this hole, so a countersink's
@@ -318,8 +373,7 @@ pub fn pocket(s: &Solid, d: &Pocket) -> Result<Solid, EditError> {
     let mut out = s.clone();
     for f in &frames {
         let axis = Frame::from_normal(DVec3::ZERO, f.z, f.x).ok_or(EditError::NoDirection("at"))?;
-        let e = entry(&out, f.origin + axis.z * 2.0 * span, axis.z)
-            .ok_or(EditError::Misses(f.origin))?;
+        let e = entry_of(&out, f, &axis, span)?;
         let depth = if d.depth > 0.0 { d.depth } else { 4.0 * span };
         let tool = extrude(
             &d.profile,

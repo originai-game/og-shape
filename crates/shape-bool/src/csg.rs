@@ -40,7 +40,7 @@ use shape_gen::{Mesh, Placement, normalize, place, trig};
 use spade::{ConstrainedDelaunayTriangulation, Point2, Triangulation};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{exact, selfcheck};
+use crate::{exact, selfcheck, sliver};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CsgOp {
@@ -2367,6 +2367,11 @@ pub fn csg_points_traced(
         let (c, kept) = arrange(points, sa, sb, op, robust);
         let (points, tris, origins, _) = emit(&c, &kept);
         let w = weld_ids(&points);
+        // Zero-area triangles on one line (`sliver`): flipped away.
+        let (tris, origins): (Vec<[u32; 3]>, Vec<(u8, u32)>) = sliver::flip(&points, &w, &tris)
+            .into_iter()
+            .map(|(t, src)| (t, origins[src]))
+            .unzip();
         let mut counts = edge_counts(&w, &tris, &origins);
         let (tris, origins) = if counts.non_manifold + counts.touching > 0 {
             let (t, o) = cancel_fins(&w, tris, origins);

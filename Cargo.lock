@@ -398,6 +398,7 @@ dependencies = [
 name = "shape-edit"
 version = "0.0.0"
 dependencies = [
+ "robust",
  "shape-2d",
  "shape-bool",
  "shape-core",
