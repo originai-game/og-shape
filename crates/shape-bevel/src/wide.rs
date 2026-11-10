@@ -71,6 +71,12 @@ pub(crate) struct Wide {
     pub stations: BTreeMap<EdgeKey, (bool, Vec<u32>)>,
     /// Whether a swallowed vertex was collapsed (the faces at it moved).
     pub collapsed: bool,
+    /// Per (vertex, surface): the gap point on a wall cut across its rows
+    /// (`rows.rs`).
+    pub gaps: BTreeMap<(u32, u32), u32>,
+    /// Per bevelled edge: where its stations lie along it, 0 to 1, where
+    /// that is not their projection on the edge (`rows.rs`).
+    pub along: BTreeMap<EdgeKey, Vec<f64>>,
 }
 
 /// Whether an outline has fewer than three distinct corners: a band
@@ -421,7 +427,7 @@ fn swallowed_run(
 
 /// `a – b` split at `m`: both its triangles in two, its names on both
 /// halves. Returns the new vertex.
-fn split(s: &mut Solid, a: u32, b: u32, m: DVec3) -> u32 {
+pub(super) fn split(s: &mut Solid, a: u32, b: u32, m: DVec3) -> u32 {
     let id = s.push_vertex(m);
     let n = s.triangles.len();
     for i in 0..n {

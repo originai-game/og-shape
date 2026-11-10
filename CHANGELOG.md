@@ -927,3 +927,17 @@
   `smallgaps.hole.diagonal`, `smallgaps.knob.program`,
   `touching.countersink.ring`, `touching.lofts.cut`, `touching.lofts.join`,
   `touching.program.elbows`, `touching.torus.ring`.
+- `shape-bevel` bevels a run of edges along a smooth wall whose rows are
+  shallower than the offset (`docs/research.md` §7.9): run Z2's toaster,
+  `fillet(10, top)` on a spline loft of rounded rectangles (8 rows a
+  span, the top row 6.9 deep), was "a bevel along a face whose triangles
+  at this vertex are not in one plane … not supported" and now builds,
+  as do the same fillet at 14 and 20, `chamfer`, a straight loft, the
+  bottom rim, and a loft of a circle to rounded rectangles. Each gap
+  point is found on the wall a fillet's offset below the run, the wall is
+  cut across its rows between them and the band above the cut is
+  replaced by the strip; what is left of the wall keeps its triangles'
+  planes. A plain multi-row wall (a loft of one section twice), which
+  was `TooLarge`, now removes what its single-row twin does to 1e-9.
+  Where the wall is too short for the bevel, the error is `TooLarge` at
+  the vertex. New golden line `bevel.rows`; no other line moved.

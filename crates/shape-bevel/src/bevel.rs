@@ -30,6 +30,8 @@ mod check;
 mod cones;
 #[path = "general.rs"]
 mod general;
+#[path = "rows.rs"]
+mod rows;
 #[path = "runs.rs"]
 mod runs;
 #[path = "tips.rs"]
@@ -269,8 +271,12 @@ impl Build<'_> {
         let mut profiles = Vec::new();
         let mut others = Vec::new();
         let mut last = 0.0;
-        for &c in mids {
-            let t = (self.pos[c as usize] - pl).dot(ph - pl) / (ph - pl).length_squared();
+        let along = self.wide.and_then(|w| w.along.get(&key));
+        for (j, &c) in mids.iter().enumerate() {
+            let t = match along {
+                Some(a) => a[j],
+                None => (self.pos[c as usize] - pl).dot(ph - pl) / (ph - pl).length_squared(),
+            };
             if !(t > last && t < 1.0) {
                 return Err(BevelError::TooLarge(pl));
             }
@@ -444,6 +450,22 @@ impl Build<'_> {
             let dl = self.edges[&el].after(el, v);
             let dr = self.edges[&er].before(er, v);
             gap_plain.push(inner.is_empty());
+            // A wall cut across its rows has its gap point already
+            // (`rows.rs`).
+            let wall = self.wide.and_then(|w| {
+                f.tris[lo..hi]
+                    .iter()
+                    .find_map(|&t| w.gaps.get(&(v, s.surfaces[t])))
+            });
+            if let Some(&id) = wall
+                && m >= 2
+            {
+                gap_point.push(id);
+                for &t in &f.tris[lo..hi] {
+                    self.repl.insert((t, v), vec![id]);
+                }
+                continue;
+            }
             match (m, inner.len()) {
                 (2.., 0) => {
                     let b = self.wedge_point(v, &f, lo, hi, dl, dr)?;
@@ -1019,13 +1041,20 @@ fn bevel_runs(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
                 match layout(s, spec, None, TILT_EXACT, true) {
                     Ok(out) => Ok(out),
                     Err(Fail::Error(e @ BevelError::LonePiece(..))) => Err(e),
-                    Err(_) => {
-                        Err(tips::lone_piece(s, spec)
-                            .unwrap_or(BevelError::Unsupported(at, TILTED)))
-                    }
+                    Err(_) => match rows::bevel(s, spec) {
+                        Ok(out) => Ok(out),
+                        Err(Some(at)) => {
+                            Err(tips::lone_piece(s, spec).unwrap_or(BevelError::TooLarge(at)))
+                        }
+                        Err(None) => Err(tips::lone_piece(s, spec)
+                            .unwrap_or(BevelError::Unsupported(at, TILTED))),
+                    },
                 }
             } else {
-                Err(tips::lone_piece(s, spec).unwrap_or(BevelError::TooLarge(at)))
+                match rows::bevel(s, spec) {
+                    Ok(out) => Ok(out),
+                    Err(_) => Err(tips::lone_piece(s, spec).unwrap_or(BevelError::TooLarge(at))),
+                }
             }
         }
     }
@@ -1424,8 +1453,14 @@ fn finish(b: Build<'_>, inserts: &BTreeMap<(usize, u32), Vec<u32>>) -> Result<So
         }
     }
     for ((x, y), names) in new_names {
+        let (rx, ry) = (remap[x as usize], remap[y as usize]);
+        if rx == u32::MAX || ry == u32::MAX {
+            // An old edge inside a band cut across a wall's rows
+            // (`rows.rs`): gone with its triangles.
+            continue;
+        }
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        out.tag_edge(remap[x as usize], remap[y as usize], &refs);
+        out.tag_edge(rx, ry, &refs);
     }
     out.canonicalize()
         .map_err(|_| BevelError::NotFinite("result"))?;

@@ -13,7 +13,8 @@
 //! joints, arc and patch miters and loop slide follow the same notes
 //! (`docs/research.md` §7.4). A lone piece of a longer crease tapers to
 //! a tip at both ends, and a corner on a face whose triangles are not one
-//! plane is cut on its folds (§7.8).
+//! plane is cut on its folds (§7.8). A band deeper than the rows of a
+//! smooth wall (a loft's top rim) is cut across them (§7.9).
 //!
 //! Names (`docs/design.md` §4):
 //! - New faces carry only `fillet` or `chamfer`.

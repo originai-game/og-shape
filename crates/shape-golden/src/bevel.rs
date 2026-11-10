@@ -81,6 +81,10 @@ pub fn cases() -> Vec<Case> {
             name: "bevel.folds",
             run: folds,
         },
+        Case {
+            name: "bevel.rows",
+            run: rows,
+        },
     ]
 }
 
@@ -1071,4 +1075,52 @@ fn folds(h: &mut OutputHash) -> Result<(), HashError> {
     )
     .unwrap_or_default();
     solid(h, fillet(&apex, &round(0.5, &["start"], 4)))
+}
+
+/// Bands deeper than a smooth wall's rows, cut across them
+/// (`docs/research.md` §7.9): run Z2's toaster housing (a spline loft of
+/// four rounded rectangles, 8 rows a span) with `fillet(10, top)`, and the
+/// smallest reproduction (a straight loft between two rounded rectangles,
+/// rows 2.5 high), filleted and chamfered 3 deep.
+fn rows(h: &mut OutputHash) -> Result<(), HashError> {
+    let rr = |w: f64, d: f64, r: f64| {
+        shape_2d::rect(&shape_2d::Rect {
+            width: w,
+            height: d,
+            radius: r,
+        })
+        .unwrap_or_default()
+    };
+    let housing = shape_gen::loft::loft(&shape_gen::loft::Loft {
+        sections: vec![
+            (rr(146.0, 284.0, 30.0), 0.0),
+            (rr(155.0, 290.0, 34.0), 45.0),
+            (rr(150.0, 288.0, 32.0), 120.0),
+            (rr(128.0, 264.0, 24.0), 175.0),
+        ],
+        steps: 8,
+        curve: shape_gen::loft::LoftCurve::Spline,
+        ..Default::default()
+    })
+    .unwrap_or_default();
+    solid(h, fillet(&housing, &round(10.0, &["top"], 0)))?;
+    let small = shape_gen::loft::loft(&shape_gen::loft::Loft {
+        sections: vec![(rr(20.0, 20.0, 4.0), 0.0), (rr(16.0, 16.0, 3.0), 10.0)],
+        steps: 4,
+        curve: shape_gen::loft::LoftCurve::Straight,
+        ..Default::default()
+    })
+    .unwrap_or_default();
+    solid(h, fillet(&small, &round(3.0, &["top"], 4)))?;
+    solid(
+        h,
+        chamfer(
+            &small,
+            &Chamfer {
+                distance: 3.0,
+                edges: names(&["top"]),
+                ..Default::default()
+            },
+        ),
+    )
 }

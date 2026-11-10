@@ -1664,6 +1664,177 @@ rows' junctions), `twisted_all` (`fillet(1.5)` every edge: 7 484.682,
 - The check costs as much as before where nearly every triangle moves
   and caps are fans of slivers (the 64-segment cylinder's rims, +1.3 ms).
 
+### 7.9 The fillet of a curved loft's top (stream AC, 2026-11-10)
+
+**Sources.** Nothing new from Blender: the two published design notes of
+§7.1 only (Trickey's Bevel page and the Bevel V2 issue #98674). The V2
+notes' "inset into the adjacent geometry regarded as one big face", then
+"intersect the outside edges of the bevel with all the existing edges"
+(§7.6) is the idea; how the inset's corners are found on a wall that is
+not one plane, the walks across it and the band's removal are ours.
+Blender's source and the Mesh Bevel node PR were not opened.
+
+**Why it was refused** (item 1). `eval/phase6/Z/repro/bevel_curved_loft_top.json`
+is a spline loft with `steps: 8`, so the rows next to the top are
+55/8 = 6.875 mm high (7.05 along the wall). At the refused vertex
+(−64, −100.886, 175), on the straight long side just before the corner's
+arc, the wall's gap holds three triangles whose normals differ in the
+fourth decimal: the rows are twisted quads, because the sections' corner
+radii differ. In order:
+- the classic layout would move the corner of each to the gap point and
+  tilt them (`Tilted`, §7.7);
+- the straight-run retry changes nothing; the wide bevel (§7.6) finds
+  the next ring of the wall inside the band but ends each cut band on an
+  unbevelled real edge, and a closed rim has none (`ends_of` ≠ 1);
+- the fold layout (§7.8) takes both folds at the vertex as real edges and
+  slides a point down each to where the offset line crosses it, 10/7.05
+  of the way along a spoke 7.05 deep: past its far end, so the face
+  between the folds cannot be cut and the attempt is `TooLarge`;
+- so the tilt refusal is given.
+
+Run A's toaster (§7.8) is a loft of three sections with one row a span
+(61 and 114 mm), and the tapered extrude is one row: the folds' far
+ends lie beyond the offset there. Here radii up to the first row's
+depth built (2, 5, 6.5 and 7, by the earlier layouts) and radii past
+it (10, 14, 20) were refused. The smallest
+reproduction is a straight loft of two rounded rectangles (20 × 20 r 4
+to 16 × 16 r 3, 10 high, 4 rows of 2.5) with `top` bevelled 3 deep;
+the same loft of one section twice (straight walls of 4 rows) was
+`TooLarge` for the same reason (test
+`a_wall_whose_rows_are_shallower_than_the_bevel_is_cut_across_them`).
+
+**What was built** (`crates/shape-bevel/src/rows.rs`). A last attempt,
+after every other (classic, straight run, wide, folds) has failed, so no
+result they give changes. It applies where each selected edge has one
+side on a **wall** (a surface whose triangles are not one plane) and the
+other on a surface that is one plane, and where each end's gap on the
+wall is bounded by two bevelled edges with no real edge between:
+1. **The gap points**, on the wall. At each such vertex `v`, the plane
+   through `v` square to the run's chord there (previous to next run
+   vertex) is walked down the wall's triangles for `d / sin(α/2)`, `d`
+   the offset and `α` the wall's angle at `v` summed over its triangles
+   (π where the run is straight on the wall, so the length is `d`).
+   The point lies on the segment the plane cuts from one triangle, so in
+   that triangle's plane, and is added to it (the triangle split in
+   three, or the edge split where the walk runs along an edge).
+2. **The cut.** For each bevelled edge, the plane through its two gap
+   points and square to its wall triangle is walked across the wall from
+   one to the other; every edge it crosses is split where it crosses
+   (`orient3d` decides the sides, a vertex on the plane is taken as it
+   is). A walk that would leave the wall, reach a bevelled vertex or
+   another gap point, or cross an earlier cut gives up.
+3. **The band**, every wall triangle reached from the bevelled edges
+   without crossing a cut, is not rebuilt; a band that reaches the
+   wall's other edges gives up. The strip gets a profile at each cut
+   point, at its share of the cut's length, its other end on the
+   straight offset line of the planar face between that face's two gap
+   points (§7.6's stations). The classic layout then runs on the cut
+   wall with those gap points.
+
+What is left of the wall is its old triangles, or pieces of them cut
+along the line in their own planes. A cut that gives up, or a layout on
+the cut wall that is `TooLarge`, is `TooLarge` at the bevelled vertex
+nearest; any other failure keeps the earlier refusal. An old edge whose
+end is inside the band loses its name with its triangles.
+
+**Measurements** (`fillet` with 0 segments, the chord rule; all results
+closed, uncrossed by the final exact check, every old triangle's corners
+and centroid on the input's surface to 4e-14, the scan's `ok`):
+
+| program | before | now, removed mm³ | prism of the top section | ratio |
+|---|---|---|---|---|
+| spline loft, `fillet(10, top)` (the repro) | tilt refusal | 15 619.122 | 15 999.600 | 0.976 |
+| same, `chamfer(10, top)` | tilt refusal | 35 267.577 | 36 086.837 | 0.977 |
+| `fillet(14, top)` | tilt refusal | 30 235.006 | 30 861.538 | 0.980 |
+| `chamfer(14, top)` | tilt refusal | 68 563.928 | 69 908.254 | 0.981 |
+| `fillet(20, top)` | tilt refusal | 61 258.257 | 61 966.811 | 0.989 |
+| `chamfer(20, top)` | tilt refusal | 138 240.171 | 140 153.747 | 0.986 |
+| `fillet(2, top)`, `chamfer(2, top)` | 646.615, 1 433.624 | the same (earlier layouts) | | |
+| `fillet(5, top)`, `chamfer(5, top)` | 4 069.243, 8 903.847 | the same (earlier layouts) | | |
+| straight loft of the same sections, `fillet(10, top)`; `chamfer` | tilt refusal | 15 694.855; 35 456.221 | | |
+| spline loft, `fillet(10, bottom)`; `chamfer` | tilt refusal | 17 333.971; 39 193.687 | | |
+| circle r 70 to two rounded rectangles (spline, 8 rows), `fillet(10, top)`; `chamfer` | tilt refusal | 15 389.277; 34 719.338 | | |
+| same loft, `fillet(10, bottom)`; `chamfer` | 9 188.824; 20 121.763 | the same (classic layout) | | |
+
+The prism is `extrude` of the top section (128 × 264 r 24), 175 high.
+The loft's wall leans in at the top: its normal there has z 0.217, so
+the rim's inner angle is 102.5°, and a profile on offsets `d` along both
+faces (the superellipse in the faces' own frame) removes sin 102.5° =
+0.976 of the square edge's section, as measured. The repro's quads are
+3 072/3 072 (worst fold 5.6°). With the smallest reproduction's straight
+walls the result removes exactly what the same loft with one row does
+(143.784 for the fillet, 297.905 for the chamfer, to 1e-12); the twisted
+loft removes 113.412 and 235.052. A wall 4 high under a 5 mm bevel is
+`TooLarge` at the rim (the test). Run through `shape measure`, the
+repro's program gives a closed housing of 6 396 triangles, volume
+7 287 213.633. The whole bevel takes 2.4 s (x86-64, release): the
+earlier attempts that fail first take 2.2 s (the wide bevel 1.1 s), as
+they did to refuse it before; this pass 0.25 s.
+
+UVs (stream Y, §21.2): the smallest reproduction, textured, keeps its
+UVs through the cut (`tests/uvs.rs`): geometry equal to the bare bevel,
+no UV triangle turned over, new triangles not stretched.
+
+**The neighbours** (item 3), in short: built are radius 2, 5, 14 and 20,
+`chamfer`, the straight loft, `bottom`, and the circle-to-rounded-rectangle
+loft (table above). Stream X's leftovers stay refused, the same as on
+`5417fac`:
+- the twisted prism's top corners (`fillet` and `chamfer` of single top
+  and bottom edges at 1.5, and 80 lines of random subsets): a bevel that ends at
+  a corner, its end face a twisted wall. This pass needs each run end's
+  wall gap bounded by two bevelled edges; an end on a real edge needs an
+  end face cut along the profile, not built. `top` and `bottom` whole
+  build (since §7.7);
+- the apex revolve's end-cap corners (`all` at 1.5, and subsets): the
+  edge between the cone and the cylinder wall has a curved wall on both
+  sides, and cuts on both sides of one edge are not built (§7.6's limit).
+
+**The scan** (`cargo run --release -p shape-bevel --example scan --
+out.txt`). It gains one solid, `loft` (a spline loft of rounded
+rectangles 20 × 16 r 4, 22 × 18 r 5 and 16 × 12 r 3 at 0, 4 and 8, 4 rows
+a span, so 1 mm rows under the 1.5 offset), added last so the earlier
+solids' random subsets are unchanged. Before is `5417fac` with the same
+scan file:
+
+| outcome | before, 45 solids | now, 45 solids | before, with `loft` | now, with `loft` |
+|---|---|---|---|---|
+| ok | 16 556 | 16 556 | 16 642 | 16 648 |
+| `TooLarge` | 416 | 416 | 426 | 426 |
+| `NotManifold` | 308 | 308 | 308 | 308 |
+| `LonePiece` | 46 | 46 | 226 | 226 |
+| `Unsupported`: faces not in one plane | 186 | 186 | 346 | 340 |
+| total | 17 512 | 17 512 | 17 948 | 17 948 |
+
+The 17 512 lines of the 45 solids are byte for byte those of `5417fac`,
+hashes included: no line moved. On `loft`, six tilt refusals became
+results (`all`, `name top` and `name bottom`, fillet and chamfer at 1.5).
+The loft's other refusals are its single rim edges and random subsets
+(`LonePiece` 180, tilt 154, `TooLarge` 10): runs ending inside a smooth
+rim, whose ends taper to tips (§7.8). This pass does not take them.
+
+**Golden.** New line `bevel.rows`: the repro's `fillet(10, top)` and the
+smallest reproduction's fillet and chamfer. No other line moved: no
+golden case reached the new pass.
+
+**Previews** (`cargo run --release -p shape-bevel --example phase3 --
+docs/previews/phase3`; earlier images not regenerated, as in §7.8):
+`loft_rows_top` (the repro: volume 7 287 213.633, quads 3 072/3 072,
+worst fold 5.6°) and `loft_rows_top_corner` (a close-up of one top
+corner).
+
+**Not done.**
+- Runs that end on a wall: at a single edge's end, or at a corner on a
+  real edge of the wall (the twisted prism's top corners), the gap is not
+  bounded by two bevelled edges. Its gap point would slide down the real
+  edge's chain and the band would end on it; not built.
+- An edge with a curved wall on both sides (cuts on both sides).
+- The gap point's depth is a walk's length, `d / sin(α/2)`, in the plane
+  square to the run's chord: exact on a straight wall, a choice on a
+  curved one (the fillet's width on the wall varies with the wall's
+  curvature across the band).
+- The earlier attempts' cost: on the repro they take 2.2 s before this
+  pass runs, as they did before to refuse it.
+
 ## 8. Phase 4: parts, joints, the CLI and the wasm binding (stream E, 2026-11-09)
 
 ### 8.1 Sources

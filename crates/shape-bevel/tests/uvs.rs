@@ -205,4 +205,69 @@ fn fillets_chamfers_and_soften_carry_uvs() {
         &fillet(&bare(&p), &fd).unwrap(),
         "fillet",
     );
+    // A loft whose rows are shallower than the fillet: the band is cut
+    // across them (`docs/research.md` §7.9), its rows' UVs trimmed.
+    let rr = |w: f64, r: f64| {
+        rect(&Rect {
+            width: w,
+            height: w,
+            radius: r,
+        })
+        .unwrap()
+    };
+    let l = textured(&Generator::Loft(&shape_gen::loft::Loft {
+        sections: vec![(rr(20.0, 4.0), 0.0), (rr(16.0, 3.0), 10.0)],
+        steps: 4,
+        curve: shape_gen::loft::LoftCurve::Straight,
+        ..Default::default()
+    }))
+    .unwrap();
+    for (kind, out, plain) in [
+        (
+            "fillet",
+            fillet(
+                &l,
+                &Fillet {
+                    radius: 3.0,
+                    edges: vec!["top".into()],
+                    ..Default::default()
+                },
+            ),
+            fillet(
+                &bare(&l),
+                &Fillet {
+                    radius: 3.0,
+                    edges: vec!["top".into()],
+                    ..Default::default()
+                },
+            ),
+        ),
+        (
+            "chamfer",
+            chamfer(
+                &l,
+                &Chamfer {
+                    distance: 3.0,
+                    edges: vec!["top".into()],
+                    ..Default::default()
+                },
+            ),
+            chamfer(
+                &bare(&l),
+                &Chamfer {
+                    distance: 3.0,
+                    edges: vec!["top".into()],
+                    ..Default::default()
+                },
+            ),
+        ),
+    ] {
+        check(
+            &format!("loft rows {kind}"),
+            &l,
+            &out.unwrap(),
+            &plain.unwrap(),
+            kind,
+        );
+    }
 }

@@ -2282,3 +2282,91 @@ fn faces_not_in_one_plane_are_cut_on_their_folds() {
         "{e:?}"
     );
 }
+
+fn rounded(w: f64, h: f64, r: f64) -> shape_2d::Profile {
+    shape_2d::rect(&shape_2d::Rect {
+        width: w,
+        height: h,
+        radius: r,
+    })
+    .unwrap()
+}
+
+/// A loft of rounded rectangles `steps` rows high: two sections, 10 high.
+fn rows_loft(top: (f64, f64, f64), steps: u32, height: f64) -> Solid {
+    shape_gen::loft::loft(&shape_gen::loft::Loft {
+        sections: vec![
+            (rounded(20.0, 20.0, 4.0), 0.0),
+            (rounded(top.0, top.1, top.2), height),
+        ],
+        steps,
+        curve: shape_gen::loft::LoftCurve::Straight,
+        ..Default::default()
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_wall_whose_rows_are_shallower_than_the_bevel_is_cut_across_them() {
+    // The smallest form of run Z2's toaster (`docs/research.md` §7.9): a
+    // loft between rounded rectangles of different corner radii, its
+    // rows 2.5 high, its top rim bevelled 3 deep. The rows are twisted
+    // quads, so the classic layout would tilt them, and the fold layout's
+    // points fall beyond the first row: it was the tilt refusal.
+    let twisted = rows_loft((16.0, 16.0, 3.0), 4, 10.0);
+    // The same with straight walls (one section twice): `TooLarge`.
+    let straight = rows_loft((20.0, 20.0, 4.0), 4, 10.0);
+    // ... whose single-row twin bevels classically.
+    let one_row = rows_loft((20.0, 20.0, 4.0), 1, 10.0);
+    let bevel = |s: &Solid, kind: &str, r: f64| {
+        if kind == "fillet" {
+            fillet(
+                s,
+                &Fillet {
+                    radius: r,
+                    edges: names(&["top"]),
+                    segments: 4,
+                    ..Default::default()
+                },
+            )
+        } else {
+            chamfer(
+                s,
+                &Chamfer {
+                    distance: r,
+                    edges: names(&["top"]),
+                    ..Default::default()
+                },
+            )
+        }
+    };
+    for kind in ["fillet", "chamfer"] {
+        let mut gone = Vec::new();
+        for s in [&twisted, &straight, &one_row] {
+            let out = bevel(s, kind, 3.0).unwrap();
+            check_closed(&out);
+            uncrossed(&out);
+            canonical(&out);
+            in_planes(s, &out, kind);
+            gone.push(on_input(s, &out, kind));
+        }
+        // Straight walls: the cut rows remove exactly what the single row
+        // does (the extra profiles are the strip's own interpolations).
+        assert!(
+            (gone[1] - gone[2]).abs() < 1e-9 * gone[2],
+            "{kind}: {gone:?}"
+        );
+        // The twisted wall leans in (the top is smaller): a little less.
+        assert!(
+            gone[0] > 0.7 * gone[2] && gone[0] < gone[2],
+            "{kind}: {gone:?}"
+        );
+    }
+    // A wall too short for the bevel: `TooLarge` where it does not fit,
+    // not the tilt refusal.
+    let short = rows_loft((16.0, 16.0, 3.0), 4, 4.0);
+    for kind in ["fillet", "chamfer"] {
+        let e = bevel(&short, kind, 5.0).unwrap_err();
+        assert!(matches!(e, BevelError::TooLarge(_)), "{kind}: {e:?}");
+    }
+}
