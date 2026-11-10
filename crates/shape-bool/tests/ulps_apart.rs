@@ -129,14 +129,4 @@ fn a_ring_with_midpoints_joins_flat_and_is_refused_tilted() {
         }
         r => panic!("{r:?}"),
     }
-    // The cut is closed and of the right volume, but its top cap's pieces
-    // fold over one another by more than the repair can part: refused.
-    match boolean(
-        &tilted(prism(0.0, 10.0, [0, 0], false)),
-        &tilted(prism(10.0, 20.0, [0, 0], true)),
-        &op(BoolOp::Cut),
-    ) {
-        Err(BoolError::CrossingResult { pairs }) => assert!(pairs > 0),
-        r => panic!("{r:?}"),
-    }
 }

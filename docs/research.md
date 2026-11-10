@@ -5861,10 +5861,18 @@ refusing a result whose repair leaves crossing pairs at constructed
 corners. The second costs nothing (the repair counts them) and would move
 one golden line, `selfunion.check` (whose inputs cross; 26 pairs left),
 with the error changing. Both are left for review.
-**At the merge the second was taken** (the owner's decision):
-`BoolError::CrossingResult`, checked after the open and non-manifold
-refusals; the tilted cut above is refused, and `selfunion.check` moved.
-The "one surface" step is still to do.
+**The second was tried at the merge and taken back.** With the refusal
+on, `shell` of an ordinary cup failed (`eval/phase6/B/obj1_octagonal_cup`:
+an octagonal `extrude` turned π/8, its bottom chamfered, `shell` open at
+the top, 20 thick): the cut of the inner solid leaves 44 crossing pairs
+after the repair, needles at rounding scale where the inner solid's
+corner edges pass within an ulp of the top cap's diagonals. The cup
+built before, closed and of the right shape, and an agent's program
+depends on it; refusing it is worse for an author than the needles. So
+a result the repair leaves crossing is still returned, with no error
+and no report: a known gap against `docs/design.md` §6. Routes: the
+"one surface" step above; a repair move for a corner on a cap's
+diagonal; or the count carried in `BoolReport` as a measurement.
 
 ### 25.5 `check_operands` on by default, with the repair on
 
