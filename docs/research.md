@@ -2486,11 +2486,13 @@ marked. None was fixed in this stream.
    refused.
 3. **A curved loft (`steps` > 1) with a small end section folds through
    itself**: open, 2 non-manifold edges, no error (reported in runs `A`
-   and `C`, not reproduced with the sections tried here).
+   and `C`, not reproduced with the sections tried here). **Done
+   (§15.2)**: a fold is refused, naming the sections; the open result
+   was most likely the cap fill of §15.1, now fixed.
 4. **Loft resampling ignores corners**: sections are resampled evenly by
    length from their largest-x point, so polygon corners fall between
    samples and a hexagon loft looks twisted (reported; §10.3 already
-   notes the missing corner correspondence).
+   notes the missing corner correspondence). **Done (§15.1).**
 5. **A `cut` whose tool lies wholly inside the target changes nothing,
    silently** (an enclosed void; reported).
    **Done** (stream L, §5.4 item 5): the void is kept, as the correct
@@ -2512,13 +2514,15 @@ marked. None was fixed in this stream.
    work). Missing in the kernel: an arc segment in `poly`, a part torus,
    an across-flats size for `polygon`, a non-uniform profile scale.
 10. **No interference measure**: nothing reports parts passing through
-    each other, at rest or posed; measures are at rest only.
+    each other, at rest or posed; measures are at rest only. **Done
+    (§15.3)**; the CLI, MCP and binding are stream M's to wire.
 11. **Bevels after a join**: `fillet(edges: "top")` takes every
     operand's top edges and throws "the bevel is larger than the faces
     allow" (reproduced); `soften` on a loft's top edge throws at any
     radius tried (reported).
 12. **Joining overlapping tapered extrudes leaves 2 degenerate
-    triangles** (reported).
+    triangles** (reported). **Not fixed**: reproduced, the cause is in
+    `shape-bool`, handed to stream L (§15.4).
 13. **A through hole on a boss over a bottom pocket** threw "the axis from
     [≈0, ≈0, 0] does not meet the solid", naming a point that is not the
     frame given (reported, not reproduced).
@@ -2540,3 +2544,221 @@ marked. None was fixed in this stream.
   server or the `shape` CLI.
 - Token counts are totals from the Agent tool, with no input and output
   split; the fixed context (62 668) is the same for every agent.
+
+## 15. Loft quality and an interference measure (stream N, 2026-11-09)
+
+Items 3, 4, 10 and 12 of §13.6. Code: `shape-gen/src/loft.rs`, the cap
+fill in `shape-2d/src/ops.rs` (`triangulate`), `shape-tools/src/
+interference.rs`, `shape-model/src/checked.rs` and `Model::interference`,
+`program::report_json`. Golden cases `loft.corners`, `loft.folds` and
+`interference.washing_machine` (`shape-golden/src/interference.rs`);
+every earlier hash is unchanged, natively and under wasmtime. Examples
+that print the measurements below: `cargo run --release -p shape-tools
+--example interference` (phase 1) and `cargo run --release -p
+shape-model --example report -- <program.json> [joint=value,…]…`.
+
+### 15.1 Loft corners (item 4)
+
+- **Which sections.** The new resampling applies to a contour slot (the
+  outline, or one hole through every section) when some section's
+  contour has a sharp point (`Contour::sharp`): polygons, `rect` with
+  radius 0, `poly` corners. Circles, ellipses and rounded rectangles are
+  `Contour::smooth` and keep today's rule (evenly by length from the
+  largest-x point). Every existing golden loft uses circles and rounded
+  rectangles (`gen2.loft.holes`, `gen2.loft.spline`, `solid.loft`), so no
+  `Loft` field was needed and no hash moved (checked by the gate). The
+  unit tests with sharp squares take the new path and still pass (the
+  square frame's 3 000 mm³ is exact either way).
+- **Start.** Section 0 starts at its corner of largest x, then smallest
+  y (today's rule, among corners). Each later section starts at its
+  corner nearest the previous start by angle about its centroid: largest
+  cosine, compared as `dot·|b| > dot_b·|a|` without dividing; ties to the
+  earlier corner. A section with no corner in a cornered slot (a square
+  to a circle) starts at its point nearest by angle.
+- **Shares.** The runs between corners share the samples by length, at
+  least one each, the rest by largest remainder (ties to the earlier
+  run). When every section has as many corners, one share serves all
+  (each run's length over its section's perimeter, summed), so corner `i`
+  runs to corner `i` and a hexagon to a turned hexagon twists by the turn
+  only. Otherwise each section shares its own. The count is raised to the
+  most corners any section has.
+- **Holes** are slots like the outline: matched by centre as before
+  (§10.1), then resampled by the same rule.
+- Checked: a hexagon r 10 to r 5 over 10 mm at 32 samples (32 does not
+  divide by 6) is the exact frustum, `h/3 (A₀ + √(A₀A₁) + A₁)`, within
+  1e-9; with even resampling five corners were cut.
+
+**The cap fill dropped lofts open.** Resampling a polygon puts points
+along its straight sides that are not exactly collinear in f64. The
+cap's constrained Delaunay triangulation (`shape-2d` `triangulate`)
+then has sliver triangles outside the region whose rounded centroid
+falls inside, and kept them: a contour edge used twice, the solid open
+and non-manifold. This happened with today's rule as well (a hexagon
+marked smooth, r 10 to r 5):
+
+| samples | 12 | 16 | 24 | 32 | 48 |
+|---|---|---|---|---|---|
+| boundary edges | 2 | 2 | 10 | 10 | 22 |
+| non-manifold edges | 4 | 4 | 14 | 12 | 24 |
+| degenerate triangles | 0 | 0 | 2 | 4 | 4 |
+
+(a hexagon to a circle: 1, 5, 13 boundary edges at 16, 32, 48 samples).
+`triangulate` now decides a triangle on a contour edge by the exact side
+of that edge (`orient2d`; the region's side is known from the contour's
+orientation, the outline's inside and a hole's outside), carries that
+decision breadth first to neighbours across edges that are not contour
+edges, and uses the centroid only for a triangle no contour edge
+reaches. Every case above is closed, with no degenerate triangle. No
+existing hash moved, so no earlier output had such a sliver. This is
+the most likely cause of the eval's "curved loft came out open, 2
+non-manifold edges" (§13.5, item 3): the binding's loft has no `curve`,
+and polygon sections with `samples` hit it with or without `steps`.
+
+### 15.2 Curved lofts (item 3)
+
+The eval's program was not kept (`runs.log` has the failed build, not
+its source); the mouse shell of `sim2` (five ellipses) does not fold with
+any `steps` from 2 to 12, on Catmull-Rom or the spline. Two folds were
+reproduced with other sections:
+
+- **z overshoot (Catmull-Rom, uneven heights).** Circles at z 0, 1, 20,
+  21, `steps` 4: z ran from −0.6875 to 21.6875. The tangent at section 1
+  is `(20 − 0)/2` over a span of 1, so the curve leaves the end sections
+  and comes back: a lip below the bottom cap and above the top. It is
+  closed and does not cross itself (`self_crossings` finds nothing), so
+  no check catches it. **Prevented**: when the Catmull-Rom z of the rings
+  would not rise strictly, z runs straight between sections (as the
+  spline's already does); x and y keep the curve, and rings stay flat.
+  Where z rises strictly the output is bit for bit the old one.
+- **Radial overshoot.** A natural spline through circles r 10, 10, 8,
+  0.5 at z 0, 10, 11, 30: 1 958 crossing triangle pairs, closed, no
+  error. Catmull-Rom through a neck, r 20, 1, 60 at z 0, 10, 20 with
+  `steps` 6: the radius runs below 0 before the neck and the wall
+  passes through the axis. **Detected**: `shape_model::loft` (which the
+  program's `loft` op now calls) runs `shape_bool::selfcheck::
+  self_crossings` on the result and refuses a fold with
+  `GenError::Invalid`: "loft: the surface passes through itself between
+  sections 0 and 1 (z 0 to 10; N crossing triangle pairs): the curve
+  overshoots there. Add a section between them, bring the sizes closer,
+  or set steps to 1 (straight)". The sections named are the lowest span
+  holding a crossing triangle. Prevention by monotone interpolation was
+  not chosen: it would change every curved loft's hash, and a monotone
+  curve per coordinate does not stop a ring from passing through the
+  axis when the sections themselves do.
+- `shape-gen` cannot call `shape-bool` (which depends on it), so
+  `shape_gen::paths::loft` itself still builds a folded surface; the
+  model layer and the program refuse it. Moving `selfcheck` below
+  `shape-gen` (into `shape-mesh`) would let the generator refuse it too;
+  that is stream L's file, so it is a suggestion for L.
+- Cost: the check on the binocular shell spline loft (2 428 triangles)
+  is 3.1 ms on top of 2.4 ms to build it. All 65 eval programs
+  (`eval/phase6/{A,B,C,T}`) still replay without error.
+
+### 15.3 Interference (item 10)
+
+- **What is reported.** `shape_tools::interference(&Scene)`: for every
+  pair of parts, triangle pairs that **cross** (each triangle has corners
+  strictly on both sides of the other's plane, by `orient3d`) and that
+  **touch** (meet otherwise: faces lying on each other, an edge or a
+  corner on a face; `selfcheck::tris_meet`), the box of what met, and
+  **inside**: the part held wholly inside a closed other, touching from
+  inside allowed, when no triangles cross. Pairs that neither meet nor
+  nest are left out. No threshold: a pin seated in its hole touches it,
+  a door through its frame crosses it; the agent judges.
+- **Inside** is the parity of a ray from a corner of the inner part to a
+  point beyond the outer one's box, every test by `orient3d`. A ray
+  through an edge or a corner, or ending in a triangle's plane, is not
+  counted on: the next of eight fixed directions is tried. A corner lying
+  on the outer surface (exactly, by `orient3d` and `orient2d`) is
+  skipped for the next, at most 16. With none left the answer is "not
+  inside". Only boxes that nest are tested.
+- **Pairs come from one box sweep** over every part's triangles
+  (`selfcheck::box_pairs`), keeping pairs of different parts.
+- **Pose.** The scene's joint values (followers from their leaders, the
+  export's `check`). Parts that the pose moves by the very same motion
+  (bit for bit: a door's ring, glass and handle) are compared where they
+  were built, since their relative placement is unchanged: posed, a
+  rotation's rounding broke the exact contact of the ring and the glass,
+  which went from 7 246 touching pairs to 401 crossing ones with the door
+  open. Pairs moving differently are compared posed.
+- **Model.** `Model::interference(pose)`: the joints named in `pose` at
+  their values (checked as `Model::pose` checks them), every other joint
+  at rest; bounds in the model's unit; the model is not changed.
+  `program::report_json(model, poses)` is `measures_json` with an added
+  field `interference`: a list, the rest first, then each pose, each
+  `{"pose": {joint: value}, "pairs": [{"a", "b", "crossings",
+  "touching", "inside" (a name or null), "boundsMin", "boundsMax"}]}`.
+  `measures_json` itself is unchanged (`model.washing_machine.measure`
+  hashes it). The CLI, the MCP server and the binding are not touched:
+  stream M wires `report_json` (or `Model::interference`) into them.
+
+The washing machine (`golden/programs/washing_machine.json`, 7 parts,
+4 014 triangles; x86-64, release, one thread):
+
+| pose | pairs | crossing pairs (crossings) | time |
+|---|---|---|---|
+| rest | 5 | cabinet/drawer (8), cabinet/dial (178) | 29 ms |
+| recorded: door 1.61 rad, drawer 120 mm | 4 | cabinet/drawer (67), cabinet/dial (178) | 22 ms |
+| open: door 2.50 rad, drawer 200 mm | 4 | cabinet/drawer (65), cabinet/dial (178) | 24 ms |
+
+The rest's other pairs touch: cabinet/ring, ring/glass, ring/handle. The
+dial is sunk into the cabinet's face and the drawer runs through it:
+both are how the program builds them, and the report says so.
+
+Phase 1's ten sand3d rebuilds (as their programs pose them):
+
+| program | parts | triangles | time | pairs meeting or nested | crossing | inside |
+|---|---|---|---|---|---|---|
+| xyz_cartesian_stage | 29 | 348 | 1.4 ms | 39 | 19 | 0 |
+| floor_task_lamp | 18 | 3 228 | 16.3 ms | 26 | 20 | 0 |
+| double_leaf_garden_gate | 37 | 928 | 3.6 ms | 49 | 17 | 0 |
+| compact_apartment_refrigerator | 34 | 1 472 | 10.5 ms | 43 | 22 | 0 |
+| skateboard | 11 | 1 332 | 3.1 ms | 10 | 8 | 0 |
+| compact_theatre_binocular | 30 | 4 528 | 17.5 ms | 50 | 43 | 2 |
+| compact_pickup_tailgate | 43 | 1 492 | 5.4 ms | 61 | 49 | 0 |
+| compact_trackpoint_keyboard | 59 | 13 596 | 53.8 ms | 33 | 24 | 1 |
+| bevel_to_spur_transfer | 30 | 11 240 | 63.4 ms | 40 | 26 | 0 |
+| gate | 6 | 296 | 0.8 ms | 3 | 0 | 0 |
+
+sand3d's assembly rule makes parts overlap to join, so crossings at rest
+are the norm there. Over the 65 eval programs the costliest was
+`T/sim3_toaster` (33 parts, 19 880 triangles): 379 ms; the next 93 ms.
+The sweep lists large triangles against every other, which is what
+grows on such models.
+
+### 15.4 Joining tapered extrudes (item 12, for stream L)
+
+Reproduced from `eval/phase6/B/auto2_lever_knob/program.json`: the
+knob is eight tapered hexagonal extrudes, each sunk 0.5 mm into the one
+below and joined in turn. Replayed here the knob has 1 degenerate
+triangle (the eval's measure said 2); it appears at op 18, the join of
+`band_7` into the body, and joining `band_6` and `band_7` alone gives it
+too (66 triangles, closed), on `main` as on this branch. Neither input
+has a degenerate triangle. The triangle lies on `band_6`'s top cap
+(z = 62.046), which `band_7`'s tapered side crosses at x = 8.30072170574391:
+its corners have y = 4.558071733838249, 4.792423911279415 and
+4.792423911279416, so one point of the cut is computed twice, 1 ulp
+apart, and the sliver between the copies has zero area. The generator's
+vertices are exact (the taper scales the hexagon's corners), so the
+cause is in `shape-bool`'s intersection points; it is left to L.
+Reproduce: ops 15 and 17 of that program, then `join` 0 with 1.
+
+### 15.5 What is untested
+
+- Corners: sections whose corner counts differ share samples per
+  section, so corners of one land wherever the other's samples fall
+  (a square to an octagon lines up only roughly). Holes that swap places
+  are still matched by centre only. No `Loft` field selects the old
+  resampling for cornered sections.
+- Folds: only the model layer refuses them. A curve that overshoots
+  without touching itself (a bulge past a section, like the z lip) is a
+  valid surface: it is prevented for z only, and built as asked in x and
+  y. The check costs about as much as building the loft.
+- Interference: `inside` needs the outer part closed; open parts are
+  only tested for meeting triangles. A part nested in another that also
+  crosses a third is reported pair by pair. Parts moved by different
+  joints that are exactly flush when posed (a slide by a non-dyadic
+  distance) can read as crossing by rounding; only identical motions
+  are compared as built.
+- Every new hash is checked natively (x86-64) and as wasm32 under
+  wasmtime here; aarch64 and Windows run in CI only.

@@ -9,6 +9,7 @@ mod bevel;
 mod cases;
 mod gen2;
 mod geom;
+mod interference;
 mod mcp;
 mod meshtools;
 mod model;

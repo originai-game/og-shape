@@ -551,7 +551,7 @@ fn generate(a: &Args) -> Result<shape_mesh::Solid, ModelError> {
                     .ok_or_else(|| a.bad("sections", "a list of {profile, z}"))?;
                 sections.push((profile(a, p)?, z));
             }
-            shape_gen::paths::loft(&Loft {
+            crate::checked::loft(&Loft {
                 sections,
                 samples: a.u32_or("samples", 0)?,
                 steps: a.u32_or("steps", 0)?,
@@ -711,6 +711,50 @@ fn frame_of(v: &Value) -> Result<Frame, String> {
 /// unit, with no thresholds.
 pub fn measures_json(m: &Model) -> Result<String, ModelError> {
     Ok(measures_value(m)?.to_string())
+}
+
+/// [`measures_json`] with one field added, `interference`: per pose, the
+/// rest first and then each of `poses` (joint values; every joint not
+/// named at rest), the pairs of parts that pass through each other, touch,
+/// or hold one wholly inside ([`Model::interference`]):
+///
+/// `{"pose": {joint: value}, "pairs": [{"a", "b", "crossings",
+/// "touching", "inside" (a part's name or null), "boundsMin",
+/// "boundsMax"}]}`
+///
+/// Counts only: no threshold says what is too much.
+pub fn report_json(m: &Model, poses: &[Vec<(String, f64)>]) -> Result<String, ModelError> {
+    let mut v = measures_value(m)?;
+    let mut list = vec![interference_value(m, &[])?];
+    for p in poses {
+        list.push(interference_value(m, p)?);
+    }
+    if let Some(o) = v.as_object_mut() {
+        o.insert("interference".into(), Value::Array(list));
+    }
+    Ok(v.to_string())
+}
+
+/// One pose's entry of [`report_json`]'s `interference`.
+fn interference_value(m: &Model, pose: &[(String, f64)]) -> Result<Value, ModelError> {
+    let v3 = |d: DVec3| json!([d.x, d.y, d.z]);
+    let pairs: Vec<Value> = m
+        .interference(pose)?
+        .into_iter()
+        .map(|x| {
+            json!({
+                "a": x.a,
+                "b": x.b,
+                "crossings": x.crossings,
+                "touching": x.touching,
+                "inside": if x.inside.is_empty() { Value::Null } else { Value::String(x.inside) },
+                "boundsMin": v3(x.bounds_min),
+                "boundsMax": v3(x.bounds_max),
+            })
+        })
+        .collect();
+    let pose: Map<String, Value> = pose.iter().map(|(k, x)| (k.clone(), json!(x))).collect();
+    Ok(json!({ "pose": pose, "pairs": pairs }))
 }
 
 fn measures_value(m: &Model) -> Result<Value, ModelError> {

@@ -312,7 +312,12 @@ pub fn stroke(points: &[DVec2], d: &StrokeDesc) -> Result<Profile, ProfileError>
 
 /// Constrained Delaunay triangulation of the profile (spade), with every
 /// contour point kept at its exact position, so caps weld to walls.
-/// Triangles are kept where their centroid lies inside the profile.
+/// A triangle on a contour edge is kept when it lies on the region's side
+/// of that edge (exactly, by `orient2d`); the others take the side of a
+/// neighbour across an edge that is not a contour edge, breadth first;
+/// only a triangle no contour edge reaches is decided by its centroid. (A
+/// sliver between nearly collinear contour points can have its rounded
+/// centroid on the wrong side.)
 pub(crate) fn triangulate(p: &Profile) -> Result<Fill, ProfileError> {
     use spade::{ConstrainedDelaunayTriangulation, Point2, Triangulation};
     if p.regions.is_empty() {
@@ -327,7 +332,12 @@ pub(crate) fn triangulate(p: &Profile) -> Result<Fill, ProfileError> {
             ConstrainedDelaunayTriangulation::new();
         // spade vertex index -> fill point index.
         let mut fill_of: BTreeMap<usize, u32> = BTreeMap::new();
-        for c in region.contours() {
+        // Contour edges, directed with the region on their left: (from, to)
+        // fill indices.
+        let mut sides: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+        for (ci, c) in region.contours().enumerate() {
+            // The outline has the region inside it, a hole outside it.
+            let left = (ci == 0) == (c.signed_area2() > 0.0);
             let mut handles = Vec::with_capacity(c.points.len());
             for q in &c.points {
                 let h = cdt
@@ -343,9 +353,15 @@ pub(crate) fn triangulate(p: &Profile) -> Result<Fill, ProfileError> {
                 let (a, b) = (handles[i], handles[(i + 1) % handles.len()]);
                 if a != b {
                     cdt.try_add_constraint(a, b);
+                    let (fa, fb) = (fill_of[&a.index()], fill_of[&b.index()]);
+                    let e = if left { (fa, fb) } else { (fb, fa) };
+                    *sides.entry(e).or_insert(0) += 1;
                 }
             }
         }
+        // Every triangle, in spade's order, with what its contour edges say
+        // (`Some(inside)`), or `None` when they say nothing.
+        let mut tris: Vec<([u32; 3], Option<bool>)> = Vec::new();
         for f in cdt.inner_faces() {
             let ids = f.vertices().map(|v| v.fix().index());
             let Some(t) = ids
@@ -356,12 +372,68 @@ pub(crate) fn triangulate(p: &Profile) -> Result<Fill, ProfileError> {
                 continue;
             };
             let [a, b, c] = [t[0], t[1], t[2]];
+            // Each contour edge of the triangle says inside (the edge runs
+            // with the triangle on its left) or outside; an edge listed
+            // both ways (contours touching there) says nothing.
+            let mut votes = (0, 0);
+            for (u, v) in [(a, b), (b, c), (c, a)] {
+                let fwd = sides.contains_key(&(u, v));
+                let back = sides.contains_key(&(v, u));
+                if fwd == back {
+                    continue;
+                }
+                let w = a ^ b ^ c ^ u ^ v;
+                let (from, to) = if fwd { (u, v) } else { (v, u) };
+                let on_left = orient2d(
+                    fill.points[from as usize],
+                    fill.points[to as usize],
+                    fill.points[w as usize],
+                ) == core::cmp::Ordering::Greater;
+                if on_left {
+                    votes.0 += 1;
+                } else {
+                    votes.1 += 1;
+                }
+            }
+            let said = match votes {
+                (_, 0) if votes.0 > 0 => Some(true),
+                (0, _) if votes.1 > 0 => Some(false),
+                _ => None,
+            };
+            tris.push(([a, b, c], said));
+        }
+        // Across an edge that is no contour edge, both triangles are on the
+        // same side: carry what is known, breadth first in a fixed order.
+        let key = |u: u32, v: u32| (u.min(v), u.max(v));
+        let mut by_edge: BTreeMap<(u32, u32), Vec<usize>> = BTreeMap::new();
+        for (i, (t, _)) in tris.iter().enumerate() {
+            for (u, v) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                if !sides.contains_key(&(u, v)) && !sides.contains_key(&(v, u)) {
+                    by_edge.entry(key(u, v)).or_default().push(i);
+                }
+            }
+        }
+        let mut queue: std::collections::VecDeque<usize> =
+            (0..tris.len()).filter(|&i| tris[i].1.is_some()).collect();
+        while let Some(i) = queue.pop_front() {
+            let (t, state) = tris[i];
+            for (u, v) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                for &j in by_edge.get(&key(u, v)).map_or(&[][..], Vec::as_slice) {
+                    if tris[j].1.is_none() {
+                        tris[j].1 = state;
+                        queue.push_back(j);
+                    }
+                }
+            }
+        }
+        for ([a, b, c], said) in tris {
             let (pa, pb, pc) = (
                 fill.points[a as usize],
                 fill.points[b as usize],
                 fill.points[c as usize],
             );
-            if !region.contains((pa + pb + pc) / 3.0) {
+            // No contour edge reaches it: the centroid decides.
+            if !said.unwrap_or_else(|| region.contains((pa + pb + pc) / 3.0)) {
                 continue;
             }
             match orient2d(pa, pb, pc) {
@@ -467,5 +539,39 @@ mod tests {
         let m = l.mirror();
         assert!((m.area() - l.area()).abs() < 1e-9);
         assert!(m.regions[0].outer.signed_area2() > 0.0);
+    }
+
+    #[test]
+    fn slivers_between_nearly_collinear_points_stay_out() {
+        // Points along a hexagon's slanted sides, interpolated in f64: not
+        // exactly collinear, so some lie a rounding error outside. The fill
+        // must still be a triangulation of the polygon: n − 2 triangles,
+        // every contour edge used once.
+        let corners: Vec<DVec2> = (0..6)
+            .map(|k| {
+                let a = trig::TAU * f64::from(k) / 6.0;
+                DVec2::new(10.0 * trig::cos(a), 10.0 * trig::sin(a))
+            })
+            .collect();
+        let mut pts = Vec::new();
+        for k in 0..6 {
+            let (p, q) = (corners[k], corners[(k + 1) % 6]);
+            for i in 0..5 {
+                pts.push(p + (q - p) * (f64::from(i) / 5.0));
+            }
+        }
+        let n = pts.len();
+        let fill = Profile::from_contour(crate::Contour::smooth(pts))
+            .triangulate()
+            .unwrap();
+        assert_eq!(fill.triangles.len(), n - 2);
+        let mut used: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+        for t in &fill.triangles {
+            for k in 0..3 {
+                let (a, b) = (t[k], t[(k + 1) % 3]);
+                *used.entry((a.min(b), a.max(b))).or_insert(0) += 1;
+            }
+        }
+        assert_eq!(used.values().filter(|&&u| u == 1).count(), n);
     }
 }

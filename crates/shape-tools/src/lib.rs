@@ -35,12 +35,15 @@
 //!   corner.
 //! - [`measure()`]: [`MeshMeasures`] and their JSON, no thresholds.
 //! - [`glb_plain`]: one node, one mesh, positions, normals and UVs.
+//! - [`interference()`]: which parts of a posed scene pass through,
+//!   touch, or hold each other wholly inside ([`Interfering`]).
 
 mod decimate;
 mod export;
 mod fbx;
 mod image;
 mod import;
+mod interference;
 mod intersect;
 mod json;
 mod jsonread;
@@ -62,6 +65,7 @@ pub use import::{
     Affine, Import, ImportError, Imported, ImportedPart, Resolve, SkinScale, UNEVEN, import,
     import_gltf, import_obj, no_files,
 };
+pub use interference::{Interfering, interference};
 pub use measure::{Measure, MeshMeasures, Piece, TextureMeasures, UvMeasures, measure};
 pub use meshglb::{PlainGlb, PlainGlbError, glb_plain};
 pub use png::png;

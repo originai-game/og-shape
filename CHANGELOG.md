@@ -402,3 +402,24 @@
 - Golden cases `touching.*` (11, of which three replay
   `golden/programs/touching_*.json`); no existing hash moved.
   `bench/booleans` gains a `touching` suite.
+- Loft: sections with corners (polygons, sharp `rect`, `poly` corners)
+  keep them as samples, and corner `i` runs to corner `i` of the next
+  section, which starts at its corner nearest the previous start by
+  angle; holes too. Smooth sections (circles, ellipses, rounded
+  rectangles) are resampled as before.
+- Loft: a Catmull-Rom curve whose z would run back past a section (uneven
+  heights) runs z straight instead, so the solid stays between its end
+  sections. Unchanged where z already rose.
+- `shape-2d` cap fills are exact: a sliver between nearly collinear
+  contour points no longer closes a cap twice. Polygon lofts with
+  `samples` (and any profile with such points) came out open.
+- `shape_model::loft`, used by the program's `loft`: a loft whose surface
+  passes through itself is refused (`GenError::Invalid`), naming the
+  sections it folds between.
+- Interference: `shape_tools::interference` (`Interfering`: crossings,
+  touching, inside, where), `Model::interference(pose)` and
+  `program::report_json(model, poses)`, the measures plus an added
+  `interference` field at rest and at each pose. `measures_json` is
+  unchanged; the CLI, MCP and binding do not expose it yet.
+- Golden cases `loft.corners`, `loft.folds` and
+  `interference.washing_machine`; no existing hash moved.
