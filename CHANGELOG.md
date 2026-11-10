@@ -1045,3 +1045,8 @@
 - `guides/meshtools.md`: a section on generated meshes (scale and
   pivot, up axis, the UV-island floor of decimation, fills across seams,
   what is not kept).
+- `shape repair` and `shape process` (and the MCP tools) report
+  `uv_seam_fills`: hole fills that cross a UV seam and stretch the
+  texture. `guides/meshtools.md` told authors to read it, and the report
+  left it out. Golden line `mcp.process.ball_defects` moved for the new
+  field (its value there is 0), with the owner's leave.

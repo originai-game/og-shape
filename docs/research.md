@@ -6514,7 +6514,7 @@ ordinary cases.
   `RepairReport::uv_seam_fills`, though `guides/meshtools.md` step 6
   tells authors to read it. Adding it (one line) moves
   `mcp.process.ball_defects` (the MCP `process` report is hashed; its
-  value would be 0). Reproduction: `shape repair robot_mech1.glb --weld
+  value would be 0). **Applied at the merge**, with the owner's leave. Reproduction: `shape repair robot_mech1.glb --weld
   0.001 --floaters 0.05 --holes 64` reports 31 fills and no
   `uv_seam_fills`; the library says 25. Decide whether the line may
   move.
