@@ -124,6 +124,8 @@ Edits (a tool must be a part; it is used up; the target keeps its name):
   boolean); `delete(part)`. `seat(host, part)` cuts
   `part`'s volume out of `host` and keeps `part`. `scale(part, { x?, y?,
   z? })` along its own axes, about its own origin.
+  `seat`, `hole`, `pocket`, `shell` and `dent` return `{ crossingPairs }`
+  too: want 0.
 - `hole(part, { diameter, at, depth?, counterbore?, countersink? })`:
   `at` one frame or a list, +z out of the material; `depth` 0 goes
   through; `counterbore: [d, depth]`, `countersink: [d, full angle]`.

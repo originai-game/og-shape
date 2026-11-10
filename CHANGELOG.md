@@ -1009,3 +1009,8 @@
 - Test: every program of the evaluation's run B builds natively, every
   part closed and none crossing itself (`shape-model`'s `phase6_b`).
   Examples `shell_sweep` and `edit_sweep` (`shape-edit`).
+- `seat`, `hole`, `pocket`, `shell` and `dent` answer `crossingPairs` in
+  a program and return `{ crossingPairs }` from the binding, as a boolean
+  does; `Model`'s five methods return `shape_edit::EditReport`. A `shell`
+  whose inner wall folds through itself comes back with the count, never
+  silently.

@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use shape_bevel::{Chamfer, Fillet, Soften};
 use shape_bool::{BoolOp, BoolReport, Boolean};
 use shape_core::{DVec3, Frame};
-use shape_edit::{Dent, Hole, Keep, Pocket, Shell};
+use shape_edit::{Dent, EditReport, Hole, Keep, Pocket, Shell};
 use shape_mesh::{Measures, Solid};
 use shape_tools::{
     Image, Interfering, JointKind, Material, Mimic, Part, Placement, Preview, Scene,
@@ -1086,6 +1086,19 @@ impl Model {
         Ok(())
     }
 
+    /// As [`Self::edit`], for an edit that reports what its result alone
+    /// does not say.
+    fn edit_report(
+        &mut self,
+        id: Id,
+        f: impl FnOnce(&Solid, &Frame) -> Result<(Solid, EditReport), ModelError>,
+    ) -> Result<EditReport, ModelError> {
+        let placement = self.node(id)?.placement;
+        let (s, r) = f(self.solid_of(id)?, &placement)?;
+        self.nodes[id.0 as usize].solid = Some(s);
+        Ok(r)
+    }
+
     /// Why `tool` may not be used up.
     fn usable(&self, tool: Id, target: Id) -> Result<(), ModelError> {
         let n = self.node(tool)?;
@@ -1282,7 +1295,7 @@ impl Model {
 
     /// The volume `part` fills, taken out of `host`; `part` is untouched
     /// ([`shape_edit::seat`]).
-    pub fn seat(&mut self, host: Id, part: Id) -> Result<(), ModelError> {
+    pub fn seat(&mut self, host: Id, part: Id) -> Result<EditReport, ModelError> {
         if host == part {
             return Err(ModelError::Refused(
                 self.node(host)?.name.clone(),
@@ -1291,7 +1304,7 @@ impl Model {
         }
         let t = self.tool_in(part, host)?;
         let name = self.node(part)?.name.clone();
-        self.edit(host, |s, _| Ok(shape_edit::seat(s, &t, &name)?))
+        self.edit_report(host, |s, _| Ok(shape_edit::seat_report(s, &t, &name)?))
     }
 
     /// Scales part `id`'s solid along its own axes, about its own origin,
@@ -1313,20 +1326,20 @@ impl Model {
     }
 
     /// Holes ([`shape_edit::hole`]); `d.at` frames are in the world.
-    pub fn hole(&mut self, id: Id, d: &Hole) -> Result<(), ModelError> {
-        self.edit(id, |s, p| {
+    pub fn hole(&mut self, id: Id, d: &Hole) -> Result<EditReport, ModelError> {
+        self.edit_report(id, |s, p| {
             let inv = p.inverse();
             let local = Hole {
                 at: d.at.iter().map(|f| inv.compose(f)).collect(),
                 ..d.clone()
             };
-            Ok(shape_edit::hole(s, &local)?)
+            Ok(shape_edit::hole_report(s, &local)?)
         })
     }
 
     /// A pocket ([`shape_edit::pocket`]); `d.at` frames are in the world.
-    pub fn pocket(&mut self, id: Id, d: &Pocket) -> Result<(), ModelError> {
-        self.edit(id, |s, p| {
+    pub fn pocket(&mut self, id: Id, d: &Pocket) -> Result<EditReport, ModelError> {
+        self.edit_report(id, |s, p| {
             let inv = p.inverse();
             let at = if d.at.is_empty() {
                 vec![inv]
@@ -1334,7 +1347,7 @@ impl Model {
                 d.at.iter().map(|f| inv.compose(f)).collect()
             };
             let local = Pocket { at, ..d.clone() };
-            Ok(shape_edit::pocket(s, &local)?)
+            Ok(shape_edit::pocket_report(s, &local)?)
         })
     }
 
@@ -1348,19 +1361,19 @@ impl Model {
 
     /// Hollows the part ([`shape_edit::shell`]); directions in `d.open`
     /// are the part's own axes.
-    pub fn shell(&mut self, id: Id, d: &Shell) -> Result<(), ModelError> {
-        self.edit(id, |s, _| Ok(shape_edit::shell(s, d)?))
+    pub fn shell(&mut self, id: Id, d: &Shell) -> Result<EditReport, ModelError> {
+        self.edit_report(id, |s, _| Ok(shape_edit::shell_report(s, d)?))
     }
 
     /// Dents ([`shape_edit::dent`]); `d.at` points are in the world.
-    pub fn dent(&mut self, id: Id, d: &Dent) -> Result<(), ModelError> {
-        self.edit(id, |s, p| {
+    pub fn dent(&mut self, id: Id, d: &Dent) -> Result<EditReport, ModelError> {
+        self.edit_report(id, |s, p| {
             let inv = p.inverse();
             let local = Dent {
                 at: d.at.iter().map(|&q| inv.point_to_world(q)).collect(),
                 ..d.clone()
             };
-            Ok(shape_edit::dent(s, &local)?)
+            Ok(shape_edit::dent_report(s, &local)?)
         })
     }
 

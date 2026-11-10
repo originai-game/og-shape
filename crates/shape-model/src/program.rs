@@ -51,13 +51,13 @@
 //! | `cut`, `join`, `intersect` | `target`, `tool`, `check`? | `voids`, `touchingEdges`, `touching`, `facesWithoutUvs`, `crossingPairs` |
 //! | `merge` | `target`, `tool` | |
 //! | `delete` | `id` | |
-//! | `seat` | `host`, `part` | |
+//! | `seat` | `host`, `part` | `crossingPairs` |
 //! | `scale` | `id`, `x`?, `y`?, `z`? (factors along its own axes; 0 keeps 1) | |
-//! | `hole` | `id`, `diameter`, `at` (frames), `depth`?, `counterbore`? `[d, depth]`, `countersink`? `[d, angle]` | |
-//! | `pocket` | `id`, `profile`, `depth`?, `at`? (frames) | |
+//! | `hole` | `id`, `diameter`, `at` (frames), `depth`?, `counterbore`? `[d, depth]`, `countersink`? `[d, angle]` | `crossingPairs` |
+//! | `pocket` | `id`, `profile`, `depth`?, `at`? (frames) | `crossingPairs` |
 //! | `split` | `id`, `frame`, `keep`? (`"above"`, `"below"`) | |
-//! | `shell` | `id`, `thickness`, `open`? | |
-//! | `dent` | `id`, `at` (points), `radius`, `depth` | |
+//! | `shell` | `id`, `thickness`, `open`? | `crossingPairs` |
+//! | `dent` | `id`, `at` (points), `radius`, `depth` | `crossingPairs` |
 //! | `fillet` | `id`, `radius`, `edges`?, `segments`?, `profile`? | |
 //! | `chamfer` | `id`, `distance`, `distance2`?, `angle`?, `edges`?, `segments`? | |
 //! | `soften` | `id`, `radius`, `angle`?, `edges`?, `segments`? | |
@@ -533,8 +533,8 @@ fn dispatch(m: &mut Model, a: &Args) -> Result<(Value, bool), ModelError> {
                 Ok((none(), true))
             }
             "seat" => {
-                m.seat(a.id("host")?, a.id("part")?)?;
-                Ok((none(), true))
+                let r = m.seat(a.id("host")?, a.id("part")?)?;
+                Ok((json!({"crossingPairs": r.crossing_pairs}), true))
             }
             "scale" => {
                 let f = |k: &str| -> Result<f64, ModelError> {
@@ -564,8 +564,8 @@ fn dispatch(m: &mut Model, a: &Args) -> Result<(Value, bool), ModelError> {
                     counterbore: pair("counterbore")?,
                     countersink: pair("countersink")?,
                 };
-                m.hole(a.id("id")?, &d)?;
-                Ok((none(), true))
+                let r = m.hole(a.id("id")?, &d)?;
+                Ok((json!({"crossingPairs": r.crossing_pairs}), true))
             }
             "pocket" => {
                 let d = Pocket {
@@ -576,8 +576,8 @@ fn dispatch(m: &mut Model, a: &Args) -> Result<(Value, bool), ModelError> {
                         None => Vec::new(),
                     },
                 };
-                m.pocket(a.id("id")?, &d)?;
-                Ok((none(), true))
+                let r = m.pocket(a.id("id")?, &d)?;
+                Ok((json!({"crossingPairs": r.crossing_pairs}), true))
             }
             "split" => {
                 let keep = match a.opt("keep").and_then(Value::as_str).unwrap_or("above") {
@@ -593,8 +593,8 @@ fn dispatch(m: &mut Model, a: &Args) -> Result<(Value, bool), ModelError> {
                     thickness: a.num("thickness")?,
                     open: a.names_or("open")?,
                 };
-                m.shell(a.id("id")?, &d)?;
-                Ok((none(), true))
+                let r = m.shell(a.id("id")?, &d)?;
+                Ok((json!({"crossingPairs": r.crossing_pairs}), true))
             }
             "dent" => {
                 let d = Dent {
@@ -602,8 +602,8 @@ fn dispatch(m: &mut Model, a: &Args) -> Result<(Value, bool), ModelError> {
                     radius: a.num("radius")?,
                     depth: a.num("depth")?,
                 };
-                m.dent(a.id("id")?, &d)?;
-                Ok((none(), true))
+                let r = m.dent(a.id("id")?, &d)?;
+                Ok((json!({"crossingPairs": r.crossing_pairs}), true))
             }
             "fillet" => {
                 let d = Fillet {

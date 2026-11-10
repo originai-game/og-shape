@@ -261,3 +261,21 @@ fn text_names_a_font_the_caller_supplies() {
         .to_string();
     assert!(e.contains("not a TrueType"), "{e}");
 }
+
+#[test]
+fn edits_answer_the_crossing_pairs_they_leave() {
+    let shell = |radius: f64, thickness: f64| {
+        let mut s = Session::new("t");
+        s.apply_value(&json!({"op": "extrude", "name": "case", "height": 80,
+            "profile": {"rect": {"width": 80, "height": 50, "radius": radius}}}))
+            .unwrap();
+        s.apply_value(&json!({"op": "shell", "id": 0, "thickness": thickness}))
+            .unwrap()
+    };
+    assert_eq!(shell(15.0, 3.0), json!({"crossingPairs": 0}));
+    // A wall thicker than the corners' radius folds the inner solid
+    // (`docs/research.md` §27.1): the part comes back, and the answer says
+    // it passes through itself.
+    let folded = shell(5.0, 10.0);
+    assert!(folded["crossingPairs"].as_u64().unwrap() > 0, "{folded}");
+}

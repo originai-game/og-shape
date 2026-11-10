@@ -60,6 +60,12 @@ export type Path2 = [[number, number], ...PathPiece<[number, number]>[]];
 /** A 3D path for `sweep` and `wire`: a start point and pieces, or a helix about +z (`og.helix`). */
 export type Route = [Vec3, ...PathPiece<Vec3>[]] | { helix: { radius: number; pitch: number; turns: number } };
 
+/** What `seat`, `hole`, `pocket`, `shell` or `dent` did that its result alone does not say. */
+export interface EditReport {
+  /** Pairs of the result's triangles that still cross after the repair of rounding errors: 0 unless the result passes through itself. */
+  crossingPairs: number;
+}
+
 /** What a boolean did that its result alone does not say. */
 export interface BoolReport {
   /** Closed shells facing in: a cut whose tool lies wholly inside the target leaves one. */
@@ -460,8 +466,8 @@ export class Shape {
     this.call("delete", { id: part });
   }
   /** Cuts the volume `part` fills out of `host`; `part` stays. */
-  seat(host: Part, part: Part): void {
-    this.call("seat", { host, part });
+  seat(host: Part, part: Part): EditReport {
+    return this.call("seat", { host, part });
   }
   /** Scales a part along its own axes about its own origin (0 or missing keeps 1). */
   scale(part: Part, d: { x?: number; y?: number; z?: number }): void {
@@ -470,20 +476,20 @@ export class Shape {
   hole(
     part: Part,
     d: { diameter: number; at: FrameData | FrameData[]; depth?: number; counterbore?: [number, number]; countersink?: [number, number] },
-  ): void {
-    this.call("hole", { id: part, ...d });
+  ): EditReport {
+    return this.call("hole", { id: part, ...d });
   }
-  pocket(part: Part, d: { profile: Profile; depth?: number; at?: FrameData | FrameData[] }): void {
-    this.call("pocket", { id: part, ...d });
+  pocket(part: Part, d: { profile: Profile; depth?: number; at?: FrameData | FrameData[] }): EditReport {
+    return this.call("pocket", { id: part, ...d });
   }
   split(part: Part, d: { frame: FrameData; keep?: "above" | "below" }): void {
     this.call("split", { id: part, ...d });
   }
-  shell(part: Part, d: { thickness: number; open?: string | string[] }): void {
-    this.call("shell", { id: part, ...d });
+  shell(part: Part, d: { thickness: number; open?: string | string[] }): EditReport {
+    return this.call("shell", { id: part, ...d });
   }
-  dent(part: Part, d: { at: Vec3[]; radius: number; depth: number }): void {
-    this.call("dent", { id: part, ...d });
+  dent(part: Part, d: { at: Vec3[]; radius: number; depth: number }): EditReport {
+    return this.call("dent", { id: part, ...d });
   }
   fillet(part: Part, d: { radius: number; edges?: string | string[]; segments?: number; profile?: number }): void {
     this.call("fillet", { id: part, ...d });

@@ -183,6 +183,9 @@ its GLB keeps rest meshes and the pose in its joint nodes.
 where its operands touch (`touchingEdges` > 0: not closed there;
 `touching`: faces lie on each other somewhere, not an error by itself;
 `crossingPairs` > 0: the result passes through itself there).
+`seat`, `hole`, `pocket`, `shell` and `dent` answer `crossingPairs` too:
+want 0. A `shell` thicker than a rounded corner, chamfer or fillet of
+the part can fold its inner wall through itself.
 A part with UVs adds `uv`: `coverage` and `overlap` (shares of the
 image, after `mapSize`), `flipped` and `zeroArea` (triangles mirrored or
 flat in UV), `outside`, `overlappingPairs`, `area`; the model,

@@ -6183,6 +6183,7 @@ crossing itself. With the shell fix undone it fails on the cup.
   snap distance (a tool's face overhanging the target's): its regions are
   then split by the walls' crossings, not tested beyond the prisms.
 - The program answer of `shell`, `hole`, `pocket`, `seat` and `dent`
-  does not show their count (`shape-model`'s edits return nothing).
+  did not show their count; **added at the merge** (`crossingPairs`, as
+  a boolean's).
 - Every new hash is checked natively (x86-64) and as wasm32 under
   wasmtime by the gate here; aarch64 and Windows run in CI only.
