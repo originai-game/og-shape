@@ -1,5 +1,5 @@
-//! Writes the previews of the bevel cases `docs/research.md` §7.4, §7.5
-//! and §7.6 add:
+//! Writes the previews of the bevel cases `docs/research.md` §7.4, §7.5,
+//! §7.6 and §7.7 add:
 //! one PNG per case, four views, of a close-up (the result intersected
 //! with a cube around the vertex that matters) or of the whole solid.
 //!
@@ -259,25 +259,25 @@ fn cases() -> Result<Vec<Case>, Error> {
         focus: None,
         azimuth: -0.6,
     });
-    for (name, twist, taper) in [("twisted", 1.0, 0.0), ("tapered", 0.0, 0.5)] {
-        let s = prism(
-            &square,
-            &Extrude {
-                height: 20.0,
-                twist,
-                taper,
-                ..Default::default()
-            },
-        )?;
-        out.push(Case {
-            name,
-            solid: fillet(&s, &round(1.5, &[], 6))?,
-            focus: None,
-            azimuth: -0.6,
-        });
-    }
+    // The twisted prism's `fillet(1.5)` on every edge is refused since
+    // stream W (`docs/research.md` §7.7): its rows tilted.
+    let tapered = prism(
+        &square,
+        &Extrude {
+            height: 20.0,
+            taper: 0.5,
+            ..Default::default()
+        },
+    )?;
+    out.push(Case {
+        name: "tapered",
+        solid: fillet(&tapered, &round(1.5, &[], 6))?,
+        focus: None,
+        azimuth: -0.6,
+    });
     stream_p(&mut out)?;
     stream_q(&mut out)?;
+    stream_w(&mut out)?;
     Ok(out)
 }
 
@@ -296,12 +296,6 @@ fn stream_p(out: &mut Vec<Case>) -> Result<(), Error> {
         solid: fillet(&touch, &round(2.0, &[], 6))?,
         focus: Some((DVec3::new(10.0, 10.0, 8.0), 6.0)),
         azimuth: 0.6,
-    });
-    out.push(Case {
-        name: "inline_ridge",
-        solid: fillet(&ridge(), &round(0.3, &["along", "split"], 6))?,
-        focus: None,
-        azimuth: -0.4,
     });
     let mut bore = cylinder(&CylinderDesc {
         radius: 4.0,
@@ -515,46 +509,73 @@ fn stream_q(out: &mut Vec<Case>) -> Result<(), Error> {
     Ok(())
 }
 
-/// A block 4 × 2 whose top has a straight real edge along y = 1, split
-/// at (2, 1, 1): a curved surface behind it, two flat faces in front.
-fn ridge() -> Solid {
-    let pts = [
-        (0.0, 1.0, 1.0),
-        (2.0, 1.0, 1.0),
-        (4.0, 1.0, 1.0),
-        (0.0, 2.0, 1.2),
-        (2.0, 2.0, 1.5),
-        (4.0, 2.0, 1.2),
-        (0.0, 0.0, 1.0),
-        (2.0, 0.0, 1.0),
-        (4.0, 0.0, 1.0),
-        (0.0, 0.0, 0.0),
-        (4.0, 0.0, 0.0),
-        (4.0, 2.0, 0.0),
-        (0.0, 2.0, 0.0),
-    ];
-    let mut s = Solid::default();
-    for (x, y, z) in pts {
-        s.push_vertex(DVec3::new(x, y, z));
-    }
-    let faces: [(u32, &str, &[[u32; 3]]); 8] = [
-        (0, "back", &[[1, 2, 5], [1, 5, 4], [1, 4, 3], [1, 3, 0]]),
-        (1, "top", &[[1, 0, 6], [1, 6, 7]]),
-        (2, "top", &[[1, 7, 8], [1, 8, 2]]),
-        (3, "side", &[[9, 10, 8], [9, 8, 7], [9, 7, 6]]),
-        (4, "side", &[[10, 11, 5], [10, 5, 2], [10, 2, 8]]),
-        (5, "side", &[[11, 12, 3], [11, 3, 4], [11, 4, 5]]),
-        (6, "side", &[[12, 9, 6], [12, 6, 0], [12, 0, 3]]),
-        (7, "bottom", &[[9, 12, 11], [9, 11, 10]]),
-    ];
-    for (surface, name, tris) in faces {
-        for &t in tris {
-            s.push_triangle(t, surface, &[name]);
-        }
-    }
-    s.tag_edge(0, 1, &["along"]);
-    s.tag_edge(1, 7, &["split"]);
-    s
+/// The cases of `docs/research.md` §7.7: results that crossed themselves
+/// or tilted faces, now fitted.
+fn stream_w(out: &mut Vec<Case>) -> Result<(), Error> {
+    let square = [(-10.0, -10.0), (10.0, -10.0), (10.0, 10.0), (-10.0, 10.0)];
+    let twisted = prism(
+        &square,
+        &Extrude {
+            height: 20.0,
+            twist: 1.0,
+            ..Default::default()
+        },
+    )?;
+    out.push(Case {
+        name: "twisted_top",
+        solid: fillet(&twisted, &round(1.5, &["top"], 4))?,
+        focus: None,
+        azimuth: 0.6,
+    });
+    out.push(Case {
+        name: "twisted_top_corner",
+        solid: chamfer(
+            &twisted,
+            &Chamfer {
+                distance: 1.0,
+                edges: vec!["top".into()],
+                ..Default::default()
+            },
+        )?,
+        focus: Some((DVec3::new(-13.8, -3.0, 18.0), 3.0)),
+        azimuth: 2.6,
+    });
+    let plate = cuboid(&BoxDesc {
+        width: 20.0,
+        depth: 20.0,
+        height: 10.0,
+    })?;
+    let mut pin = cylinder(&CylinderDesc {
+        radius: 4.0,
+        height: 30.0,
+        ..Default::default()
+    })?;
+    pin.map_positions(|p| p + DVec3::new(0.0, 0.0, -10.0), false);
+    let bore = boolean(
+        &plate,
+        &pin,
+        &Boolean {
+            op: BoolOp::Cut,
+            ..Default::default()
+        },
+    )?;
+    let mut bottom = chamfer(
+        &bore,
+        &Chamfer {
+            distance: 1.5,
+            edges: vec!["bottom".into()],
+            ..Default::default()
+        },
+    )?;
+    // Turned over (a half turn about x), so the bottom faces the camera.
+    bottom.map_positions(|p| DVec3::new(p.x, -p.y, -p.z), false);
+    out.push(Case {
+        name: "bore_bottom_chamfer",
+        solid: bottom,
+        focus: None,
+        azimuth: 0.5,
+    });
+    Ok(())
 }
 
 fn main() -> Result<(), Error> {

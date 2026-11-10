@@ -69,6 +69,10 @@ pub fn cases() -> Vec<Case> {
             name: "bevel.wide",
             run: wide,
         },
+        Case {
+            name: "bevel.sound",
+            run: sound,
+        },
     ]
 }
 
@@ -536,6 +540,9 @@ fn slivers(h: &mut OutputHash) -> Result<(), HashError> {
                 ..Default::default()
             },
         );
+        // The twisted prism (twist 1) hashes the refusal since stream W
+        // (`docs/research.md` §7.7): before, its result removed 14.7 mm³
+        // where the tapered one removes 101, its twisted rows tilted.
         solid(h, fillet(&s, &round(1.5, &[], 4)))?;
     }
     Ok(())
@@ -618,6 +625,8 @@ fn inline(h: &mut OutputHash) -> Result<(), HashError> {
     }
     r.tag_edge(0, 1, &["along"]);
     r.tag_edge(1, 7, &["split"]);
+    // Refused since stream W (`docs/research.md` §7.7): the result lifted
+    // the flat face off its plane by 0.11 of the offset at (2, 1, 1).
     solid(h, fillet(&r, &round(0.3, &["along", "split"], 4)))?;
     solid(
         h,
@@ -846,4 +855,87 @@ fn wide(h: &mut OutputHash) -> Result<(), HashError> {
         },
     );
     solid(h, fillet(&twisted, &round(5.0, &["top"], 4)))
+}
+
+/// Results that crossed themselves or were otherwise wrong, and the
+/// inputs and selections now refused (`docs/research.md` §7.7).
+fn sound(h: &mut OutputHash) -> Result<(), HashError> {
+    let plate = cuboid(&BoxDesc {
+        width: 20.0,
+        depth: 20.0,
+        height: 10.0,
+    })
+    .unwrap_or_default();
+    let pin = |r: f64, height: f64, z: f64| {
+        let mut c = cylinder(&CylinderDesc {
+            radius: r,
+            height,
+            ..Default::default()
+        })
+        .unwrap_or_default();
+        c.map_positions(|p| p + DVec3::new(0.0, 0.0, z), false);
+        c
+    };
+    let op = |b: &Solid, op| {
+        shape_bool::boolean(
+            &plate,
+            b,
+            &shape_bool::Boolean {
+                op,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_default()
+    };
+    // Crossed itself near the bore; the straight-run retry fits it.
+    let bore = op(&pin(4.0, 30.0, -10.0), shape_bool::BoolOp::Cut);
+    solid(
+        h,
+        chamfer(
+            &bore,
+            &Chamfer {
+                distance: 1.5,
+                edges: names(&["bottom"]),
+                ..Default::default()
+            },
+        ),
+    )?;
+    // The input crossed itself (a boolean's sliver): welded first.
+    let post = op(&pin(3.0, 8.0, 10.0), shape_bool::BoolOp::Join);
+    let corner = tag(&post, "pick", |p| p.x == -10.0 && p.y == -10.0);
+    solid(h, fillet(&corner, &round(0.5, &["pick"], 4)))?;
+    // Four faces on one edge.
+    let mut other = plate.clone();
+    other.map_positions(|p| p + DVec3::new(20.0, 0.0, 10.0), false);
+    let edge = op(&other, shape_bool::BoolOp::Join);
+    solid(h, fillet(&edge, &round(1.0, &[], 4)))?;
+    // The twisted prism's top at radii its rows' tilt broke.
+    let square = [(-10.0, -10.0), (10.0, -10.0), (10.0, 10.0), (-10.0, 10.0)];
+    let twisted = prism(
+        &square,
+        &Extrude {
+            height: 20.0,
+            twist: 1.0,
+            ..Default::default()
+        },
+    );
+    for r in [0.5, 2.0] {
+        solid(h, fillet(&twisted, &round(r, &["top"], 4)))?;
+        solid(
+            h,
+            chamfer(
+                &twisted,
+                &Chamfer {
+                    distance: r,
+                    edges: names(&["top"]),
+                    ..Default::default()
+                },
+            ),
+        )?;
+    }
+    // A strip of no width: one piece of a rim.
+    let rim = tag(&pin(5.0, 10.0, 0.0), "pick", |p| {
+        p.z == 10.0 && p.x > 4.8 && p.y >= 0.0
+    });
+    solid(h, fillet(&rim, &round(0.5, &["pick"], 4)))
 }

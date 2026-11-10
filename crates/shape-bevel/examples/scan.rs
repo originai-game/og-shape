@@ -2,7 +2,8 @@
 //! at 0.5 and 1.5 on about 19 000 selections (every edge, each name, each
 //! single real edge, seeded random subsets) of generator solids and
 //! booleans. Prints one line per bevel (`solid | selection | bevel |
-//! outcome`) to the file given, and a count per outcome. An outcome is
+//! outcome | hash`, a result's first 16 hex digits of its output hash) to
+//! the file given, and a count per outcome. An outcome is
 //! `ok` only when the result is closed, has no triangle of zero area and
 //! no two triangles crossing (`shape_bool::selfcheck`).
 //!
@@ -316,25 +317,36 @@ fn tagged(s: &Solid, picks: &[(u32, u32)]) -> Solid {
     out
 }
 
-fn outcome(r: Result<Solid, BevelError>) -> String {
+/// The outcome, and for a result the first 16 hex digits of its output
+/// hash (so two runs show which results changed their bytes).
+fn outcome(r: Result<Solid, BevelError>) -> (String, String) {
     match r {
         Ok(s) => {
             let m = s.measure();
-            if !(m.closed && m.degenerate_triangles == 0) {
-                "open".into()
+            let mut h = shape_core::OutputHash::new();
+            let hash = match s.hash_into(&mut h) {
+                Ok(()) => h.finish_hex()[..16].to_string(),
+                Err(_) => "NaN".into(),
+            };
+            let o = if !(m.closed && m.degenerate_triangles == 0) {
+                "open"
             } else if shape_bool::selfcheck::self_crossings(&s.positions, &s.triangles).is_empty() {
-                "ok".into()
+                "ok"
             } else {
-                "crossing".into()
-            }
+                "crossing"
+            };
+            (o.into(), hash)
         }
-        Err(BevelError::TooLarge(_)) => "TooLarge".into(),
-        Err(BevelError::Unsupported(_, what)) => format!("Unsupported({what})"),
-        Err(e) => format!("{e:?}")
-            .split('(')
-            .next()
-            .unwrap_or("error")
-            .to_string(),
+        Err(BevelError::TooLarge(_)) => ("TooLarge".into(), String::new()),
+        Err(BevelError::Unsupported(_, what)) => (format!("Unsupported({what})"), String::new()),
+        Err(e) => (
+            format!("{e:?}")
+                .split('(')
+                .next()
+                .unwrap_or("error")
+                .to_string(),
+            String::new(),
+        ),
     }
 }
 
@@ -391,9 +403,9 @@ fn main() -> Result<(), Error> {
                     },
                 );
                 for (kind, r) in [("fillet", f), ("chamfer", c)] {
-                    let o = outcome(r);
+                    let (o, hash) = outcome(r);
                     *counts.entry(o.clone()).or_default() += 1;
-                    writeln!(lines, "{name} | {sel} | {kind} {size} | {o}")?;
+                    writeln!(lines, "{name} | {sel} | {kind} {size} | {o} | {hash}")?;
                 }
             }
         }

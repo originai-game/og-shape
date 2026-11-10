@@ -1072,6 +1072,10 @@ fn ridge() -> Solid {
 
 #[test]
 fn an_edge_in_line_with_its_unbevelled_neighbour_across_a_curved_face() {
+    // §7.5 placed the gap's point at the mean of the curved face's point
+    // and the flat face's, which lifted the flat `top` face off its plane
+    // by 0.11 of the offset at the vertex. A single point cannot stay in
+    // both faces' planes there, so the bevel is refused (§7.7).
     let r = ridge();
     let m = r.measure();
     assert!(m.closed && m.degenerate_triangles == 0, "{m:?}");
@@ -1085,9 +1089,7 @@ fn an_edge_in_line_with_its_unbevelled_neighbour_across_a_curved_face() {
                 segments: 4,
                 ..Default::default()
             },
-        )
-        .unwrap();
-        check(&s, "fillet");
+        );
         let c = chamfer(
             &r,
             &Chamfer {
@@ -1095,25 +1097,11 @@ fn an_edge_in_line_with_its_unbevelled_neighbour_across_a_curved_face() {
                 edges: names(&["along", "split"]),
                 ..Default::default()
             },
-        )
-        .unwrap();
-        check(&c, "chamfer");
-        // The curved face's corner at the vertex moves along its spoke to
-        // the ridge, square to the edge, by half the offset; the flat
-        // face's point on the unbevelled piece is at the offset along it,
-        // and the gap takes their mean.
-        let a = v + shape_core::DVec3::new(0.0, 1.0, 0.5).normalize() * (d / 2.0);
-        let b = v + shape_core::DVec3::new(d, 0.0, 0.0);
-        let want = (a + b) / 2.0;
-        for out in [&s, &c] {
+        );
+        for out in [s, c] {
             assert!(
-                out.positions.iter().any(|&p| (p - want).length() < 1e-12),
-                "{want}"
-            );
-            // The unbevelled piece's far end and its name survive.
-            assert!(
-                out.positions
-                    .contains(&shape_core::DVec3::new(4.0, 1.0, 1.0))
+                matches!(out, Err(BevelError::Unsupported(p, _)) if p == v),
+                "{out:?}"
             );
         }
     }
@@ -1784,4 +1772,293 @@ fn a_twisted_prism_s_top_edges_cut_across_its_rows() {
     for w in per_r2.windows(2) {
         assert!((w[0] - w[1]).abs() < 0.02 * w[0], "{per_r2:?}");
     }
+}
+
+// Results that crossed themselves or were otherwise wrong
+// (`docs/research.md` §7.7).
+
+fn moved(s: &Solid, by: shape_core::DVec3) -> Solid {
+    let mut out = s.clone();
+    out.map_positions(|p| p + by, false);
+    out
+}
+
+fn op(a: &Solid, b: &Solid, op: shape_bool::BoolOp) -> Solid {
+    shape_bool::boolean(
+        a,
+        b,
+        &shape_bool::Boolean {
+            op,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+
+fn plate() -> Solid {
+    cuboid(&BoxDesc {
+        width: 20.0,
+        depth: 20.0,
+        height: 10.0,
+    })
+    .unwrap()
+}
+
+fn pin(r: f64, h: f64) -> Solid {
+    cylinder(&CylinderDesc {
+        radius: r,
+        height: h,
+        ..Default::default()
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_layout_that_crosses_itself_is_never_returned() {
+    // A bore's bottom rim: the boolean leaves the plate's bottom edges in
+    // pieces, and at 1.5 the classic layout crossed itself near the bore.
+    // The final check sends it on to the straight-run retry, which fits.
+    let bore = op(
+        &plate(),
+        &moved(&pin(4.0, 30.0), shape_core::DVec3::new(0.0, 0.0, -10.0)),
+        shape_bool::BoolOp::Cut,
+    );
+    let v0 = bore.measure().volume;
+    let removed = |d: f64| {
+        let s = chamfer(
+            &bore,
+            &Chamfer {
+                distance: d,
+                edges: names(&["bottom"]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        check_closed(&s);
+        uncrossed(&s);
+        v0 - s.measure().volume
+    };
+    // Every edge square, the same corners: the cut grows with d².
+    let ratio = removed(1.5) / removed(0.5);
+    assert!((ratio - 9.0).abs() < 0.2, "{ratio}");
+}
+
+#[test]
+fn inputs_that_cross_themselves_or_are_not_manifold() {
+    // A post joined onto a plate: the boolean leaves two rim points 1e-15
+    // apart and a sliver across the plate's top triangle. The weld of a
+    // wide bevel's pass 0 takes it out first.
+    let post = op(
+        &plate(),
+        &moved(&pin(3.0, 8.0), shape_core::DVec3::new(0.0, 0.0, 10.0)),
+        shape_bool::BoolOp::Join,
+    );
+    let mut corner = post.clone();
+    let (a, b) = post
+        .real_edges()
+        .into_iter()
+        .find(|&(a, b)| {
+            let (p, q) = (post.positions[a as usize], post.positions[b as usize]);
+            p.x == -10.0 && p.y == -10.0 && q.x == -10.0 && q.y == -10.0
+        })
+        .unwrap();
+    corner.tag_edge(a, b, &["pick"]);
+    let s = fillet(
+        &corner,
+        &Fillet {
+            radius: 0.5,
+            edges: names(&["pick"]),
+            segments: 4,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    check_closed(&s);
+    uncrossed(&s);
+    // Two boxes overlapping, not joined: refused, never bevelled through.
+    let mut two = plate();
+    let other = moved(&plate(), shape_core::DVec3::new(5.0, 5.0, 5.0));
+    let base = two.positions.len() as u32;
+    for &p in &other.positions {
+        two.push_vertex(p);
+    }
+    for (t, tri) in other.triangles.iter().enumerate() {
+        let names: Vec<&str> = other.face_tags[t]
+            .iter()
+            .map(|&n| other.names.name(n))
+            .collect();
+        two.push_triangle(tri.map(|v| v + base), other.surfaces[t] + 10, &names);
+    }
+    let r = fillet(
+        &two,
+        &Fillet {
+            radius: 1.0,
+            ..Default::default()
+        },
+    );
+    assert!(matches!(r, Err(BevelError::SelfCrossing(_))), "{r:?}");
+    // Two boxes joined along an edge: four faces on one edge.
+    let edge = op(
+        &plate(),
+        &moved(&plate(), shape_core::DVec3::new(20.0, 0.0, 10.0)),
+        shape_bool::BoolOp::Join,
+    );
+    let r = fillet(
+        &edge,
+        &Fillet {
+            radius: 1.0,
+            ..Default::default()
+        },
+    );
+    assert!(
+        matches!(r, Err(BevelError::NotManifold(p, q)) if p.x == 10.0 && q.x == 10.0 && p.z == 10.0 && q.z == 10.0),
+        "{r:?}"
+    );
+}
+
+fn twisted() -> Solid {
+    let square = shape_2d::Profile::from_contour(shape_2d::Contour::corners(vec![
+        DVec2::new(-10.0, -10.0),
+        DVec2::new(10.0, -10.0),
+        DVec2::new(10.0, 10.0),
+        DVec2::new(-10.0, 10.0),
+    ]));
+    extrude(
+        &square,
+        &Extrude {
+            height: 20.0,
+            twist: 1.0,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_twisted_prism_s_top_keeps_its_sides_at_every_radius() {
+    // The side rows are twisted quads: moving the top corner down the
+    // helical edge tilted the row's long triangle, and r 0.5 added 11 mm³.
+    // The bands are cut instead, at every radius (§7.7).
+    let t = twisted();
+    let v0 = t.measure().volume;
+    let sides: Vec<[shape_core::DVec3; 3]> = t
+        .faces(&["side"])
+        .unwrap()
+        .iter()
+        .map(|&i| t.triangles[i as usize].map(|v| t.positions[v as usize]))
+        .collect();
+    for r in [0.5, 1.0, 2.0, 3.0] {
+        let f = fillet(
+            &t,
+            &Fillet {
+                radius: r,
+                segments: 4,
+                edges: names(&["top"]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let c = chamfer(
+            &t,
+            &Chamfer {
+                distance: r,
+                edges: names(&["top"]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        for s in [&f, &c] {
+            check_closed(s);
+            uncrossed(s);
+            for i in s.faces(&["side"]).unwrap() {
+                for v in s.triangles[i as usize] {
+                    let p = s.positions[v as usize];
+                    assert!(to_surface(p, &sides) < 1e-9, "r {r}: {p}");
+                }
+            }
+        }
+        let per_r2 = (v0 - f.measure().volume) / (r * r);
+        assert!(per_r2 > 15.0 && per_r2 < 19.0, "r {r}: {per_r2}");
+        assert!(c.measure().volume < f.measure().volume);
+    }
+}
+
+#[test]
+fn faces_a_bevel_would_tilt_and_strips_of_no_width_are_refused() {
+    let tip = |e: &BevelError| matches!(e, BevelError::Unsupported(_, why) if why.contains("tip at both ends"));
+    let tilt = |e: &BevelError| matches!(e, BevelError::Unsupported(_, why) if why.contains("not in one plane"));
+    // One piece of a cylinder's rim tapers to a tip at both ends: it came
+    // back unchanged.
+    let c = pin(5.0, 10.0);
+    let (a, b) = c
+        .real_edges()
+        .into_iter()
+        .find(|&(a, b)| c.positions[a as usize].z == 10.0 && c.positions[b as usize].z == 10.0)
+        .unwrap();
+    let mut piece = c.clone();
+    piece.tag_edge(a, b, &["pick"]);
+    let e = fillet(
+        &piece,
+        &Fillet {
+            radius: 0.5,
+            edges: names(&["pick"]),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert!(tip(&e), "{e:?}");
+    // A middle piece of the twisted prism's helical edge the same; the top
+    // piece tilts the rows at the top corner.
+    let t = twisted();
+    let helical: Vec<EdgeKey> = t
+        .real_edges()
+        .into_iter()
+        .filter(|&(a, b)| t.positions[a as usize].z != t.positions[b as usize].z)
+        .collect();
+    for (z, want) in [(10.0, tip as fn(&BevelError) -> bool), (20.0, tilt)] {
+        let &(a, b) = helical
+            .iter()
+            .find(|&&(a, b)| {
+                let (p, q) = (t.positions[a as usize], t.positions[b as usize]);
+                p.z.max(q.z) >= z && p.z.min(q.z) < z
+            })
+            .unwrap();
+        let mut one = t.clone();
+        one.tag_edge(a, b, &["pick"]);
+        let e = fillet(
+            &one,
+            &Fillet {
+                radius: 0.5,
+                edges: names(&["pick"]),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(want(&e), "z {z}: {e:?}");
+    }
+    // A cone's fan at an apex: the part revolve's start cap meets it.
+    let apex = shape_gen::solids::revolve(
+        &shape_2d::Profile::from_contour(shape_2d::Contour::corners(vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(8.0, 0.0),
+            DVec2::new(8.0, 4.0),
+            DVec2::new(0.0, 10.0),
+        ])),
+        &shape_gen::solids::Revolve {
+            angle: 3.0,
+            axis: shape_gen::solids::Axis::Z,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let e = fillet(
+        &apex,
+        &Fillet {
+            radius: 0.5,
+            edges: names(&["start"]),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert!(tilt(&e), "{e:?}");
 }

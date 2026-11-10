@@ -1322,6 +1322,161 @@ and the tube's 3 mm top at 1.5, 68).
 - Untested: wide bands on doubly curved faces (domes, tori), and loop
   slide or miters together with a wide band.
 
+### 7.7 Bevel results that crossed themselves (stream W, 2026-11-10)
+
+**Sources.** Nothing new from Blender: the two published design notes of
+§7.1 only (Trickey's Bevel page and the Bevel V2 issue #98674). Neither
+covers what follows (checks on a result, inputs that cross themselves,
+faces that are not one plane at a vertex, a strip of no width); every
+choice below is ours. Blender's source and the Mesh Bevel node PR were not
+opened.
+
+**Reproduced.** The scan of §7.6 on `a4b6046` gives its numbers exactly:
+16 304 ok, 446 `TooLarge`, 458 crossing, 308 `NotClosed` of 17 516. The
+scan now also prints each result's output hash, so a second run shows
+which results changed their bytes.
+
+**Causes, smallest first.**
+
+| cause | scan lines | what it was | now |
+|---|---|---|---|
+| the input crosses itself | 440, all on the post (a pin joined onto a plate) | the boolean leaves two rim points 1e-15 apart and a sliver lying across the plate's top triangle; every bevel of that solid kept it | weld first (below); 72 fit, 368 select a lone rim piece |
+| a straight run in pieces | 16: bore (5), notch (6), join (2), cross bar (2), ring 4 (1) | a boolean's cut edge left in pieces; a piece shorter than the next bevel sits under it, and the classic layout's triangles crossed there, all at 1.5 | the final check (below) hands it to the straight-run retry of §7.4; 10 fit, 6 select a lone piece |
+| a band wider than a segment | 2, ring 2 `subset 15` | crossing at a rim vertex the bevel swallowed | the wide bevel of §7.6; the selection holds a lone piece |
+| four faces on one edge | 308 `NotClosed`, all on "join edge" (two boxes joined along an edge) | outside the domain: the solid is not closed | `NotManifold(a, b)`: bevel the parts before joining them, or let them overlap |
+
+**The final check (the backstop).** The input is checked first: closed,
+two faces on every edge, and not crossing itself (`self_crossings` of
+`shape_bool::selfcheck`, exact). An input that crosses itself is welded as
+a wide bevel's pass 0 welds (edges shorter than 1e-9 of the largest offset
+collapsed); if it still crosses, `SelfCrossing(at)`. Then every result is
+checked the same way: two crossing triangles can only be the bevel's own,
+and the attempt fails `TooLarge` at the bevelled vertex nearest the
+crossing pair. Because it is an attempt's failure and not the final
+answer, the straight-run retry and the wide bevel are tried as for any
+`TooLarge`. The check is always on. Its cost (x86-64, release): a box's
+twelve edges filleted at 8 segments 1.4 ms of 3.7 ms (38 %), at 32
+segments 49 ms of 79 ms (62 %); a 64-segment cylinder's rims at 8
+segments 4.8 ms of 10.5 ms (46 %). Nearly all of it is the broad phase
+(`box_pairs`): the result's big flat faces cover many of its grid cells.
+That function belongs to `shape-bool` and was not changed here.
+
+**Faces tilted off their planes** (item 3 of the stream). The classic
+layout keeps every old triangle and moves its corner at a bevelled vertex
+to the gap's point. On a twisted prism a side row is a twisted quad: the
+two diagonals differ by 27 mm³. The top corner's point slides down the
+helical edge, which is not in the plane of the row's long triangle
+(corner, far top corner, far lower vertex), so the whole 20 mm triangle
+tilts by 0.9 of the offset: 4 mm³ a wall at r 0.5. A cone's fan at an
+apex does the same along the cone's whole slant. Measured over the scan,
+the distance of a replaced corner from its triangle's plane is at most
+1.5e-11 of the offset on every solid but three (the twisted and the
+twisted tapered prism, 0.14–0.80; the apex revolve, 0.33–1.08), so the
+rule is exact: a new corner more than 1e-9 of the largest offset off its
+triangle's plane is refused, and the bands (bevelled edge, face) at that
+vertex are cut as §7.6 cuts a wide band, even with no vertex inside. Two
+allowances, both §7.6's approximations: a tenth of the offset after pass
+1 slid or merged a run vertex, or after pass 2 collapsed a swallowed
+vertex (the ring's cut bands tilt by 0.006 of the offset there); and a
+corner replaced by a vertex of the solid itself (a cut point) is exact.
+What cannot be cut is `Unsupported(at, "a bevel along a face whose
+triangles at this vertex are not in one plane …")`.
+
+| twisted prism (square 20, 1 rad), `top` | r 0.5 | 1 | 1.5 | 2 | 2.5 | 3 |
+|---|---|---|---|---|---|---|
+| fillet removed / r², before | −44.4 | −10.7 | 0.38 | 5.8 | 9.0 | 11.0 |
+| fillet removed / r², now | 18.6 | 17.4 | 16.1 | 15.3 | 17.5 | 18.1 |
+| chamfer removed / r², now | 41.8 | 40.0 | 38.3 | 41.7 | 42.3 | 41.8 |
+
+From r 3.5 the wide bevel already cut these bands (18.1–18.8, §7.6).
+Every vertex of a side face in the result lies on the input's side
+triangles to 1e-9, at every radius (a test). The fillet's dip at
+1.5–2: between its stations the strip bridges the row's concave diagonal
+fold, so a profile point lies outside the input by up to 0.026 (r 2) and
+0.075 (r 3); the chamfer, flat, does not.
+
+Refused now, wrong before (main's results, measured): on the apex revolve
+`fillet(0.5, start)` moved the apex corner of the cone's triangles off
+their planes by up to 1.08 of the offset, leaving them up to 0.27 off the
+input surface (old faces, not the fillet's); the twisted prism's
+`fillet(0.5)` of every
+edge added 21.6 mm³, a single top edge 3.3 mm³; `bevel.slivers`'s
+twisted `fillet(1.5)` of every edge removed 14.7 mm³ where the tapered
+prism's removes 101. The twisted prism's side edges (twisted faces on
+both sides: cuts on both sides of one edge, refused by §7.6's pass 2),
+a top edge's terminal end on the next twisted wall, and the apex
+revolve's caps stay `Unsupported`. §7.5's hand-built ridge is refused too:
+its gap point, the mean of the curved face's and the flat face's points,
+lifted the flat `top` face by 0.11 of the offset, and no single point is
+in both faces' planes there.
+
+**Strips of no width.** A bevelled edge whose faces meet again at both
+its ends tapers to a tip at both (§7.4's choice (b), slide zero): its
+strip has no width and it came back unbevelled, with only its name gone
+(a helical side piece of the twisted prism removed exactly 0; a cylinder's
+rim piece gave the input's 92 triangles back). Now
+`Unsupported(at, "a bevelled edge that tapers to a tip at both ends …:
+select the whole crease")`. This is the scan's largest change: every
+single rim piece and every random subset holding an isolated rim piece,
+10 160 results that came back as ok.
+
+**Checked and kept: faces off the input surface.** A rebuilt old face may
+leave the input surface legitimately. A concave fillet ending on an end
+face fills the corner, and its end cap lies in the end face's plane
+outside the old face (the join's cut-edge piece, 0.09 off). A chamfer
+ending at a concave corner exposes a cap in the wall's plane inside the
+old solid (the notch, 0.75 at d 1.5). About 280 scan results show this,
+all on joins, the notch and the cross bar. So no such check was added.
+
+**Fillet and chamfer disagree** (§7.5, "Still errors"). In this scan, on
+`a4b6046`, the pairs where the fillet fits and the chamfer of the same
+offset does not, or the reverse, are 2 (`bore | subset 12` and
+`ring 4 | subset 22`, both a crossing result); now 0. The "about 80" of
+§7.5 came from its scratch scan, before §7.6's wide bevels.
+
+**The scan** (`cargo run --release -p shape-bevel --example scan --
+out.txt`; 17 516 bevels):
+
+| outcome | before (`a4b6046`) | now |
+|---|---|---|
+| ok | 16 304 | 6 012 |
+| `TooLarge` | 446 | 168 |
+| crossing triangles | 458 | 0 |
+| `NotClosed` | 308 | 0 |
+| `NotManifold` | – | 308 |
+| `Unsupported`: tip at both ends | – | 10 812 |
+| `Unsupported`: faces not in one plane | – | 216 |
+
+By line: 10 160 ok, 376 crossing and 276 `TooLarge` became the tip
+error (their selections hold a lone rim piece); 214 ok and 2 `TooLarge`
+the tilt error (twisted 72, twisted tapered 116, apex revolve 28); 82
+crossing became ok; 308 `NotClosed` became `NotManifold`. Of the 5 930
+results ok before and after, 5 914 keep their bytes; the 16 that moved are
+the twisted and twisted tapered prisms' `name top` and `name bottom`,
+fixed above. Nothing that fitted correctly fails. `TooLarge` left: notch
+44, cross bar 38, thin box 36, join 32, tube 6, counterbore 4, apex
+revolve 4, ring 2, cross bore 2. The scan took 58 s before the lone-piece
+refusals and 28 s after (x86-64, release, one thread).
+
+**Previews** (`cargo run --release -p shape-bevel --example phase3 --
+docs/previews/phase3`; earlier images byte for byte the same):
+`twisted_top` (`fillet(1.5, top)`: volume 7 556.877, quads 60/64, worst
+fold 59.5°), `twisted_top_corner` (a close-up of `chamfer(1, top)` at a
+top corner, 16/16), `bore_bottom_chamfer` (the bore turned over,
+`chamfer(1.5, bottom)`: 3 385.624, 60/60). `twisted` (the twisted prism
+filleted all round) and `inline_ridge` are removed: those results are
+refused now.
+
+**Not done.**
+- The twisted prism's side edges, a terminal end on a twisted face and
+  the apex revolve's caps are refused, not built. Building them needs
+  cuts on both sides of one edge and an end face cut along the profile.
+- §7.6's own limits (item 6): not attempted.
+- The post's sliver is a boolean's output crossing itself; the bevel now
+  welds it, but the boolean should not leave it (for `shape-bool`).
+- Tips at both ends are refused, not slid: Blender's slide by the offset
+  would tilt a faceted wall, as §7.4 found.
+
 ## 8. Phase 4: parts, joints, the CLI and the wasm binding (stream E, 2026-11-09)
 
 ### 8.1 Sources
