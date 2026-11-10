@@ -234,6 +234,11 @@ pub fn binary_fbx() -> Vec<u8> {
                         n("Content", vec![P::R(png)], vec![]),
                     ],
                 ),
+                n(
+                    "Texture",
+                    vec![P::L(600), s("Albedo\0\u{1}Texture"), s("")],
+                    vec![],
+                ),
             ],
         ),
         n(
@@ -245,6 +250,14 @@ pub fn binary_fbx() -> Vec<u8> {
                 n("C", vec![s("OO"), P::L(100), P::L(300)], vec![]),
                 n("C", vec![s("OO"), P::L(400), P::L(300)], vec![]),
                 n("C", vec![s("OO"), P::L(401), P::L(300)], vec![]),
+                // The base-colour texture: the video under a texture, the
+                // texture on the first material's DiffuseColor.
+                n("C", vec![s("OO"), P::L(500), P::L(600)], vec![]),
+                n(
+                    "C",
+                    vec![s("OP"), P::L(600), P::L(400), s("DiffuseColor")],
+                    vec![],
+                ),
             ],
         ),
     ])

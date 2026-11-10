@@ -30,10 +30,10 @@ fn main() {
                     s.append(&shape_tools::apply_transform(&q).unwrap());
                 }
                 s.canonicalize().unwrap();
-                let m = measure(&s, &Measure { uvs: None, images: &im.images, ..Default::default() });
+                let m = measure(&s, &Measure { images: &im.images, ..Default::default() });
                 println!("{path}: {} parts, {} polys triangulated, skipped {:?}, {:.0} ms", im.parts.len(), im.polygons_triangulated, im.skipped, t.elapsed().as_secs_f64()*1000.0);
                 println!("  names {:?}", im.parts.iter().map(|p| p.name.as_str()).take(8).collect::<Vec<_>>());
-                println!("  uvs on parts: {}/{}", im.parts.iter().filter(|p| p.uvs.is_some()).count(), im.parts.len());
+                println!("  uvs on parts: {}/{}", im.parts.iter().filter(|p| p.solid.uvs.is_some()).count(), im.parts.len());
                 let j = m.to_json();
                 println!("  {}", &j[..j.len().min(700)]);
                 let v = preview(&Scene { name: "f".into(), parts: vec![Part::new("m", &s)] }, &Preview { width: 256, views: 4, ..Default::default() }).unwrap();

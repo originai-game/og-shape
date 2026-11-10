@@ -193,10 +193,7 @@ fn contract(bytes: &[u8]) -> Result<(), String> {
     let s = &back.parts[0].solid;
     let m = measure(
         s,
-        &Measure {
-            uvs: back.parts[0].uvs.as_deref(),
-            ..Default::default()
-        },
+        &Measure::default(),
     );
     if m.triangles > CONTRACT_TRIANGLES {
         return Err(format!("{} triangles", m.triangles));
@@ -373,13 +370,13 @@ fn chain(input: &str, defect: &str, bytes: &[u8], tool: Option<&Solid>, out: &Op
     .expect("decimate");
     times[2] = ms(start);
     let start = Instant::now();
-    let uv = unwrap(&low, &Unwrap::default());
+    let mut low = low;
+    let uv = unwrap(&mut low, &Unwrap::default());
     times[3] = ms(start);
     let start = Instant::now();
     let m = measure(
         &low,
         &Measure {
-            uvs: uv.as_ref().ok().map(|u| u.corners.as_slice()),
             intersections: true,
             ..Default::default()
         },
@@ -409,12 +406,12 @@ fn chain(input: &str, defect: &str, bytes: &[u8], tool: Option<&Solid>, out: &Op
         );
     }
     let start = Instant::now();
-    let plain = uv.as_ref().map(|u| {
+    let plain = uv.as_ref().map(|_| {
         glb_plain(
             &low,
             &PlainGlb {
                 name: "model",
-                uvs: Some(u),
+                ..Default::default()
             },
         )
         .expect("glb")

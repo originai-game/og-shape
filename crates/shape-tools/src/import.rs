@@ -1345,12 +1345,30 @@ impl Doc<'_> {
             .items()
             .iter()
             .find_map(|p| p.get("material").index())?;
-        let info = self
-            .json
-            .get("materials")
-            .at(mi)
-            .get("pbrMetallicRoughness")
-            .get("baseColorTexture");
+        let material = self.json.get("materials").at(mi);
+        let others: Vec<&str> = [
+            ("normalTexture", "normal"),
+            ("occlusionTexture", "occlusion"),
+            ("emissiveTexture", "emissive"),
+        ]
+        .into_iter()
+        .filter(|(k, _)| !material.get(k).is_null())
+        .map(|(_, n)| n)
+        .chain(
+            (!material
+                .get("pbrMetallicRoughness")
+                .get("metallicRoughnessTexture")
+                .is_null())
+            .then_some("metallic-roughness"),
+        )
+        .collect();
+        if !others.is_empty() {
+            skipped.push(format!(
+                "{name}: its material's {} textures (only the base colour is kept)",
+                others.join(", ")
+            ));
+        }
+        let info = material.get("pbrMetallicRoughness").get("baseColorTexture");
         let ti = info.get("index").index()?;
         if info.get("texCoord").index().unwrap_or(0) != 0 {
             skipped.push(format!(

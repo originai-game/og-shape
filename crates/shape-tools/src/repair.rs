@@ -801,7 +801,8 @@ pub fn close_holes(
             left += 1;
         }
     }
-    let mut new_tris: Vec<([u32; 3], u32, Vec<Tag>, [DVec2; 3])> = Vec::new();
+    type Fill = ([u32; 3], u32, Vec<Tag>, [DVec2; 3]);
+    let mut new_tris: Vec<Fill> = Vec::new();
     let mut seams = 0;
     for (rim, rim_tris) in loops {
         if rim.len() < 3 || rim.len() > max_edges {

@@ -277,6 +277,12 @@ fn binary_fbx_with_pivots_compressed_arrays_and_a_texture() {
     let p = &imported.parts[0];
     assert_eq!((p.name.as_str(), p.material.as_str()), ("Cube", "Steel"));
     assert_eq!(p.solid.uvs.as_ref().map(Vec::len), Some(12));
+    // Steel's DiffuseColor texture is the embedded PNG.
+    let map = p.map.as_ref().unwrap();
+    assert_eq!(
+        (map.name.as_str(), map.mime.as_str()),
+        ("textures/albedo.png", "image/png")
+    );
     assert_eq!(imported.images.len(), 1);
     assert_eq!(imported.images[0].name, "textures/albedo.png");
     assert_eq!(imported.images[0].width, Some(16));

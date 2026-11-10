@@ -20,6 +20,7 @@ mod solids;
 mod surface;
 mod tools;
 mod touching;
+mod uvs;
 
 use std::process::ExitCode;
 
