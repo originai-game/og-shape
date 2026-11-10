@@ -1077,8 +1077,7 @@
   - Repair, join, the fuse step, decimation, booleans (`shape_bool`) and
     unwrap carry the colours as they carry UVs: hole fills take their
     rim's, a cut face interpolates them, decimation keeps hard colour
-    borders as feature lines and penalises smearing a colour as it does
-    a bone border. `BoolReport::faces_without_colors` counts faces from
+    borders as feature lines. `BoolReport::faces_without_colors` counts faces from
     an operand without colours (its `Debug` text shows the field only
     when it is not 0).
   - `shape_tools::downsize` and `decode`: a texture budget. PNG and

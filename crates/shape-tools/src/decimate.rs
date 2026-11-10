@@ -54,11 +54,10 @@
 //! border (an edge whose two triangles give either end different
 //! colours) is a feature line as a UV seam is, and a collapse gives the
 //! removed vertex's corners the kept vertex's colour on the same side (the
-//! mean at a midpoint). Smearing a colour is penalised as moving a bone
-//! border is: removing a vertex costs its largest colour difference to a
-//! corner of a triangle around it (any channel, 0..=1) times the bend
-//! scale, on top of its quadric error, and the reported `error` leaves it
-//! out.
+//! mean at a midpoint). A smooth colour costs nothing extra: a penalty
+//! for removing a vertex whose colour differs from its ring's (as a bone
+//! border's, §11.5) raised both the surface error and the colour error
+//! on the generated meshes measured (`docs/research.md` §29.6).
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BinaryHeap};
@@ -455,29 +454,6 @@ impl Mesh {
         Some(moves)
     }
 
-    /// How far `v`'s colour stands from the corners of the triangles
-    /// around it: the largest difference in any channel; 0 on a solid
-    /// without colours.
-    fn color_step(&self, v: u32) -> f64 {
-        let Some(c) = &self.colors else {
-            return 0.0;
-        };
-        let mut step: f64 = 0.0;
-        for &t in &self.around[v as usize] {
-            let tri = self.tris[t as usize];
-            let Some(k) = tri.iter().position(|&x| x == v) else {
-                continue;
-            };
-            let mine = c[t as usize][k];
-            for other in c[t as usize] {
-                for ch in 0..4 {
-                    step = step.max((mine[ch] - other[ch]).abs());
-                }
-            }
-        }
-        step
-    }
-
     /// The best allowed collapse of edge `a b`, if any.
     fn plan(&self, a: u32, b: u32) -> Option<Entry> {
         if self.max_len > 0.0
@@ -521,10 +497,6 @@ impl Mesh {
                     q.w * d * d
                 }
                 _ => 0.0,
-            } + {
-                // Removing `from` smears its colour over its ring.
-                let d = self.color_step(from) * self.bend;
-                q.w * d * d
             };
             for p in options {
                 let e = Entry {
