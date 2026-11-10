@@ -60,7 +60,10 @@ horizontal (`front` +X, `right` +Y, `back` −X, `left` −Y) and y is +Z.
 
 ## `Shape`: one model, every method one kernel operation
 
-Generators take `name` and `on?` and return a `Part`. `on` puts the
+Generators take `name`, `on?` and `uvs?` and return a `Part`.
+`og.model({ name, uvs: true, textures: { "checker.png": bytes } })`
+gives every part UVs and supplies the images materials name:
+`s.material(part, { map: "checker.png", mapSize: 20 })`. `on` puts the
 part's own origin and axes on the frame's; a profile's x, y are the
 part's x, y.
 

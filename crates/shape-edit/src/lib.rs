@@ -323,6 +323,7 @@ pub fn above(x: f64, y: f64) -> Frame {
 }
 
 /// A tool along a frame's −z: from `over` above the entry to `depth` below.
+#[allow(clippy::too_many_arguments)]
 fn bore(
     entry: DVec3,
     axis: &Frame,

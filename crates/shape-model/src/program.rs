@@ -24,6 +24,7 @@
 //! | op | fields | answers |
 //! |---|---|---|
 //! | `units` | `unit`: `"mm"`, `"cm"`, `"m"` | |
+//! | `uvs` | | |
 //! | `box` | `name`, `width`, `depth`, `height`, `on`? | `id` |
 //! | `cylinder` | `name`, `radius`, `radiusTop`?, `height`, `segments`?, `on`? | `id` |
 //! | `cone` | `name`, `radius`, `height`, `segments`?, `on`? | `id` |
@@ -47,7 +48,7 @@
 //! | `attach` | `to`, `name`, `children` | `id` |
 //! | `copy` | `id`, `name` | `id` |
 //! | `mirror` | `id`, `plane` (a frame), `name` | `id` |
-//! | `cut`, `join`, `intersect` | `target`, `tool`, `check`? | `voids`, `touchingEdges`, `touching` |
+//! | `cut`, `join`, `intersect` | `target`, `tool`, `check`? | `voids`, `touchingEdges`, `touching`, `facesWithoutUvs` |
 //! | `merge` | `target`, `tool` | |
 //! | `delete` | `id` | |
 //! | `seat` | `host`, `part` | |
@@ -60,7 +61,7 @@
 //! | `fillet` | `id`, `radius`, `edges`?, `segments`?, `profile`? | |
 //! | `chamfer` | `id`, `distance`, `distance2`?, `angle`?, `edges`?, `segments`? | |
 //! | `soften` | `id`, `radius`, `angle`?, `edges`?, `segments`? | |
-//! | `material` | `ids`, `name`?, `color`?, `metalness`?, `roughness`?, `emissive`?, `opacity`? | |
+//! | `material` | `ids`, `name`?, `color`?, `metalness`?, `roughness`?, `emissive`?, `opacity`?, `map`?, `mapSize`? | |
 //! | `joint` | `child`, `parent`, `name`, `kind`?, `on`, `axis`?, `range`?, `mimic`? (`{joint, multiplier}`) | |
 //! | `pose` | `joint`, `value` | |
 //!
@@ -90,6 +91,14 @@
 //! `{"tangentArc": {"to"}}`, `{"spline": {"points"}}`, flattened by the
 //! curve rule (`shape_2d::curve`, [`shape_gen::path3`]). In 3D (`sweep`,
 //! `wire`) it may instead be `{"helix": {"radius", "pitch", "turns"}}`.
+//!
+//! Every generator also takes `uvs`? (a boolean; the `uvs` operation's
+//! choice by default): the part's solid gets UVs in the model's unit
+//! (`shape_gen::solids::textured`). `uvs` asks for them on every part
+//! made after it, and is refused once a part without them exists. A
+//! material's `map` names an image the caller supplies
+//! ([`Session::texture`], [`textures_named`]); `mapSize` is the units it
+//! spans. A part with UVs adds `uv` to the measures.
 //!
 //! A `text` profile names a font; the caller supplies its bytes under that
 //! name ([`Session::font`], [`run_with`]); [`fonts_named`] lists the names

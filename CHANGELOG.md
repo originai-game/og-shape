@@ -803,3 +803,36 @@
   results are refused now).
 - `repair`'s self-intersection count (`check_intersections`) welds equal
   positions first, as `measure` does. No golden line moved.
+- UVs everywhere a program can reach (stream Y, `docs/research.md` §21):
+  - The program asks for UVs: the `uvs` operation (every part made after
+    it; refused once a part without UVs exists) and `uvs` on every
+    generator; `og.model({ uvs: true })` and `uvs?` on generators in the
+    binding; `--uvs` on `shape build`, `export`, `measure`, `preview`;
+    `uvs` on the MCP `build`, `preview`, `measure`, `export` tools. UVs
+    stay opt-in: nothing changes without them.
+  - A material names a base-colour image (`map`, PNG or JPEG) the caller
+    supplies, and `mapSize`, the units it spans. The CLI and MCP read it
+    relative to the program (as fonts); the binding takes
+    `og.model({ textures })`; `Session::texture`, `textures_named`,
+    `run_files`. GLB export embeds it and writes the UVs divided by
+    `mapSize`. A map on a part without UVs is refused.
+  - `textured` builds `loft`, `sweep`, `thread`, `wire`, `body`, `knurl`,
+    the gear solid and `wedge` with UVs (seams in `shape_gen::solids`'s
+    docs).
+  - `fillet`, `chamfer` and `soften` carry UVs: untouched faces keep
+    theirs, trimmed faces are re-fitted, new faces take the map of the
+    old face they face most. `BevelError::HasUvs` is gone.
+  - `split`, `hole`, `pocket`, `shell` build their tools with UVs on a
+    solid that has them; `dent` and skin refinement interpolate them;
+    `drop_slivers` interpolates them (it left them on the wrong
+    triangles). A cut's tool UVs are mirrored so the cavity reads as the
+    tool's outside did. `seat` with a part without UVs is
+    `EditError::NoUvs`; the model's `merge` of a part with UVs and one
+    without is refused. A `mirror` copy's UVs read mirrored.
+  - Booleans answer `facesWithoutUvs` (program answer, `shape build`,
+    MCP, `BoolReport` in the binding). `measure` adds `uv` per part with
+    UVs and fills `uvCoverage` and `uvOverlap`.
+  - Golden: `uvs.generators2`, `uvs.edits`, `uvs.program` added
+    (`golden/programs/uv_plate.json`, `checker.png`); no line moved.
+    `tools/check_uvs.ts` loads the plate in three.js; screenshots in
+    `docs/previews/uv/`.

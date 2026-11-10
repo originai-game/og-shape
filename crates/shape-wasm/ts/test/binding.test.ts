@@ -196,3 +196,25 @@ describe("the washing machine", () => {
     expect(m.joints).toEqual(["door_hinge", "drum_spin", "drawer_slide", "dial_turn"]);
   });
 });
+
+describe("uvs", () => {
+  const checker = new Uint8Array(readFileSync(new URL("golden/programs/checker.png", root)));
+  test("the UV plate records the committed program and gives its golden bytes", async () => {
+    const { uvPlate } = await import("../examples/uv_plate.ts");
+    const s = uvPlate(og, checker);
+    expect(s.program()).toBe(readFileSync(new URL("golden/programs/uv_plate.json", root), "utf8").trim());
+    const m = s.measure();
+    expect(m.parts[0].uv.flipped).toBe(0);
+    expect(m.parts[0].uv.zeroArea).toBe(0);
+    expect(m.uvCoverage).toBeGreaterThan(0.9);
+    s.free();
+  });
+  test("uvs are a boolean; a map not supplied is a located error", () => {
+    expect(() => og.model({ name: "u", uvs: "yes" as any })).toThrow(/uvs is true or false/);
+    const s = og.model({ name: "u", uvs: true });
+    const b = s.box({ name: "b", width: 10, depth: 10, height: 10 });
+    expect(() => s.material(b, { map: "nope.png" })).toThrow(/"nope.png" was not supplied.*binding\.test\.ts/s);
+    const pin = s.box({ name: "pin", width: 2, depth: 2, height: 20, uvs: false, on: og.frame({ origin: [0, 0, -5] }) });
+    expect(s.cut(b, pin).facesWithoutUvs).toBeGreaterThan(0);
+  });
+});

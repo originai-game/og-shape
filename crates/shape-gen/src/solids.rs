@@ -29,6 +29,19 @@
 //!   outside: a face that would read mirrored has its u negated
 //!   (decided per surface by `orient2d`).
 //!
+//! The other generators, by the same rule (`docs/research.md` §21.1),
+//! with their seams: [`crate::paths::sweep`] and `thread` (walls u round
+//! each section, v along the path, seam along the contour's first point;
+//! caps in the section's placed coordinates), [`crate::loft::loft`]
+//! (u round each ring, v up; seam along each ring's first sample; caps
+//! x, y), [`crate::wire::wire`] (u round, v along; seam along the ring's
+//! first point, and across ring 0 on a closed wire; caps in the ring's
+//! circle), [`crate::body::body`] (u round each section from +x, v
+//! along y; seam along +x), [`crate::parts::knurl`] (the crest cylinder:
+//! u = radius × angle from +x, v = z), [`crate::parts::gear_solid`] (caps
+//! x, y; walls as an extrude's, v = z; seam at the outline's first
+//! point), [`wedge`] (an extrude's).
+//!
 //! Each contour's closing segment ends at its full length, not at 0, so a
 //! closed wall has one seam where its contour starts (and a full turn one
 //! where its angle does).

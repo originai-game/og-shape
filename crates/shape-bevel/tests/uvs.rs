@@ -55,12 +55,12 @@ fn check(what: &str, input: &Solid, out: &Solid, plain: &Solid, kind: &str) -> f
         let p = t.map(|v| input.positions[v as usize]);
         for (i, u) in out.triangles.iter().enumerate() {
             let q = u.map(|v| out.positions[v as usize]);
-            if let Some(r) = (0..3).find(|&r| q[r] == p[0] && q[(r + 1) % 3] == p[1]) {
-                if q[(r + 2) % 3] == p[2] {
-                    let got = [uvs[i][r], uvs[i][(r + 1) % 3], uvs[i][(r + 2) % 3]];
-                    assert_eq!(got, ins[j], "{what}: untouched triangle {j} moved in UV");
-                    kept += 1;
-                }
+            if let Some(r) = (0..3).find(|&r| q[r] == p[0] && q[(r + 1) % 3] == p[1])
+                && q[(r + 2) % 3] == p[2]
+            {
+                let got = [uvs[i][r], uvs[i][(r + 1) % 3], uvs[i][(r + 2) % 3]];
+                assert_eq!(got, ins[j], "{what}: untouched triangle {j} moved in UV");
+                kept += 1;
             }
         }
     }

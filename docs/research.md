@@ -4539,3 +4539,186 @@ measures is the model as posed.
   compare the washing machine's GLB and PNG). Not run: the golden run as
   wasm32-wasip1 under wasmtime (not installable here), aarch64 and
   Windows (CI only).
+
+## 21. UVs everywhere a program can reach (stream Y)
+
+Stream S put UVs on `Solid` and carried them through import, export,
+repair, decimation and booleans (§17). This stream closes §17.6's gaps
+that a program meets: the program can ask for UVs, every generator and
+edit carries them or refuses, bevels carry them, and a material names a
+texture. UVs stay opt-in: with no `uvs` anywhere, every existing golden
+line is as it was (checked: `golden/hashes.txt` gains three lines, none
+moves).
+
+### 21.1 Generators
+
+`textured` covers every generator now. The rule is §17.3's (caps planar,
+walls by arc length round and along, in the model's unit); a shared
+helper (`RingUvs`, `shape_gen::solids`) measures a wall stitched between
+rings in 3D: u the arc length round ring i from its point 0 (the closing
+segment ends at the whole length), v the arc length along the line of
+point j from ring 0. Measuring along each line, not by section height,
+keeps v in millimetres on a sweep that bends or a loft that bulges.
+
+| generator | walls | caps | seams |
+|---|---|---|---|
+| `sweep`, `thread` | `RingUvs` (u round each section, v along the path) | the section's own placed 2D coordinates (twisted and scaled as there) | along the contour's first point |
+| `loft` | `RingUvs` | x, y | along each ring's first sample (outline and holes) |
+| `wire` | `RingUvs`; a closed wire wraps (v ends at the whole length) | the ring's circle | along the ring's first point; across ring 0 when closed |
+| `body` | `RingUvs`; an apex ring borrows its neighbour's u | the section's (x, z − centre) | along +x |
+| `knurl` | the crest cylinder: u = r × angle, v = z | x, y | at +x |
+| gear solid | as an extrude's (u along the outline, v = z) | x, y | at the outline's first point (a tooth's middle on +x), the bore's and hub's at +x |
+| `wedge` | an extrude's | | |
+
+Decided: the knurl does not use `RingUvs`. Its rows zigzag in radius
+(the diamonds), so v measured along each line differs from line to line
+by the teeth's ups and downs; the first version turned 1 in 20 of the
+diamond triangles over in UV. The crest cylinder's map shears nothing.
+
+`crates/shape-gen/tests/textured.rs` checks each: the same solid as the
+generator alone, and every triangle with area counter-clockwise in UV;
+a straight wire unrolls to its polygon's perimeter by its length.
+
+### 21.2 Bevels
+
+Plan phase 3 asked for new faces by mean-value interpolation from the
+boundary (§7.2). Stream X was rewriting the layout at the same time, so
+UVs are a pass over the result (`shape-bevel/src/uvs.rs`): the bevel runs
+on the solid with its UVs taken off, and the pass matches the result to
+the input. No line of the layout changed.
+
+- **Old faces.** Each result triangle on an old face is matched to the
+  input triangle with the same face names nearest its centroid (of those
+  within 1e-7 of the part's size of the nearest, the largest: the first
+  version took a boolean sliver and extended its map, which turned two
+  triangles over near a through hole). Its corners take UVs by
+  barycentric interpolation there (`Solid::uv_at`). A trimmed triangle
+  lies inside its source, so this is the same map re-fitted; an
+  untouched one keeps its UVs bit for bit (the test checks it).
+- **New faces**, per connected patch: each triangle takes the chart (old
+  surface) around the patch whose nearest triangle it faces most, and
+  that triangle's map extended over its corners. On a chart whose UVs
+  are affine in position (every flat face of a generator) that is the
+  chart's map projected onto the new face. Mean-value interpolation of
+  boundary values that are one affine map reproduces that map exactly
+  (linear precision), so on flat charts the two agree; the projection is
+  what is computed.
+- Why not one mean-value patch per fillet: a fillet's boundary runs
+  along two charts whose UVs are unrelated (a cap's x, y and a wall's
+  arc length), so the boundary data jump where the charts meet, and the
+  interior blends two maps into one that matches neither. Split by the
+  face it faces, a fillet strip is continuous with both of its faces,
+  with one seam along its middle; a corner patch splits in three.
+- Measured (`crates/shape-bevel/tests/uvs.rs`): the edges between a new
+  and an old face along which UVs are continuous: box fillet on `top`
+  8 of 8, chamfer 8 of 8, `soften` of every edge 24 of 24, a cylinder's
+  top fillet 96 of 96, a plate with two holes filleted on `top` and
+  `hole` 188 of 200. No triangle turned over or flat in UV; the ratio of
+  UV to surface area of new triangles stays within 0.05 to 2.
+- On a curved chart (a bore, a cylinder's wall) each new triangle takes
+  the tangent plane of the facet nearest it: the patch has small cracks
+  in UV where that facet changes (sub-millimetre at these sizes), and
+  the chart's own seam stays a seam. A first version gave each vertex
+  one value from the facet nearest it; at a bore's mouth neighbouring
+  vertices projected onto different facets and turned triangles over.
+
+`BevelError::HasUvs` is gone.
+
+### 21.3 The other tools
+
+| tool | UVs |
+|---|---|
+| `split` | the half-space box is built `textured`: the cut face is planar in the plane's own x, y |
+| `hole`, `pocket` | the tools are `textured` extrudes: a bore's wall u round, v along the axis; floors planar |
+| `shell` | the inner solid takes the outer's UVs corner for corner |
+| `seat` | the part's UVs; a part without UVs on a host with them is `EditError::NoUvs` |
+| any cut (`split` below, `hole`, `pocket`, `shell`, `seat`, the model's `cut`) | the tool's u is negated first: a cut turns the tool's faces inside out, and its UVs would read mirrored from the cavity (the hole's bore did, and a fillet at its mouth projecting that chart turned over) |
+| `dent` | a split edge's midpoint takes the mean of its ends' UVs in each triangle (a seam stays a seam) |
+| `merge` (`shape_edit`) | `Solid::append`'s rule (zero-filled side); the model refuses merging a part with UVs and one without |
+| `shape-skin` refinement | as `dent` |
+| `drop_slivers` (placement) | **was wrong**: it renumbered triangles and left `uvs` indexed as before. Each piece now interpolates in its source triangle (the test's UVs are an affine function, kept exactly) |
+| placement, `copy`, `scale` | carried; a scale stretches the texture with the part |
+| `mirror` | the image's triangles turn over with their UVs: the texture reads mirrored, as a mirror image does, and `measure` counts every such triangle `flipped`. Negating u instead would read unmirrored but change the chart's meaning; the agent can tell from `flipped` |
+| `delete` | nothing to carry |
+| booleans | `facesWithoutUvs` in the program answer, `shape build`, MCP and the binding |
+
+### 21.4 The program surface
+
+- **Asking.** The `uvs` operation (no fields) makes every later part
+  textured; it is refused once a part without UVs exists, so a model
+  that asks never holds a part that silently lacks them. Each generator
+  takes `uvs` (a boolean) to choose for itself. The binding's
+  `og.model({ uvs: true })` sends the operation; `--uvs` (CLI) and
+  `uvs` (MCP) replay a program as if it began with it.
+- **Units.** UVs are in the model's unit on the surface (a millimetre
+  model's are millimetres). A material's `mapSize` (default 1) is how
+  many units the image spans: the model's build divides the UVs of the
+  parts the material reaches by it, so the GLB's TEXCOORD_0 is in
+  images and repeats with the sampler. `measure`'s `uv` reads the same
+  divided UVs, so its coverage and overlap are of the image. Rejected:
+  a scale on `uvs` (tools inside edits are built in units, and their UVs
+  would not match the part's); KHR_texture_transform (three.js reads it,
+  other tools may not, and measure would not see it).
+- **Textures** follow fonts (§16): the program records the name only;
+  the caller supplies bytes (`Session::texture`, `og.model({ textures })`)
+  and the CLI and MCP read it relative to the program
+  (`textures_named`). PNG and JPEG, by their signatures; a missing or
+  other file is an error at the `material` operation, located like the
+  rest.
+- **Measures.** A part with UVs adds `uv` (area, coverage, overlap,
+  overlappingPairs, flipped, zeroArea, outside); the model's
+  `uvCoverage` (least over parts) and `uvOverlap` (most), null without
+  UVs, so reports of models without UVs are unchanged.
+
+### 21.5 Acceptance
+
+`golden/programs/uv_plate.json` (recorded by
+`crates/shape-wasm/ts/examples/uv_plate.ts`): an 80 × 50 × 6 mm plate
+with two 8 mm through holes, its top edges filleted (r 1.5), a lofted
+handle (rounded rectangle, ellipse, rounded rectangle; 4 steps a span)
+joined on, and a 64² checker (`golden/programs/checker.png`, 8 squares a
+side) spanning 20 mm.
+
+- One part, closed, 3 144 triangles (the same count without UVs); the
+  join reports `facesWithoutUvs` 0. `measure`: `flipped` 0, `zeroArea` 0,
+  coverage 1 and overlap 1 (the UVs repeat the image 4 × 2.5 times
+  across the plate, so every texel is covered several times), 2 942 of
+  3 144 triangles outside the unit square (repeat, as intended).
+- Time (x86-64, release): `shape build` 60 ms with UVs, 49 ms without.
+- three.js r186 `GLTFLoader` in headless Chromium
+  (`tools/check_uvs.ts`): one mesh, a UV on every one of its 2 554
+  vertices, all finite, the map 64 × 64 with repeat wrapping, no page
+  error. Screenshots: `docs/previews/uv/plate_checker.png` and
+  `plate_checker_back.png`. Seen: squares square on the caps, the walls
+  and the fillets, continuous over the fillets onto the top and the
+  walls; the handle's squares shear where the loft's rings turn from the
+  rectangle to the ellipse (the samples run corner to corner, §15.1), so
+  its wall map is sheared, not flipped.
+- In the edits test (`crates/shape-model/tests/uvs.rs`), booleans leave a
+  few needles (two corners an ulp apart, area about 1e-15 mm²) whose two
+  near corners take one UV: `measure` counts them `zeroArea` (2 after a
+  counterbored hole, 1 after `seat`). They are the boolean's, not the
+  UVs'.
+
+Golden: `uvs.generators2` (every new generator textured), `uvs.edits`
+(hole with a counterbore, pocket, fillet, chamfer, shell, dent and split
+of a textured plate), `uvs.program` (the acceptance program's GLB and
+measures).
+
+### 21.6 Gaps and what is untested
+
+- §17.6 item 2 and 3 (hole fills overlapping their chart reported by
+  repair; one texture per joined solid stated in the report): not done.
+- New faces on curved charts have small UV cracks where the nearest
+  facet changes (§21.2); true mean-value interpolation per chart region
+  would remove them. A patch whose old faces are all curved and cross
+  their charts' seams keeps those seams; it is not refused.
+- A bevel on an imported solid whose faces' names repeat across
+  separate regions matches old faces by name and distance; a face that
+  a wide bevel rebuilt from its outline across a UV seam of one planar
+  face (not made by any generator) would take one side's map.
+- `mapSize` scales UVs at export and in `measure`; the preview does not
+  draw textures.
+- The three.js check runs by hand (`node tools/check_uvs.ts`), not in
+  the gate. Determinism of the new hashes: native x86-64 and wasm32
+  under wasmtime here; aarch64 and Windows in CI only.
