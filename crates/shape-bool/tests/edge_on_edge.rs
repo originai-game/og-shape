@@ -83,3 +83,59 @@ fn through_bore_on_the_cap_diagonal_is_closed() {
 fn blind_bore_on_the_cap_diagonal_is_closed() {
     check(2.0, 4.0, 7.0);
 }
+
+/// A frustum along z from `z0`, `h` high, radii `r0` to `r1`, on an
+/// `n`-gon (`shape-edit`'s hole tools, unturned).
+fn frustum(r0: f64, r1: f64, z0: f64, h: f64, n: u32) -> Solid {
+    let c = shape_2d::circle(&shape_2d::Circle {
+        radius: r0,
+        segments: n,
+    })
+    .unwrap();
+    let mut s = shape_gen::solids::extrude(
+        &c,
+        &shape_gen::solids::Extrude {
+            height: h,
+            taper: 1.0 - r1 / r0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    s.map_positions(|p| p + DVec3::new(0.0, 0.0, z0), false);
+    s
+}
+
+#[test]
+fn a_countersink_ending_on_the_bore_closes_in_either_order() {
+    // The cone's narrow end is the bore's own polygon, at the same angles:
+    // its ring of vertices lies on the bore's vertex columns and its ring
+    // edges in the bore's wall planes (`docs/research.md` §5.4, item 4;
+    // §18). With the bore cut first, the wall's pieces are bent by the
+    // rounding of the first cut, and a ring edge almost in a piece's plane
+    // made its crossing 0/0: a NaN, refused as a position not finite.
+    let cut = |a: &Solid, b: &Solid| {
+        boolean(
+            a,
+            b,
+            &Boolean {
+                op: BoolOp::Cut,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    };
+    for (r, mouth, depth) in [(2.0, 4.0, 0.0), (2.0, 4.0, 6.0), (3.3, 6.6, 0.0)] {
+        let n = 24;
+        let d = if depth > 0.0 { depth } else { 40.0 };
+        let h = mouth - r;
+        let bore = frustum(r, r, 10.0 - d, d + 0.06, n);
+        let sink = frustum(r, mouth + 0.06, 10.0 - h, h + 0.06, n);
+        let one = cut(&cut(&plate(), &bore), &sink).measure();
+        let two = cut(&cut(&plate(), &sink), &bore).measure();
+        assert!(one.closed && two.closed, "{r} {depth}: {one:?} {two:?}");
+        assert!(
+            (one.volume - two.volume).abs() < 1e-9 * one.volume,
+            "{r} {depth}"
+        );
+    }
+}

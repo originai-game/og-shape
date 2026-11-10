@@ -91,6 +91,23 @@ pub fn cases() -> Vec<Case> {
             },
         },
         Case {
+            name: "touching.countersink.ring",
+            run: |h| {
+                // A countersink whose narrow end is the bore's own polygon,
+                // cut after the bore: a ring of coincident edges
+                // (`docs/research.md` §18).
+                let plate = block(40.0, 40.0, 10.0)?;
+                let bore = frustum(2.0, 2.0, -30.0, 40.06)?;
+                let sink = frustum(2.0, 4.06, 8.0, 2.06)?;
+                let d = Boolean {
+                    op: BoolOp::Cut,
+                    ..Default::default()
+                };
+                let bored = shape_bool::boolean(&plate, &bore, &d).map_err(fail)?;
+                both(h, &bored, &sink, BoolOp::Cut)
+            },
+        },
+        Case {
             name: "touching.program.rim",
             run: |h| replay(h, RIM),
         },
@@ -207,6 +224,26 @@ fn turned_elbows() -> Result<(Solid, Solid), HashError> {
     };
     let b = turn(turn(elbow(-600.0)?, s)?, -s)?;
     Ok((elbow(0.0)?, b))
+}
+
+/// A frustum along z from `z0`, `h` high, radii `r0` to `r1`, on a
+/// 24-gon: a hole's tools in `shape-edit`.
+fn frustum(r0: f64, r1: f64, z0: f64, h: f64) -> Result<Solid, HashError> {
+    let c = shape_2d::circle(&shape_2d::Circle {
+        radius: r0,
+        segments: 24,
+    })
+    .map_err(fail)?;
+    let s = shape_gen::solids::extrude(
+        &c,
+        &shape_gen::solids::Extrude {
+            height: h,
+            taper: 1.0 - r1 / r0,
+            ..Default::default()
+        },
+    )
+    .map_err(fail)?;
+    Ok(moved(s, DVec3::new(0.0, 0.0, z0)))
 }
 
 fn both(h: &mut OutputHash, a: &Solid, b: &Solid, op: BoolOp) -> Result<(), HashError> {
