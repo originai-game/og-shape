@@ -66,7 +66,7 @@ pub use export::{
     posed, stl, stl_at,
 };
 pub use fbx::import_fbx;
-pub use image::ImageInfo;
+pub use image::{ImageInfo, Texture};
 pub use import::{
     Affine, Import, ImportError, Imported, ImportedPart, Resolve, SkinScale, UNEVEN, import,
     import_gltf, import_obj, no_files,

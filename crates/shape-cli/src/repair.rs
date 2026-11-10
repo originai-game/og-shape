@@ -34,7 +34,7 @@ pub fn repair(files: &dyn Files, d: &RepairDesc) -> Result<String, Failure> {
     let joined = mesh.joined()?;
     let (fixed, r) = shape_tools::repair(&joined, &d.repair).map_err(failed)?;
     let m = shape_tools::measure(&fixed, &Measure::default());
-    let output = write_solid(files, &mesh.name, &fixed, None, d.out.as_deref())?;
+    let output = write_solid(files, &mesh.name, &fixed, mesh.map(), d.out.as_deref())?;
     Ok(object(&[
         ("triangles_in", joined.triangles.len().to_string()),
         ("repair", report::repair(&r)),

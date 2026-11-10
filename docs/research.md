@@ -3566,3 +3566,238 @@ measures is the model as posed.
   compare the washing machine's GLB and PNG). Not run: the golden run as
   wasm32-wasip1 under wasmtime (not installable here), aarch64 and
   Windows (CI only).
+## 17. UVs in the data model (stream S, 2026-11-10)
+
+Before this, `Solid` had no texture coordinates: generators and bevels
+made none, imported UVs and textures were measured and then dropped by
+repair and decimation, and the mesh-tool chain always unwrapped afresh
+(§9.8).
+
+### 17.1 The decision
+
+- **`Solid::uvs: Option<Vec<[DVec2; 3]>>`**: one UV per triangle
+  corner, f64, rounded to f32 only on output. A seam is two corners of
+  one vertex with different UVs, so welding by position (canonical
+  order, §6) never has to split or merge anything for UVs.
+- **Convention:** (0, 0) at the bottom left of the image, v up (OBJ's,
+  FBX's, the unwrap's). glTF's v runs down: import writes `1 − v`, and
+  both GLB writers write `1 − v` back. In f64 both flips are exact for
+  the f32 values a file holds in [0, 1], so a file's UVs survive import
+  and export bit for bit; UVs computed in f64 on the way (interpolated,
+  averaged) come back within f32's rounding (3–7·10⁻⁸ in UV units on the
+  files below).
+- **Optional, and invisible when absent:**
+  - `canonicalize` rotates a triangle's UVs with it, checks them for NaN,
+    and orders triangles on the same corners, surface and names by their
+    UVs, as a last tie-break;
+  - `hash_into` adds `"uvs"` and the values only when present.
+  
+  With `None`, canonical order and every hash are as before: no line of
+  `golden/hashes.txt` moved.
+- **Keeping it consistent:** `push_triangle` gives a new triangle (0, 0)
+  at each corner when the solid has UVs; tools that add triangles call
+  `push_triangle_uv`. `reverse_triangle` turns a triangle with its UVs.
+  `append` of a solid without UVs to one with them (or the other way)
+  gives the bare side's triangles (0, 0): zero-area UV triangles, which
+  `measure` counts.
+- **The texture:** an imported part keeps its first material's
+  base-colour texture as the file's bytes, never decoded:
+  `ImportedPart::map: Option<Texture>` (`Texture`: name, MIME type,
+  bytes; three.js's `map`). Read from glTF `baseColorTexture` (the plain
+  source, `EXT_texture_webp` or `KHR_texture_basisu`), OBJ `map_Kd`, FBX
+  a material's `DiffuseColor` texture's `Video`. On export,
+  `Material::map` (`glb`) and `PlainGlb::map` (`glb_plain`) embed it in
+  the GLB's binary chunk with one sampler (linear, repeat). Only PNG and
+  JPEG are written (glTF's core formats); another format, or a map on a
+  part without UVs, is `ExportError::BadTexture` /
+  `PlainGlbError::BadTexture`.
+- **Said, not dropped:** the import's `skipped` list names what it reads
+  past: a part where only some primitives (OBJ: faces; FBX: corners) have
+  UVs gets none and says so; a base-colour texture on a second UV set,
+  a `KHR_texture_transform` (not applied), and a material's normal,
+  occlusion, emissive and metallic-roughness textures (only the base
+  colour is kept).
+
+Rejected:
+
+- **UVs per vertex, vertices split at seams.** The usual GPU layout, but
+  canonical order welds by position: split vertices would weld back,
+  and every tool that compares positions (weld, the decimator's link
+  condition, booleans' welding) would have to learn that two vertices
+  at one point are one. Per corner keeps the solid's topology the
+  geometry's. The writers split per (position, surface, UV) on output,
+  as they already did for normals.
+- **Per-vertex UVs plus a seam table ("wedges", Hoppe 1999).** Smaller
+  in memory, but every operation must keep two structures in step; per
+  corner is one array indexed like `triangles`.
+- **UVs beside the solid** (the old `ImportedPart::uvs` and `Uvs`): lost
+  by any operation that reorders triangles, which is every operation.
+  `unwrap` still returns `Uvs` (charts, scale) and now also sets
+  `Solid::uvs`.
+- **f32 inside.** Interpolation (booleans, decimation midpoints) would
+  round twice; f64 inside, f32 out, as positions.
+- **Several UV sets.** Only the first is read; a texture on the second is
+  reported, not mapped. A `Vec` of sets can replace the `Option` later
+  without changing a hash that has none.
+- **UVs always on generator output.** Every generator golden hash, and
+  every GLB built from them, would move. Generators give UVs on request
+  (§17.3).
+
+### 17.2 Through the tools
+
+| tool | what happens to UVs |
+|---|---|
+| `weld`, `remove_degenerate`, `remove_floaters` | a kept triangle keeps its corners' UVs; welding moves positions, never UVs |
+| `orient` | a turned triangle turns its UVs (`reverse_triangle`) |
+| `close_holes` | each rim vertex takes its UV in the rim triangle of the rim edge leaving it, a fan's centre their mean; a rim whose vertices have different UVs on their two rim triangles crosses a seam, and `RepairReport::uv_seam_fills` counts those fills |
+| `fuse`, booleans (`shape_bool`) | every output triangle lies in one input triangle (`origins`), and takes its UVs by barycentric interpolation there, so a cut face keeps its mapping exactly; faces from an operand without UVs, when the other has them, get (0, 0) and `BoolReport::faces_without_uvs` counts them |
+| `apply_transform`, `join` | carried; a mirroring transform turns triangles with their UVs; `join` zero-fills parts without UVs (above) |
+| `decimate`, `lods`, `collapse_short_edges` | a UV seam (an edge whose two triangles give either end different UVs) is a feature line, like a surface border: a seam vertex slides only along its seam. A collapse gives each corner of the removed vertex the UV the kept vertex has on the same side, matched through the edge's own two triangles; a midpoint collapse gives both ends' corners the mean. Refused, as a turned-over face is: a collapse whose corners cannot be matched (one end with two UVs and no seam to say which applies), or that turns a UV triangle over or flattens it (`orient2d`) |
+| `unwrap` | replaces the solid's UVs |
+| `measure` | coverage, overlap, flipped, outside: from the solid's UVs, whatever made them (the `Measure::uvs` field is gone) |
+| `glb`, `glb_plain` | write TEXCOORD_0 (v flipped) and the map |
+| `fillet`, `chamfer`, `soften` | refuse a solid with UVs (`BevelError::HasUvs`), §17.4 |
+
+The seam lines are belt and braces: with them turned off, the matching
+alone already keeps the sphere test's UV error small (it refuses every
+collapse across a seam), but a seam vertex could then move off its
+seam's line within the surface. With both, the seams stay where they
+were.
+
+The CLI: `repair`, `decimate` and `export` of a mesh write its UVs and
+its texture (the one all textured parts share). `process` keeps a mesh's
+own UVs and texture and skips the unwrap (`"unwrap": null`); `--unwrap`
+(MCP: `fresh_uvs`) unwraps anyway, and then writes no texture (it was
+painted for the old UVs). The import report gains `"map"` on a part
+that has one, so reports of files without textures are unchanged.
+
+### 17.3 Generators
+
+`shape_gen::solids::textured(&Generator)` builds extrude, revolve, box,
+cylinder, cone, tube, sphere, torus and dome with UVs, in millimetres
+on the surface (a texture with a repeat sampler tiles once per mm; scale
+it by `1/size` for a texture of `size` mm):
+
+- caps (`top`, `bottom`, `start`, `end`, a dome's flat base): planar,
+  the profile's own coordinates (an extrude's twisted top: its own x, y);
+- an extrude's walls: u is the arc length along the profile's contour
+  from its first point, v the height above the bottom;
+- a turned solid's walls: u is radius × angle (the arc length round the
+  axis at that vertex's radius), v the arc length along the profile;
+- each contour's closing segment ends at the full length, so a closed
+  wall has one seam, at its first point, and a full turn one at angle 0;
+- every face's UVs run counter-clockwise as the face does from outside:
+  a surface whose UV triangles mostly run clockwise (counted exactly by
+  `orient2d`) has u negated.
+
+The same positions, triangles and names as the generator alone; the
+test checks that, the orientation of every UV triangle with area, the
+box's top equal to its plan, and the cylinder's wall 2π·r round and its
+height up.
+
+Why a separate entry and not a `uvs` field on each desc: the descs are
+built as struct literals in about 25 files across the workspace, many
+of them other streams'. A field would have meant editing all of them.
+One entry adds nothing to any desc.
+
+Not done: sweep, loft, body, wire, thread, gear and knurl (each needs
+its own rule; sweep and loft would take the extrude's, along the path).
+The model's program surface (stream R) does not ask for UVs yet.
+
+### 17.4 Bevels: refused, for now
+
+Plan phase 3 asks for UVs on bevel faces by mean-value interpolation
+from the boundary. Stream W is rewriting `shape-bevel`'s layout, so the
+change here is three guards: `fillet`, `chamfer` and `soften` refuse a
+solid with UVs (`BevelError::HasUvs`), never returning it without them.
+The way in, once W lands, is in the assembly step of `bevel.rs`, where
+each output triangle is either an old face's (`unit` `None`, with its
+source triangle) or a new face's:
+- an old face's corners take UVs by barycentric interpolation in their
+  source triangle's plane, as booleans do (its corners only slide within
+  that face);
+- a new face's vertices take the mean-value coordinates (Floater 2003)
+  of their unit's boundary loop, flattened onto the unit's mean plane,
+  with the boundary's UVs from the old faces next to it. A unit whose
+  boundary crosses a UV seam should be split along it, or report it.
+
+### 17.5 Acceptance (`bench/meshtools`, `uv-check`; x86-64, release)
+
+Outside textured GLBs (Khronos glTF-Sample-Assets, fetched, not
+committed): `import → join → repair (weld 1 µm, floaters 5 %, holes ≤ 64
+edges) → decimate to half → glb_plain` with the file's base-colour
+texture, read back by the `gltf` crate and by our importer, then loaded
+by three.js r160's `GLTFLoader` in headless Chromium.
+
+UV error: for every output corner, the UV the input surface has at the
+nearest point (interpolated in the input triangle there; on a seam or an
+edge, the nearest triangle whose UV is closest) against the corner's
+own, in UV units and in texels of the texture
+(`crates/shape-tools/tests/support/uverror.rs`).
+
+| file | triangles | repair UV error | decimate to half: UV error max / p99 / mean (texels) | surface moved | GLB round trip (corner by corner) | texture |
+|---|---|---|---|---|---|---|
+| Duck (512² PNG) | 4 212 → 2 106 | 0 | 0.33 / 0.062 / 0.003 | 2.45 mm (of ~3.3 m) | 4·10⁻⁸ | same bytes back; three.js: `map` 512×512, `uv` 1 224 |
+| BoxTextured (256² PNG) | 12 → 8 | 0 | 0 / 0 / 0 | 0 | 0 | same; three.js reads it |
+| Avocado (2048² PNG) | 682 → 718 (1 hole filled) → 358 | 0 | 6.5 / 1.0 / 0.055 | 0.16 mm | 3·10⁻⁸ | same; three.js reads it |
+| DamagedHelmet (2048² JPEG) | 15 452 → 15 796 (69 holes filled, 59 across a seam, 12 left) → 7 898 | 0 | 404 / 2.2 / 0.33 | 6.9 mm | 7·10⁻⁸ | same; three.js reads it |
+
+- **Repair** changes no UV of a triangle it keeps (error 0 against the
+  import on every file).
+- **Decimation:** the mean error is a third of a texel or less, p99 at
+  most 2.2 texels. The helmet's maximum (404 texels) is where the surface
+  itself moved 6.9 mm: the nearest input point lies on another part of
+  the model, in another chart. Duck and Avocado have no such spot.
+- **Hole fills** add what the measure shows: on Avocado one fill raises
+  UV overlap from 0 to 6.9 % of texels (its fan covers part of a chart);
+  on the helmet, 59 of 69 fills cross a seam and are reported.
+- **Flipped UV triangles** (clockwise against their face): half of
+  Duck's and the helmet's, as the files have them (their charts are
+  mirrored); decimation keeps the share (Duck 2 075 of 4 212 → 1 050 of
+  2 106). Fill triangles add their own (Avocado 1 → 37).
+- The helmet's UVs lie in v ∈ [1, 2] in the file (−1..0 here, after the
+  flip): it relies on the repeat sampler. `measure` reports coverage only
+  in the unit square, so 0 there; `outside` counts every triangle.
+- **Seen:** three.js renders of the full and the half model side by
+  side, `docs/previews/uv/duck-full-half.png` and
+  `damaged-helmet-full-half.png`. The duck is the same. The helmet's
+  decals and panels sit where they did; its visor and metal look
+  different because only the base colour is kept (its emissive,
+  metallic-roughness, normal and occlusion maps are reported as skipped).
+- Time (helmet): repair 142 ms, decimation 52 ms.
+
+Golden: `uvs.generators` (each `textured` generator), `uvs.chain` (a
+textured sphere as a soup with a hole, repaired and decimated),
+`uvs.boolean` (a textured block cut by a pin without UVs), `uvs.glb`
+(scene and plain GLB with a PNG map, and the scene read back). Tests:
+`crates/shape-mesh` (UVs follow corners through canonical order),
+`shape-gen` (`textured`), `crates/shape-tools/tests/uvs.rs` (GLB round
+trip with the `gltf` crate, decimation, repair, a cut, OBJ `map_Kd`),
+`crates/shape-bevel/tests/uvs.rs` (refusal), and the FBX fixture now has
+a `DiffuseColor` texture.
+
+### 17.6 Gaps and what is untested
+
+- Tools not audited for UVs, which may drop them silently: `shape-edit`'s
+  `dent` and `split` (they rebuild solids), `shape-skin`'s refinement,
+  and `shape-model`'s placement. Generators feed them no UVs today
+  (`textured` is opt-in and the program surface does not ask for it),
+  so nothing reaches them yet; each should carry or refuse before it
+  does.
+- Hole fills take rim UVs as they are: a fill across a seam stretches
+  (reported), and a fill inside one chart can overlap the chart's other
+  triangles (measured, not reported by repair).
+- One texture per joined solid: `shape process` and `glb_plain` write
+  one material; parts with different maps lose theirs on the plain GLB
+  (`Mesh::map` is `None` then). `glb` of an imported mesh keeps each
+  part's.
+- No UV-aware quadric: decimation keeps UVs by matching and refusing,
+  not by adding UV error to the cost (Hoppe 1999's attribute quadrics).
+  The UV error above is what that leaves.
+- Generators beyond extrude, revolve and the primitives; bevels (§17.4).
+- The three.js check ran by hand (`GLTFLoader.loadAsync` in Chromium,
+  `uv` and `map` present, renders compared by eye), not in CI.
+- FBX textures: checked on the hand-written fixture only; the three
+  real FBX files tried have no textures.
+- Determinism of the new hashes: native x86-64 and wasm32 under wasmtime
+  here; aarch64 and Windows in CI only.

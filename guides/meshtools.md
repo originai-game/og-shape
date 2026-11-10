@@ -21,6 +21,9 @@ import → join → repair → decimate → unwrap → measure → preview → e
    `glb_plain` alone refuses it (a plain GLB carries no skin). A
    skeleton under a uniformly scaled armature (centimetres)
    has the scale taken out; the import report (`skin_scales`) says so.
+   UVs (the first set) and the base-colour texture (`map`) are kept
+   too, and carried by every step below; `skipped` names the other
+   material maps (normal, emissive, ...), which are not.
 2. **Join** the parts into one solid (`join`). Each part's faces keep its
    name, so a part can still be found after joining. Skinned parts share
    one skeleton, merged by bone name; bones of one name that disagree, a
@@ -46,12 +49,21 @@ import → join → repair → decimate → unwrap → measure → preview → e
    price is a little more surface error elsewhere at the same count
    (`docs/research.md` §11.5). `cross_bone_borders` turns this off for a
    mesh that will not be posed.
-5. **Unwrap** (`unwrap`). Raise `resolution` to the texture size you will
-   bake at, so the padding is in its texels.
-6. **Measure** (`measure`) with the UVs, the images and `intersections`.
+5. **Unwrap** (`unwrap`) only when the mesh has no UVs, or you will paint
+   a new texture: unwrapping replaces the file's UVs, and its texture no
+   longer fits. Raise `resolution` to the texture size you will bake at,
+   so the padding is in its texels. `shape process` keeps a textured
+   mesh's UVs unless given `--unwrap`.
+6. **Measure** (`measure`) with the images and `intersections`; it
+   measures the UVs the mesh carries. After repair, look at
+   `uv_seam_fills` in its report: those hole fills stretch the texture
+   across a seam. After decimation, `uv.overlapping_pairs` and
+   `uv.flipped` should be what they were before (a file's own mirrored
+   charts count as flipped).
 7. **Preview** and look at it.
-8. **Export** `glb_plain` for texturing, or `glb` for parts, joints and
-   skins. To check a decimated skin, pose both meshes the same way
+8. **Export** `glb_plain` for texturing (with `map` to keep the file's
+   texture), or `glb` for parts, joints and skins (a part's
+   `material.map`). To check a decimated skin, pose both meshes the same way
    (`shape-skin`'s `pose`) and compare them: the posed error should be no
    more than the rest error.
 

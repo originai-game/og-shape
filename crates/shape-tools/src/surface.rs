@@ -1,9 +1,11 @@
 //! A solid's triangles with one vertex per (position, surface): normals
-//! smooth within a surface and split at real edges.
+//! smooth within a surface and split at real edges. A solid with UVs gets
+//! one vertex per (position, surface, UV): its seams split vertices too,
+//! and the copies share their normal.
 
 use std::collections::BTreeMap;
 
-use shape_core::DVec3;
+use shape_core::{DVec2, DVec3};
 use shape_mesh::Solid;
 
 /// Vertices split by surface, in kernel space (millimetres, Z up).
@@ -13,6 +15,9 @@ pub(crate) struct Split {
     pub indices: Vec<u32>,
     /// Per split vertex, the solid's vertex it copies.
     pub sources: Vec<u32>,
+    /// Per split vertex, its texture coordinates, if the solid has UVs
+    /// (kernel convention: v up).
+    pub uvs: Vec<DVec2>,
 }
 
 /// Splits `s` so that each surface has its own vertices. A vertex's normal
@@ -20,36 +25,54 @@ pub(crate) struct Split {
 /// normalized. Vertices are numbered in order of first use by the
 /// triangles, so the result depends only on the solid.
 pub(crate) fn split(s: &Solid) -> Split {
-    let mut ids: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+    // The UV's f32 bits, as written: corners that write the same share a
+    // vertex. (0, 0) for a solid with none.
+    let uv_key = |i: usize, k: usize| {
+        s.uvs.as_ref().map_or((0, 0), |u| {
+            let q = u[i][k];
+            ((q.x as f32).to_bits(), (q.y as f32).to_bits())
+        })
+    };
+    let mut ids: BTreeMap<(u32, u32, (u32, u32)), u32> = BTreeMap::new();
+    let mut smooth: BTreeMap<(u32, u32), DVec3> = BTreeMap::new();
     let mut out = Split {
         positions: Vec::new(),
         normals: Vec::new(),
         indices: Vec::with_capacity(s.triangles.len() * 3),
         sources: Vec::new(),
+        uvs: Vec::new(),
     };
+    let mut normal_of: Vec<(u32, u32)> = Vec::new();
     for (i, t) in s.triangles.iter().enumerate() {
         let [a, b, c] = t.map(|v| s.positions[v as usize]);
         // Twice the area, along the normal.
         let n = (b - a).cross(c - a);
-        for &v in t {
-            let key = (v, s.surfaces[i]);
+        for (k, &v) in t.iter().enumerate() {
+            let key = (v, s.surfaces[i], uv_key(i, k));
             let next = out.positions.len() as u32;
             let id = *ids.entry(key).or_insert(next);
             if id == next {
                 out.positions.push(s.positions[v as usize]);
-                out.normals.push(DVec3::ZERO);
                 out.sources.push(v);
+                normal_of.push((v, s.surfaces[i]));
+                if let Some(u) = &s.uvs {
+                    out.uvs.push(u[i][k]);
+                }
             }
-            out.normals[id as usize] += n;
+            *smooth.entry((v, s.surfaces[i])).or_default() += n;
             out.indices.push(id);
         }
     }
-    for n in &mut out.normals {
-        let len = n.length();
-        // Only degenerate triangles touch a zero sum: any fixed unit vector
-        // will do.
-        *n = if len > 0.0 { *n / len } else { DVec3::Z };
-    }
+    out.normals = normal_of
+        .iter()
+        .map(|key| {
+            let n = smooth[key];
+            let len = n.length();
+            // Only degenerate triangles touch a zero sum: any fixed unit
+            // vector will do.
+            if len > 0.0 { n / len } else { DVec3::Z }
+        })
+        .collect();
     out
 }
 

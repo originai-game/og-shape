@@ -58,6 +58,9 @@ pub enum BevelError {
     Skinned,
     /// A field holds a value it does not take (the field and why).
     Invalid(&'static str),
+    /// The solid has UVs (`Solid::uvs`): bevels do not carry UVs yet
+    /// (`docs/research.md` §17), and never drop them silently.
+    HasUvs,
 }
 
 impl std::fmt::Display for BevelError {
@@ -82,6 +85,9 @@ impl std::fmt::Display for BevelError {
             BevelError::Invalid(why) => f.write_str(why),
             BevelError::Skinned => f.write_str(
                 "the solid is skinned; bevels do not carry skins yet: bevel first, then skin it",
+            ),
+            BevelError::HasUvs => f.write_str(
+                "the solid has UVs; bevels do not carry UVs yet: bevel first, then give it UVs",
             ),
         }
     }
@@ -223,6 +229,9 @@ pub fn fillet(s: &Solid, d: &Fillet) -> Result<Solid, BevelError> {
     if s.skin.is_some() {
         return Err(BevelError::Skinned);
     }
+    if s.uvs.is_some() {
+        return Err(BevelError::HasUvs);
+    }
     let r = positive(d.radius, "radius")?;
     let profile = if d.profile == 0.0 { 0.5 } else { d.profile };
     if !(profile.is_finite() && profile > 0.0 && profile < 1.0) {
@@ -247,6 +256,9 @@ pub fn fillet(s: &Solid, d: &Fillet) -> Result<Solid, BevelError> {
 pub fn chamfer(s: &Solid, d: &Chamfer) -> Result<Solid, BevelError> {
     if s.skin.is_some() {
         return Err(BevelError::Skinned);
+    }
+    if s.uvs.is_some() {
+        return Err(BevelError::HasUvs);
     }
     let d1 = positive(d.distance, "distance")?;
     let offsets = if d.angle != 0.0 {
@@ -280,6 +292,9 @@ pub fn chamfer(s: &Solid, d: &Chamfer) -> Result<Solid, BevelError> {
 pub fn soften(s: &Solid, d: &Soften) -> Result<Solid, BevelError> {
     if s.skin.is_some() {
         return Err(BevelError::Skinned);
+    }
+    if s.uvs.is_some() {
+        return Err(BevelError::HasUvs);
     }
     let r = positive(d.radius, "radius")?;
     let angle = if d.angle == 0.0 {

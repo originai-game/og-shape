@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use shape_mesh::Solid;
 use shape_model::Model;
-use shape_tools::{Import, Imported, Part, Scene, apply_transform, import, join};
+use shape_tools::{Import, Imported, Part, Scene, Texture, apply_transform, import, join};
 
 use crate::{Failure, failed};
 
@@ -181,6 +181,15 @@ impl Mesh {
             )));
         }
         join(&self.imported.parts).map_err(failed)
+    }
+
+    /// The base-colour texture the joined solid can carry: the one every
+    /// textured part shares. `None` when no part has one, or when parts
+    /// have different ones (a plain GLB has one material).
+    pub fn map(&self) -> Option<&Texture> {
+        let mut maps = self.imported.parts.iter().filter_map(|p| p.map.as_ref());
+        let first = maps.next()?;
+        maps.all(|m| m == first).then_some(first)
     }
 
     /// Whether any part is skinned.

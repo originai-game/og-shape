@@ -1,6 +1,7 @@
 //! A plain GLB of one solid: one node, one mesh, one primitive, one
-//! material, positions, normals and (if given) texture coordinates: what
-//! a texturing tool takes once a mesh is closed, joined, triangulated,
+//! material, positions, normals and (if the solid has them) texture
+//! coordinates, with the base-colour texture if one is given: what a
+//! texturing tool takes once a mesh is closed, joined, triangulated,
 //! under its triangle budget and unwrapped.
 
 use std::collections::BTreeMap;
@@ -9,18 +10,21 @@ use std::fmt;
 use shape_core::DVec3;
 use shape_mesh::Solid;
 
+use crate::export::{ExportError, check_texture, gltf_uv, texture_json};
+use crate::image::Texture;
 use crate::json::{Json, f32n, nums};
 use crate::surface::{METRES, y_up};
-use crate::unwrap::Uvs;
 
 /// What to write besides the geometry. The zero value writes a mesh named
-/// `mesh` with no texture coordinates.
+/// `mesh` with no texture. Texture coordinates are the solid's own
+/// ([`Solid::uvs`], from import or [`crate::unwrap()`]).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlainGlb<'a> {
     /// The node's and the mesh's name; "" is `mesh`.
     pub name: &'a str,
-    /// Texture coordinates per triangle corner, from [`crate::unwrap()`].
-    pub uvs: Option<&'a Uvs>,
+    /// The material's base-colour texture (three.js `map`): PNG or JPEG,
+    /// on a solid with UVs.
+    pub map: Option<&'a Texture>,
 }
 
 /// Why a plain GLB could not be written.
@@ -32,6 +36,8 @@ pub enum PlainGlbError {
     UvMismatch,
     /// The solid is skinned and this writer writes no skin (phase 5b).
     Skinned,
+    /// The texture cannot be written (not PNG or JPEG, or no UVs): why.
+    BadTexture(String),
 }
 
 impl fmt::Display for PlainGlbError {
@@ -44,6 +50,7 @@ impl fmt::Display for PlainGlbError {
             PlainGlbError::UvMismatch => {
                 f.write_str("the UVs were made for a different number of triangles")
             }
+            PlainGlbError::BadTexture(why) => write!(f, "the texture: {why}"),
         }
     }
 }
@@ -64,16 +71,22 @@ pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
     if s.positions.iter().any(|p| !p.is_finite()) {
         return Err(PlainGlbError::NotFinite);
     }
-    let uvs = match d.uvs {
-        Some(u) if u.corners.len() != s.triangles.len() => return Err(PlainGlbError::UvMismatch),
+    let uvs = match &s.uvs {
+        Some(u) if u.len() != s.triangles.len() => return Err(PlainGlbError::UvMismatch),
         Some(u) => {
-            if u.corners.iter().flatten().any(|q| !q.is_finite()) {
+            if u.iter().flatten().any(|q| !q.is_finite()) {
                 return Err(PlainGlbError::NotFinite);
             }
-            Some(&u.corners)
+            Some(u)
         }
         None => None,
     };
+    if let Some(t) = d.map {
+        check_texture(t, "", uvs.is_some()).map_err(|e| match e {
+            ExportError::BadTexture { why, .. } => PlainGlbError::BadTexture(why),
+            _ => PlainGlbError::BadTexture(e.to_string()),
+        })?;
+    }
     // Normals per (vertex, surface).
     let mut normal: BTreeMap<(u32, u32), DVec3> = BTreeMap::new();
     for (i, t) in s.triangles.iter().enumerate() {
@@ -90,10 +103,7 @@ pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
     let mut indices: Vec<u32> = Vec::with_capacity(s.triangles.len() * 3);
     for (i, t) in s.triangles.iter().enumerate() {
         for (k, &v) in t.iter().enumerate() {
-            let uv = uvs.map_or([0.0f32; 2], |u| {
-                let q = u[i][k];
-                [q.x as f32, (1.0 - q.y) as f32]
-            });
+            let uv = uvs.map_or([0.0f32; 2], |u| gltf_uv(u[i][k]));
             let key = (
                 v,
                 s.surfaces[i],
@@ -246,15 +256,28 @@ pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
                 ("name", Json::Str(name.into())),
                 (
                     "pbrMetallicRoughness",
-                    Json::Obj(vec![
-                        ("baseColorFactor", nums(&[1.0, 1.0, 1.0, 1.0])),
-                        ("metallicFactor", Json::Num(0.0)),
-                        ("roughnessFactor", Json::Num(1.0)),
-                    ]),
+                    Json::Obj(match d.map {
+                        Some(_) => vec![
+                            ("baseColorFactor", nums(&[1.0, 1.0, 1.0, 1.0])),
+                            ("baseColorTexture", Json::Obj(vec![("index", Json::Int(0))])),
+                            ("metallicFactor", Json::Num(0.0)),
+                            ("roughnessFactor", Json::Num(1.0)),
+                        ],
+                        None => vec![
+                            ("baseColorFactor", nums(&[1.0, 1.0, 1.0, 1.0])),
+                            ("metallicFactor", Json::Num(0.0)),
+                            ("roughnessFactor", Json::Num(1.0)),
+                        ],
+                    }),
                 ),
             ])]),
         ));
         doc.push(("accessors", Json::Arr(accessors)));
+        doc.extend(texture_json(
+            &d.map.into_iter().collect::<Vec<_>>(),
+            &mut bin,
+            &mut views,
+        ));
         doc.push(("bufferViews", Json::Arr(views)));
         doc.push((
             "buffers",

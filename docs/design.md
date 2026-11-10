@@ -79,9 +79,27 @@ atlas packing. Each can be added later without changing the API.
 
 - **Solid:** a closed, oriented triangle mesh in f64. It carries:
   - per-face attributes: material, surface id, operand id;
-  - names: sets of face tags and edge tags.
+  - names: sets of face tags and edge tags;
+  - optionally, UVs: one texture coordinate per triangle corner, so a
+    seam is two corners of a vertex with different UVs (v up; glTF's v
+    is flipped on the way in and out).
   
-  Positions are rounded to f32 only on output.
+  Positions and UVs are f64 inside and rounded to f32 only on output. A
+  solid without UVs orders and hashes exactly as before UVs existed.
+- **UVs through operations** (`docs/research.md` §17):
+  - Import keeps the first UV set and the base-colour texture (as the
+    file's bytes); GLB export writes both.
+  - Repair, apply transform and join keep each triangle's UVs; a filled
+    hole takes its rim's, and a fill across a seam is reported.
+  - Decimation keeps seams as feature lines and moves each corner's UV
+    with its vertex, on its own side of any seam.
+  - Booleans interpolate UVs inside each source face, so cut faces keep
+    their mapping; faces from an operand without UVs are counted.
+  - Generators give UVs in millimetres on request (caps planar, walls by
+    arc length and height). Bevels refuse a solid with UVs until they
+    interpolate them (mean-value coordinates from the boundary).
+  - A tool that cannot keep UVs refuses or reports; it never drops them
+    silently.
 - **Names.** Every face and edge carries a set of tags. sand3d's rules are
   the starting point (`docs/research.md` §1.3):
   - Generators name caps and walls (`top`, `bottom`, `start`, `end`,

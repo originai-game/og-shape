@@ -24,11 +24,10 @@ use crate::intersect::{degenerate, self_intersections, tris_overlap_2d};
 use crate::json::Json;
 
 /// What to measure besides the geometry. The zero value measures the
-/// geometry only.
+/// geometry, and the UVs the solid carries ([`Solid::uvs`]: imported,
+/// carried through the tools, or from [`crate::unwrap()`]).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Measure<'a> {
-    /// Per triangle, its corners' texture coordinates.
-    pub uvs: Option<&'a [[DVec2; 3]]>,
     /// The textures the model uses.
     pub images: &'a [ImageInfo],
     /// Texels across the square the UV coverage is sampled at; 0 is 1024.
@@ -276,7 +275,7 @@ pub fn measure(s: &Solid, d: &Measure) -> MeshMeasures {
     if d.intersections {
         m.self_intersections = Some(self_intersections(&s.positions, &s.triangles).len());
     }
-    if let Some(uv) = d.uvs.filter(|u| u.len() == s.triangles.len()) {
+    if let Some(uv) = &s.uvs {
         m.uv = Some(uv_measures(
             uv,
             if d.uv_resolution == 0 {
@@ -558,12 +557,11 @@ mod tests {
 
     #[test]
     fn measures_a_sphere_and_its_uvs() {
-        let s = sphere(10.0).unwrap();
-        let uv = unwrap(&s, &Unwrap::default()).unwrap();
+        let mut s = sphere(10.0).unwrap();
+        unwrap(&mut s, &Unwrap::default()).unwrap();
         let m = measure(
             &s,
             &Measure {
-                uvs: Some(&uv.corners),
                 intersections: true,
                 uv_resolution: 256,
                 ..Default::default()
@@ -587,10 +585,10 @@ mod tests {
             let c = two.push_vertex(DVec3::Y);
             two.push_triangle([a, b, c], 0, &[]);
         }
+        two.uvs = Some(same);
         let m = measure(
             &two,
             &Measure {
-                uvs: Some(&same),
                 uv_resolution: 64,
                 ..Default::default()
             },

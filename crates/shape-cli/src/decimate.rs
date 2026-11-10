@@ -60,7 +60,7 @@ pub fn decimate(files: &dyn Files, d: &DecimateDesc) -> Result<String, Failure> 
             ("measures", m.to_json()),
             (
                 "output",
-                write_solid(files, &mesh.name, s, None, out.as_deref())?,
+                write_solid(files, &mesh.name, s, mesh.map(), out.as_deref())?,
             ),
         ]));
     }

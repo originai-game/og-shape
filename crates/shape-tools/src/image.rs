@@ -1,5 +1,39 @@
 //! Texture images found by import: their size read from the file header,
-//! never decoded, for the measure of texture memory.
+//! never decoded, for the measure of texture memory; and a part's
+//! base-colour texture ([`Texture`]), kept as the file's bytes so export
+//! can write it back.
+
+/// A base-colour texture (three.js's `map`): the image file's bytes as
+/// they were read, never decoded or re-encoded.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Texture {
+    /// The image's name (as in [`ImageInfo::name`]).
+    pub name: String,
+    /// Its MIME type: `image/png`, `image/jpeg`, `image/webp` or
+    /// `image/ktx2`; "" when the header is not one of those.
+    pub mime: String,
+    /// The image file's bytes.
+    pub bytes: Vec<u8>,
+}
+
+impl Texture {
+    /// A texture from an image file's bytes, its type read from the
+    /// header.
+    pub fn from_bytes(name: &str, bytes: Vec<u8>) -> Texture {
+        let mime = match header(&bytes).0 {
+            "png" => "image/png",
+            "jpeg" => "image/jpeg",
+            "webp" => "image/webp",
+            "ktx2" => "image/ktx2",
+            _ => "",
+        };
+        Texture {
+            name: name.to_string(),
+            mime: mime.to_string(),
+            bytes,
+        }
+    }
+}
 
 /// One image a model references.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

@@ -14,8 +14,12 @@ pub use skin::{Bone, Skin, SkinError, Weights};
 
 use std::collections::BTreeMap;
 
-use shape_core::order::{cmp_dvec3, sorted_order};
-use shape_core::{DVec3, HashError, OutputHash};
+use shape_core::order::{cmp_dvec2, cmp_dvec3, sorted_order};
+use shape_core::{DVec2, DVec3, HashError, OutputHash};
+
+/// One triangle's texture coordinates, a corner each, in the order of
+/// its vertices.
+pub type CornerUvs = [DVec2; 3];
 
 /// An undirected edge, by its two vertex indices, smaller first.
 pub type EdgeKey = (u32, u32);
@@ -38,6 +42,14 @@ pub fn edge_key(a: u32, b: u32) -> EdgeKey {
 /// - `names`: the strings behind the tag ids.
 /// - `skin`: optional bones and per-vertex weights ([`skin`]). `None`
 ///   leaves every other part, and the hash, as it was before skins.
+/// - `uvs`: optional texture coordinates, per triangle corner
+///   (`docs/design.md` §4), so a seam is two corners of one vertex with
+///   different coordinates. f64 here, f32 on output; (0, 0) at the
+///   bottom left of the image (glTF's v is flipped on export). `None`
+///   leaves canonical order and the hash as they were before UVs. When
+///   present it has one entry per triangle; [`Solid::push_triangle`]
+///   gives a new triangle (0, 0) at every corner, so a tool that adds
+///   triangles sets their coordinates with [`Solid::push_triangle_uv`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Solid {
     /// Vertex positions.
@@ -54,6 +66,8 @@ pub struct Solid {
     pub names: Names,
     /// Bones and per-vertex weights, if the solid is skinned.
     pub skin: Option<Skin>,
+    /// Per triangle, its corners' texture coordinates, if it has any.
+    pub uvs: Option<Vec<CornerUvs>>,
 }
 
 impl Solid {
@@ -65,6 +79,30 @@ impl Solid {
         self.triangles.push(t);
         self.surfaces.push(surface);
         self.face_tags.push(ids);
+        if let Some(uvs) = &mut self.uvs {
+            uvs.resize(self.triangles.len(), [DVec2::ZERO; 3]);
+        }
+    }
+
+    /// Appends a triangle with its corners' texture coordinates. On a
+    /// solid with no UVs yet, every earlier triangle gets (0, 0) at its
+    /// corners.
+    pub fn push_triangle_uv(&mut self, t: [u32; 3], surface: u32, tags: &[&str], uv: CornerUvs) {
+        let uvs = self.uvs.get_or_insert_with(Vec::new);
+        uvs.resize(self.triangles.len(), [DVec2::ZERO; 3]);
+        self.push_triangle(t, surface, tags);
+        if let Some(uvs) = &mut self.uvs {
+            uvs[self.triangles.len() - 1] = uv;
+        }
+    }
+
+    /// Turns triangle `i` over (its second and third corners swapped),
+    /// with its texture coordinates.
+    pub fn reverse_triangle(&mut self, i: usize) {
+        self.triangles[i].swap(1, 2);
+        if let Some(uv) = self.uvs.as_mut().and_then(|u| u.get_mut(i)) {
+            uv.swap(1, 2);
+        }
     }
 
     /// Appends a vertex and returns its index. On a skinned solid the
@@ -180,10 +218,21 @@ impl Solid {
     /// summed per bone, the four largest kept, normalized); a copy with no
     /// weights does not count.
     ///
-    /// Fails on a NaN position.
+    /// Texture coordinates stay with their triangle's corners (rotated
+    /// with it). Two triangles on the same corners, surface and names
+    /// are ordered by their coordinates, so UVs never reorder a solid
+    /// that has none.
+    ///
+    /// Fails on a NaN position or texture coordinate.
     pub fn canonicalize(&mut self) -> Result<(), HashError> {
         if self.positions.iter().any(|p| p.is_nan()) {
             return Err(HashError::NaN);
+        }
+        if let Some(uvs) = &mut self.uvs {
+            if uvs.iter().flatten().any(|q| q.is_nan()) {
+                return Err(HashError::NaN);
+            }
+            uvs.resize(self.triangles.len(), [DVec2::ZERO; 3]);
         }
         // Tags in name order first, so ties between triangles break the
         // same way whatever order the names were interned in.
@@ -218,7 +267,8 @@ impl Solid {
         }
         // 2. Triangles: renumbered, degenerate ones dropped, each rotated
         // to start at its smallest index (winding kept).
-        let mut tris: Vec<([u32; 3], u32, Vec<Tag>)> = Vec::with_capacity(self.triangles.len());
+        type Tri = ([u32; 3], u32, Vec<Tag>, CornerUvs);
+        let mut tris: Vec<Tri> = Vec::with_capacity(self.triangles.len());
         for (i, t) in self.triangles.iter().enumerate() {
             let t = t.map(|v| remap[v as usize]);
             if t[0] == t[1] || t[1] == t[2] || t[0] == t[2] {
@@ -226,12 +276,23 @@ impl Solid {
             }
             let r = (0..3).min_by_key(|&k| t[k]).unwrap_or(0);
             let t = [t[r], t[(r + 1) % 3], t[(r + 2) % 3]];
-            tris.push((t, self.surfaces[i], self.face_tags[i].clone()));
+            let uv = self.uvs.as_ref().map_or([DVec2::ZERO; 3], |u| {
+                let u = u[i];
+                [u[r], u[(r + 1) % 3], u[(r + 2) % 3]]
+            });
+            tris.push((t, self.surfaces[i], self.face_tags[i].clone(), uv));
         }
+        let cmp_uv = |a: &CornerUvs, b: &CornerUvs| {
+            (0..3)
+                .map(|k| cmp_dvec2(a[k], b[k]))
+                .find(|o| o.is_ne())
+                .unwrap_or(core::cmp::Ordering::Equal)
+        };
         tris.sort_by(|a, b| {
             a.0.cmp(&b.0)
                 .then(a.1.cmp(&b.1))
                 .then_with(|| a.2.cmp(&b.2))
+                .then_with(|| cmp_uv(&a.3, &b.3))
         });
         // 3. Surfaces renumbered by first use.
         let mut surface_ids: BTreeMap<u32, u32> = BTreeMap::new();
@@ -242,7 +303,7 @@ impl Solid {
         // 4. Edge names follow their vertices; names on edges that no
         // longer exist are dropped.
         let mut present: BTreeMap<EdgeKey, ()> = BTreeMap::new();
-        for (t, _, _) in &tris {
+        for (t, _, _, _) in &tris {
             for k in 0..3 {
                 present.insert(edge_key(t[k], t[(k + 1) % 3]), ());
             }
@@ -260,6 +321,9 @@ impl Solid {
         self.positions = positions;
         self.triangles = tris.iter().map(|t| t.0).collect();
         self.surfaces = tris.iter().map(|t| t.1).collect();
+        if self.uvs.is_some() {
+            self.uvs = Some(tris.iter().map(|t| t.3).collect());
+        }
         self.face_tags = tris.into_iter().map(|t| t.2).collect();
         self.edge_tags = edge_tags;
         // Again: names on dropped triangles and edges are gone now.
@@ -307,6 +371,14 @@ impl Solid {
                 h.f64s(&w.weights)?;
             }
         }
+        // Likewise UVs: only a solid that has them adds them.
+        if let Some(uvs) = &self.uvs {
+            h.str("uvs");
+            h.u64(uvs.len() as u64);
+            for q in uvs.iter().flatten() {
+                h.f64s(&[q.x, q.y])?;
+            }
+        }
         Ok(())
     }
 
@@ -317,8 +389,18 @@ impl Solid {
     /// solid's skeleton (or the other's, if this one has none) and the
     /// vertices from the side without it have no weights, which
     /// [`Skin::check`] reports: a skin is never dropped silently.
+    ///
+    /// UVs: when either solid has them, the result does; triangles from
+    /// the side without get (0, 0) at every corner (a zero-area UV
+    /// triangle, which `measure` counts).
     pub fn append(&mut self, other: &Solid) {
         let base = self.positions.len() as u32;
+        let first = self.triangles.len();
+        if self.uvs.is_some() || other.uvs.is_some() {
+            self.uvs
+                .get_or_insert_with(Vec::new)
+                .resize(first, [DVec2::ZERO; 3]);
+        }
         if self.skin.is_some() || other.skin.is_some() {
             let mine = self.skin.get_or_insert_with(|| Skin {
                 bones: other
@@ -353,6 +435,11 @@ impl Solid {
             let tags: Vec<&str> = tags.iter().map(|&x| other.names.name(x)).collect();
             self.tag_edge(a + base, b + base, &tags);
         }
+        if let (Some(mine), Some(theirs)) = (&mut self.uvs, &other.uvs) {
+            for (k, uv) in theirs.iter().enumerate() {
+                mine[first + k] = *uv;
+            }
+        }
     }
 
     /// Every vertex mapped by `f`. A map that mirrors (`mirrors == true`)
@@ -364,8 +451,8 @@ impl Solid {
             *p = f(*p);
         }
         if mirrors {
-            for t in &mut self.triangles {
-                t.swap(1, 2);
+            for i in 0..self.triangles.len() {
+                self.reverse_triangle(i);
             }
         }
     }
@@ -424,6 +511,45 @@ mod tests {
         a.hash_into(&mut ha).unwrap();
         b.hash_into(&mut hb).unwrap();
         assert_eq!(ha.finish_hex(), hb.finish_hex());
+    }
+
+    #[test]
+    fn uvs_follow_their_corners_through_canonical_order() {
+        // Each corner's UV is a function of its position (and, on one
+        // face, of the face too: a seam), so after welding, sorting and
+        // rotating, every corner must still carry its own.
+        let uv_of =
+            |p: DVec3, seam: bool| DVec2::new(p.x + 2.0 * p.z + f64::from(u8::from(seam)), p.y);
+        let build = |reversed: bool| {
+            let mut s = tetra(DVec3::ZERO, reversed);
+            s.uvs = Some(
+                s.triangles
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| t.map(|v| uv_of(s.positions[v as usize], s.surfaces[i] == 1)))
+                    .collect(),
+            );
+            s.canonicalize().unwrap();
+            s
+        };
+        let (a, b) = (build(false), build(true));
+        assert_eq!(a, b);
+        for (i, t) in a.triangles.iter().enumerate() {
+            for k in 0..3 {
+                let seam = a.surfaces[i] == a.surfaces[a.faces(&["side"]).unwrap()[0] as usize];
+                assert_eq!(
+                    a.uvs.as_ref().unwrap()[i][k],
+                    uv_of(a.positions[t[k] as usize], seam)
+                );
+            }
+        }
+        // Without UVs, the hash is what it was; with them, it differs.
+        let mut bare = a.clone();
+        bare.uvs = None;
+        let (mut hb, mut hu) = (OutputHash::new(), OutputHash::new());
+        bare.hash_into(&mut hb).unwrap();
+        a.hash_into(&mut hu).unwrap();
+        assert_ne!(hb.finish_hex(), hu.finish_hex());
     }
 
     #[test]

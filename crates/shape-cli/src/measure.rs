@@ -46,12 +46,10 @@ fn mesh_measures(mesh: &Mesh, d: &MeasureDesc) -> Result<String, Failure> {
     let placed = mesh.placed()?;
     let parts: Vec<String> = placed
         .iter()
-        .zip(&mesh.imported.parts)
-        .map(|((name, s), p)| {
+        .map(|(name, s)| {
             let m = shape_tools::measure(
                 s,
                 &Measure {
-                    uvs: p.uvs.as_deref(),
                     intersections: d.intersections,
                     ..Default::default()
                 },

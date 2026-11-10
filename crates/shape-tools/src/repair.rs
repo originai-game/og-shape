@@ -23,6 +23,17 @@
 //! parts joined. The self-union of [`Repair::fuse`] refuses skins (the
 //! report says so).
 //!
+//! UVs (`Solid::uvs`, per triangle corner) are carried through every
+//! step: a kept triangle keeps its corners' UVs (welding moves positions,
+//! never UVs), a turned triangle turns its UVs with it, and the fuse step
+//! interpolates them on the faces it cuts (`shape_bool`). A hole fill
+//! takes, at each rim vertex, the UV its rim triangle gives it, and its
+//! centre vertex (if any) their mean; a rim that crosses a UV seam gives
+//! a stretched fill, which [`RepairReport::uv_seam_fills`] counts.
+//! [`join`] gives the triangles of parts without UVs (0, 0) at every
+//! corner when another part has them: zero-area UV triangles, which
+//! `measure` counts.
+//!
 //! A single closed surface that folds through itself is untangled by the
 //! fuse step too (`shape_bool::self_union`: the space it winds round at
 //! least once). An open one cannot be: [`repair`] reports its intersecting
@@ -33,7 +44,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use shape_core::order::sorted_order;
-use shape_core::{DVec3, HashError};
+use shape_core::{DVec2, DVec3, HashError};
 use shape_mesh::skin::Mat4;
 use shape_mesh::{Bone, Skin, Solid, Tag, Weights, edge_key};
 
@@ -112,6 +123,10 @@ pub struct RepairReport {
     pub short_edges: usize,
     /// Self-intersecting triangle pairs at the end, if asked.
     pub self_intersections: Option<usize>,
+    /// Filled holes whose rim crosses a UV seam (a rim vertex with
+    /// different UVs on its two rim triangles): the fill's UVs stretch
+    /// across the seam. 0 on a solid without UVs.
+    pub uv_seam_fills: usize,
 }
 
 /// Why repair could not run.
@@ -355,15 +370,16 @@ pub(crate) fn drop_unused(s: &Solid) -> Solid {
 fn rebuild(s: &Solid, triangles: &[usize], remap: &[u32], positions: Vec<DVec3>) -> Solid {
     let mut out = Solid {
         positions,
+        uvs: s.uvs.as_ref().map(|_| Vec::new()),
         ..Default::default()
     };
     for &i in triangles {
         let tags: Vec<&str> = s.face_tags[i].iter().map(|&x| s.names.name(x)).collect();
-        out.push_triangle(
-            s.triangles[i].map(|v| remap[v as usize]),
-            s.surfaces[i],
-            &tags,
-        );
+        let t = s.triangles[i].map(|v| remap[v as usize]);
+        match &s.uvs {
+            Some(u) => out.push_triangle_uv(t, s.surfaces[i], &tags, u[i]),
+            None => out.push_triangle(t, s.surfaces[i], &tags),
+        }
     }
     for (&(a, b), tags) in &s.edge_tags {
         let (a, b) = (remap[a as usize], remap[b as usize]);
@@ -694,9 +710,9 @@ pub fn orient(s: &Solid) -> Result<(Solid, usize), RepairError> {
         }
     }
     let mut turned = 0;
-    for (i, t) in s.triangles.iter_mut().enumerate() {
-        if flip[i] {
-            t.swap(1, 2);
+    for (i, &f) in flip.iter().enumerate() {
+        if f {
+            s.reverse_triangle(i);
             turned += 1;
         }
     }
@@ -713,11 +729,18 @@ pub fn orient(s: &Solid) -> Result<(Solid, usize), RepairError> {
 /// already exists in the mesh is not allowed, so the result stays
 /// manifold; a rim with no such fill is fanned from a new vertex at its
 /// centre instead. Returns the solid
-/// and the counts `(holes filled, triangles added, holes left)`.
+/// and the counts `(holes filled, triangles added, holes left, fills
+/// across a UV seam)`.
+///
+/// UVs: each rim vertex takes the UV its corner has in the rim triangle
+/// of the rim edge leaving it; a centre vertex takes their mean. A rim
+/// vertex whose two rim triangles give it different UVs sits on a seam:
+/// the fill stretches across it, and the fourth count says how many
+/// fills do.
 pub fn close_holes(
     s: &Solid,
     max_edges: usize,
-) -> Result<(Solid, usize, usize, usize), RepairError> {
+) -> Result<(Solid, usize, usize, usize, usize), RepairError> {
     let mut s = s.clone();
     s.canonicalize()?;
     let mut directed: BTreeMap<(u32, u32), u32> = BTreeMap::new();
@@ -778,12 +801,28 @@ pub fn close_holes(
             left += 1;
         }
     }
-    let mut new_tris: Vec<([u32; 3], u32, Vec<Tag>)> = Vec::new();
+    type Fill = ([u32; 3], u32, Vec<Tag>, [DVec2; 3]);
+    let mut new_tris: Vec<Fill> = Vec::new();
+    let mut seams = 0;
     for (rim, rim_tris) in loops {
         if rim.len() < 3 || rim.len() > max_edges {
             left += 1;
             continue;
         }
+        // Each rim vertex's UV in its rim triangles: leaving (j) and
+        // arriving (j − 1).
+        let uv_in = |t: u32, v: u32| -> DVec2 {
+            let tri = s.triangles[t as usize];
+            let k = tri.iter().position(|&x| x == v).unwrap_or(0);
+            s.uvs.as_ref().map_or(DVec2::ZERO, |u| u[t as usize][k])
+        };
+        let n = rim.len();
+        let rim_uv: Vec<DVec2> = (0..n).map(|j| uv_in(rim_tris[j], rim[j])).collect();
+        if s.uvs.is_some() && (0..n).any(|j| uv_in(rim_tris[(j + n - 1) % n], rim[j]) != rim_uv[j])
+        {
+            seams += 1;
+        }
+        let centre_uv = rim_uv.iter().copied().sum::<DVec2>() / n as f64;
         let tris = fill(&s, &rim, &undirected).unwrap_or_else(|| {
             // Every chord already exists: fan from a new vertex at the
             // rim's centre, whose edges are all new.
@@ -808,6 +847,11 @@ pub fn close_holes(
         tags.sort_unstable();
         tags.dedup();
         let surface = s.surfaces[rim_tris[0] as usize];
+        let uv_of = |v: u32| {
+            rim.iter()
+                .position(|&x| x == v)
+                .map_or(centre_uv, |j| rim_uv[j])
+        };
         for t in &tris {
             for k in 0..3 {
                 *undirected
@@ -817,15 +861,21 @@ pub fn close_holes(
         }
         added += tris.len();
         filled += 1;
-        new_tris.extend(tris.into_iter().map(|t| (t, surface, tags.clone())));
+        new_tris.extend(
+            tris.into_iter()
+                .map(|t| (t, surface, tags.clone(), t.map(uv_of))),
+        );
     }
-    for (t, surface, tags) in new_tris {
+    for (t, surface, tags, uv) in new_tris {
         s.triangles.push(t);
         s.surfaces.push(surface);
         s.face_tags.push(tags);
+        if let Some(u) = &mut s.uvs {
+            u.push(uv);
+        }
     }
     s.canonicalize()?;
-    Ok((s, filled, added, left))
+    Ok((s, filled, added, left, seams))
 }
 
 /// The least-area triangulation of a rim, avoiding edges the mesh already
@@ -905,7 +955,8 @@ pub fn repair(s: &Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairErro
     let (s, flipped) = orient(&s)?;
     r.flipped = flipped;
     let s = if d.max_hole_edges > 0 {
-        let (s, filled, added, left) = close_holes(&s, d.max_hole_edges)?;
+        let (s, filled, added, left, seams) = close_holes(&s, d.max_hole_edges)?;
+        r.uv_seam_fills = seams;
         r.holes_filled = filled;
         r.fill_triangles = added;
         r.holes_left = left;

@@ -598,6 +598,7 @@ fn dispatch(m: &mut Model, a: &Args) -> Result<(Value, bool), ModelError> {
                     roughness: opt_num("roughness")?,
                     emissive: colour("emissive")?.unwrap_or([0.0; 3]),
                     opacity: opt_num("opacity")?,
+                    map: None,
                 };
                 m.material(&a.ids("ids")?, &mat)?;
                 Ok((none(), true))

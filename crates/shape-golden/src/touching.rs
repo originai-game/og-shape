@@ -182,6 +182,7 @@ fn both(h: &mut OutputHash, a: &Solid, b: &Solid, op: BoolOp) -> Result<(), Hash
                 touching_edges,
                 voids,
                 touching,
+                ..
             } = r;
             h.str(&format!("{touching_edges} {voids} {touching}"));
             s.hash_into(h)

@@ -10,7 +10,9 @@
 //! Euler order, scaling offset and pivot, scaling) and the geometric
 //! transform, the file's axes and unit (`GlobalSettings`), and texture
 //! images' sizes (embedded `Video` content or files through the
-//! resolver), and skins: a `Skin` deformer's clusters as bones, parents
+//! resolver), each part's base-colour texture (`DiffuseColor`, its bytes
+//! as [`crate::ImportedPart::map`]), the first UV layer as `Solid::uvs`,
+//! and skins: a `Skin` deformer's clusters as bones, parents
 //! first, their rest frames and inverse bind matrices from the clusters'
 //! `Transform` and `TransformLink`, their `Indexes` and `Weights` as
 //! weights, on the part's `Solid::skin` in the mesh's own coordinates (a
@@ -23,7 +25,7 @@ use std::collections::BTreeMap;
 use shape_core::{DVec2, DVec3, Frame, trig};
 use shape_mesh::{Bone, Skin, Solid, Weights};
 
-use crate::image::ImageInfo;
+use crate::image::{ImageInfo, Texture};
 use crate::import::{
     Affine, ImportError, Imported, ImportedPart, Resolve, SkinScale, fetch, fmt_err, from_y_up,
     place, rest_and_inverse, similarity, unique,
@@ -610,6 +612,8 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
     // Connections: object → object, in file order.
     let mut children_of: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
     let mut parent_of: BTreeMap<i64, i64> = BTreeMap::new();
+    // Material → its base-colour texture (an OP link on `DiffuseColor`).
+    let mut diffuse_of: BTreeMap<i64, i64> = BTreeMap::new();
     if let Some(c) = root.child("Connections") {
         for link in c.all("C") {
             let kind = link.props.first().and_then(Prop::str).unwrap_or("");
@@ -619,6 +623,9 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
             ) else {
                 continue;
             };
+            if kind == "OP" && link.props.get(3).and_then(Prop::str) == Some("DiffuseColor") {
+                diffuse_of.entry(parent).or_insert(child);
+            }
             if kind == "OO" || kind == "OP" {
                 children_of.entry(parent).or_default().push(child);
                 let is_model = |id: i64| by_id.get(&id).is_some_and(|n| n.name == "Model");
@@ -919,6 +926,28 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
         }
         m
     };
+    // A video's name and its bytes (embedded content, or the file).
+    let video = |v: &Node| -> (String, Result<Vec<u8>, String>) {
+        let file = v
+            .text("RelativeFilename")
+            .or(v.text("Filename"))
+            .unwrap_or("")
+            .replace('\\', "/");
+        let name = if file.is_empty() {
+            object_name(v.props.get(1).and_then(Prop::str).unwrap_or("video"))
+        } else {
+            file.clone()
+        };
+        let content = v.child("Content").and_then(|c| match c.props.first() {
+            Some(Prop::Bytes(b)) if !b.is_empty() => Some(b.clone()),
+            _ => None,
+        });
+        let bytes = match content {
+            Some(b) => Ok(b),
+            None => fetch(&file, resolve).map_err(|e| e.to_string()),
+        };
+        (name, bytes)
+    };
     for o in objects.all("Model") {
         let Some(id) = o.props.first().and_then(Prop::int) else {
             continue;
@@ -935,16 +964,35 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
                     .collect()
             })
             .unwrap_or_default();
-        let materials: Vec<String> = children_of
+        let materials: Vec<(i64, String)> = children_of
             .get(&id)
             .map(|cs| {
                 cs.iter()
-                    .filter_map(|c| by_id.get(c))
-                    .filter(|n| n.name == "Material")
-                    .map(|n| object_name(n.props.get(1).and_then(Prop::str).unwrap_or("")))
+                    .filter_map(|c| Some((*c, *by_id.get(c)?)))
+                    .filter(|(_, n)| n.name == "Material")
+                    .map(|(c, n)| {
+                        (
+                            c,
+                            object_name(n.props.get(1).and_then(Prop::str).unwrap_or("")),
+                        )
+                    })
                     .collect()
             })
             .unwrap_or_default();
+        // The first material's base-colour texture, through its video.
+        let map = materials
+            .first()
+            .and_then(|(m, _)| diffuse_of.get(m))
+            .and_then(|t| children_of.get(t))
+            .and_then(|cs| {
+                cs.iter()
+                    .filter_map(|c| by_id.get(c))
+                    .find(|n| n.name == "Video")
+            })
+            .and_then(|v| {
+                let (name, bytes) = video(v);
+                Some(Texture::from_bytes(&name, bytes.ok()?))
+            });
         let name = unique(
             &object_name(o.props.get(1).and_then(Prop::str).unwrap_or("")),
             &mut used,
@@ -952,6 +1000,12 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
         let geo = geometric(o);
         for g in geometries {
             let (mut solid, uvs, polys) = mesh(g, &name, &geo, unit, &to_kernel, p_det < 0.0)?;
+            if uvs.is_none() && g.all("LayerElementUV").next().is_some() {
+                out.skipped.push(format!(
+                    "{name}: its UV layer misses some corners, so no UVs"
+                ));
+            }
+            solid.uvs = uvs;
             let read = skin_of(g, &name, &solid.positions)?;
             if let Some((skin, scaled)) = read {
                 if let Some((placed, info)) = scaled {
@@ -982,37 +1036,21 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
                 name: name.clone(),
                 solid,
                 transform,
-                uvs,
-                material: materials.first().cloned().unwrap_or_default(),
+                material: materials.first().map(|m| m.1.clone()).unwrap_or_default(),
+                map: map.clone(),
             });
         }
     }
     // Texture images.
     let mut seen = BTreeMap::new();
     for v in objects.all("Video") {
-        let file = v
-            .text("RelativeFilename")
-            .or(v.text("Filename"))
-            .unwrap_or("")
-            .replace('\\', "/");
-        let name = if file.is_empty() {
-            object_name(v.props.get(1).and_then(Prop::str).unwrap_or("video"))
-        } else {
-            file.clone()
-        };
+        let (name, bytes) = video(v);
         if seen.insert(name.clone(), ()).is_some() {
             continue;
         }
-        let content = v.child("Content").and_then(|c| match c.props.first() {
-            Some(Prop::Bytes(b)) if !b.is_empty() => Some(b.clone()),
-            _ => None,
-        });
-        out.images.push(match content {
-            Some(b) => ImageInfo::from_bytes(&name, &b),
-            None => match fetch(&file, resolve) {
-                Ok(b) => ImageInfo::from_bytes(&name, &b),
-                Err(e) => ImageInfo::missing(&name, &e.to_string()),
-            },
+        out.images.push(match bytes {
+            Ok(b) => ImageInfo::from_bytes(&name, &b),
+            Err(e) => ImageInfo::missing(&name, &e),
         });
     }
     if out.parts.is_empty() {
@@ -1224,6 +1262,6 @@ Connections:  {
         assert!((m.area - 1.0).abs() < 1e-9);
         let [a, b, c] = s.triangles[0].map(|v| s.positions[v as usize]);
         assert!((b - a).cross(c - a).z > 0.0);
-        assert_eq!(p.uvs.as_ref().map(Vec::len), Some(2));
+        assert_eq!(p.solid.uvs.as_ref().map(Vec::len), Some(2));
     }
 }

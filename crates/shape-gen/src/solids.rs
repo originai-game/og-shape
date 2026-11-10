@@ -13,11 +13,31 @@
 //! [`crate::wire`], [`crate::parts`] (gear solid, knurl).
 //!
 //! Every generator returns a canonical [`Solid`] (`Solid::canonicalize`).
+//!
+//! UVs: [`textured`] builds any of these generators with [`Solid::uvs`]
+//! on every face, in millimetres on the surface, by one rule (the
+//! generators themselves give none, as before UVs existed):
+//! - caps (`top`, `bottom`, `start`, `end`, a dome's `bottom`) are planar:
+//!   the profile's own coordinates (x, y), or for a turned solid's flat
+//!   base its x and depth;
+//! - an extrude's walls: u is the arc length along the profile's contour
+//!   from its first point, v the height above the bottom;
+//! - a turned solid's walls: u is the arc length round the axis at the
+//!   vertex's radius (radius × angle), v the arc length along the
+//!   profile's contour;
+//! - every face's UVs run counter-clockwise as the face does seen from
+//!   outside: a face that would read mirrored has its u negated
+//!   (decided per surface by `orient2d`).
+//!
+//! Each contour's closing segment ends at its full length, not at 0, so a
+//! closed wall has one seam where its contour starts (and a full turn one
+//! where its angle does).
 
 use shape_2d::curve::segments;
 use shape_2d::{Circle, Contour, Profile, ProfileError, Rect, circle, rect};
+use shape_core::predicates::orient2d;
 use shape_core::{DVec2, DVec3, trig};
-use shape_mesh::Solid;
+use shape_mesh::{CornerUvs, Solid};
 
 /// Why a generator could not build its solid.
 #[derive(Clone, Debug, PartialEq)]
@@ -97,16 +117,74 @@ pub(crate) fn count(per_turn: u32, radius: f64, angle: f64) -> u32 {
     }
 }
 
-/// Faces out, then canonical.
+/// Faces out (UVs turned with their triangles, then made to read
+/// unmirrored), then canonical.
 pub(crate) fn finish(mut s: Solid) -> Result<Solid, GenError> {
     if s.measure().volume < 0.0 {
-        for t in &mut s.triangles {
-            t.swap(1, 2);
+        for i in 0..s.triangles.len() {
+            s.reverse_triangle(i);
         }
     }
+    unmirror_uvs(&mut s);
     s.canonicalize()
         .map_err(|_| GenError::NotFinite("positions"))?;
     Ok(s)
+}
+
+/// Pushes a triangle, with its UVs when the solid is being given some.
+pub(crate) fn push(
+    s: &mut Solid,
+    uvs: bool,
+    t: [u32; 3],
+    surface: u32,
+    tags: &[&str],
+    uv: CornerUvs,
+) {
+    if uvs {
+        s.push_triangle_uv(t, surface, tags, uv);
+    } else {
+        s.push_triangle(t, surface, tags);
+    }
+}
+
+/// Per surface, negates u where most of its UV triangles run clockwise
+/// (a face that would read mirrored), counted exactly by `orient2d`.
+pub(crate) fn unmirror_uvs(s: &mut Solid) {
+    let Some(uvs) = &mut s.uvs else { return };
+    let mut balance: std::collections::BTreeMap<u32, i64> = std::collections::BTreeMap::new();
+    for (i, u) in uvs.iter().enumerate() {
+        let b = balance.entry(s.surfaces[i]).or_default();
+        match orient2d(u[0], u[1], u[2]) {
+            core::cmp::Ordering::Greater => *b += 1,
+            core::cmp::Ordering::Less => *b -= 1,
+            core::cmp::Ordering::Equal => {}
+        }
+    }
+    for (i, u) in uvs.iter_mut().enumerate() {
+        if balance[&s.surfaces[i]] < 0 {
+            for q in u {
+                q.x = -q.x;
+            }
+        }
+    }
+}
+
+/// Each point's arc length along a closed contour from its first point,
+/// and the whole length: `(at, total)`.
+pub(crate) fn arc_lengths(points: &[DVec2]) -> (Vec<f64>, f64) {
+    let mut at = Vec::with_capacity(points.len());
+    let mut sum = 0.0;
+    for i in 0..points.len() {
+        at.push(sum);
+        sum += (points[(i + 1) % points.len()] - points[i]).length();
+    }
+    (at, sum)
+}
+
+/// The arc length at the end of the segment from point `i0` to the next:
+/// `at[i0 + 1]`, or the whole length for the closing segment.
+pub(crate) fn arc_end(at: &[f64], total: f64, i0: usize) -> f64 {
+    at.get(i0 + 1).copied().unwrap_or(total)
 }
 
 /// The runs of a contour between its corners: `(first, last)` point
@@ -143,6 +221,10 @@ pub struct Extrude {
 
 /// A profile extruded along +z: `bottom` at z = 0, `top` at `height`.
 pub fn extrude(profile: &Profile, d: &Extrude) -> Result<Solid, GenError> {
+    extrude_with(profile, d, false)
+}
+
+fn extrude_with(profile: &Profile, d: &Extrude, uvs: bool) -> Result<Solid, GenError> {
     let h = positive(d.height, "height")?;
     let twist = finite(d.twist, "twist")?;
     let taper = finite(d.taper, "taper")?;
@@ -181,21 +263,18 @@ pub fn extrude(profile: &Profile, d: &Extrude) -> Result<Solid, GenError> {
         .iter()
         .map(|p| s.push_vertex(at(*p, layers)))
         .collect();
+    let planar = |t: [u32; 3], s: &Solid| t.map(|v| s.positions[v as usize].truncate());
     for t in &fill.triangles {
-        s.push_triangle(
-            [
-                bottom[t[0] as usize],
-                bottom[t[2] as usize],
-                bottom[t[1] as usize],
-            ],
-            0,
-            &["bottom"],
-        );
-        s.push_triangle(
-            [top[t[0] as usize], top[t[1] as usize], top[t[2] as usize]],
-            1,
-            &["top"],
-        );
+        let b = [
+            bottom[t[0] as usize],
+            bottom[t[2] as usize],
+            bottom[t[1] as usize],
+        ];
+        let uv = planar(b, &s);
+        push(&mut s, uvs, b, 0, &["bottom"], uv);
+        let u = [top[t[0] as usize], top[t[1] as usize], top[t[2] as usize]];
+        let uv = planar(u, &s);
+        push(&mut s, uvs, u, 1, &["top"], uv);
     }
     // Walls, one surface per run between corners.
     let mut surface = 2;
@@ -213,13 +292,33 @@ pub fn extrude(profile: &Profile, d: &Extrude) -> Result<Solid, GenError> {
             let ring: Vec<Vec<u32>> = (0..=layers)
                 .map(|l| c.points.iter().map(|p| s.push_vertex(at(*p, l))).collect())
                 .collect();
+            let (along, total) = arc_lengths(&c.points);
             for (a, b) in runs(c) {
                 for i in a..b {
                     let (i0, i1) = (i % n, (i + 1) % n);
+                    let (u0, u1) = (along[i0], arc_end(&along, total, i0));
                     for l in 0..layers as usize {
                         let (p, q) = (&ring[l], &ring[l + 1]);
-                        s.push_triangle([p[i0], p[i1], q[i1]], surface, tags);
-                        s.push_triangle([p[i0], q[i1], q[i0]], surface, tags);
+                        let v0 = h * (l as f64 / layers as f64);
+                        let v1 = h * ((l + 1) as f64 / layers as f64);
+                        let (a0, a1) = (DVec2::new(u0, v0), DVec2::new(u1, v0));
+                        let (b0, b1) = (DVec2::new(u0, v1), DVec2::new(u1, v1));
+                        push(
+                            &mut s,
+                            uvs,
+                            [p[i0], p[i1], q[i1]],
+                            surface,
+                            tags,
+                            [a0, a1, b1],
+                        );
+                        push(
+                            &mut s,
+                            uvs,
+                            [p[i0], q[i1], q[i0]],
+                            surface,
+                            tags,
+                            [a0, b1, b0],
+                        );
                     }
                 }
                 surface += 1;
@@ -279,6 +378,10 @@ pub struct Revolve {
 /// height along +z and the turn is counter-clockwise seen from +z, from
 /// +x (sand3d's `revolve`).
 pub fn revolve(profile: &Profile, d: &Revolve) -> Result<Solid, GenError> {
+    revolve_with(profile, d, false)
+}
+
+fn revolve_with(profile: &Profile, d: &Revolve, uvs: bool) -> Result<Solid, GenError> {
     let angle = finite(d.angle, "angle")?;
     let per_turn = segments_field(d.segments, "segments")?;
     let full = angle == 0.0 || angle.abs() >= trig::TAU;
@@ -311,13 +414,35 @@ pub fn revolve(profile: &Profile, d: &Revolve) -> Result<Solid, GenError> {
         let cols: Vec<Vec<u32>> = (0..=steps)
             .map(|k| c.points.iter().map(|p| s.push_vertex(at(*p, k))).collect())
             .collect();
+        let (along, total) = arc_lengths(&c.points);
+        // Round the axis at the point's radius; along the contour.
+        let uv = |i: usize, v: f64, k: usize| {
+            DVec2::new(c.points[i].x * (sweep * (k as f64 / steps as f64)), v)
+        };
         for (a, b) in runs(c) {
             for i in a..b {
                 let (i0, i1) = (i % n, (i + 1) % n);
+                let (v0, v1) = (along[i0], arc_end(&along, total, i0));
                 for k in 0..steps as usize {
                     let (p, q) = (&cols[k], &cols[k + 1]);
-                    s.push_triangle([p[i0], q[i0], q[i1]], surface, &["side"]);
-                    s.push_triangle([p[i0], q[i1], p[i1]], surface, &["side"]);
+                    let (p0, p1) = (uv(i0, v0, k), uv(i1, v1, k));
+                    let (q0, q1) = (uv(i0, v0, k + 1), uv(i1, v1, k + 1));
+                    push(
+                        &mut s,
+                        uvs,
+                        [p[i0], q[i0], q[i1]],
+                        surface,
+                        &["side"],
+                        [p0, q0, q1],
+                    );
+                    push(
+                        &mut s,
+                        uvs,
+                        [p[i0], q[i1], p[i1]],
+                        surface,
+                        &["side"],
+                        [p0, q1, p1],
+                    );
                 }
             }
             surface += 1;
@@ -351,8 +476,18 @@ pub fn revolve(profile: &Profile, d: &Revolve) -> Result<Solid, GenError> {
             .map(|p| s.push_vertex(at(*p, steps)))
             .collect();
         for t in &fill.triangles {
-            s.push_triangle(t.map(|i| first[i as usize]), surface, &["start"]);
-            s.push_triangle(
+            let profile_uv = |k: [u32; 3]| k.map(|i| fill.points[i as usize]);
+            push(
+                &mut s,
+                uvs,
+                t.map(|i| first[i as usize]),
+                surface,
+                &["start"],
+                profile_uv(*t),
+            );
+            push(
+                &mut s,
+                uvs,
                 [
                     last[t[0] as usize],
                     last[t[2] as usize],
@@ -360,6 +495,7 @@ pub fn revolve(profile: &Profile, d: &Revolve) -> Result<Solid, GenError> {
                 ],
                 surface + 1,
                 &["end"],
+                profile_uv([t[0], t[2], t[1]]),
             );
         }
     }
@@ -386,17 +522,22 @@ pub struct BoxDesc {
 /// A box centred on the origin in x and y, from z = 0 up. Its walls are
 /// also named `right` (+x), `left` (−x), `back` (+y) and `front` (−y).
 pub fn cuboid(d: &BoxDesc) -> Result<Solid, GenError> {
+    cuboid_with(d, false)
+}
+
+fn cuboid_with(d: &BoxDesc, uvs: bool) -> Result<Solid, GenError> {
     let p = rect(&Rect {
         width: d.width,
         height: d.depth,
         radius: 0.0,
     })?;
-    let mut s = extrude(
+    let mut s = extrude_with(
         &p,
         &Extrude {
             height: d.height,
             ..Default::default()
         },
+        uvs,
     )?;
     let (w, dd) = (d.width / 2.0, d.depth / 2.0);
     let names: Vec<(u32, &str)> = s
@@ -446,6 +587,10 @@ pub struct CylinderDesc {
 
 /// A cylinder (or truncated cone) on z = 0 about the z axis.
 pub fn cylinder(d: &CylinderDesc) -> Result<Solid, GenError> {
+    cylinder_with(d, false)
+}
+
+fn cylinder_with(d: &CylinderDesc, uvs: bool) -> Result<Solid, GenError> {
     let r = positive(d.radius, "radius")?;
     let top = if d.radius_top == 0.0 {
         r
@@ -460,13 +605,14 @@ pub fn cylinder(d: &CylinderDesc) -> Result<Solid, GenError> {
             trig::TAU,
         ),
     })?;
-    extrude(
+    extrude_with(
         &base,
         &Extrude {
             height: d.height,
             taper: 1.0 - top / r,
             ..Default::default()
         },
+        uvs,
     )
 }
 
@@ -492,18 +638,23 @@ pub struct ConeDesc {
 
 /// A cone from its desc (as [`cone`]).
 pub fn cone_desc(d: &ConeDesc) -> Result<Solid, GenError> {
+    cone_with(d, false)
+}
+
+fn cone_with(d: &ConeDesc, uvs: bool) -> Result<Solid, GenError> {
     let (radius, height) = (d.radius, d.height);
     let p = circle(&Circle {
         radius: positive(radius, "radius")?,
         segments: segments_field(d.segments, "segments")?,
     })?;
-    extrude(
+    extrude_with(
         &p,
         &Extrude {
             height,
             taper: 1.0,
             ..Default::default()
         },
+        uvs,
     )
 }
 
@@ -532,6 +683,10 @@ pub struct TubeDesc {
 
 /// A tube from its desc (as [`tube`]).
 pub fn tube_desc(d: &TubeDesc) -> Result<Solid, GenError> {
+    tube_with(d, false)
+}
+
+fn tube_with(d: &TubeDesc, uvs: bool) -> Result<Solid, GenError> {
     let (outer, inner, height) = (d.outer, d.inner, d.height);
     let i = positive(inner, "inner")?;
     if i >= positive(outer, "outer")? {
@@ -546,23 +701,24 @@ pub fn tube_desc(d: &TubeDesc) -> Result<Solid, GenError> {
         radius: i,
         segments: n,
     })?);
-    extrude(
+    extrude_with(
         &p,
         &Extrude {
             height,
             ..Default::default()
         },
+        uvs,
     )
 }
 
 /// A sphere centred on the origin.
 pub fn sphere(radius: f64) -> Result<Solid, GenError> {
-    sphere_n(radius, 0)
+    sphere_n(radius, 0, false)
 }
 
 /// A sphere with `per_turn` segments round (0: the chord rule) and half
 /// as many from pole to pole.
-fn sphere_n(radius: f64, per_turn: u32) -> Result<Solid, GenError> {
+fn sphere_n(radius: f64, per_turn: u32, uvs: bool) -> Result<Solid, GenError> {
     let r = positive(radius, "radius")?;
     let n = count(per_turn, r, trig::PI).max(2);
     let mut half: Vec<DVec2> = (0..=n)
@@ -574,21 +730,22 @@ fn sphere_n(radius: f64, per_turn: u32) -> Result<Solid, GenError> {
     half[0].x = 0.0;
     half[n as usize].x = 0.0;
     let p = Profile::from_contour(Contour::smooth(half));
-    revolve(
+    revolve_with(
         &p,
         &Revolve {
             segments: per_turn,
             ..Default::default()
         },
+        uvs,
     )
 }
 
 /// A dome: the upper half of a sphere, flat `bottom` on y = 0.
 pub fn dome(radius: f64) -> Result<Solid, GenError> {
-    dome_n(radius, 0)
+    dome_n(radius, 0, false)
 }
 
-fn dome_n(radius: f64, per_turn: u32) -> Result<Solid, GenError> {
+fn dome_n(radius: f64, per_turn: u32, uvs: bool) -> Result<Solid, GenError> {
     let r = positive(radius, "radius")?;
     let n = count(per_turn, r, trig::PI / 2.0);
     let mut pts: Vec<DVec2> = (0..=n)
@@ -603,36 +760,53 @@ fn dome_n(radius: f64, per_turn: u32) -> Result<Solid, GenError> {
     sharp[0] = true;
     sharp[n as usize] = true;
     sharp[n as usize + 1] = true;
-    let mut s = revolve(
+    let mut s = revolve_with(
         &Profile::from_contour(Contour { points: pts, sharp }),
         &Revolve {
             segments: per_turn,
             ..Default::default()
         },
+        uvs,
     )?;
     // The flat disc on y = 0 is the dome's bottom.
-    let bottom = s.names.intern("bottom");
-    for (i, t) in s.triangles.iter().enumerate() {
-        if t.iter().all(|&v| s.positions[v as usize].y == 0.0) {
-            s.face_tags[i] = vec![bottom];
-        }
-    }
+    flat_bottom(&mut s);
     s.canonicalize()
         .map_err(|_| GenError::NotFinite("positions"))?;
     Ok(s)
 }
 
+/// Names the flat disc on y = 0 of a turned solid `bottom`, and gives it
+/// planar UVs (x and z) if the solid has UVs.
+fn flat_bottom(s: &mut Solid) {
+    let bottom = s.names.intern("bottom");
+    for (i, t) in s.triangles.iter().enumerate() {
+        if t.iter().all(|&v| s.positions[v as usize].y == 0.0) {
+            s.face_tags[i] = vec![bottom];
+            if let Some(u) = &mut s.uvs {
+                u[i] = t.map(|v| {
+                    let p = s.positions[v as usize];
+                    DVec2::new(p.x, p.z)
+                });
+            }
+        }
+    }
+    unmirror_uvs(s);
+}
+
 /// A torus about the y axis.
 pub fn torus(radius: f64, tube_radius: f64) -> Result<Solid, GenError> {
-    torus_y(&TorusDesc {
-        radius,
-        tube_radius,
-        ..Default::default()
-    })
+    torus_y(
+        &TorusDesc {
+            radius,
+            tube_radius,
+            ..Default::default()
+        },
+        false,
+    )
 }
 
 /// A torus about the y axis from its desc, ignoring its `axis`.
-fn torus_y(d: &TorusDesc) -> Result<Solid, GenError> {
+fn torus_y(d: &TorusDesc, uvs: bool) -> Result<Solid, GenError> {
     let (r, t) = (
         positive(d.radius, "radius")?,
         positive(d.tube_radius, "tube_radius")?,
@@ -645,13 +819,14 @@ fn torus_y(d: &TorusDesc) -> Result<Solid, GenError> {
         segments: segments_field(d.tube_segments, "tube_segments")?,
     })?
     .translate(DVec2::new(r, 0.0));
-    revolve(
+    revolve_with(
         &p,
         &Revolve {
             angle: d.angle,
             segments: d.segments,
             ..Default::default()
         },
+        uvs,
     )
 }
 
@@ -670,7 +845,11 @@ pub struct SphereDesc {
 
 /// A sphere from its desc.
 pub fn sphere_desc(d: &SphereDesc) -> Result<Solid, GenError> {
-    let mut s = sphere_n(d.radius, segments_field(d.segments, "segments")?)?;
+    sphere_with(d, false)
+}
+
+fn sphere_with(d: &SphereDesc, uvs: bool) -> Result<Solid, GenError> {
+    let mut s = sphere_n(d.radius, segments_field(d.segments, "segments")?, uvs)?;
     if d.axis == Axis::Z {
         y_to_z(&mut s, d.radius)?;
     }
@@ -700,7 +879,11 @@ pub struct TorusDesc {
 
 /// A torus from its desc.
 pub fn torus_desc(d: &TorusDesc) -> Result<Solid, GenError> {
-    let mut s = torus_y(d)?;
+    torus_with(d, false)
+}
+
+fn torus_with(d: &TorusDesc, uvs: bool) -> Result<Solid, GenError> {
+    let mut s = torus_y(d, uvs)?;
     if d.axis == Axis::Z {
         y_to_z(&mut s, d.tube_radius)?;
     }
@@ -725,14 +908,19 @@ pub struct DomeDesc {
 
 /// A dome from its desc: sand3d's `dome(d, h)` with `radius = d / 2`.
 pub fn dome_desc(d: &DomeDesc) -> Result<Solid, GenError> {
+    dome_with(d, false)
+}
+
+fn dome_with(d: &DomeDesc, uvs: bool) -> Result<Solid, GenError> {
     let per_turn = segments_field(d.segments, "segments")?;
     let mut s = if d.height == 0.0 {
-        dome_n(d.radius, per_turn)?
+        dome_n(d.radius, per_turn, uvs)?
     } else {
         cap(
             positive(d.radius, "radius")?,
             positive(d.height, "height")?,
             per_turn,
+            uvs,
         )?
     };
     if d.axis == Axis::Z {
@@ -742,7 +930,7 @@ pub fn dome_desc(d: &DomeDesc) -> Result<Solid, GenError> {
 }
 
 /// A spherical cap `a` in base radius and `h` high, about +y on y = 0.
-fn cap(a: f64, h: f64, per_turn: u32) -> Result<Solid, GenError> {
+fn cap(a: f64, h: f64, per_turn: u32, uvs: bool) -> Result<Solid, GenError> {
     let r = (a * a + h * h) / (2.0 * h);
     let from = trig::atan2(r - h, a);
     let sweep = trig::PI / 2.0 - from;
@@ -758,22 +946,58 @@ fn cap(a: f64, h: f64, per_turn: u32) -> Result<Solid, GenError> {
     sharp[0] = true;
     sharp[1] = true;
     sharp[n as usize + 1] = true;
-    let mut s = revolve(
+    let mut s = revolve_with(
         &Profile::from_contour(Contour { points: pts, sharp }),
         &Revolve {
             segments: per_turn,
             ..Default::default()
         },
+        uvs,
     )?;
-    let bottom = s.names.intern("bottom");
-    for (i, t) in s.triangles.iter().enumerate() {
-        if t.iter().all(|&v| s.positions[v as usize].y == 0.0) {
-            s.face_tags[i] = vec![bottom];
-        }
-    }
+    flat_bottom(&mut s);
     s.canonicalize()
         .map_err(|_| GenError::NotFinite("positions"))?;
     Ok(s)
+}
+
+/// A generator [`textured`] can build.
+#[derive(Clone, Copy, Debug)]
+pub enum Generator<'a> {
+    /// [`extrude`].
+    Extrude(&'a Profile, Extrude),
+    /// [`revolve`].
+    Revolve(&'a Profile, Revolve),
+    /// [`cuboid`].
+    Box(BoxDesc),
+    /// [`cylinder`].
+    Cylinder(CylinderDesc),
+    /// [`cone_desc`].
+    Cone(ConeDesc),
+    /// [`tube_desc`].
+    Tube(TubeDesc),
+    /// [`sphere_desc`].
+    Sphere(SphereDesc),
+    /// [`torus_desc`].
+    Torus(TorusDesc),
+    /// [`dome_desc`].
+    Dome(DomeDesc),
+}
+
+/// The generator's solid with UVs on every face, by the rule in the
+/// module docs: the same positions, triangles and names as the
+/// generator alone gives, plus [`Solid::uvs`].
+pub fn textured(g: &Generator) -> Result<Solid, GenError> {
+    match g {
+        Generator::Extrude(p, d) => extrude_with(p, d, true),
+        Generator::Revolve(p, d) => revolve_with(p, d, true),
+        Generator::Box(d) => cuboid_with(d, true),
+        Generator::Cylinder(d) => cylinder_with(d, true),
+        Generator::Cone(d) => cone_with(d, true),
+        Generator::Tube(d) => tube_with(d, true),
+        Generator::Sphere(d) => sphere_with(d, true),
+        Generator::Torus(d) => torus_with(d, true),
+        Generator::Dome(d) => dome_with(d, true),
+    }
 }
 
 /// A wedge: a right triangle (legs `width` along x, `height` along y)
@@ -1023,5 +1247,144 @@ mod tests {
         assert!((quarter.volume * 4.0 - whole.volume).abs() < 1e-9 * whole.volume);
         let m = torus_desc(&TorusDesc { segments: 2, ..d });
         assert!(matches!(m, Err(GenError::Invalid(_))));
+    }
+
+    #[test]
+    fn textured_generators_keep_their_geometry_and_read_unmirrored() {
+        let bar = rect(&Rect {
+            width: 10.0,
+            height: 4.0,
+            radius: 1.0,
+        })
+        .unwrap();
+        let cases = [
+            (
+                Generator::Box(BoxDesc {
+                    width: 4.0,
+                    depth: 3.0,
+                    height: 2.0,
+                }),
+                cuboid(&BoxDesc {
+                    width: 4.0,
+                    depth: 3.0,
+                    height: 2.0,
+                }),
+            ),
+            (
+                Generator::Extrude(
+                    &bar,
+                    Extrude {
+                        height: 6.0,
+                        twist: 0.5,
+                        ..Default::default()
+                    },
+                ),
+                extrude(
+                    &bar,
+                    &Extrude {
+                        height: 6.0,
+                        twist: 0.5,
+                        ..Default::default()
+                    },
+                ),
+            ),
+            (
+                Generator::Cylinder(CylinderDesc {
+                    radius: 5.0,
+                    height: 8.0,
+                    ..Default::default()
+                }),
+                cylinder(&CylinderDesc {
+                    radius: 5.0,
+                    height: 8.0,
+                    ..Default::default()
+                }),
+            ),
+            (
+                Generator::Sphere(SphereDesc {
+                    radius: 6.0,
+                    axis: Axis::Z,
+                    ..Default::default()
+                }),
+                sphere_desc(&SphereDesc {
+                    radius: 6.0,
+                    axis: Axis::Z,
+                    ..Default::default()
+                }),
+            ),
+            (
+                Generator::Torus(TorusDesc {
+                    radius: 10.0,
+                    tube_radius: 2.0,
+                    angle: 2.0,
+                    ..Default::default()
+                }),
+                torus_desc(&TorusDesc {
+                    radius: 10.0,
+                    tube_radius: 2.0,
+                    angle: 2.0,
+                    ..Default::default()
+                }),
+            ),
+            (
+                Generator::Dome(DomeDesc {
+                    radius: 5.0,
+                    ..Default::default()
+                }),
+                dome_desc(&DomeDesc {
+                    radius: 5.0,
+                    ..Default::default()
+                }),
+            ),
+        ];
+        for (g, plain) in cases {
+            let t = textured(&g).unwrap();
+            let plain = plain.unwrap();
+            assert!(plain.uvs.is_none());
+            let mut bare = t.clone();
+            let uvs = bare.uvs.take().unwrap();
+            assert_eq!(bare, plain, "{g:?}");
+            // Every face with area reads counter-clockwise, as seen from
+            // outside.
+            for (i, u) in uvs.iter().enumerate() {
+                let [a, b, c] = t.triangles[i].map(|v| t.positions[v as usize]);
+                if (b - a).cross(c - a).length() > 1e-9 {
+                    assert_eq!(
+                        orient2d(u[0], u[1], u[2]),
+                        core::cmp::Ordering::Greater,
+                        "{g:?} triangle {i}"
+                    );
+                }
+            }
+        }
+        // The box's top is its plan in mm; a cylinder's wall runs its
+        // circumference round and its height up.
+        let b = textured(&Generator::Box(BoxDesc {
+            width: 4.0,
+            depth: 3.0,
+            height: 2.0,
+        }))
+        .unwrap();
+        let uvs = b.uvs.as_ref().unwrap();
+        for i in b.faces(&["top"]).unwrap() {
+            for (k, &v) in b.triangles[i as usize].iter().enumerate() {
+                assert_eq!(uvs[i as usize][k], b.positions[v as usize].truncate());
+            }
+        }
+        let c = textured(&Generator::Cylinder(CylinderDesc {
+            radius: 5.0,
+            height: 8.0,
+            ..Default::default()
+        }))
+        .unwrap();
+        let side = c.faces(&["side"]).unwrap();
+        let u = c.uvs.as_ref().unwrap();
+        let (lo, hi) = side.iter().flat_map(|&i| u[i as usize]).fold(
+            (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY)),
+            |(l, h), q| (l.min(q), h.max(q)),
+        );
+        let round = hi.x - lo.x;
+        assert!((round - trig::TAU * 5.0).abs() < 0.2, "{round}");
+        assert_eq!(hi.y - lo.y, 8.0);
     }
 }

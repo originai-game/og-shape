@@ -79,19 +79,25 @@ pub fn imported(format: &str, m: &Imported) -> String {
         .parts
         .iter()
         .map(|p| {
-            object(&[
+            // `map` (the base-colour texture's name) only on a part that
+            // has one.
+            let mut fields = vec![
                 ("name", string(&p.name)),
                 ("material", string(&p.material)),
                 ("triangles", p.solid.triangles.len().to_string()),
                 ("vertices", p.solid.positions.len().to_string()),
-                ("uvs", p.uvs.is_some().to_string()),
-                (
-                    "bones",
-                    p.solid.skin.as_ref().map_or("null".into(), |k| {
-                        array(&k.bones.iter().map(|b| string(&b.name)).collect::<Vec<_>>())
-                    }),
-                ),
-            ])
+                ("uvs", p.solid.uvs.is_some().to_string()),
+            ];
+            if let Some(t) = &p.map {
+                fields.push(("map", string(&t.name)));
+            }
+            fields.push((
+                "bones",
+                p.solid.skin.as_ref().map_or("null".into(), |k| {
+                    array(&k.bones.iter().map(|b| string(&b.name)).collect::<Vec<_>>())
+                }),
+            ));
+            object(&fields)
         })
         .collect();
     let images: Vec<String> = m

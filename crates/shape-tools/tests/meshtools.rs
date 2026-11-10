@@ -107,7 +107,7 @@ fn obj_round_trip_and_polygons() {
     let m = p.solid.measure();
     assert!((m.area - 300.0).abs() < 1e-9);
     // UVs follow their corners: u = x / 20 mm.
-    let uvs = p.uvs.as_ref().unwrap();
+    let uvs = p.solid.uvs.as_ref().unwrap();
     for (t, uv) in p.solid.triangles.iter().zip(uvs) {
         for k in 0..3 {
             let pos = p.solid.positions[t[k] as usize];
@@ -220,11 +220,11 @@ fn the_chain_meets_a_texturing_budget() {
     )
     .unwrap();
     assert!(low.triangles.len() <= 300, "{d:?}");
-    let uv = unwrap(&low, &Unwrap::default()).unwrap();
+    let mut low = low;
+    unwrap(&mut low, &Unwrap::default()).unwrap();
     let m = measure(
         &low,
         &Measure {
-            uvs: Some(&uv.corners),
             intersections: true,
             ..Default::default()
         },
@@ -249,7 +249,7 @@ fn the_chain_meets_a_texturing_budget() {
         &low,
         &PlainGlb {
             name: "chain",
-            uvs: Some(&uv),
+            ..Default::default()
         },
     )
     .unwrap();
@@ -262,13 +262,7 @@ fn the_chain_meets_a_texturing_budget() {
     // And our importer reads it back as the same closed mesh.
     let back = import(&bytes, &Import::default(), &no_files).unwrap();
     assert_eq!(back.parts.len(), 1);
-    let again = measure(
-        &back.parts[0].solid,
-        &Measure {
-            uvs: back.parts[0].uvs.as_deref(),
-            ..Default::default()
-        },
-    );
+    let again = measure(&back.parts[0].solid, &Measure::default());
     assert!(again.closed);
     assert_eq!(again.triangles, low.triangles.len());
     assert_eq!(again.uv.unwrap().overlapping_pairs, 0);
@@ -282,7 +276,13 @@ fn binary_fbx_with_pivots_compressed_arrays_and_a_texture() {
     assert_eq!(imported.polygons_triangulated, 6);
     let p = &imported.parts[0];
     assert_eq!((p.name.as_str(), p.material.as_str()), ("Cube", "Steel"));
-    assert_eq!(p.uvs.as_ref().map(Vec::len), Some(12));
+    assert_eq!(p.solid.uvs.as_ref().map(Vec::len), Some(12));
+    // Steel's DiffuseColor texture is the embedded PNG.
+    let map = p.map.as_ref().unwrap();
+    assert_eq!(
+        (map.name.as_str(), map.mime.as_str()),
+        ("textures/albedo.png", "image/png")
+    );
     assert_eq!(imported.images.len(), 1);
     assert_eq!(imported.images[0].name, "textures/albedo.png");
     assert_eq!(imported.images[0].width, Some(16));
@@ -385,7 +385,7 @@ fn a_skinned_glb_is_read_whole_and_never_broken_silently() {
         PlainGlbError::Skinned
     );
     // Unwrap does not re-index, and a preview shows the bind pose.
-    let uv = unwrap(s, &Unwrap::default()).unwrap();
+    let uv = unwrap(&mut s.clone(), &Unwrap::default()).unwrap();
     assert_eq!(uv.corners.len(), s.triangles.len());
     let scene = Scene {
         name: "rig".into(),

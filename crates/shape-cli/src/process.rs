@@ -5,6 +5,11 @@
 //! (one node, one mesh), or OBJ or STL without them. Repair and unwrap
 //! take their zero values unless set, as in `shape repair` and
 //! `shape unwrap`.
+//!
+//! A mesh that carries UVs from its file keeps them, and its base-colour
+//! texture (when its parts share one), through repair and decimation:
+//! the unwrap step is then skipped (`"unwrap": null`) unless `--unwrap`
+//! asks for fresh UVs, which drops the texture.
 
 use std::path::PathBuf;
 
@@ -31,6 +36,9 @@ pub struct ProcessDesc {
     pub budget: usize,
     /// The unwrap.
     pub unwrap: Unwrap,
+    /// Unwrap even a mesh that carries UVs (its texture is then not
+    /// written: it was painted for the old UVs).
+    pub fresh_uvs: bool,
     /// Count self-intersecting triangle pairs in the final measures.
     pub intersections: bool,
     /// Where to write the result, if anywhere.
@@ -57,22 +65,27 @@ pub fn process(files: &dyn Files, d: &ProcessDesc) -> Result<String, Failure> {
     } else {
         (fixed, "null".to_string())
     };
-    let uvs = shape_tools::unwrap(&low, &d.unwrap).map_err(failed)?;
+    let mut low = low;
+    let (unwrapped, map) = if low.uvs.is_none() || d.fresh_uvs {
+        let uvs = shape_tools::unwrap(&mut low, &d.unwrap).map_err(failed)?;
+        (report::unwrap(&uvs), None)
+    } else {
+        ("null".to_string(), mesh.map())
+    };
     let m = shape_tools::measure(
         &low,
         &Measure {
-            uvs: Some(&uvs.corners),
             images: &mesh.imported.images,
             uv_resolution: d.unwrap.resolution,
             intersections: d.intersections,
         },
     );
-    let output = write_solid(files, &mesh.name, &low, Some(&uvs), d.out.as_deref())?;
+    let output = write_solid(files, &mesh.name, &low, map, d.out.as_deref())?;
     Ok(object(&[
         ("import", imported),
         ("repair", report::repair(&r)),
         ("decimate", dec),
-        ("unwrap", report::unwrap(&uvs)),
+        ("unwrap", unwrapped),
         ("measures", m.to_json()),
         ("output", output),
     ]))
@@ -80,7 +93,7 @@ pub fn process(files: &dyn Files, d: &ProcessDesc) -> Result<String, Failure> {
 
 /// The command line.
 pub fn run(a: &Args) -> Result<String, Failure> {
-    let mut known = vec!["-o", "--out", "--budget", "--intersections"];
+    let mut known = vec!["-o", "--out", "--budget", "--intersections", "--unwrap"];
     known.extend(IMPORT_OPTIONS);
     known.extend(crate::repair::OPTIONS);
     known.extend(crate::unwrap::OPTIONS);
@@ -95,6 +108,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
             repair,
             budget: a.number("--budget")?.unwrap_or(0),
             unwrap: crate::unwrap::options(a)?,
+            fresh_uvs: a.switch("--unwrap"),
             intersections: a.switch("--intersections"),
             out: a.out_opt()?,
         },

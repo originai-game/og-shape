@@ -106,7 +106,8 @@ const TOOLS: [Tool; 10] = [
         name: "process",
         description: "The mesh tools' chain on one file: import → join → repair → decimate to \
             `budget` triangles → unwrap → measure → export (`out`, a plain GLB with UVs). One \
-            report of every step.",
+            report of every step. A mesh that carries UVs keeps them and its texture, and is not \
+            unwrapped unless `fresh_uvs` is set.",
         schema: process_schema,
         handler: process_tool,
     },
@@ -550,6 +551,10 @@ fn process_schema() -> Value {
             "intersections",
             boolean("Count self-intersecting triangle pairs in the final measures (exact)."),
         ),
+        (
+            "fresh_uvs",
+            boolean("Unwrap even a mesh that carries UVs from its file (its texture is then not written)."),
+        ),
     ]);
     schema(p, &["path"])
 }
@@ -715,6 +720,7 @@ fn process_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
         budget: a.uint("budget")? as usize,
         unwrap: a.sub("unwrap")?.as_ref().unwrap_or(&none).unwrap()?,
         intersections: a.flag("intersections")?,
+        fresh_uvs: a.flag("fresh_uvs")?,
         out: a.path("out")?,
     };
     Ok(vec![text(process(&server.ws, &d)?)])
