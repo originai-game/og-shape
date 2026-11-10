@@ -47,7 +47,7 @@ Run on `main` on 2026-11-10; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 133 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 280 pass | `scripts/check.sh test` |
+| Tests | 282 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 104 of 106 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -63,11 +63,15 @@ Known limits. Each is an error value or a recorded gap; the two marked
 silent return a result with no error:
 - **Silent:** one built part in the table above crosses itself and was
   returned without an error (the mouse's shell): to be traced.
-- **Silent:** a boolean whose result still crosses itself by rounding
-  after the repair is returned without an error. Seen on a cup's `shell`
-  (44 needle pairs at rounding scale; the cup is closed and of the right
-  shape) and on faces a few ulps apart that are not one plane
-  (`docs/research.md` §25.4). Refusing them was tried and broke the cup.
+- **Silent, measured:** a boolean or edit whose result still crosses
+  itself after the repair is returned without an error, with the count in
+  its report (`crossingPairs`, `BoolReport::crossing_pairs`,
+  `shape_edit::EditReport`). No committed program, golden case other than
+  `selfunion.check` (its inputs cross by design), bench case, or swept
+  `hole`, `pocket`, `seat` or `dent` leaves any; 76 of 4 920 swept
+  shells do (950 before), where a rounded corner, chamfer or fillet
+  narrower than the wall folds the inner solid beyond what `self_union`
+  untangles (`docs/research.md` §27).
 - 1 300 of the scan's bevels are refused: too large for the faces (426),
   a lone piece of a crease that does not fit (226), a twisted face (340),
   an edge with more than two faces (308).

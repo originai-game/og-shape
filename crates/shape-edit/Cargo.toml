@@ -15,5 +15,8 @@ shape-gen.workspace = true
 shape-bool.workspace = true
 robust.workspace = true
 
+[dev-dependencies]
+shape-bevel.workspace = true
+
 [lints]
 workspace = true

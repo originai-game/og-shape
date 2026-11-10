@@ -23,8 +23,8 @@ mod uncross;
 mod winding;
 
 pub use csg::{
-    CsgOp, CsgOutput, OperandError, SelfUnion, csg, csg_points, csg_points_traced, csg_traced,
-    self_union_points, uncross_output,
+    CsgOp, CsgOutput, OperandError, SelfUnion, csg, csg_points, csg_points_repaired,
+    csg_points_traced, csg_traced, self_union_points, uncross_output,
 };
 pub use named::{
     BoolError, BoolOp, BoolReport, Boolean, boolean, boolean_report, check_operands, components,

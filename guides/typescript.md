@@ -115,9 +115,11 @@ as the image of the original, posed by the same values.
 
 Edits (a tool must be a part; it is used up; the target keeps its name):
 - `cut`, `join`, `intersect(target, tool, { check? })` return `{ voids,
-  touchingEdges, touching }`: voids left; edges where the operands only
-  touch (> 0: not closed there); `touching`, faces lying on each other
-  somewhere (not an error by itself). `check` refuses an operand that
+  touchingEdges, touching, facesWithoutUvs, crossingPairs }`: voids left;
+  edges where the operands only touch (> 0: not closed there);
+  `touching`, faces lying on each other somewhere (not an error by
+  itself); `crossingPairs`, pairs of the result's triangles that still
+  cross (> 0: it passes through itself there). `check` refuses an operand that
   passes through itself. `merge(target, tool)` adds the tool as it is (no
   boolean); `delete(part)`. `seat(host, part)` cuts
   `part`'s volume out of `host` and keeps `part`. `scale(part, { x?, y?,

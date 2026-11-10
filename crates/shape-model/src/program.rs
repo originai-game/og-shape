@@ -48,7 +48,7 @@
 //! | `attach` | `to`, `name`, `children` | `id` |
 //! | `copy` | `id`, `name` | `id` |
 //! | `mirror` | `id`, `plane` (a frame), `name` | `id` |
-//! | `cut`, `join`, `intersect` | `target`, `tool`, `check`? | `voids`, `touchingEdges`, `touching`, `facesWithoutUvs` |
+//! | `cut`, `join`, `intersect` | `target`, `tool`, `check`? | `voids`, `touchingEdges`, `touching`, `facesWithoutUvs`, `crossingPairs` |
 //! | `merge` | `target`, `tool` | |
 //! | `delete` | `id` | |
 //! | `seat` | `host`, `part` | |
@@ -519,6 +519,7 @@ fn dispatch(m: &mut Model, a: &Args) -> Result<(Value, bool), ModelError> {
                         "touchingEdges": r.touching_edges,
                         "touching": r.touching,
                         "facesWithoutUvs": r.faces_without_uvs,
+                        "crossingPairs": r.crossing_pairs,
                     }),
                     true,
                 ))

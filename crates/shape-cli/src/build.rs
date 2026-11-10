@@ -2,7 +2,8 @@
 //! built, as JSON: the parts with their triangle counts and the joints,
 //! and every boolean (`cut`, `join`, `intersect`) with what its result
 //! alone does not say: the voids it left and the edges where its operands
-//! touch, and the faces it left without UVs (`shape_bool::BoolReport`).
+//! touch, the faces it left without UVs, and the pairs of its result's
+//! triangles that still cross (`shape_bool::BoolReport`).
 
 use shape_model::Model;
 use shape_tools::Import;
@@ -15,7 +16,7 @@ use crate::{Failure, failed};
 /// The built model's name and parts: each part's name, parent, joint
 /// (or null) and triangle count; then `booleans`, in program order: `op`,
 /// `target`, `tool`, `voids`, `touchingEdges`, `touching`,
-/// `facesWithoutUvs`.
+/// `facesWithoutUvs`, `crossingPairs`.
 pub fn report(model: &Model) -> Result<String, Failure> {
     let built = model.build().map_err(failed)?;
     let scene = built.scene();
@@ -46,6 +47,7 @@ pub fn report(model: &Model) -> Result<String, Failure> {
                 ("touchingEdges", b.report.touching_edges.to_string()),
                 ("touching", b.report.touching.to_string()),
                 ("facesWithoutUvs", b.report.faces_without_uvs.to_string()),
+                ("crossingPairs", b.report.crossing_pairs.to_string()),
             ])
         })
         .collect();

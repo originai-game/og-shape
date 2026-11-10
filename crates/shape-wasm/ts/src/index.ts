@@ -70,6 +70,8 @@ export interface BoolReport {
   touching: boolean;
   /** Faces left without UVs: from the operand that had none, when the other had some. */
   facesWithoutUvs: number;
+  /** Pairs of the result's triangles that still cross after the repair of rounding errors: 0 unless the result passes through itself. */
+  crossingPairs: number;
 }
 
 /** A view of a `body`: one value, `[y, value]` points, or points on a spline. */

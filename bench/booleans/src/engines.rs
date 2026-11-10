@@ -5,7 +5,9 @@ use std::time::Instant;
 use glam::DVec3;
 use manifold_rust::manifold::Manifold;
 use manifold_rust::types::{BooleanEngine, Error, MeshGL, OpType};
-use shape_bool::{CsgOp, csg, csg_points_traced, self_union_points, selfcheck, uncross_output};
+use shape_bool::{
+    CsgOp, csg, csg_points_repaired, csg_points_traced, self_union_points, selfcheck,
+};
 use shape_gen::Placement;
 
 use crate::mesh::Tri;
@@ -78,9 +80,9 @@ pub static COUNT_CROSSINGS: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// Whether the og-shape engines repair their outputs' crossings by a
-/// rounding error (`uncross_output`, inside the timing), as
-/// `shape_bool::boolean` does; off with `--no-uncross`
-/// (`docs/research.md` §23, §25).
+/// rounding error and build faces a rounding error apart as one surface
+/// (`csg_points_repaired`, inside the timing), as `shape_bool::boolean`
+/// does; off with `--no-uncross` (`docs/research.md` §23, §25, §27).
 pub static UNCROSS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// A mesh welded by exact position, in f64.
@@ -221,27 +223,28 @@ fn og_shape(
     };
     let used = Some((vol(&ops[0]), vol(&ops[1])));
     let mut crossings = None;
-    let r = csg_points_traced((&ops[0].pos, &ops[0].tris), (&ops[1].pos, &ops[1].tris), op)
-        .map(|o| {
-            let o = if UNCROSS.load(std::sync::atomic::Ordering::Relaxed) {
-                uncross_output(&ops[0].pos, &ops[1].pos, o).0
-            } else {
-                o
-            };
-            (o.points, o.tris)
-        })
-        .map_err(|e| format!("{e:?}"))
-        .and_then(|(p, t)| {
-            let out = from_points(&p, &t);
-            if t.is_empty() || out.closed() {
-                if COUNT_CROSSINGS.load(std::sync::atomic::Ordering::Relaxed) {
-                    crossings = Some(shell_crossings(&welded64(&p, &t)).0);
-                }
-                Ok(out)
-            } else {
-                Err("open result".to_string())
+    let (a, b) = (
+        (&ops[0].pos[..], &ops[0].tris[..]),
+        (&ops[1].pos[..], &ops[1].tris[..]),
+    );
+    let r = if UNCROSS.load(std::sync::atomic::Ordering::Relaxed) {
+        csg_points_repaired(a, b, op).map(|(o, _)| o)
+    } else {
+        csg_points_traced(a, b, op)
+    }
+    .map(|o| (o.points, o.tris))
+    .map_err(|e| format!("{e:?}"))
+    .and_then(|(p, t)| {
+        let out = from_points(&p, &t);
+        if t.is_empty() || out.closed() {
+            if COUNT_CROSSINGS.load(std::sync::atomic::Ordering::Relaxed) {
+                crossings = Some(shell_crossings(&welded64(&p, &t)).0);
             }
-        });
+            Ok(out)
+        } else {
+            Err("open result".to_string())
+        }
+    });
     (r, prep, used, crossings)
 }
 

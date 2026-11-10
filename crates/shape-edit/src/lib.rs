@@ -17,7 +17,9 @@ use std::collections::BTreeMap;
 
 use robust::{Coord3D, orient3d};
 use shape_2d::Profile;
-use shape_bool::{BoolError, BoolOp, Boolean, boolean, boolean_report};
+use shape_bool::{
+    BoolError, BoolOp, BoolReport, Boolean, boolean, boolean_report, crossing_pairs, self_union,
+};
 use shape_core::DVec2;
 use shape_core::{DVec3, Frame};
 use shape_gen::solids::{Extrude, GenError, Generator, extrude, textured};
@@ -128,11 +130,16 @@ fn positive(v: f64) -> bool {
 /// UVs are dropped when `s` has none (the result has none either), and a
 /// tool without UVs on a solid with them is refused ([`EditError::NoUvs`],
 /// naming `what`), never cut in with none.
-fn uv_boolean(s: &Solid, tool: &Solid, d: &Boolean, what: &str) -> Result<Solid, EditError> {
+fn uv_boolean(
+    s: &Solid,
+    tool: &Solid,
+    d: &Boolean,
+    what: &str,
+) -> Result<(Solid, BoolReport), EditError> {
     if s.uvs.is_none() && tool.uvs.is_some() {
         let mut bare = tool.clone();
         bare.uvs = None;
-        return Ok(boolean(s, &bare, d)?);
+        return Ok(boolean_report(s, &bare, d)?);
     }
     let (out, report) = if d.op == BoolOp::Cut {
         boolean_report(s, &cut_tool_uvs(tool), d)?
@@ -142,7 +149,27 @@ fn uv_boolean(s: &Solid, tool: &Solid, d: &Boolean, what: &str) -> Result<Solid,
     if report.faces_without_uvs > 0 {
         return Err(EditError::NoUvs(what.into()));
     }
-    Ok(out)
+    Ok((out, report))
+}
+
+/// What an edit did that its result alone does not say (`hole_report`,
+/// `pocket_report`, `seat_report`, `shell_report`, `dent_report`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EditReport {
+    /// Pairs of the result's triangles that still cross after the repair
+    /// of rounding errors, summed over the edit's booleans
+    /// ([`BoolReport::crossing_pairs`]); the result's own
+    /// ([`crossing_pairs`]) for [`dent`], which makes no boolean, and for a
+    /// [`shell`] whose inner solid folded through itself. 0 for a result
+    /// that does not pass through itself. A measurement, never a refusal
+    /// (`docs/research.md` §27).
+    pub crossing_pairs: usize,
+}
+
+impl EditReport {
+    fn add(&mut self, r: &BoolReport) {
+        self.crossing_pairs += r.crossing_pairs;
+    }
 }
 
 /// A cut turns the tool's faces inside out, and with them their UVs,
@@ -294,6 +321,7 @@ pub fn split(s: &Solid, frame: &Frame, keep: Keep) -> Result<Solid, EditError> {
         },
         "the split",
     )
+    .map(|(s, _)| s)
 }
 
 // ── hole ────────────────────────────────────────────────────────────────────
@@ -365,6 +393,11 @@ fn bore(
 /// Holes of `d.diameter` into the solid. Mouth edges get `hole`; the bore
 /// `hole.side`, a blind floor `hole.bottom`.
 pub fn hole(s: &Solid, d: &Hole) -> Result<Solid, EditError> {
+    hole_report(s, d).map(|(s, _)| s)
+}
+
+/// [`hole`], with what the result alone does not say ([`EditReport`]).
+pub fn hole_report(s: &Solid, d: &Hole) -> Result<(Solid, EditReport), EditError> {
     unskinned(&[s])?;
     if !positive(d.diameter) {
         return Err(EditError::NotPositive("diameter"));
@@ -372,6 +405,7 @@ pub fn hole(s: &Solid, d: &Hole) -> Result<Solid, EditError> {
     let span = size(s);
     let over = span * 1e-3;
     let mut out = s.clone();
+    let mut report = EditReport::default();
     for f in &d.at {
         let axis = Frame::from_normal(DVec3::ZERO, f.z, f.x).ok_or(EditError::NoDirection("at"))?;
         let e = entry_of(&out, f, &axis, span)?;
@@ -421,7 +455,7 @@ pub fn hole(s: &Solid, d: &Hole) -> Result<Solid, EditError> {
             )?);
         }
         for t in tools {
-            out = uv_boolean(
+            let (next, r) = uv_boolean(
                 &out,
                 &t,
                 &Boolean {
@@ -431,9 +465,11 @@ pub fn hole(s: &Solid, d: &Hole) -> Result<Solid, EditError> {
                 },
                 "the hole",
             )?;
+            out = next;
+            report.add(&r);
         }
     }
-    Ok(out)
+    Ok((out, report))
 }
 
 // ── pocket ──────────────────────────────────────────────────────────────────
@@ -452,6 +488,11 @@ pub struct Pocket {
 /// The profile cut into the solid from where each frame's axis enters it.
 /// Floor and walls are named `pocket.bottom` and `pocket.side`.
 pub fn pocket(s: &Solid, d: &Pocket) -> Result<Solid, EditError> {
+    pocket_report(s, d).map(|(s, _)| s)
+}
+
+/// [`pocket`], with what the result alone does not say ([`EditReport`]).
+pub fn pocket_report(s: &Solid, d: &Pocket) -> Result<(Solid, EditReport), EditError> {
     unskinned(&[s])?;
     let span = size(s);
     let over = span * 1e-3;
@@ -461,6 +502,7 @@ pub fn pocket(s: &Solid, d: &Pocket) -> Result<Solid, EditError> {
         d.at.clone()
     };
     let mut out = s.clone();
+    let mut report = EditReport::default();
     for f in &frames {
         let axis = Frame::from_normal(DVec3::ZERO, f.z, f.x).ok_or(EditError::NoDirection("at"))?;
         let e = entry_of(&out, f, &axis, span)?;
@@ -477,7 +519,7 @@ pub fn pocket(s: &Solid, d: &Pocket) -> Result<Solid, EditError> {
             origin: e - axis.z * depth,
             ..axis
         };
-        out = uv_boolean(
+        let (next, r) = uv_boolean(
             &out,
             &placed(tool, &frame),
             &Boolean {
@@ -487,8 +529,10 @@ pub fn pocket(s: &Solid, d: &Pocket) -> Result<Solid, EditError> {
             },
             "the pocket",
         )?;
+        out = next;
+        report.add(&r);
     }
-    Ok(out)
+    Ok((out, report))
 }
 
 // ── seat ────────────────────────────────────────────────────────────────────
@@ -496,6 +540,15 @@ pub fn pocket(s: &Solid, d: &Pocket) -> Result<Solid, EditError> {
 /// The host with the volume `part` fills taken out; `part` is untouched.
 /// Refused if they share no volume.
 pub fn seat(host: &Solid, part: &Solid, part_name: &str) -> Result<Solid, EditError> {
+    seat_report(host, part, part_name).map(|(s, _)| s)
+}
+
+/// [`seat`], with what the result alone does not say ([`EditReport`]).
+pub fn seat_report(
+    host: &Solid,
+    part: &Solid,
+    part_name: &str,
+) -> Result<(Solid, EditReport), EditError> {
     unskinned(&[host, part])?;
     let shared = boolean(
         host,
@@ -511,7 +564,7 @@ pub fn seat(host: &Solid, part: &Solid, part_name: &str) -> Result<Solid, EditEr
         Ok(v) if v.measure().volume <= 0.0 => return Err(EditError::NoOverlap),
         Ok(_) => {}
     }
-    uv_boolean(
+    let (out, r) = uv_boolean(
         host,
         part,
         &Boolean {
@@ -520,7 +573,10 @@ pub fn seat(host: &Solid, part: &Solid, part_name: &str) -> Result<Solid, EditEr
             tool: part_name,
         },
         &format!("the part {part_name:?}"),
-    )
+    )?;
+    let mut report = EditReport::default();
+    report.add(&r);
+    Ok((out, report))
 }
 
 // ── shell ───────────────────────────────────────────────────────────────────
@@ -677,6 +733,11 @@ fn offset(planes: &[(DVec3, f64)]) -> DVec3 {
 /// the cut opens them); then the inner solid is cut away. Inner faces get
 /// `cut` and `shell.*`.
 pub fn shell(s: &Solid, d: &Shell) -> Result<Solid, EditError> {
+    shell_report(s, d).map(|(s, _)| s)
+}
+
+/// [`shell`], with what the result alone does not say ([`EditReport`]).
+pub fn shell_report(s: &Solid, d: &Shell) -> Result<(Solid, EditReport), EditError> {
     unskinned(&[s])?;
     let t = d.thickness;
     if !positive(t) {
@@ -704,16 +765,51 @@ pub fn shell(s: &Solid, d: &Shell) -> Result<Solid, EditError> {
     inner
         .canonicalize()
         .map_err(|_| EditError::NotPositive("thickness"))?;
-    uv_boolean(
-        s,
-        &inner,
-        &Boolean {
-            op: BoolOp::Cut,
-            target: "",
-            tool: "shell",
-        },
-        "the shell",
-    )
+    let cut = |tool: &Solid| {
+        uv_boolean(
+            s,
+            tool,
+            &Boolean {
+                op: BoolOp::Cut,
+                target: "",
+                tool: "shell",
+            },
+            "the shell",
+        )
+    };
+    if crossing_pairs(&inner) == 0 {
+        return cut(&inner).map(|(out, r)| {
+            let mut report = EditReport::default();
+            report.add(&r);
+            (out, report)
+        });
+    }
+    // The inner solid folds through itself where a face shrinks past
+    // nothing (a chamfer, fillet or rounded corner narrower than the wall,
+    // `docs/research.md` §27): its outside is cut instead (`self_union`),
+    // if that result is closed (an inner solid touching the outer along an
+    // edge would leave a wall of no thickness there). Otherwise, or where
+    // it crosses itself more, the folded solid is cut as before. The
+    // boolean counts only pairs at corners it made, so here the result's
+    // own pairs are counted.
+    let counted = |out: Solid| {
+        let crossing_pairs = crossing_pairs(&out);
+        (out, EditReport { crossing_pairs })
+    };
+    let untangled = self_union(&inner)
+        .ok()
+        .and_then(|u| cut(&u).ok())
+        .filter(|(_, r)| r.touching_edges == 0)
+        .map(|(out, _)| counted(out));
+    let untangled = match untangled {
+        Some(u) if u.1.crossing_pairs == 0 => return Ok(u),
+        u => u,
+    };
+    match (untangled, cut(&inner).map(|(out, _)| counted(out))) {
+        (Some(u), Ok(f)) if u.1.crossing_pairs < f.1.crossing_pairs => Ok(u),
+        (Some(u), Err(_)) => Ok(u),
+        (_, f) => f,
+    }
 }
 
 // ── dent ────────────────────────────────────────────────────────────────────
@@ -734,6 +830,20 @@ pub struct Dent {
 /// reach are first split (shared edge midpoints, so no cracks) until no
 /// edge is longer than `radius / 4`. Moved faces get `dent`.
 pub fn dent(s: &Solid, d: &Dent) -> Result<Solid, EditError> {
+    dent_built(s, d)
+}
+
+/// [`dent`], with what the result alone does not say ([`EditReport`]: the
+/// result's own crossing pairs, a sweep over its triangles).
+pub fn dent_report(s: &Solid, d: &Dent) -> Result<(Solid, EditReport), EditError> {
+    let out = dent_built(s, d)?;
+    let report = EditReport {
+        crossing_pairs: crossing_pairs(&out),
+    };
+    Ok((out, report))
+}
+
+fn dent_built(s: &Solid, d: &Dent) -> Result<Solid, EditError> {
     unskinned(&[s])?;
     if !positive(d.radius) {
         return Err(EditError::NotPositive("radius"));

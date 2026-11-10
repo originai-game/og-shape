@@ -24,7 +24,8 @@
 //! each f64 output that cross within one shell (outside the timing), and
 //! the summary says how many cases left any, and `--hashes` adds each
 //! boolean's count after its hash. The og-shape engines repair crossings
-//! by a rounding error in their outputs (`shape_bool::uncross_output`,
+//! by a rounding error in their outputs, and build faces a rounding error
+//! apart as one surface where those cross (`shape_bool::csg_points_repaired`,
 //! inside the timing), as `shape_bool::boolean` does; `--no-uncross`
 //! leaves them as built, for comparison.
 

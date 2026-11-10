@@ -5889,3 +5889,176 @@ clean now). Not turned on; its cost is §5.2's.
 - The tilted cut of §25.4 is found, not refused or fixed.
 - Every new hash is checked natively (x86-64) and as wasm32 under
   wasmtime by the gate here; aarch64 and Windows run in CI only.
+
+## 27. Boolean results the repair leaves crossing (stream AF, 2026-11-10)
+
+Base 514c386. Every side is still decided by `orient3d` and `orient2d`;
+the one new use of a distance (the snap distance, below) chooses a
+candidate result, which exact checks then keep or drop.
+
+### 27.1 The cup: a folded inner solid, not needles
+
+`eval/phase6/B/obj1_octagonal_cup` (an octagon of radius 104.45 turned
+π/8, 137 high, its bottom chamfered 10, `shell` 20 thick open at the top)
+left 44 crossing pairs after the repair (§25.4). **Read off the pairs,
+the cause is not the top cap's diagonals.** The pairs are triangles of
+the inner solid's bottom cap (z = 20, every corner the tool's own)
+against its walls: the shell's inner solid crosses itself. `shell` moves each vertex by the
+least-squares fit of the planes it touches (`offset`); the chamfer is 10
+wide and the wall 20 thick, so the chamfer's offset turns over: the inner
+bottom ring lands at z = 20 and radius 84.65 (a corner), the ring above it
+at z = 18.28 and radius 82.8, and the inner bottom cap runs out through
+the walls. `crossing_pairs` on the inner solid: 26. The cut keeps the
+fold, a lip about 1.7 high and 1.85 wide around the inner bottom: the
+cup's volume was 2 017 648.2, and is 2 016 896.4 with the fold gone (the
+lip's section, about 1.6 mm², times the inner perimeter, 507). The
+repair could not help: the crossings are millimetres long.
+
+**Fixed in `shell`.** When the inner solid crosses itself (exact,
+`crossing_pairs`), its outside is cut instead: `self_union`, the space
+it winds round at least once. A fold turned inside out winds −1 or 0
+there, so the fold drops and the inner solid is the prism 20 in from
+every face. That result is taken if the cut is closed (no touching
+edges: an inner solid meeting the outer along an edge would leave a
+wall of no thickness) and crosses itself in no pair. Otherwise the folded
+inner solid is cut as before, and the one with fewer crossing pairs
+returned, so nothing that built before is refused. Test
+`a_chamfer_narrower_than_the_wall_does_not_fold_the_hollow` (`shape-edit`;
+44 pairs without the fix; the volume is the outer's less the octagonal
+prism of apothem 76.5 from z = 20, to 10⁻⁹).
+
+**The sweep** (`cargo run --release -p shape-edit --example
+shell_sweep`): extrusions 80 high of regular polygons of 3 to 12 sides,
+radius 50, turned 0, π/8, 0.3 and π/n; rounded rectangles 80 × 50 with
+radius 5 and 15, 60 × 60 with radius 29; circles of radius 40 (the chord
+rule, 24 and 64 segments). Bottoms: plain, tapered ±0.2, chamfered 2, 10
+and 25, filleted 5 and 15 (`shape-bevel`). Thickness 1, 3, 10, 20, 30.
+Open `top`, `bottom`, `+x`, or closed. 7 220 shells (the bevel refuses
+7 of the bottoms); 1 410 open `+x` where no flat face faces +x
+(`NotFlat`, the same before and after).
+
+| | before | after |
+|---|---|---|
+| built | 4 827 | 4 920 |
+| built, crossing themselves | 950 | 76 |
+| refused | 983 | 890 |
+
+Of the 950 that crossed, 886 are clean and 64 still cross (60 with the
+same pairs, 4 with fewer). 93 refused before are built (81 clean, 12
+crossing). None that built before is refused, and none comes out open
+that did not (a square prism tapered 0.2, 30 thick, open at the top, is
+non-manifold before and after). Crossing pairs over the sweep: 59 356
+before, 24 496 after. `shell_report`'s count equals `crossing_pairs` on
+every result. Two results that did not cross change volume: a triangle
+turned π/8, chamfered 25, 20 and 30 thick, open at the bottom (205 681.0
+→ 187 258.9 and 205 152.3): its inner solid crossed itself away from the
+outer surface and its outside is cut now; a triangle of apothem 25
+hollowed 20 or 30 thick turns its inner solid inside out, so neither
+volume is a wall of that thickness.
+
+Left crossing (76): rounded rectangles, mostly closed (`open: []`, 35 of
+37), where rounded corners narrower than the wall fold the inner solid
+and `self_union` of it comes out open; triangles and squares chamfered,
+filleted or tapered (32), a hexagon (1), an octagon and a nonagon opened
+at +x (6); 61 of the 76 are 20 or 30 thick. Refused (890; 885 diagnosed,
+as before, as the shell's inner solid passing through itself): the cut of
+a folded inner solid comes out open, and its outside could not be cut
+closed either; 680 open the bottom under a chamfer or fillet, 162 open
++x. Each is an error value, as before.
+
+### 27.2 Faces a few ulps apart as one surface (§23.4, §25.4)
+
+The tilted midpoints' cut (§25.4) comes from the second pass: the first
+is open (4 edges), the second closed with 266 crossing pairs, 259 after
+the repair. Its top cap is cut by the tool's 64-corner fan, which lies
+within ulps of it without being one plane, so every crossing point is an
+edge's crossing with a plane it lies ulps from.
+
+**Built: `shape_bool::csg_points_repaired`.** `csg_points_traced`, then
+the repair (`uncross_output`); where the operands touch (coplanar or
+touching pairs) and that result is open, not manifold, or still crosses
+itself, both passes run once more with **each pair of triangles, one of
+each operand, whose every corner lies within the snap distance of the
+other's plane, without the two being exactly one plane (`orient3d`),
+left uncut** (`Csg::near_coplanar`). Regions do not join such a triangle
+to one of its own mesh that is not one (`Csg::flat`), so a cap left uncut
+is a region of its own and its walls another; without that, the tilted
+fanned join came back closed with the tool's half lost (its bottom, the
+region's largest piece, has the target on one side, and the whole region
+was dropped). Each result, repaired, is taken only if it is closed and
+manifold (exact welding) and crosses itself in fewer pairs (exact,
+`selfcheck::crossing`); an open or non-manifold result only by one that
+crosses itself in none. `boolean` and the bench's og-shape engines call
+it; the repair runs once per boolean as before.
+
+The reproductions of §25.4 (`crates/shape-bool/tests/ulps_apart.rs`):
+
+| case | join | cut | intersect |
+|---|---|---|---|
+| tilted, the tool's bottom fanned from corner 5 | was refused (`OpenTouching`); now closed, volume of both, 0 pairs | was refused (`NotManifold`); now closed, the target's volume, 0 pairs | empty |
+| the tool's bottom with midpoints, flat | closed (unchanged) | closed (unchanged) | empty |
+| the same, tilted | refused, `OpenTouching` (unchanged) | was closed with 259 pairs; now closed, the target's volume, 0 pairs | empty |
+
+The tilted midpoints' join stays open: the tool's side walls have a
+corner at each midpoint, an ulp off the target's ring edge, and nothing
+splits the target's wall there. That needs the target's triangle split at
+the tool's vertex (§23.4's last paragraph), not attempted.
+
+**Bench** (`bench/booleans`, every suite and engine, `--crossings`,
+Thingi10K's 40 meshes): verdicts the same case by case, all 921 output
+hashes the same as at the base, no ok output crosses itself in either
+run. No bench case reaches the new pass with a result it improves.
+Mean ms of ok cases, the base against now (one binary each, run after
+each other on a shared 4-core container with other work running, so
+noisy): sand3d 10.0 → 9.4 (checked), 10.2 → 9.3 (untangled); Thingi10K
+504.5 → 492.8, 577.5 → 574.3; synthetic 506.5 → 516.1, 599.8 → 607.0;
+touching 39.3 → 37.2, 45.6 → 47.0; scaling 500.3 → 495.7, 636.3 → 652.0.
+The new pass costs nothing where nothing touches and nothing crosses.
+
+### 27.3 The count, and the refusal
+
+Booleans that end with crossing pairs after the repair (`BoolReport::
+crossing_pairs`), counted over:
+
+| where | before | after |
+|---|---|---|
+| every committed program (`eval/phase6/**`, `golden/programs/`; 104 of 106 build, before and after) | 2 (the cup in runs A and B, 44 pairs each) | 0 |
+| the golden cases | 1, `selfunion.check` (26; its inputs cross by design) | the same |
+| `bench/booleans` | 0 | 0 |
+| `shell` sweep (results crossing themselves) | 950 | 76 |
+| `hole` (1 794), `pocket` (384), `seat` (192), `dent` (64) sweeps (`edit_sweep`) | 0 | 0 (every output byte for byte the same) |
+
+**The refusal is not turned on**: 76 swept shells still cross
+themselves (27.1), and refusing them would refuse shells that build
+today. The count is carried instead: `BoolReport::crossing_pairs`
+(`crossingPairs` in a boolean's answer, `shape build`, the MCP `build`
+tool and the binding's `BoolReport`), and `shape_edit::EditReport` from
+`hole_report`, `pocket_report`, `seat_report`, `shell_report` and
+`dent_report`. A boolean counts pairs with a corner it made (the
+repair's own count); pairs an operand brought crossing are not counted
+(`check_operands` finds those): a closed shell's void is the inner solid
+whole, so a folded inner solid's pairs never reach a constructed corner,
+and `shell_report` counts the result's own pairs when its inner solid
+crossed itself; `dent_report` counts the result's own (no boolean).
+Golden: `rest.program.booleans` moved (it hashes the report's debug
+text); no other line.
+
+### 27.4 The standing test
+
+`crates/shape-model/tests/phase6_b.rs`: every `eval/phase6/B/*/program.json`
+builds natively, every part closed, without non-manifold edges, and none
+crossing itself. With the shell fix undone it fails on the cup.
+
+### 27.5 What is untested
+
+- The cases left in 27.1 (folded inner solids `self_union` cannot
+  untangle, or whose cut is open); `shell` builds an inner solid by vertex
+  offsets, and a proper offset of a face that shrinks past nothing is not
+  built.
+- The "one surface" pass on operands that meet only partly within the
+  snap distance (a tool's face overhanging the target's): its regions are
+  then split by the walls' crossings, not tested beyond the prisms.
+- The program answer of `shell`, `hole`, `pocket`, `seat` and `dent`
+  does not show their count (`shape-model`'s edits return nothing).
+- Every new hash is checked natively (x86-64) and as wasm32 under
+  wasmtime by the gate here; aarch64 and Windows run in CI only.
