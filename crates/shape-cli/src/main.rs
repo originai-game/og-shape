@@ -17,7 +17,7 @@
 //! shape unwrap   <mesh> [-o out.glb] [--angle DEG] [--resolution PX]
 //!                [--padding TEXELS]
 //! shape process  <mesh> [--budget N] [-o out.glb] [repair and unwrap
-//!                options] [--intersections]
+//!                options] [--intersections] [--unwrap] [--texture-max PX]
 //! ```
 //!
 //! An input is a program (the JSON a binding records,
@@ -51,7 +51,8 @@ const USAGE: &str = "usage: shape <command> <input> [options]
   decimate <mesh> (--ratio R | --target N) [--max-error MM] [--lock-border]
            [--lods N] [-o out]
   unwrap   <mesh> [-o out.glb] [--angle DEG] [--resolution PX] [--padding TEXELS]
-  process  <mesh> [--budget N] [-o out.glb] [repair and unwrap options] [--intersections]";
+  process  <mesh> [--budget N] [-o out.glb] [repair and unwrap options] [--intersections]
+           [--unwrap] [--texture-max PX]";
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();

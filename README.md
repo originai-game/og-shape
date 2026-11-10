@@ -39,7 +39,7 @@ Meshes from elsewhere go through the same kernel:
 | | |
 |---|---|
 | ![generated bear](docs/previews/generated/hunyuan-300.png) | ![generated barn](docs/previews/generated/meshy-barn.png) |
-| A Hunyuan3D-2 bear (150 000 triangles) as generated, at 10 000 and at 2 000, its texture kept; top `shape preview`, bottom three.js (`docs/research.md` §28). | A Meshy barn (37 000 triangles), the same way. Its metallic-roughness map is dropped: only the base colour is kept. |
+| A Hunyuan3D-2 bear (150 000 triangles) as generated, at 10 000 and at 2 000, its texture kept; top `shape preview`, bottom three.js (`docs/research.md` §28). | A Meshy barn (37 000 triangles), the same way. Rendered before its metallic-roughness map was carried (§29). |
 
 `docs/previews/` holds more: the bevel cases (`phase3/`), a skinned
 figure and Mixamo's Soldier posed (`phase5b/`), the models loaded and
@@ -82,8 +82,13 @@ silent returns a result with no error:
   an edge with more than two faces (308).
 - The unwrap is planar per chart, with no atlas packing; the preview
   draws no textures.
-- Not read: Draco and meshopt-compressed glTF, morph targets, vertex
-  colours. No USD or URDF export.
+- Not read: Draco and meshopt-compressed glTF, morph targets, a second
+  UV set. No USD or URDF export.
+- An imported mesh's normals are recomputed, smooth within a surface: a
+  normal map baked against the file's normals shades a median 1–1.6°
+  differently after repair alone. The texture budget writes PNG only (no
+  KTX2 or Basis) and does not decode progressive JPEG; a plain GLB has
+  one material, so parts whose materials differ lose theirs (reported).
 - The declarative `.ogt` source and `og cook` belong to the merge.
 
 ## Use it

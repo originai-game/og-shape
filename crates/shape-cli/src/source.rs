@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use shape_mesh::Solid;
 use shape_model::Model;
-use shape_tools::{Import, Imported, Part, Scene, Texture, apply_transform, import, join};
+use shape_tools::{Import, Imported, Material, Part, Scene, apply_transform, import, join};
 
 use crate::{Failure, failed};
 
@@ -228,13 +228,42 @@ impl Mesh {
         join(&self.imported.parts).map_err(failed)
     }
 
-    /// The base-colour texture the joined solid can carry: the one every
-    /// textured part shares. `None` when no part has one, or when parts
-    /// have different ones (a plain GLB has one material).
-    pub fn map(&self) -> Option<&Texture> {
-        let mut maps = self.imported.parts.iter().filter_map(|p| p.map.as_ref());
-        let first = maps.next()?;
-        maps.all(|m| m == first).then_some(first)
+    /// The material the joined solid is written with, the glTF factors
+    /// its file left unset (glTF's defaults), and what could not be kept.
+    /// Parts whose materials agree (names aside) give theirs; parts that
+    /// differ give three.js's default material with the base-colour map
+    /// every textured part shares, if they share one (a plain GLB has one
+    /// material), and the third value says so.
+    pub fn material(&self) -> (Material, Vec<String>, Vec<String>) {
+        let parts = &self.imported.parts;
+        let Some(first) = parts.first() else {
+            return Default::default();
+        };
+        let bare = |m: &Material| Material {
+            name: String::new(),
+            ..m.clone()
+        };
+        if parts
+            .iter()
+            .all(|p| bare(&p.material) == bare(&first.material))
+        {
+            return (first.material.clone(), first.defaults.clone(), Vec::new());
+        }
+        let mut maps = parts.iter().filter_map(|p| p.material.map.as_ref());
+        let shared = maps.next().filter(|m| maps.all(|x| x == *m)).cloned();
+        let dropped = vec![format!(
+            "the parts have different materials, and one is written: three.js's default{}",
+            if shared.is_some() {
+                " with the base-colour map they share"
+            } else {
+                ""
+            }
+        )];
+        let m = Material {
+            map: shared,
+            ..Default::default()
+        };
+        (m, Vec::new(), dropped)
     }
 
     /// Whether any part is skinned.

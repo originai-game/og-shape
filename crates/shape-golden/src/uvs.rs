@@ -215,6 +215,7 @@ fn glb_case(h: &mut OutputHash) -> Result<(), HashError> {
             &PlainGlb {
                 name: "can",
                 map: Some(&map),
+                ..Default::default()
             },
         )
         .map_err(fail)?,
@@ -222,7 +223,7 @@ fn glb_case(h: &mut OutputHash) -> Result<(), HashError> {
     let back = import(&scene, &Import::default(), &no_files).map_err(fail)?;
     for p in &back.parts {
         h.str(&p.name);
-        h.bytes(p.map.as_ref().map_or(&[][..], |t| &t.bytes));
+        h.bytes(p.material.map.as_ref().map_or(&[][..], |t| &t.bytes));
         p.solid.hash_into(h)?;
     }
     Ok(())

@@ -21,9 +21,18 @@ import → join → repair → decimate → unwrap → measure → preview → e
    `glb_plain` alone refuses it (a plain GLB carries no skin). A
    skeleton under a uniformly scaled armature (centimetres)
    has the scale taken out; the import report (`skin_scales`) says so.
-   UVs (the first set) and the base-colour texture (`map`) are kept
-   too, and carried by every step below; `skipped` names the other
-   material maps (normal, emissive, ...), which are not.
+   UVs (the first set), vertex colours (glTF `COLOR_0`, OBJ
+   `v x y z r g b`) and the part's material are kept too, and carried by
+   every step below. The material (`ImportedPart::material`, the import
+   report's `look`) has the factors as the file means them, by three.js's
+   names, and its maps as the files' bytes: `map` (base colour),
+   `metalness_map` (glTF's metallic-roughness), `normal_map`,
+   `emissive_map`, `ao_map`. A glTF factor the file leaves unset takes
+   glTF's default and is listed in `defaults`: an unset `metallicFactor`
+   is 1, a metal, as every glTF viewer draws it (Hunyuan3D and TRELLIS
+   leave it unset). The tools keep it so; set it yourself if the object
+   is not metal. `skipped` names what is not kept (a map on a second UV
+   set, an MTL's specular, a sampler that does not repeat).
 2. **Join** the parts into one solid (`join`). Each part's faces keep its
    name, so a part can still be found after joining. Skinned parts share
    one skeleton, merged by bone name; bones of one name that disagree, a
@@ -50,8 +59,9 @@ import → join → repair → decimate → unwrap → measure → preview → e
    (`docs/research.md` §11.5). `cross_bone_borders` turns this off for a
    mesh that will not be posed.
 5. **Unwrap** (`unwrap`) only when the mesh has no UVs, or you will paint
-   a new texture: unwrapping replaces the file's UVs, and its texture no
-   longer fits. Raise `resolution` to the texture size you will bake at,
+   a new texture: unwrapping replaces the file's UVs, and its maps no
+   longer fit, so every one is dropped (the report's `material.dropped`
+   names them); the factors and vertex colours stay. Raise `resolution` to the texture size you will bake at,
    so the padding is in its texels. `shape process` keeps a textured
    mesh's UVs unless given `--unwrap`.
 6. **Measure** (`measure`) with the images and `intersections`; it
@@ -61,9 +71,18 @@ import → join → repair → decimate → unwrap → measure → preview → e
    `uv.flipped` should be what they were before (a file's own mirrored
    charts count as flipped).
 7. **Preview** and look at it.
-8. **Export** `glb_plain` for texturing (with `map` to keep the file's
-   texture), or `glb` for parts, joints and skins (a part's
-   `material.map`). To check a decimated skin, pose both meshes the same way
+8. **Shrink the textures** to the game's budget (`downsize`; `shape
+   process --texture-max PX`, MCP `texture_max`): every map whose longest
+   side is over `PX` texels is box-filtered down (colour maps in linear
+   light, data maps as stored) and written as PNG; the report gives each
+   map's size and decoded bytes before and after. A PNG of a photo
+   texture is larger on disk than the JPEG it came from; the GPU memory
+   (`decoded_bytes_with_mips`) is what shrinks. A progressive JPEG is not
+   decoded and is kept as it is (the report's `error` says so).
+9. **Export** `glb_plain` for texturing (with `material` to keep the
+   file's look), or `glb` for parts, joints and skins (a part's
+   `material`). OBJ and STL hold the mesh only: the output's
+   `not_written` lists the UVs, colours and material they leave out. To check a decimated skin, pose both meshes the same way
    (`shape-skin`'s `pose`) and compare them: the posed error should be no
    more than the rest error.
 
@@ -84,6 +103,8 @@ import → join → repair → decimate → unwrap → measure → preview → e
 | `uv.overlapping_pairs`, `uv.flipped`, `uv.outside` | UV faces over each other, mirrored, or outside the square | 0 for baking and painting |
 | `uv.coverage` | how much of the square the charts fill | the higher the better; 0.1–0.8 on the acceptance meshes, 0.5 on average, lowest on thin parts |
 | `texture.decoded_bytes_with_mips` | GPU memory the textures take | within the game's budget |
+| `texture.materials`, `texture.by_kind` | each material's maps and sizes; memory per kind of map | a normal or metallic-roughness map rarely needs the base colour's size |
+| `colors.borders` | edges where a vertex colour changes sharply (only on a mesh with colours) | what it was before decimation |
 
 ## A budget, for example a texturing tool's input
 
@@ -106,9 +127,18 @@ Measured on 54 outputs of eight generators (`docs/research.md` §28):
   `--unwrap` reaches the budget and drops the texture.
 - A hole filled across UV seams can cover half the texture: compare
   `uv.overlap` before and after repair.
-- Only the base colour is kept: metallic-roughness and normal maps,
-  vertex colours and the material's metallic and roughness factors
-  are not (`skipped` names the maps and the colours).
+- The material and every map are kept, and TripoSR's, InstantMesh's
+  and Unique3D's vertex colours (their only colour). Hunyuan3D's and
+  TRELLIS's files leave `metallicFactor` unset, so they are metal by
+  glTF's rule (`defaults` in the import report); set it to 0 if that is
+  not meant. Meshy's maps are 2048² and 4096² (up to 85 MiB with mips):
+  `--texture-max 1024` brings each map to 5.3 MiB.
+- A normal map is in tangent space: a viewer derives the tangents from
+  the UVs and the normals the GLB carries, which the tools recompute
+  (smooth within a surface). On SPAR3D's files the shading normal moves
+  a median 1–1.6° after repair alone and 2.6–6° after decimation to
+  10 000 triangles (`docs/research.md` §29.4); mirrored UV charts keep
+  their handedness.
 
 ## What repair cannot do
 

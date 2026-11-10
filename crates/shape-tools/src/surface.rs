@@ -1,7 +1,7 @@
 //! A solid's triangles with one vertex per (position, surface): normals
 //! smooth within a surface and split at real edges. A solid with UVs gets
 //! one vertex per (position, surface, UV): its seams split vertices too,
-//! and the copies share their normal.
+//! and the copies share their normal. Vertex colours split the same way.
 
 use std::collections::BTreeMap;
 
@@ -18,6 +18,9 @@ pub(crate) struct Split {
     /// Per split vertex, its texture coordinates, if the solid has UVs
     /// (kernel convention: v up).
     pub uvs: Vec<DVec2>,
+    /// Per split vertex, its colour (linear RGBA), if the solid has
+    /// colours.
+    pub colors: Vec<[f64; 4]>,
 }
 
 /// Splits `s` so that each surface has its own vertices. A vertex's normal
@@ -33,7 +36,14 @@ pub(crate) fn split(s: &Solid) -> Split {
             ((q.x as f32).to_bits(), (q.y as f32).to_bits())
         })
     };
-    let mut ids: BTreeMap<(u32, u32, (u32, u32)), u32> = BTreeMap::new();
+    // Likewise the colour's f32 bits; none for a solid without.
+    let color_key = |i: usize, k: usize| {
+        s.colors
+            .as_ref()
+            .map_or([0; 4], |c| c[i][k].map(|x| (x as f32).to_bits()))
+    };
+    type Key = (u32, u32, (u32, u32), [u32; 4]);
+    let mut ids: BTreeMap<Key, u32> = BTreeMap::new();
     let mut smooth: BTreeMap<(u32, u32), DVec3> = BTreeMap::new();
     let mut out = Split {
         positions: Vec::new(),
@@ -41,6 +51,7 @@ pub(crate) fn split(s: &Solid) -> Split {
         indices: Vec::with_capacity(s.triangles.len() * 3),
         sources: Vec::new(),
         uvs: Vec::new(),
+        colors: Vec::new(),
     };
     let mut normal_of: Vec<(u32, u32)> = Vec::new();
     for (i, t) in s.triangles.iter().enumerate() {
@@ -48,7 +59,7 @@ pub(crate) fn split(s: &Solid) -> Split {
         // Twice the area, along the normal.
         let n = (b - a).cross(c - a);
         for (k, &v) in t.iter().enumerate() {
-            let key = (v, s.surfaces[i], uv_key(i, k));
+            let key = (v, s.surfaces[i], uv_key(i, k), color_key(i, k));
             let next = out.positions.len() as u32;
             let id = *ids.entry(key).or_insert(next);
             if id == next {
@@ -57,6 +68,9 @@ pub(crate) fn split(s: &Solid) -> Split {
                 normal_of.push((v, s.surfaces[i]));
                 if let Some(u) = &s.uvs {
                     out.uvs.push(u[i][k]);
+                }
+                if let Some(c) = &s.colors {
+                    out.colors.push(c[i][k]);
                 }
             }
             *smooth.entry((v, s.surfaces[i])).or_default() += n;

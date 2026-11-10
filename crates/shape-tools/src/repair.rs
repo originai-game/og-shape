@@ -33,6 +33,12 @@
 //! takes, at each rim vertex, the UV its rim triangle gives it, and its
 //! centre vertex (if any) their mean; a rim that crosses a UV seam gives
 //! a stretched fill, which [`RepairReport::uv_seam_fills`] counts.
+//!
+//! Vertex colours (`Solid::colors`) are carried the same way as UVs: a
+//! kept triangle keeps its corners' colours, the fuse step interpolates
+//! them on cut faces and gives a corner on an input vertex that vertex's
+//! own colour back, and a hole fill takes its rim's colours (a fan's
+//! centre their mean).
 //! [`join`] gives the triangles of parts without UVs (0, 0) at every
 //! corner when another part has them: zero-area UV triangles, which
 //! `measure` counts.
@@ -49,7 +55,7 @@ use std::fmt;
 use shape_core::order::sorted_order;
 use shape_core::{DVec2, DVec3, HashError};
 use shape_mesh::skin::Mat4;
-use shape_mesh::{Bone, Skin, Solid, Tag, Weights, edge_key};
+use shape_mesh::{Bone, CornerColors, Skin, Solid, Tag, WHITE, Weights, edge_key};
 
 use crate::import::{Affine, ImportedPart};
 use crate::intersect::{degenerate, self_intersections};
@@ -374,6 +380,7 @@ fn rebuild(s: &Solid, triangles: &[usize], remap: &[u32], positions: Vec<DVec3>)
     let mut out = Solid {
         positions,
         uvs: s.uvs.as_ref().map(|_| Vec::new()),
+        colors: s.colors.as_ref().map(|_| Vec::new()),
         ..Default::default()
     };
     for &i in triangles {
@@ -382,6 +389,9 @@ fn rebuild(s: &Solid, triangles: &[usize], remap: &[u32], positions: Vec<DVec3>)
         match &s.uvs {
             Some(u) => out.push_triangle_uv(t, s.surfaces[i], &tags, u[i]),
             None => out.push_triangle(t, s.surfaces[i], &tags),
+        }
+        if let Some(c) = &s.colors {
+            out.set_colors(out.triangles.len() - 1, c[i]);
         }
     }
     for (&(a, b), tags) in &s.edge_tags {
@@ -804,7 +814,7 @@ pub fn close_holes(
             left += 1;
         }
     }
-    type Fill = ([u32; 3], u32, Vec<Tag>, [DVec2; 3]);
+    type Fill = ([u32; 3], u32, Vec<Tag>, [DVec2; 3], CornerColors);
     let mut new_tris: Vec<Fill> = Vec::new();
     let mut seams = 0;
     for (rim, rim_tris) in loops {
@@ -826,6 +836,20 @@ pub fn close_holes(
             seams += 1;
         }
         let centre_uv = rim_uv.iter().copied().sum::<DVec2>() / n as f64;
+        // Colours likewise: each rim vertex its colour in the rim
+        // triangle leaving it, a fan's centre their mean.
+        let rim_color: Vec<[f64; 4]> = (0..n)
+            .map(|j| {
+                let t = rim_tris[j] as usize;
+                let k = s.triangles[t]
+                    .iter()
+                    .position(|&x| x == rim[j])
+                    .unwrap_or(0);
+                s.colors.as_ref().map_or(WHITE, |c| c[t][k])
+            })
+            .collect();
+        let centre_color: [f64; 4] =
+            core::array::from_fn(|ch| rim_color.iter().map(|c| c[ch]).sum::<f64>() / n as f64);
         let tris = fill(&s, &rim, &undirected).unwrap_or_else(|| {
             // Every chord already exists: fan from a new vertex at the
             // rim's centre, whose edges are all new.
@@ -855,6 +879,11 @@ pub fn close_holes(
                 .position(|&x| x == v)
                 .map_or(centre_uv, |j| rim_uv[j])
         };
+        let color_of = |v: u32| {
+            rim.iter()
+                .position(|&x| x == v)
+                .map_or(centre_color, |j| rim_color[j])
+        };
         for t in &tris {
             for k in 0..3 {
                 *undirected
@@ -866,15 +895,18 @@ pub fn close_holes(
         filled += 1;
         new_tris.extend(
             tris.into_iter()
-                .map(|t| (t, surface, tags.clone(), t.map(uv_of))),
+                .map(|t| (t, surface, tags.clone(), t.map(uv_of), t.map(color_of))),
         );
     }
-    for (t, surface, tags, uv) in new_tris {
+    for (t, surface, tags, uv, color) in new_tris {
         s.triangles.push(t);
         s.surfaces.push(surface);
         s.face_tags.push(tags);
         if let Some(u) = &mut s.uvs {
             u.push(uv);
+        }
+        if let Some(c) = &mut s.colors {
+            c.push(color);
         }
     }
     s.canonicalize()?;
@@ -982,6 +1014,57 @@ fn keep_input_uvs(before: &Solid, mut after: Solid) -> Result<Solid, RepairError
     Ok(after)
 }
 
+/// After the fuse step, as [`keep_input_uvs`] for colours: a corner on
+/// a vertex of `before` takes the colour `before` gives it there (the
+/// nearest of its colours), so no colour border appears where the file
+/// had none. Corners the union made (on cut lines) keep its
+/// interpolation.
+fn keep_input_colors(before: &Solid, mut after: Solid) -> Result<Solid, RepairError> {
+    let Some(old) = &before.colors else {
+        return Ok(after);
+    };
+    let key = |p: DVec3| [p.x + 0.0, p.y + 0.0, p.z + 0.0].map(f64::to_bits);
+    let mut at: BTreeMap<[u64; 3], Vec<[f64; 4]>> = BTreeMap::new();
+    for (t, tri) in before.triangles.iter().enumerate() {
+        for (k, &v) in tri.iter().enumerate() {
+            at.entry(key(before.positions[v as usize]))
+                .or_default()
+                .push(old[t][k]);
+        }
+    }
+    let cmp = |a: &[f64; 4], b: &[f64; 4]| {
+        (0..4)
+            .map(|k| a[k].total_cmp(&b[k]))
+            .find(|o| o.is_ne())
+            .unwrap_or(core::cmp::Ordering::Equal)
+    };
+    for c in at.values_mut() {
+        c.sort_by(cmp);
+        c.dedup();
+    }
+    let n = after.triangles.len();
+    let new = after.colors.get_or_insert_with(|| vec![[WHITE; 3]; n]);
+    let dist =
+        |a: &[f64; 4], b: &[f64; 4]| (0..4).map(|k| (a[k] - b[k]) * (a[k] - b[k])).sum::<f64>();
+    for (t, tri) in after.triangles.iter().enumerate() {
+        for (k, &v) in tri.iter().enumerate() {
+            let Some(cs) = at.get(&key(after.positions[v as usize])) else {
+                continue;
+            };
+            let here = new[t][k];
+            let mut best = cs[0];
+            for c in &cs[1..] {
+                if dist(c, &here) < dist(&best, &here) {
+                    best = *c;
+                }
+            }
+            new[t][k] = best;
+        }
+    }
+    after.canonicalize()?;
+    Ok(after)
+}
+
 /// Runs the repair steps in order (weld, degenerate and duplicate
 /// triangles, floaters, orientation, holes, fuse, short edges) and reports
 /// what each changed. The result is in canonical order.
@@ -1028,7 +1111,7 @@ pub fn repair(s: &Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairErro
             match shape_bool::fuse(&s) {
                 Ok(f) if f.measure().closed => {
                     r.fused = Some(Ok(n));
-                    keep_input_uvs(&s, f)?
+                    keep_input_colors(&s, keep_input_uvs(&s, f)?)?
                 }
                 Ok(f) => {
                     let m = f.measure();

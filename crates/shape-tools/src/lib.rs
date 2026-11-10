@@ -37,7 +37,10 @@
 //! - [`unwrap()`]: charts, planar projection, packing; [`Uvs`] per
 //!   corner.
 //! - [`measure()`]: [`MeshMeasures`] and their JSON, no thresholds.
-//! - [`glb_plain`]: one node, one mesh, positions, normals and UVs.
+//! - [`glb_plain`]: one node, one mesh, positions, normals, UVs, vertex
+//!   colours and the material with its maps.
+//! - [`downsize`]: a texture budget: a map over a size, decoded (PNG,
+//!   baseline JPEG), box-filtered down and written as PNG.
 //! - [`interference()`]: which parts of a posed scene pass through,
 //!   touch, or hold each other wholly inside ([`Interfering`]).
 
@@ -58,12 +61,13 @@ mod preview;
 mod repair;
 mod skin;
 mod surface;
+mod texture;
 mod unwrap;
 
 pub use decimate::{Decimate, DecimateError, DecimateReport, collapse_short_edges, decimate, lods};
 pub use export::{
-    ExportError, Joint, JointKind, Material, Mimic, Part, Placement, Scene, glb, obj, obj_at,
-    posed, stl, stl_at,
+    ColorSpace, ExportError, Joint, JointKind, MAP_KINDS, Material, Mimic, Part, Placement, Scene,
+    glb, obj, obj_at, posed, stl, stl_at,
 };
 pub use fbx::import_fbx;
 pub use image::{ImageInfo, Texture};
@@ -80,4 +84,5 @@ pub use repair::{
     Floaters, Repair, RepairError, RepairReport, Weld, apply_transform, close_holes, join, orient,
     remove_degenerate, remove_floaters, repair, weld,
 };
+pub use texture::{Downsize, TextureError, decode, downsize};
 pub use unwrap::{Unwrap, UnwrapError, Uvs, unwrap};

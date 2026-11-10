@@ -48,6 +48,17 @@
 //! whose corners cannot be matched (more than one UV side on one end, no
 //! seam to say which) or that would turn a UV triangle over or flatten it
 //! (`orient2d`, exact) is refused, as a turned-over face is.
+//!
+//! Vertex colours (`Solid::colors`, per corner) are carried with the UVs:
+//! a corner's UV and colour are matched together, so a hard colour
+//! border (an edge whose two triangles give either end different
+//! colours) is a feature line as a UV seam is, and a collapse gives the
+//! removed vertex's corners the kept vertex's colour on the same side (the
+//! mean at a midpoint). Smearing a colour is penalised as moving a bone
+//! border is: removing a vertex costs its largest colour difference to a
+//! corner of a triangle around it (any channel, 0..=1) times the bend
+//! scale, on top of its quadric error, and the reported `error` leaves it
+//! out.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BinaryHeap};
@@ -55,7 +66,7 @@ use std::fmt;
 
 use shape_core::predicates::orient2d;
 use shape_core::{DVec2, DVec3};
-use shape_mesh::{EdgeKey, Skin, Solid, Weights, edge_key};
+use shape_mesh::{CornerColors, EdgeKey, Skin, Solid, Weights, edge_key};
 
 use crate::repair::drop_unused;
 
@@ -283,10 +294,30 @@ struct Mesh {
     bend: f64,
     /// Per triangle, its corners' UVs, on a solid with UVs.
     uvs: Option<Vec<[DVec2; 3]>>,
+    /// Per triangle, its corners' colours, on a solid with colours.
+    colors: Option<Vec<CornerColors>>,
 }
 
-/// A corner's new UV: triangle, corner, UV.
-type UvMove = (u32, usize, DVec2);
+/// What a corner carries besides its vertex: its UV and its colour
+/// (zero where the solid has none). Corners match when both agree.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Attr {
+    uv: DVec2,
+    color: [f64; 4],
+}
+
+impl Attr {
+    /// The mean of two, the same bits whichever comes first.
+    fn mean(a: Attr, b: Attr) -> Attr {
+        Attr {
+            uv: (a.uv + b.uv) * 0.5,
+            color: core::array::from_fn(|k| (a.color[k] + b.color[k]) * 0.5),
+        }
+    }
+}
+
+/// A corner's new attributes: triangle, corner, attributes.
+type UvMove = (u32, usize, Attr);
 
 impl Mesh {
     fn neighbours(&self, v: u32) -> Vec<u32> {
@@ -326,7 +357,7 @@ impl Mesh {
         if shared != opposite || opposite.is_empty() {
             return false;
         }
-        if self.uv_moves(from, to, p).is_none() {
+        if self.attr_moves(from, to, p).is_none() {
             return false;
         }
         // Nothing turns over or loses its area.
@@ -346,28 +377,37 @@ impl Mesh {
         true
     }
 
-    /// The corners' new UVs for the collapse `from → to` at `p`: empty on
-    /// a solid without UVs; `None` if they cannot be matched across a
-    /// seam, or a UV triangle would turn over or flatten.
-    fn uv_moves(&self, from: u32, to: u32, p: DVec3) -> Option<Vec<UvMove>> {
-        let Some(uvs) = &self.uvs else {
+    /// A corner's attributes.
+    fn attr(&self, t: u32, k: usize) -> Attr {
+        Attr {
+            uv: self.uvs.as_ref().map_or(DVec2::ZERO, |u| u[t as usize][k]),
+            color: self.colors.as_ref().map_or([0.0; 4], |c| c[t as usize][k]),
+        }
+    }
+
+    /// The corners' new UVs and colours for the collapse `from → to` at
+    /// `p`: empty on a solid with neither; `None` if they cannot be
+    /// matched across a seam, or a UV triangle would turn over or
+    /// flatten.
+    fn attr_moves(&self, from: u32, to: u32, p: DVec3) -> Option<Vec<UvMove>> {
+        if self.uvs.is_none() && self.colors.is_none() {
             return Some(Vec::new());
-        };
+        }
         let corner = |t: u32, v: u32| self.tris[t as usize].iter().position(|&x| x == v);
-        // The edge's own triangles pair each side's UVs at the two ends.
-        let mut pairs: Vec<(DVec2, DVec2)> = Vec::new();
+        // The edge's own triangles pair each side's attributes at the two
+        // ends.
+        let mut pairs: Vec<(Attr, Attr)> = Vec::new();
         for &t in &self.around[from as usize] {
             if let (Some(kf), Some(kt)) = (corner(t, from), corner(t, to)) {
-                let u = uvs[t as usize];
-                pairs.push((u[kf], u[kt]));
+                pairs.push((self.attr(t, kf), self.attr(t, kt)));
             }
         }
         let midpoint = p != self.pos[to as usize];
         let mut moves: Vec<UvMove> = Vec::new();
-        // One end's UV mapped to the other's, if exactly one pairing has
-        // it.
-        let other = |u: DVec2, from_end: bool| -> Option<DVec2> {
-            let mut found: Option<DVec2> = None;
+        // One end's attributes mapped to the other's, if exactly one
+        // pairing has them.
+        let other = |u: Attr, from_end: bool| -> Option<Attr> {
+            let mut found: Option<Attr> = None;
             for &(a, b) in &pairs {
                 let (mine, theirs) = if from_end { (a, b) } else { (b, a) };
                 if mine == u {
@@ -388,29 +428,54 @@ impl Mesh {
                     continue;
                 }
                 let k = corner(t, v)?;
-                let u = uvs[t as usize][k];
+                let u = self.attr(t, k);
                 let o = other(u, from_end)?;
                 let new = match (midpoint, from_end) {
                     (false, _) => o,
-                    (true, true) => (u + o) * 0.5,
-                    (true, false) => (o + u) * 0.5,
+                    (true, true) => Attr::mean(u, o),
+                    (true, false) => Attr::mean(o, u),
                 };
                 moves.push((t, k, new));
             }
         }
-        for &(t, k, new) in &moves {
-            let before = uvs[t as usize];
-            let mut after = before;
-            after[k] = new;
-            let (b, a) = (
-                orient2d(before[0], before[1], before[2]),
-                orient2d(after[0], after[1], after[2]),
-            );
-            if b.is_ne() && a != b {
-                return None;
+        if let Some(uvs) = &self.uvs {
+            for &(t, k, new) in &moves {
+                let before = uvs[t as usize];
+                let mut after = before;
+                after[k] = new.uv;
+                let (b, a) = (
+                    orient2d(before[0], before[1], before[2]),
+                    orient2d(after[0], after[1], after[2]),
+                );
+                if b.is_ne() && a != b {
+                    return None;
+                }
             }
         }
         Some(moves)
+    }
+
+    /// How far `v`'s colour stands from the corners of the triangles
+    /// around it: the largest difference in any channel; 0 on a solid
+    /// without colours.
+    fn color_step(&self, v: u32) -> f64 {
+        let Some(c) = &self.colors else {
+            return 0.0;
+        };
+        let mut step: f64 = 0.0;
+        for &t in &self.around[v as usize] {
+            let tri = self.tris[t as usize];
+            let Some(k) = tri.iter().position(|&x| x == v) else {
+                continue;
+            };
+            let mine = c[t as usize][k];
+            for other in c[t as usize] {
+                for ch in 0..4 {
+                    step = step.max((mine[ch] - other[ch]).abs());
+                }
+            }
+        }
+        step
     }
 
     /// The best allowed collapse of edge `a b`, if any.
@@ -456,6 +521,10 @@ impl Mesh {
                     q.w * d * d
                 }
                 _ => 0.0,
+            } + {
+                // Removing `from` smears its colour over its ring.
+                let d = self.color_step(from) * self.bend;
+                q.w * d * d
             };
             for p in options {
                 let e = Entry {
@@ -477,10 +546,13 @@ impl Mesh {
 
     fn collapse(&mut self, e: &Entry) {
         let (from, to) = (e.from, e.to);
-        let moves = self.uv_moves(from, to, e.pos).unwrap_or_default();
-        if let Some(uvs) = &mut self.uvs {
-            for (t, k, new) in moves {
-                uvs[t as usize][k] = new;
+        let moves = self.attr_moves(from, to, e.pos).unwrap_or_default();
+        for (t, k, new) in moves {
+            if let Some(uvs) = &mut self.uvs {
+                uvs[t as usize][k] = new.uv;
+            }
+            if let Some(c) = &mut self.colors {
+                c[t as usize][k] = new.color;
             }
         }
         let around = std::mem::take(&mut self.around[from as usize]);
@@ -631,6 +703,7 @@ fn collapse(
             }
         },
         uvs: s.uvs.clone(),
+        colors: s.colors.clone(),
     };
     let mut users: BTreeMap<EdgeKey, Vec<u32>> = BTreeMap::new();
     let mut total_area = 0.0;
@@ -670,6 +743,13 @@ fn collapse(
                     let at = |t: usize, v: u32| {
                         let k = s.triangles[t].iter().position(|&w| w == v).unwrap_or(0);
                         u[t][k]
+                    };
+                    at(x, a) != at(y, a) || at(x, b) != at(y, b)
+                }) || s.colors.as_ref().is_some_and(|c| {
+                    // A hard colour border, likewise.
+                    let at = |t: usize, v: u32| {
+                        let k = s.triangles[t].iter().position(|&w| w == v).unwrap_or(0);
+                        c[t][k]
                     };
                     at(x, a) != at(y, a) || at(x, b) != at(y, b)
                 })
@@ -787,6 +867,7 @@ fn collapse(
         positions: m.pos.clone(),
         names: s.names.clone(),
         uvs: s.uvs.as_ref().map(|_| Vec::new()),
+        colors: s.colors.as_ref().map(|_| Vec::new()),
         skin: s.skin.as_ref().map(|k| Skin {
             bones: k.bones.clone(),
             weights: m.weights.clone().unwrap_or_default(),
@@ -799,6 +880,9 @@ fn collapse(
             out.surfaces.push(s.surfaces[i]);
             out.face_tags.push(s.face_tags[i].clone());
             if let (Some(to), Some(from)) = (&mut out.uvs, &m.uvs) {
+                to.push(from[i]);
+            }
+            if let (Some(to), Some(from)) = (&mut out.colors, &m.colors) {
                 to.push(from[i]);
             }
         }

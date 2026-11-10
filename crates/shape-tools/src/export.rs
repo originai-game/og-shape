@@ -10,29 +10,126 @@ use crate::image::Texture;
 use crate::json::{Json, f32n, nums};
 use crate::surface::{METRES, face_normal, split, y_up};
 
+/// How a [`Material`]'s `color` and `emissive` are given (three.js's
+/// colour spaces).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ColorSpace {
+    /// sRGB components, as a person picks them (three.js
+    /// `SRGBColorSpace`); written to glTF converted to linear.
+    #[default]
+    Srgb,
+    /// Linear components, as glTF's factors are (three.js
+    /// `LinearSRGBColorSpace`); written as they are. An import gives this,
+    /// so a file's factors go out unchanged.
+    Linear,
+}
+
 /// What a part is made of: glTF's metallic-roughness model with
 /// three.js's `MeshStandardMaterial` names. The zero value is three.js's
 /// default material (white, roughness 1, not metal, opaque).
+///
+/// Every map is sampled at the solid's [`Solid::uvs`] (glTF `texCoord`
+/// 0); a part with a map and no UVs is [`ExportError::BadTexture`], as is
+/// a map that is not PNG or JPEG.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Material {
     /// The material's name in the file; empty takes the part's name.
     pub name: String,
-    /// Base colour, sRGB components in 0..=1 (three.js `color`); `None`
-    /// is white.
+    /// Base colour, components in 0..=1 in `color_space` (three.js
+    /// `color`); `None` is white.
     pub color: Option<[f64; 3]>,
     /// 0 dielectric, 1 metal (three.js `metalness`).
     pub metalness: f64,
     /// 0 mirror, 1 matte (three.js `roughness`); `None` is 1.
     pub roughness: Option<f64>,
-    /// Light given off, sRGB components in 0..=1 (three.js `emissive`).
+    /// Light given off, components in 0..=1 in `color_space` (three.js
+    /// `emissive`).
     pub emissive: [f64; 3],
     /// 1 opaque, 0 invisible (three.js `opacity`); `None` is 1. Below 1
-    /// the material blends.
+    /// the material blends, unless `transparent` says otherwise.
     pub opacity: Option<f64>,
-    /// Base-colour texture (three.js `map`), sampled at the solid's
-    /// [`Solid::uvs`]; PNG or JPEG. A part with a map and no UVs is
-    /// [`ExportError::BadTexture`].
+    /// Base-colour texture (three.js `map`).
     pub map: Option<Texture>,
+    /// How `color` and `emissive` are given.
+    pub color_space: ColorSpace,
+    /// Multiplies `emissive` (three.js `emissiveIntensity`); `None` is 1.
+    /// Above 1 it is written with `KHR_materials_emissive_strength`.
+    pub emissive_intensity: Option<f64>,
+    /// Blending (glTF `alphaMode` `BLEND`) or not (`OPAQUE`); `None`
+    /// blends when `opacity` is below 1 (three.js `transparent`).
+    pub transparent: Option<bool>,
+    /// Texels whose alpha is below this are cut out (glTF `MASK` with
+    /// this `alphaCutoff`; three.js `alphaTest`). Overrides `transparent`.
+    pub alpha_test: Option<f64>,
+    /// Both sides drawn (glTF `doubleSided`; three.js `side: DoubleSide`).
+    pub double_sided: bool,
+    /// glTF's `metallicRoughnessTexture`: roughness in green, metalness in
+    /// blue, multiplied by `roughness` and `metalness` (three.js sets it
+    /// as both `roughnessMap` and `metalnessMap`).
+    pub metalness_map: Option<Texture>,
+    /// A tangent-space normal map (three.js `normalMap`).
+    pub normal_map: Option<Texture>,
+    /// The normal map's strength (glTF `normalTexture.scale`, three.js
+    /// `normalScale`); `None` is 1.
+    pub normal_scale: Option<f64>,
+    /// Emissive texture, multiplied by `emissive` (three.js
+    /// `emissiveMap`).
+    pub emissive_map: Option<Texture>,
+    /// Ambient occlusion in red (glTF `occlusionTexture`, three.js
+    /// `aoMap`).
+    pub ao_map: Option<Texture>,
+    /// The occlusion's strength (glTF `occlusionTexture.strength`, three.js
+    /// `aoMapIntensity`); `None` is 1.
+    pub ao_map_intensity: Option<f64>,
+}
+
+/// The kinds of map a [`Material`] carries, in the order reports list
+/// them: three.js's names.
+pub const MAP_KINDS: [&str; 5] = [
+    "map",
+    "metalness_map",
+    "normal_map",
+    "emissive_map",
+    "ao_map",
+];
+
+impl Material {
+    /// Each map the material has, with its kind ([`MAP_KINDS`]).
+    pub fn maps(&self) -> Vec<(&'static str, &Texture)> {
+        self.map_slots()
+            .into_iter()
+            .filter_map(|(k, t)| Some((k, t.as_ref()?)))
+            .collect()
+    }
+
+    /// Each map slot, filled or not, with its kind.
+    pub(crate) fn map_slots(&self) -> [(&'static str, &Option<Texture>); 5] {
+        [
+            (MAP_KINDS[0], &self.map),
+            (MAP_KINDS[1], &self.metalness_map),
+            (MAP_KINDS[2], &self.normal_map),
+            (MAP_KINDS[3], &self.emissive_map),
+            (MAP_KINDS[4], &self.ao_map),
+        ]
+    }
+
+    /// Each map slot, mutably.
+    pub fn maps_mut(&mut self) -> [(&'static str, &mut Option<Texture>); 5] {
+        [
+            (MAP_KINDS[0], &mut self.map),
+            (MAP_KINDS[1], &mut self.metalness_map),
+            (MAP_KINDS[2], &mut self.normal_map),
+            (MAP_KINDS[3], &mut self.emissive_map),
+            (MAP_KINDS[4], &mut self.ao_map),
+        ]
+    }
+
+    /// Whether a map of this kind holds colour (sRGB: base colour and
+    /// emissive) rather than data (metalness-roughness, normals,
+    /// occlusion).
+    pub fn is_color_map(kind: &str) -> bool {
+        kind == "map" || kind == "emissive_map"
+    }
 }
 
 /// How a joint moves its part (`docs/research.md` §1.5).
@@ -505,7 +602,7 @@ fn check_joints(scene: &Scene) -> Result<Vec<(Option<Checked>, Rigid)>, ExportEr
 }
 
 /// sRGB component to linear (glTF factors are linear).
-fn linear(c: f64) -> f64 {
+pub(crate) fn linear(c: f64) -> f64 {
     let c = c.clamp(0.0, 1.0);
     if c <= 0.04045 {
         c / 12.92
@@ -514,42 +611,123 @@ fn linear(c: f64) -> f64 {
     }
 }
 
-fn material_json(m: &Material, part: &str, map: Option<u64>) -> Result<Json, ExportError> {
+/// The glTF texture index of each of a material's maps, in
+/// [`MAP_KINDS`] order.
+pub(crate) type MapIndices = [Option<u64>; 5];
+
+/// A material as glTF JSON, its maps at `maps`, and whether it needs
+/// `KHR_materials_emissive_strength`. Fields a zero-value material does
+/// not set are left out, so its JSON is as it always was.
+pub(crate) fn material_json(
+    m: &Material,
+    part: &str,
+    maps: MapIndices,
+) -> Result<(Json, bool), ExportError> {
     let name = if m.name.is_empty() { part } else { &m.name };
     let what = || format!("material {name:?}");
     let color = m.color.unwrap_or([1.0; 3]);
     let opacity = m.opacity.unwrap_or(1.0);
     let roughness = m.roughness.unwrap_or(1.0);
+    let extra = [
+        m.emissive_intensity.unwrap_or(1.0),
+        m.alpha_test.unwrap_or(0.5),
+        m.normal_scale.unwrap_or(1.0),
+        m.ao_map_intensity.unwrap_or(1.0),
+    ];
     for v in color
         .iter()
         .chain(&m.emissive)
         .chain([&opacity, &roughness, &m.metalness])
+        .chain(&extra)
     {
         finite(*v, what)?;
     }
+    let space = |c: f64| match m.color_space {
+        ColorSpace::Srgb => linear(c),
+        ColorSpace::Linear => c.clamp(0.0, 1.0),
+    };
     let base = [
-        linear(color[0]),
-        linear(color[1]),
-        linear(color[2]),
+        space(color[0]),
+        space(color[1]),
+        space(color[2]),
         opacity.clamp(0.0, 1.0),
     ];
+    let index = |k: u64| Json::Obj(vec![("index", Json::Int(k))]);
     let mut pbr = vec![("baseColorFactor", nums(&base))];
-    if let Some(k) = map {
-        pbr.push(("baseColorTexture", Json::Obj(vec![("index", Json::Int(k))])));
+    if let Some(k) = maps[0] {
+        pbr.push(("baseColorTexture", index(k)));
     }
     pbr.push(("metallicFactor", Json::Num(m.metalness.clamp(0.0, 1.0))));
     pbr.push(("roughnessFactor", Json::Num(roughness.clamp(0.0, 1.0))));
+    if let Some(k) = maps[1] {
+        pbr.push(("metallicRoughnessTexture", index(k)));
+    }
     let mut fields = vec![
         ("name", Json::Str(name.to_string())),
         ("pbrMetallicRoughness", Json::Obj(pbr)),
     ];
-    if m.emissive != [0.0; 3] {
-        fields.push(("emissiveFactor", nums(&m.emissive.map(linear))));
+    if let Some(k) = maps[2] {
+        let mut t = vec![("index", Json::Int(k))];
+        if let Some(scale) = m.normal_scale.filter(|&x| x != 1.0) {
+            t.push(("scale", Json::Num(scale)));
+        }
+        fields.push(("normalTexture", Json::Obj(t)));
     }
-    if opacity < 1.0 {
+    if let Some(k) = maps[4] {
+        let mut t = vec![("index", Json::Int(k))];
+        if let Some(strength) = m.ao_map_intensity.filter(|&x| x != 1.0) {
+            t.push(("strength", Json::Num(strength.clamp(0.0, 1.0))));
+        }
+        fields.push(("occlusionTexture", Json::Obj(t)));
+    }
+    if let Some(k) = maps[3] {
+        fields.push(("emissiveTexture", index(k)));
+    }
+    if m.emissive != [0.0; 3] {
+        fields.push(("emissiveFactor", nums(&m.emissive.map(space))));
+    }
+    if let Some(cutoff) = m.alpha_test {
+        fields.push(("alphaMode", Json::Str("MASK".into())));
+        fields.push(("alphaCutoff", Json::Num(cutoff.max(0.0))));
+    } else if m.transparent.unwrap_or(opacity < 1.0) {
         fields.push(("alphaMode", Json::Str("BLEND".into())));
     }
-    Ok(Json::Obj(fields))
+    if m.double_sided {
+        fields.push(("doubleSided", Json::Bool(true)));
+    }
+    let strength = m.emissive_intensity.filter(|&x| x != 1.0);
+    if let Some(x) = strength {
+        fields.push((
+            "extensions",
+            Json::Obj(vec![(
+                "KHR_materials_emissive_strength",
+                Json::Obj(vec![("emissiveStrength", Json::Num(x.max(0.0)))]),
+            )]),
+        ));
+    }
+    Ok((Json::Obj(fields), strength.is_some()))
+}
+
+/// Each of a material's maps checked ([`check_texture`]) and given its
+/// index in `textures` (shared when two maps are the same image).
+pub(crate) fn map_indices<'t>(
+    m: &'t Material,
+    part: &str,
+    has_uvs: bool,
+    textures: &mut Vec<&'t Texture>,
+) -> Result<MapIndices, ExportError> {
+    let mut out: MapIndices = [None; 5];
+    for (k, (_, slot)) in m.map_slots().into_iter().enumerate() {
+        if let Some(t) = slot {
+            check_texture(t, part, has_uvs)?;
+            let i = textures.iter().position(|x| *x == t).unwrap_or_else(|| {
+                textures.push(t);
+                textures.len() - 1
+            });
+            out[k] = Some(i as u64);
+        }
+    }
+    Ok(out)
 }
 
 fn joint_extras(j: &Checked) -> Json {
@@ -621,6 +799,7 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
     let mut roots: Vec<usize> = Vec::new();
     let mut skins: Vec<SkinOut> = Vec::new();
     let mut textures: Vec<&Texture> = Vec::new();
+    let mut emissive_strength = false;
     let mut view = |bin: &mut Vec<u8>, start: usize, target: u64| -> u64 {
         views.push(Json::Obj(vec![
             ("buffer", Json::Int(0)),
@@ -704,6 +883,27 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
                 ]));
                 attributes.push(("TEXCOORD_0", Json::Int((accessors.len() - 1) as u64)));
             }
+            if !s.colors.is_empty() {
+                if s.colors.iter().flatten().any(|c| !c.is_finite()) {
+                    return Err(ExportError::NotFinite(format!(
+                        "part {:?}'s vertex colours",
+                        part.name
+                    )));
+                }
+                let start = bin.len();
+                s.colors
+                    .iter()
+                    .flatten()
+                    .for_each(|&c| push_f32(&mut bin, c.clamp(0.0, 1.0) as f32));
+                let cv = view(&mut bin, start, ARRAY_BUFFER);
+                accessors.push(Json::Obj(vec![
+                    ("bufferView", Json::Int(cv)),
+                    ("componentType", Json::Int(FLOAT)),
+                    ("count", Json::Int(s.colors.len() as u64)),
+                    ("type", Json::Str("VEC4".into())),
+                ]));
+                attributes.push(("COLOR_0", Json::Int((accessors.len() - 1) as u64)));
+            }
             if let Some(sk) = skin {
                 let (j, w) = crate::skin::vertex_data(sk, &s.sources);
                 for (bytes, kind, name) in
@@ -735,18 +935,15 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
             primitive.push(("attributes", Json::Obj(attributes)));
             primitive.push(("indices", Json::Int((accessors.len() - 1) as u64)));
         }
-        let map = match &part.material.map {
-            Some(t) => {
-                check_texture(t, &part.name, part.solid.uvs.is_some())?;
-                let k = textures.iter().position(|x| *x == t).unwrap_or_else(|| {
-                    textures.push(t);
-                    textures.len() - 1
-                });
-                Some(k as u64)
-            }
-            None => None,
-        };
-        materials.push(material_json(&part.material, &part.name, map)?);
+        let maps = map_indices(
+            &part.material,
+            &part.name,
+            part.solid.uvs.is_some(),
+            &mut textures,
+        )?;
+        let (material, strength) = material_json(&part.material, &part.name, maps)?;
+        emissive_strength |= strength;
+        materials.push(material);
         let mesh_index = meshes.len() as u64;
         if !primitive.is_empty() {
             primitive.push(("material", Json::Int((materials.len() - 1) as u64)));
@@ -882,6 +1079,9 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
         ),
         ("nodes", Json::Arr(nodes)),
     ];
+    if emissive_strength {
+        doc.insert(1, ("extensionsUsed", extensions_used()));
+    }
     if !meshes.is_empty() {
         doc.push(("meshes", Json::Arr(meshes)));
         doc.push(("materials", Json::Arr(materials)));
@@ -923,6 +1123,11 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
         out.extend_from_slice(&bin);
     }
     Ok(out)
+}
+
+/// `extensionsUsed` for a material with an emissive strength.
+pub(crate) fn extensions_used() -> Json {
+    Json::Arr(vec![Json::Str("KHR_materials_emissive_strength".into())])
 }
 
 /// Checks that a texture can be written: PNG or JPEG (glTF's core

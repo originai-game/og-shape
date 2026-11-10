@@ -1050,3 +1050,60 @@
   texture. `guides/meshtools.md` told authors to read it, and the report
   left it out. Golden line `mcp.process.ball_defects` moved for the new
   field (its value there is 0), with the owner's leave.
+- Materials, maps and vertex colours through the mesh chain (stream AH,
+  `docs/research.md` §29):
+  - `shape_mesh::Solid::colors`: vertex colours, linear RGBA per triangle
+    corner, beside `uvs`; present only when the input has them, so no
+    hash of a solid without them moved. `Solid::set_colors`,
+    `Solid::color_at`, `shape_mesh::WHITE`.
+  - Import reads glTF `COLOR_0` (float or normalised integer, RGB or
+    RGBA) and OBJ `v x y z r g b` (sRGB, made linear) into it; they were
+    only listed in `skipped` before.
+  - `ImportedPart::material` is now a `shape_tools::Material` (was the
+    material's name; `ImportedPart::map` is now `material.map`): factors
+    as the file means them (glTF: base colour, metallic, roughness,
+    emissive with `KHR_materials_emissive_strength`, alpha mode and
+    cutoff, double-sided; MTL: `Kd`, `d`/`Tr`, `Ke`, `Pr`, `Pm`; FBX:
+    diffuse, emissive, opacity) and every map: `map`, `metalness_map`,
+    `normal_map`, `emissive_map`, `ao_map`. `ImportedPart::defaults`
+    lists the glTF factors the file leaves unset (an unset
+    `metallicFactor` is 1, as glTF says).
+  - `Material` gains `color_space` (`ColorSpace::Linear` writes glTF's
+    factors unchanged), `emissive_intensity`, `transparent`,
+    `alpha_test`, `double_sided`, `metalness_map`, `normal_map`,
+    `normal_scale`, `emissive_map`, `ao_map`, `ao_map_intensity`; `glb`
+    and `glb_plain` (new `PlainGlb::material`) write them, and
+    `COLOR_0`. A zero-value material writes the JSON it always did.
+  - Repair, join, the fuse step, decimation, booleans (`shape_bool`) and
+    unwrap carry the colours as they carry UVs: hole fills take their
+    rim's, a cut face interpolates them, decimation keeps hard colour
+    borders as feature lines and penalises smearing a colour as it does
+    a bone border. `BoolReport::faces_without_colors` counts faces from
+    an operand without colours (its `Debug` text shows the field only
+    when it is not 0).
+  - `shape_tools::downsize` and `decode`: a texture budget. PNG and
+    baseline JPEG are decoded (integer inverse DCT), box-filtered down
+    in linear light for colour maps and as stored for data maps, and
+    written as PNG; the same bytes on every target. `shape process
+    --texture-max PX` and the MCP `process` tool's `texture_max` apply it
+    to every map kept and report each map's size and decoded bytes
+    before and after (`textures`).
+  - `measure` with `Measure::materials` reports each material's maps and
+    sizes and texture memory per kind of map (`texture.materials`,
+    `texture.by_kind`), and on a coloured solid `colors.borders`.
+  - The CLI's and MCP's `import` report gives each part's `colors` and
+    `look` (factors, maps, `defaults`); `repair`, `decimate`, `unwrap`
+    and `process` report the `material` written, with what was
+    `dropped` (every map when the UVs are replaced, or parts whose
+    materials differ), and an OBJ or STL output's `not_written` lists
+    the UVs, colours and material it leaves out. `process` has a
+    `textures` step (seven steps now), and its `measures.texture` counts
+    the maps it writes (it counted every image the file references).
+  - Golden: `mcp.process.ball_defects` moved for the new report fields
+    only (its GLB is byte for byte the same). New cases
+    `meshtools.look.import`, `meshtools.look.chain`,
+    `meshtools.look.texture`, `mcp.process.look`; fixture
+    `golden/meshes/stripes_420.jpg` (32 × 16, made here with libjpeg).
+  - `bench/generated/look.ts` measures what of a file's look reaches the
+    output; `bench/generated/src/bin/normals.rs` what the chain does to a
+    normal map's shading.

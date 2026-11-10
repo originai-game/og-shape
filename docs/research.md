@@ -6531,3 +6531,214 @@ ordinary cases.
   Stable Fast 3D (its outputs' terms), FBX or Draco outputs (none of
   these generators write them), skinned generated characters (none
   here are rigged).
+
+## 29. Materials, maps and vertex colours through the chain (stream AH)
+
+Base 64af70c. §28.7 found four gaps in how a mesh's look goes through
+the tools, by files affected of 54: material factors not carried (36 of
+38 GLB: the output was always metallic 0, roughness 1), maps other than
+base colour dropped (21: 15 metallic-roughness, 6 normal), vertex
+colours not read (14: TripoSR, InstantMesh, Unique3D, whose only colour
+they are), and no texture budget (16 files over 16 MiB of texture with
+mips, Meshy's 4096² up to 85 MiB). This stream closes the first three
+and adds the fourth. Numbers, no verdicts.
+
+### 29.1 The decisions
+
+- **`Solid::colors: Option<Vec<[[f64; 4]; 3]>>`**: linear RGBA per
+  triangle corner, exactly parallel to `Solid::uvs` (§17.1), for the
+  same reasons: a hard colour border is two corners of one vertex with
+  different colours, so welding by position never splits or merges for
+  colour. Absent unless the input has colours; `canonicalize` rotates
+  them with their triangle and breaks the last ties by them, after the
+  UVs; `hash_into` adds them only when present. No golden line of a
+  solid without colours moved. A triangle added without saying is opaque
+  white (`shape_mesh::WHITE`), which is what glTF draws for a primitive
+  without `COLOR_0`; `append` gives the side without colours white.
+- **Read:** glTF `COLOR_0` as float or normalised unsigned byte or short,
+  RGB (alpha 1) or RGBA, linear as glTF defines it; a primitive without
+  it is white. OBJ `v x y z r g b` as sRGB (as three.js's OBJLoader and
+  the generators that write it mean it), made linear; a file whose
+  components exceed 1 is read as 0..=255; a part takes colours when any
+  of its vertices has one, and the others are white (reported). FBX's
+  `LayerElementColor` is listed in `skipped`, not read.
+- **The material of an imported part** is a `shape_tools::Material`
+  (`ImportedPart::material`, which was the material's name;
+  `ImportedPart::map` became `material.map`): the export's struct,
+  three.js's names, extended with what glTF has and it lacked:
+  `emissive_intensity` (`KHR_materials_emissive_strength`),
+  `transparent` (`BLEND` or `OPAQUE` explicitly), `alpha_test` (`MASK`
+  and its cutoff), `double_sided`, `metalness_map` (glTF's
+  metallic-roughness texture; three.js sets it as both its metalness
+  and roughness map), `normal_map` and `normal_scale`, `emissive_map`,
+  `ao_map` and `ao_map_intensity`. Each new field's zero value writes
+  what was written before, so no golden GLB of a program moved.
+- **Colour space.** `Material::color` and `emissive` were sRGB (three.js
+  `color`) and written to glTF linearised by `trig::pow`. A file's glTF
+  factors are linear; converting them to sRGB and back would not return
+  the file's bits. `Material::color_space` (`ColorSpace::Srgb`, the
+  default, or `Linear`) says which: an import sets `Linear`, and a
+  file's factors go out bit for bit (the round-trip test compares them
+  with `==`). MTL's `Kd`/`Ke` and FBX's colours are sRGB, as three.js's
+  loaders read them.
+- **glTF's defaults as the file means them.** An unset `metallicFactor`
+  is 1 by the specification, and every viewer draws such a material as
+  metal; so does the import. `ImportedPart::defaults` lists each factor
+  the file left unset (`metallicFactor`, `roughnessFactor`,
+  `baseColorFactor`), and the import report shows them, so an agent can
+  see that Hunyuan3D's bear is metal by default, not by intent, and
+  decide. A primitive with no material takes glTF's default material
+  (also metal).
+- **Maps.** All five glTF maps are read on `texCoord` 0, kept as their
+  files' bytes, and written back with the solid's UVs; a map on another
+  UV set is listed in `skipped`, as is a sampler that does not repeat
+  (Meshy's robot mirrors; one sampler, linear and repeating, is
+  written). OBJ: `map_Kd`, `map_Ke` and `norm` (the PBR extension's
+  normal map); `bump`/`map_Bump` are height maps, and `map_Pr`/`map_Pm`
+  separate grey maps glTF cannot take without combining them: listed,
+  with every other unread MTL statement (`Ks`, `Ns`, `Ka`, `illum`…).
+  FBX: the textures linked to `DiffuseColor`, `NormalMap` and
+  `EmissiveColor`; others listed.
+- **Where the material goes.** The CLI joins a file's parts into one
+  solid and writes one material (a plain GLB). Parts whose materials
+  agree (names aside) give theirs; otherwise three.js's default with the
+  base-colour map every textured part shares, as before, and the
+  report's `material.dropped` says so. `--unwrap` (and `shape unwrap`)
+  drop every map, each named in `dropped`; the factors and colours stay.
+  OBJ and STL hold positions only: the output's `not_written` lists the
+  UVs, colours and material left out.
+- **The texture budget** (`shape_tools::downsize`, `--texture-max PX`):
+  decode, box filter, PNG. Rejected: KTX2/Basis (an encoder is a large
+  dependency or port, and out of scope here); resampling with a wider
+  kernel (a box filter's weights are exact rationals, so the integer
+  arithmetic is exact and target-independent; a Lanczos kernel needs
+  `sin`).
+- **No new crate.** The PNG decoder inflates with `miniz_oxide` (already
+  used); the JPEG decoder is written here from the specification (ITU
+  T.81: Huffman tables per F.2.2.3, the coefficient extension F.2.2.1,
+  block order A.2): baseline and extended sequential Huffman, 8-bit,
+  one or three components, any sampling, restart intervals, JFIF and
+  Adobe colour transforms. Progressive and arithmetic-coded JPEG are
+  refused with a reason (none of the 43 JPEGs in the bench is
+  progressive).
+
+### 29.2 Determinism of the image code
+
+- The inverse DCT is separable and integer: an 8×8 basis table
+  `c(u)/2·cos((2x+1)uπ/16)` computed once by `trig::cos` and rounded to
+  integers × 2¹³, rows kept with 3 extra bits, columns rounded to
+  bytes, all in `i64`. Chroma at half resolution is filled by the
+  triangle filter (¾ the nearer sample, ¼ the next), in integers.
+  YCbCr to RGB in 16-bit fixed point.
+- The box filter weighs each input texel by its exact overlap with the
+  output texel, as integers (input and output sizes as the units), in
+  two passes with one rounding each. Colour channels are averaged in
+  linear light: a 256-entry sRGB-to-linear table × 2²⁰, computed once
+  by `trig::pow` and rounded; the result goes back to the sRGB byte
+  whose table entry is nearest (a binary search). Alpha and data maps
+  are averaged as stored (× 2¹² for the rounding). A normal map's
+  averaged vectors are not renormalised: shorter normals where the map
+  varies inside a texel, which a viewer renormalises.
+- PNG out through the existing encoder (filter Up, deflate level 9).
+- Golden `meshtools.look.texture` hashes the fixture JPEG's decoded
+  texels and the PNG bytes of four downsizings; the gate compares it on
+  every target.
+
+### 29.3 Through the tools
+
+| tool | vertex colours | material and maps |
+|---|---|---|
+| `weld`, `remove_degenerate`, `remove_floaters`, `orient` | a kept triangle keeps its corners' colours; a turned triangle turns them | per part, untouched |
+| `close_holes` | each rim vertex takes its colour in the rim triangle leaving it, a fan's centre their mean (as UVs, §17.2) | – |
+| `fuse` (self-union) | interpolated in the source triangle by `shape_bool`; a corner on an input vertex gets that vertex's own colour back (the nearest of its colours), as the UV fix of §28.5 does, so no border appears where the file had none | – |
+| booleans (`shape_bool`) | interpolated barycentrically in each output triangle's source triangle, so a cut face keeps its colours; the faces of an operand without colours are white and `BoolReport::faces_without_colors` counts them (its `Debug` shows the field only when it is not 0, so no report of a solid without colours reads differently) | – |
+| `apply_transform`, `join` | carried; a mirror turns them with the triangle; a part without colours joined to one with them is white | the CLI writes the parts' common material, or reports why not |
+| `decimate`, `lods`, `collapse_short_edges` | a corner's UV and colour are matched together through the edge's triangles (§17.2's matching, on both); a hard colour border is a feature line as a UV seam is; removing a vertex costs, on top of its quadric error, its largest colour difference to a corner of a triangle around it (0..=1) × 0.5 % of the diagonal, squared and weighted by its quadric's area, as a bone border's step does (§11.5); the reported `error` leaves the penalty out | kept (the UVs are) |
+| `unwrap` | kept | every map dropped, each named in `material.dropped` |
+| `glb`, `glb_plain` | `COLOR_0` as float RGBA, one vertex per (position, surface, UV, colour) | every factor and map |
+| `obj`, `stl` | not written (`not_written`) | not written |
+| `measure` | `colors.borders`: edges where a corner's colour differs between the two triangles | with `Measure::materials`: each material's maps and sizes, memory per kind |
+
+Tests (`crates/shape-tools/tests/colors.rs`): an affine colour on a
+sphere comes out of decimation to half within 10⁻¹² of the colour of
+each corner's position; two hemispheres keep one colour per triangle
+and their border on the input's border vertices (it fails with the
+feature line taken out); a soup with a hole repaired keeps every rim
+corner's colour; a coloured block cut by a pin without colours keeps
+the affine colour on its own faces to 10⁻¹² and counts the pin's faces;
+a material with every field and map, and colours, through `glb` and
+`glb_plain` and back compares equal; glTF's defaults are listed; an
+FBX material's colours; the JPEG fixture against libjpeg.
+
+### 29.4 Normal maps under repair and decimation (SPAR3D)
+
+A normal map is in tangent space. None of the 54 files carries
+`TANGENT`, so a viewer derives the frame itself: three.js, from the
+screen-space derivatives of position and UV per pixel (per triangle, in
+effect: dP/du and dP/dv), around the interpolated vertex normal; glTF
+asks for MikkTSpace, which also starts from the UVs and normals. The
+chain changes both inputs: decimation moves vertices and UVs, and every
+output's normals are recomputed (area-weighted, smooth within a surface)
+where the file had its own. Mirrored UV charts (30–80 % of triangles,
+§28.2) flip the frame's handedness; decimation keeps each UV triangle's
+winding (`orient2d`), so it should not flip one.
+
+Measured, not assumed: `bench/generated/src/bin/normals.rs` takes each
+output triangle's centre, finds the nearest point of the input surface,
+and compares the shading normal a viewer computes there on each mesh
+(per-triangle frame from dP/du, dP/dv made orthogonal to the
+interpolated normal; the map's texel at each mesh's own UV; glTF's +y
+up the texture). Also the angle between the interpolated vertex normals
+alone, and the share of points whose UV winding differs. SPAR3D's six
+files (normal map 1024², the guide's repair, keeping UVs):
+
+| file (triangles) | repaired: shading median / p95 (°) | keep 50k | keep 10k | keep 2k | handedness differs (10k; 2k) |
+|---|---|---|---|---|---|
+| 5 (42k) | 0.92 / 7.2 | 0.92 / 7.2 | 2.75 / 15.8 | 8.1 / 35.5 | 0.01 %; 0.70 % |
+| 30 (42k) | 1.35 / 10.4 | 1.35 / 10.4 | 5.26 / 22.1 | 6.1 / 30.7 (7.4k) | 0.28 %; 1.04 % |
+| 120 (70k) | 1.44 / 16.8 | 2.46 / 19.3 | 6.09 / 31.6 (21k) | 6.09 / 31.6 (21k) | 0.22 %; 0.22 % |
+| 300 (35k) | 1.16 / 6.7 | 1.16 / 6.7 | 3.28 / 13.8 | 10.9 / 36.1 | 0.03 %; 1.95 % |
+| 420 (25k) | 1.61 / 10.9 | 1.61 / 10.9 | 3.58 / 16.9 | 12.2 / 45.7 | 0 %; 3.05 % |
+| 480 (25k) | 1.05 / 9.5 | 1.05 / 9.5 | 2.58 / 14.7 | 9.7 / 42.1 | 0 %; 1.65 % |
+
+(In parentheses: where the budget is not reached, §28.3's UV-island
+floor.) The input against itself gives 0 everywhere, so the measure
+adds nothing of its own.
+
+- **Repair alone** moves the shading normal a median 0.9–1.6°, p95
+  7–17°, with no vertex moved (the median distance to the input is 0):
+  it is the recomputed vertex normals. The median angle between the two
+  vertex normals alone is within 0.11° of the median shading angle on
+  every file (0.93 against 0.92° on file 5, 1.42 against 1.35° on 30),
+  so the tangent frame adds almost nothing; the normals do. Writing the
+  file's normals back would remove it, and needs normals on the solid
+  (not done here: §29.8).
+- **Decimation** to 10k: median 2.6–6.1°, p95 14–32°; to 2k, 6–12° and
+  31–46°. The maxima (84–170° on every row) were not traced to their
+  places; a nearest point on another part of the model (a thin part,
+  or another chart) gives such angles.
+- **Handedness**: none differs after repair; 0–0.28 % of points at 10k
+  and 0.2–3 % at 2k. Decimation refuses a collapse that turns a UV
+  triangle over, so these are points whose nearest input point lies in
+  a chart of the other winding; the measure does not separate the
+  cases further.
+- What it means for an agent: a normal-mapped mesh keeps its relief at
+  10k to within a few degrees; below that, or for a hard-surface map,
+  bake again (§28.7, no baking here).
+
+### 29.5 The decoder against a reference
+
+`bench/generated/src/bin/decode.rs` decodes every texture in the 54
+files (61 images: 18 PNG, 43 baseline JPEG, 1024² to 4096²) and writes
+the texels; PIL 12.3 (libjpeg) decodes the same files:
+
+- PNG: all 18 identical, texel for texel.
+- JPEG: every texel within 4 levels of libjpeg's (median of the per-image
+  maxima 3), mean difference 0.06 levels (worst image 0.14). The
+  difference is rounding in the inverse DCT and the chroma filter
+  (libjpeg alternates its rounding bias; this one does not). Before the
+  triangle filter, with chroma upsampled by nearest sample, it was up to
+  76 levels at colour edges (mean 0.9).
+- Time (x86-64, release): median 33 ms at 1024², 115 ms at 2048², 518
+  ms at 4096².
+

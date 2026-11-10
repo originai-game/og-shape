@@ -71,7 +71,7 @@ Tools (arguments are in each tool's schema):
 | `export` | a program or a mesh file; `out` (.glb, .obj, .stl), `pose`? | the file |
 | `import` | a mesh file; `out`? | parts, materials, UVs, bones, images, what was skipped |
 | `repair`, `decimate`, `unwrap` | a mesh file and the tool's settings; `out`? | what changed, measures after |
-| `process` | a mesh file; `budget`, `repair`, `unwrap`, `out`? | the whole chain's report |
+| `process` | a mesh file; `budget`, `repair`, `unwrap`, `fresh_uvs`, `texture_max`, `out`? | the whole chain's report, with the material written and each map's size before and after |
 | `run_typescript` | `source` or `path` (a .ts file already there); `program_out`? | parts, measures, the recorded program, `console.log` output as `logs` |
 
 `pose` (`{"lid_hinge": 1.2}`: radians, or mm for a slide) poses a

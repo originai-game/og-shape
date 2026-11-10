@@ -223,6 +223,18 @@ pub fn drop_slivers(s: &mut Solid) -> bool {
             .collect();
         s.uvs = Some(uvs);
     }
+    if let Some(c) = &s.colors {
+        let colors: Vec<_> = out
+            .iter()
+            .map(|&(t, src)| {
+                t.map(|v| {
+                    s.color_at(src, s.positions[v as usize])
+                        .unwrap_or(c[src][0])
+                })
+            })
+            .collect();
+        s.colors = Some(colors);
+    }
     s.surfaces = out.iter().map(|&(_, src)| s.surfaces[src]).collect();
     s.face_tags = out
         .iter()

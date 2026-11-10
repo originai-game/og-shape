@@ -83,6 +83,8 @@ atlas packing. Each can be added later without changing the API.
   - optionally, UVs: one texture coordinate per triangle corner, so a
     seam is two corners of a vertex with different UVs (v up; glTF's v
     is flipped on the way in and out).
+  - optionally, vertex colours: linear RGBA per triangle corner, kept
+    exactly as UVs are (`docs/research.md` §29).
   
   Positions and UVs are f64 inside and rounded to f32 only on output. A
   solid without UVs orders and hashes exactly as before UVs existed.
@@ -104,6 +106,11 @@ atlas packing. Each can be added later without changing the API.
     cavity reads right.
   - A tool that cannot keep UVs refuses or reports; it never drops them
     silently.
+- **Materials of imported meshes** (`docs/research.md` §29): an imported
+  part keeps its material's factors as the file means them (glTF's
+  defaults where it leaves one unset) and its five glTF maps, by
+  three.js's names, through every tool that keeps its UVs; replacing the
+  UVs drops the maps and says so.
 - **Names.** Every face and edge carries a set of tags. sand3d's rules are
   the starting point (`docs/research.md` §1.3):
   - Generators name caps and walls (`top`, `bottom`, `start`, `end`,

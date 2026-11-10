@@ -110,9 +110,10 @@ const TOOLS: [Tool; 10] = [
     Tool {
         name: "process",
         description: "The mesh tools' chain on one file: import → join → repair → decimate to \
-            `budget` triangles → unwrap → measure → export (`out`, a plain GLB with UVs). One \
-            report of every step. A mesh that carries UVs keeps them and its texture, and is not \
-            unwrapped unless `fresh_uvs` is set.",
+            `budget` triangles → unwrap → textures → measure → export (`out`, a plain GLB with \
+            UVs, vertex colours and the material). One report of every step. A mesh that carries \
+            UVs keeps them and its material's maps, and is not unwrapped unless `fresh_uvs` is \
+            set; `texture_max` shrinks maps over that many texels.",
         schema: process_schema,
         handler: process_tool,
     },
@@ -634,7 +635,12 @@ fn process_schema() -> Value {
         ),
         (
             "fresh_uvs",
-            boolean("Unwrap even a mesh that carries UVs from its file (its texture is then not written)."),
+            boolean("Unwrap even a mesh that carries UVs from its file (its maps are then not written)."),
+        ),
+        (
+            "texture_max",
+            int("Shrink every map kept whose longest side is over this many texels (box filter, \
+                 written as PNG); the report gives each map's size before and after. 0 keeps them."),
         ),
     ]);
     schema(p, &["path"])
@@ -828,6 +834,7 @@ fn process_tool(server: &Server, a: &Args, p: &mut dyn Progress) -> Result<Vec<V
         unwrap: a.sub("unwrap")?.as_ref().unwrap_or(&none).unwrap()?,
         intersections: a.flag("intersections")?,
         fresh_uvs: a.flag("fresh_uvs")?,
+        texture_max: a.u32("texture_max")?,
         out: a.path("out")?,
     };
     let total = STEPS.len();

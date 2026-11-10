@@ -100,10 +100,26 @@ fn obj_round_trip_and_polygons() {
     };
     let imported = import_obj(quad.as_bytes(), &d, &no_files).unwrap();
     assert_eq!(imported.polygons_triangulated, 1);
-    // The library, the line and the vertex colour, which is not read.
-    assert_eq!(imported.skipped.len(), 3);
-    assert_eq!(imported.skipped[2], "1 vertex colours (v x y z r g b)");
+    // The library, the line, and the vertices without a colour.
+    assert_eq!(
+        imported.skipped[1..],
+        [
+            "5 of 6 vertices have no colour and are white",
+            "1 line elements"
+        ]
+    );
     let p = &imported.parts[0];
+    // The one coloured vertex: sRGB (1, 0.5, 0) made linear; the rest white.
+    let colors = p.solid.colors.as_ref().unwrap();
+    let first = p.solid.triangles.iter().zip(colors).find_map(|(t, c)| {
+        let k = t
+            .iter()
+            .position(|&v| p.solid.positions[v as usize] == DVec3::ZERO)?;
+        Some(c[k])
+    });
+    let half = shape_core::trig::pow((0.5 + 0.055) / 1.055, 2.4);
+    assert_eq!(first, Some([1.0, half, 0.0, 1.0]));
+    assert!(colors.iter().flatten().filter(|c| **c == [1.0; 4]).count() > 0);
     assert_eq!(p.name, "plate");
     assert_eq!(p.solid.triangles.len(), 4);
     let m = p.solid.measure();
@@ -161,14 +177,21 @@ fn gltf_with_external_and_embedded_buffers() {
         r#""asset":{"version":"2.0"},"extensionsRequired":["KHR_draco_mesh_compression"]"#,
     );
     assert!(import_gltf(draco.as_bytes(), &files).is_err());
-    // Vertex colours are not read, and said so (image-to-3D outputs carry
-    // their colour there).
+    // Vertex colours are read (image-to-3D outputs carry their colour
+    // there): here the positions as RGB, clamped to 1.
     assert!(imported.skipped.is_empty());
     let coloured = json.replace(r#""POSITION":0}"#, r#""POSITION":0,"COLOR_0":0}"#);
     let imported = import_gltf(coloured.as_bytes(), &files).unwrap();
+    assert!(imported.skipped.is_empty());
+    let mut colors: Vec<[f64; 4]> = imported.parts[0].solid.colors.as_ref().unwrap()[0].to_vec();
+    colors.sort_by(|a, b| a.partial_cmp(b).unwrap());
     assert_eq!(
-        imported.skipped,
-        ["tri: primitive 0's vertex colours (COLOR_0)"]
+        colors,
+        [
+            [0.0, 0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0, 1.0]
+        ]
     );
 }
 
@@ -286,10 +309,13 @@ fn binary_fbx_with_pivots_compressed_arrays_and_a_texture() {
     assert_eq!(imported.parts.len(), 1);
     assert_eq!(imported.polygons_triangulated, 6);
     let p = &imported.parts[0];
-    assert_eq!((p.name.as_str(), p.material.as_str()), ("Cube", "Steel"));
+    assert_eq!(
+        (p.name.as_str(), p.material.name.as_str()),
+        ("Cube", "Steel")
+    );
     assert_eq!(p.solid.uvs.as_ref().map(Vec::len), Some(12));
     // Steel's DiffuseColor texture is the embedded PNG.
-    let map = p.map.as_ref().unwrap();
+    let map = p.material.map.as_ref().unwrap();
     assert_eq!(
         (map.name.as_str(), map.mime.as_str()),
         ("textures/albedo.png", "image/png")

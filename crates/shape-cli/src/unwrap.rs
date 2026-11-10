@@ -43,10 +43,13 @@ pub fn unwrap(files: &dyn Files, d: &UnwrapDesc) -> Result<String, Failure> {
             ..Default::default()
         },
     );
-    let output = write_solid(files, &mesh.name, &s, None, d.out.as_deref())?;
+    let (mut material, defaults, mut dropped) = mesh.material();
+    dropped.extend(crate::process::drop_maps(&mut material));
+    let output = write_solid(files, &mesh.name, &s, Some(&material), d.out.as_deref())?;
     Ok(object(&[
         ("unwrap", report::unwrap(&uvs)),
         ("measures", m.to_json()),
+        ("material", report::material(&material, &defaults, &dropped)),
         ("output", output),
     ]))
 }
