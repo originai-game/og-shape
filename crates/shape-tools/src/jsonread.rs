@@ -91,6 +91,14 @@ impl Value {
         }
     }
 
+    /// The members of an object, in file order; empty for anything else.
+    pub(crate) fn entries(&self) -> &[(String, Value)] {
+        match self {
+            Value::Obj(fields) => fields,
+            _ => &[],
+        }
+    }
+
     /// An array of numbers, if this is one.
     pub(crate) fn nums(&self) -> Option<Vec<f64>> {
         match self {

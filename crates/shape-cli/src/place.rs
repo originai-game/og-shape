@@ -94,11 +94,12 @@ pub fn place(files: &dyn Files, d: &PlaceDesc) -> Result<String, Failure> {
 }
 
 /// A mesh file's parts, as placed here, in the format `out` names: GLB
-/// keeps skins, UVs and each part's base-colour texture.
+/// keeps skins, UVs, vertex colours and each part's material with its
+/// maps.
 fn encode_parts(mesh: &Mesh, parts: &[(String, Solid)], out: &Path) -> Result<Vec<u8>, Failure> {
     let mut s = scene(&mesh.name, parts);
     for (part, p) in s.parts.iter_mut().zip(&mesh.imported.parts) {
-        part.material.map = p.map.clone();
+        part.material = p.material.clone();
     }
     match extension(out).as_str() {
         "glb" => glb(&s).map_err(failed),

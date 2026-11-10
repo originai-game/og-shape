@@ -43,7 +43,10 @@
 //!   about up), scales it uniformly to a size, and moves its origin to
 //!   its base or centre; [`axis_measures`] reports the numbers that tell
 //!   which way it stands.
-//! - [`glb_plain`]: one node, one mesh, positions, normals and UVs.
+//! - [`glb_plain`]: one node, one mesh, positions, normals, UVs, vertex
+//!   colours and the material with its maps.
+//! - [`downsize`]: a texture budget: a map over a size, decoded (PNG,
+//!   baseline JPEG), box-filtered down and written as PNG.
 //! - [`interference()`]: which parts of a posed scene pass through,
 //!   touch, or hold each other wholly inside ([`Interfering`]).
 
@@ -65,6 +68,7 @@ mod preview;
 mod repair;
 mod skin;
 mod surface;
+mod texture;
 mod unwrap;
 
 pub use decimate::{
@@ -72,8 +76,8 @@ pub use decimate::{
     merge_charts,
 };
 pub use export::{
-    ExportError, Joint, JointKind, Material, Mimic, Part, Placement, Scene, glb, obj, obj_at,
-    posed, stl, stl_at,
+    ColorSpace, ExportError, Joint, JointKind, MAP_KINDS, Material, Mimic, Part, Placement, Scene,
+    glb, obj, obj_at, posed, stl, stl_at,
 };
 pub use fbx::import_fbx;
 pub use image::{ImageInfo, Texture};
@@ -94,4 +98,5 @@ pub use repair::{
     apply_transform, close_holes, join, orient, remove_degenerate, remove_floaters, repair,
     split_non_manifold, weld,
 };
+pub use texture::{Downsize, TextureError, decode, downsize};
 pub use unwrap::{Unwrap, UnwrapError, Uvs, unwrap};

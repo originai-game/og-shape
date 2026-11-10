@@ -14,6 +14,9 @@
 //! interpolation there, so a face the boolean cuts keeps its texture
 //! mapping. When only one operand has UVs, the other's faces get (0, 0)
 //! at every corner and [`BoolReport::faces_without_uvs`] counts them.
+//! Vertex colours ([`Solid::colors`]) likewise: interpolated in the source
+//! triangle, white on the faces of an operand without them, which
+//! [`BoolReport::faces_without_colors`] counts.
 //!
 //! An operand whose surface passes through itself is refused
 //! ([`BoolError::SelfIntersecting`]): by [`check_operands`] before any
@@ -169,8 +172,10 @@ fn names_or_none(v: &[String]) -> String {
 }
 
 /// What a boolean did that its result alone does not say
-/// ([`boolean_report`]).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// ([`boolean_report`]). Its `Debug` text lists `faces_without_colors`
+/// only when it is not 0, so reports of solids without colours read as
+/// they did before colours existed.
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct BoolReport {
     /// Edges of the result shared by four faces, two of each operand:
     /// where the operands touch along an edge. The result is then the
@@ -186,6 +191,10 @@ pub struct BoolReport {
     /// operand without UVs while the other had them (0 when both or
     /// neither have UVs).
     pub faces_without_uvs: usize,
+    /// Faces of the result given white vertex colours because they came
+    /// from the operand without colours while the other had them (0 when
+    /// both or neither have colours).
+    pub faces_without_colors: usize,
     /// Pairs of the result's triangles that still cross after the repair
     /// of rounding errors ([`uncross_output`](crate::uncross_output)), at
     /// least one with a corner the boolean made: 0 for a result that does
@@ -193,6 +202,20 @@ pub struct BoolReport {
     /// brought crossing are not counted ([`check_operands`] finds them). A
     /// measurement, never a refusal (`docs/research.md` §27).
     pub crossing_pairs: usize,
+}
+
+impl core::fmt::Debug for BoolReport {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut d = f.debug_struct("BoolReport");
+        d.field("touching_edges", &self.touching_edges)
+            .field("voids", &self.voids)
+            .field("touching", &self.touching)
+            .field("faces_without_uvs", &self.faces_without_uvs);
+        if self.faces_without_colors != 0 {
+            d.field("faces_without_colors", &self.faces_without_colors);
+        }
+        d.field("crossing_pairs", &self.crossing_pairs).finish()
+    }
 }
 
 const CAPS: [&str; 4] = ["top", "bottom", "start", "end"];
@@ -231,12 +254,16 @@ pub fn components(s: &Solid) -> Vec<Solid> {
                 positions: s.positions.clone(),
                 skin: s.skin.clone(),
                 uvs: s.uvs.as_ref().map(|_| Vec::new()),
+                colors: s.colors.as_ref().map(|_| Vec::new()),
                 ..Default::default()
             };
             for i in tris {
                 let tags: Vec<&str> = s.face_tags[i].iter().map(|&x| s.names.name(x)).collect();
                 c.push_triangle(s.triangles[i], s.surfaces[i], &tags);
                 if let (Some(to), Some(from)) = (&mut c.uvs, &s.uvs) {
+                    to[c.triangles.len() - 1] = from[i];
+                }
+                if let (Some(to), Some(from)) = (&mut c.colors, &s.colors) {
                     to[c.triangles.len() - 1] = from[i];
                 }
             }
@@ -530,6 +557,12 @@ fn boolean_once(
     } else {
         0
     };
+    let faces_without_colors = if target.colors.is_some() != tool.colors.is_some() {
+        let bare = u8::from(target.colors.is_some());
+        out.origins.iter().filter(|o| o.0 == bare).count()
+    } else {
+        0
+    };
     let s = named_result(
         out.points,
         &out.tris,
@@ -546,6 +579,7 @@ fn boolean_once(
             voids,
             touching,
             faces_without_uvs,
+            faces_without_colors,
             crossing_pairs,
         },
     ))
@@ -629,6 +663,16 @@ fn named_result(
                 u[n - 1] = uv;
             }
         }
+        if let Some(c) = &solid.colors {
+            let at = solid.triangles[src as usize].map(|v| solid.positions[v as usize]);
+            let c = c[src as usize];
+            let color = t.map(|v| {
+                let w = barycentric(at, out.positions[v as usize]);
+                core::array::from_fn(|k| c[0][k] * w[0] + c[1][k] * w[1] + c[2][k] * w[2])
+            });
+            let n = out.triangles.len();
+            out.set_colors(n - 1, color);
+        }
     }
     // Edges: each output edge's two triangles.
     let mut by_edge: BTreeMap<EdgeKey, Vec<usize>> = BTreeMap::new();
@@ -708,6 +752,22 @@ fn named_result(
     out.canonicalize()
         .map_err(|_| BoolError::NotFinite("result"))?;
     Ok(out)
+}
+
+/// The barycentric weights of `p` in triangle `at`, as [`interpolate`]
+/// measures them; `[1, 0, 0]` for a degenerate triangle.
+fn barycentric(at: [DVec3; 3], p: DVec3) -> [f64; 3] {
+    let [a, b, c] = at;
+    let n = (b - a).cross(c - a);
+    let whole = n.dot(n);
+    if whole <= 0.0 || whole.is_nan() {
+        return [1.0, 0.0, 0.0];
+    }
+    [
+        (b - p).cross(c - p).dot(n) / whole,
+        (c - p).cross(a - p).dot(n) / whole,
+        (a - p).cross(b - p).dot(n) / whole,
+    ]
 }
 
 /// The UV at `p`, a point in the plane of triangle `at` (to rounding),

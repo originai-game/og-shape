@@ -7,7 +7,10 @@
 //! write one kernel report each, in `shape-tools`' snake_case.
 
 use serde_json::{Value, json};
-use shape_tools::{Blocked, DecimateReport, Imported, NonManifold, RepairReport, Uvs};
+use shape_tools::{
+    Blocked, ColorSpace, DecimateReport, ImageInfo, Imported, Material, NonManifold, RepairReport,
+    Uvs,
+};
 
 /// `{"k": v, …}` from keys and values that are JSON text already.
 pub fn object(fields: &[(&str, String)]) -> String {
@@ -131,14 +134,16 @@ pub fn imported(format: &str, m: &Imported) -> String {
             // has one.
             let mut fields = vec![
                 ("name", string(&p.name)),
-                ("material", string(&p.material)),
+                ("material", string(&p.material.name)),
                 ("triangles", p.solid.triangles.len().to_string()),
                 ("vertices", p.solid.positions.len().to_string()),
                 ("uvs", p.solid.uvs.is_some().to_string()),
             ];
-            if let Some(t) = &p.map {
+            if let Some(t) = &p.material.map {
                 fields.push(("map", string(&t.name)));
             }
+            fields.push(("colors", p.solid.colors.is_some().to_string()));
+            fields.push(("look", material(&p.material, &p.defaults, &[])));
             fields.push((
                 "bones",
                 p.solid.skin.as_ref().map_or("null".into(), |k| {
@@ -177,5 +182,62 @@ pub fn imported(format: &str, m: &Imported) -> String {
             "skipped",
             array(&m.skipped.iter().map(|s| string(s)).collect::<Vec<_>>()),
         ),
+    ])
+}
+
+/// A material's factors and maps, with the glTF factors its file left
+/// unset (`defaults`) and what a step could not keep (`dropped`). Colours
+/// are as stored, in `color_space` (`linear`: glTF's factors; `srgb`:
+/// written converted to linear).
+pub fn material(m: &Material, defaults: &[String], dropped: &[String]) -> String {
+    let num = |x: f64| Value::from(x).to_string();
+    let opt = |x: Option<f64>| x.map_or("null".into(), num);
+    let rgb = |c: [f64; 3]| array(&c.map(num));
+    let alpha_mode = if m.alpha_test.is_some() {
+        "MASK"
+    } else if m.transparent.unwrap_or(m.opacity.unwrap_or(1.0) < 1.0) {
+        "BLEND"
+    } else {
+        "OPAQUE"
+    };
+    let maps: Vec<String> = m
+        .maps()
+        .into_iter()
+        .map(|(kind, t)| {
+            let i = ImageInfo::from_bytes(&t.name, &t.bytes);
+            object(&[
+                ("kind", string(kind)),
+                ("name", string(&t.name)),
+                ("format", string(&i.format)),
+                ("width", i.width.map_or("null".into(), |w| w.to_string())),
+                ("height", i.height.map_or("null".into(), |h| h.to_string())),
+                ("file_bytes", i.file_bytes.to_string()),
+            ])
+        })
+        .collect();
+    let strings = |v: &[String]| array(&v.iter().map(|x| string(x)).collect::<Vec<_>>());
+    object(&[
+        ("name", string(&m.name)),
+        (
+            "color_space",
+            string(match m.color_space {
+                ColorSpace::Srgb => "srgb",
+                ColorSpace::Linear => "linear",
+            }),
+        ),
+        ("color", rgb(m.color.unwrap_or([1.0; 3]))),
+        ("opacity", num(m.opacity.unwrap_or(1.0))),
+        ("metalness", num(m.metalness)),
+        ("roughness", num(m.roughness.unwrap_or(1.0))),
+        ("emissive", rgb(m.emissive)),
+        ("emissive_intensity", opt(m.emissive_intensity)),
+        ("alpha_mode", string(alpha_mode)),
+        ("alpha_cutoff", opt(m.alpha_test)),
+        ("double_sided", m.double_sided.to_string()),
+        ("normal_scale", opt(m.normal_scale)),
+        ("ao_map_intensity", opt(m.ao_map_intensity)),
+        ("maps", array(&maps)),
+        ("defaults", strings(defaults)),
+        ("dropped", strings(dropped)),
     ])
 }

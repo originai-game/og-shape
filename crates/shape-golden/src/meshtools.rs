@@ -97,7 +97,7 @@ fn hash_uvs(h: &mut OutputHash, uvs: &[[DVec2; 3]]) -> Result<(), HashError> {
 /// down; the kernel's up, so `gltf` flips it back).
 fn hash_part(h: &mut OutputHash, p: &ImportedPart, gltf: bool) -> Result<(), HashError> {
     h.str(&p.name);
-    h.str(&p.material);
+    h.str(&p.material.name);
     let t = &p.transform;
     h.dvec3s(&[t.x, t.y, t.z, t.t])?;
     let mut bare = p.solid.clone();
@@ -440,6 +440,7 @@ fn measure_case(h: &mut OutputHash) -> Result<(), HashError> {
         images: &images,
         uv_resolution: 128,
         intersections: true,
+        ..Default::default()
     };
     h.str(&measure(&s, &d).to_json());
     Ok(())

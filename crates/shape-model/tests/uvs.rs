@@ -73,7 +73,7 @@ fn a_plate_with_a_hole_a_fillet_and_a_lofted_handle_exports_uvs_everywhere() {
     let p = &imported.parts[0];
     let uvs = p.solid.uvs.as_ref().expect("UVs in the GLB");
     assert_eq!(uvs.len(), p.solid.triangles.len());
-    assert_eq!(p.map.as_ref().unwrap().bytes, checker());
+    assert_eq!(p.material.map.as_ref().unwrap().bytes, checker());
     // Replayed through `run_files`: the same bytes.
     let again = run_files(&program, &Fonts::new(), &textures).unwrap();
     assert_eq!(again.glb().unwrap(), glb);

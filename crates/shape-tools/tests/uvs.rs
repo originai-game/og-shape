@@ -71,7 +71,7 @@ fn a_textured_generator_round_trips_through_glb() {
     // same image bytes.
     let back = import(&bytes, &Import::default(), &no_files).unwrap();
     let p = &back.parts[0];
-    assert_eq!(p.map.as_ref().map(|t| &t.bytes), Some(&map.bytes));
+    assert_eq!(p.material.map.as_ref().map(|t| &t.bytes), Some(&map.bytes));
     let e = uv_error(&s, &p.solid);
     assert!(e.max < 1e-5 && e.max_distance < 1e-3, "{e:?}");
     // A map with no UVs to sample it is an error value.
@@ -223,7 +223,10 @@ fn obj_keeps_its_vt_and_map_kd() {
     };
     let im = shape_tools::import_obj(obj.as_bytes(), &Import::default(), &files).unwrap();
     let p = &im.parts[0];
-    assert_eq!(p.map.as_ref().map(|t| t.name.as_str()), Some("albedo.png"));
+    assert_eq!(
+        p.material.map.as_ref().map(|t| t.name.as_str()),
+        Some("albedo.png")
+    );
     assert_eq!(
         p.solid.uvs.as_ref().unwrap()[0],
         [DVec2::ZERO, DVec2::X, DVec2::ONE]

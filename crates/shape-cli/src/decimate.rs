@@ -70,6 +70,7 @@ pub fn decimate(files: &dyn Files, d: &DecimateDesc) -> Result<String, Failure> 
     } else {
         lods(&joined, &lod_levels(&d.decimate, d.lods)).map_err(failed)?
     };
+    let (material, defaults, dropped) = mesh.material();
     let mut list = Vec::new();
     for (k, (s, r)) in levels.iter().enumerate() {
         let out = match (&d.out, d.lods) {
@@ -83,12 +84,13 @@ pub fn decimate(files: &dyn Files, d: &DecimateDesc) -> Result<String, Failure> 
             ("measures", m.to_json()),
             (
                 "output",
-                write_solid(files, &mesh.name, s, mesh.map(), out.as_deref())?,
+                write_solid(files, &mesh.name, s, Some(&material), out.as_deref())?,
             ),
         ]));
     }
     Ok(object(&[
         ("triangles_in", joined.triangles.len().to_string()),
+        ("material", report::material(&material, &defaults, &dropped)),
         ("levels", array(&list)),
     ]))
 }

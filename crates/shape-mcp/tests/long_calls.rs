@@ -205,7 +205,7 @@ fn progress_ping_and_a_queued_cancellation() {
         .filter(|m| m["method"] == "notifications/progress")
     {
         assert_eq!(p["params"]["progressToken"], "p1");
-        assert_eq!(p["params"]["total"], 6);
+        assert_eq!(p["params"]["total"], shape_cli::process::STEPS.len());
     }
     // The ping is answered while request 1 runs; request 2 never runs.
     assert_eq!(answered(&out), [0, 3, 1]);

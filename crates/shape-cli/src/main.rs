@@ -21,6 +21,7 @@
 //!                [--pivot base|center|X,Y,Z]
 //! shape process  <mesh> [--budget N] [--merge-charts UV] [-o out.glb]
 //!                [repair, unwrap and place options] [--intersections]
+//!                [--unwrap] [--texture-max PX]
 //! ```
 //!
 //! An input is a program (the JSON a binding records,
@@ -68,7 +69,7 @@ const USAGE: &str = "usage: shape <command> <input> [options]
                                                 900mm) and origin, before and after
   process  <mesh> [--budget N] [--merge-charts UV] [-o out.glb]
            [repair, unwrap and place options]
-           [--intersections]";
+           [--intersections] [--unwrap] [--texture-max PX]";
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();

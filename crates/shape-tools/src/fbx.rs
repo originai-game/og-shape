@@ -10,14 +10,17 @@
 //! Euler order, scaling offset and pivot, scaling) and the geometric
 //! transform, the file's axes and unit (`GlobalSettings`), and texture
 //! images' sizes (embedded `Video` content or files through the
-//! resolver), each part's base-colour texture (`DiffuseColor`, its bytes
-//! as [`crate::ImportedPart::map`]), the first UV layer as `Solid::uvs`,
+//! resolver), each part's first material ([`crate::ImportedPart::material`]:
+//! `DiffuseColor` × `DiffuseFactor` as its sRGB colour, `EmissiveColor`
+//! × `EmissiveFactor`, `Opacity`, and the textures linked to
+//! `DiffuseColor`, `NormalMap` and `EmissiveColor`; other linked textures
+//! are listed as skipped), the first UV layer as `Solid::uvs`,
 //! and skins: a `Skin` deformer's clusters as bones, parents
 //! first, their rest frames and inverse bind matrices from the clusters'
 //! `Transform` and `TransformLink`, their `Indexes` and `Weights` as
 //! weights, on the part's `Solid::skin` in the mesh's own coordinates (a
 //! bone scaled at bind time is refused). Skipped and listed: blend
-//! shapes, NURBS and other geometry. FBX 6 and
+//! shapes, NURBS and other geometry, vertex colours. FBX 6 and
 //! older are [`ImportError::Unsupported`].
 
 use std::collections::BTreeMap;
@@ -25,6 +28,7 @@ use std::collections::BTreeMap;
 use shape_core::{DVec2, DVec3, Frame, trig};
 use shape_mesh::{Bone, Skin, Solid, Weights};
 
+use crate::export::Material;
 use crate::image::{ImageInfo, Texture};
 use crate::import::{
     Affine, ImportError, Imported, ImportedPart, Resolve, SkinScale, fetch, fmt_err, from_y_up,
@@ -612,8 +616,9 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
     // Connections: object → object, in file order.
     let mut children_of: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
     let mut parent_of: BTreeMap<i64, i64> = BTreeMap::new();
-    // Material → its base-colour texture (an OP link on `DiffuseColor`).
-    let mut diffuse_of: BTreeMap<i64, i64> = BTreeMap::new();
+    // Material → its textures, by the property each OP link names
+    // (`DiffuseColor`, `NormalMap`, …), first link of each.
+    let mut textures_of: BTreeMap<i64, BTreeMap<String, i64>> = BTreeMap::new();
     if let Some(c) = root.child("Connections") {
         for link in c.all("C") {
             let kind = link.props.first().and_then(Prop::str).unwrap_or("");
@@ -623,8 +628,14 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
             ) else {
                 continue;
             };
-            if kind == "OP" && link.props.get(3).and_then(Prop::str) == Some("DiffuseColor") {
-                diffuse_of.entry(parent).or_insert(child);
+            if kind == "OP"
+                && let Some(prop) = link.props.get(3).and_then(Prop::str)
+            {
+                textures_of
+                    .entry(parent)
+                    .or_default()
+                    .entry(prop.to_string())
+                    .or_insert(child);
             }
             if kind == "OO" || kind == "OP" {
                 children_of.entry(parent).or_default().push(child);
@@ -979,20 +990,49 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
                     .collect()
             })
             .unwrap_or_default();
-        // The first material's base-colour texture, through its video.
-        let map = materials
-            .first()
-            .and_then(|(m, _)| diffuse_of.get(m))
-            .and_then(|t| children_of.get(t))
-            .and_then(|cs| {
-                cs.iter()
+        // The first material, and its textures through their videos.
+        let mut unread: Vec<String> = Vec::new();
+        let material = materials.first().map(|(m, mname)| {
+            let node = by_id.get(m);
+            let texture = |prop: &str| {
+                let t = textures_of.get(m)?.get(prop)?;
+                let v = children_of
+                    .get(t)?
+                    .iter()
                     .filter_map(|c| by_id.get(c))
-                    .find(|n| n.name == "Video")
-            })
-            .and_then(|v| {
+                    .find(|n| n.name == "Video")?;
                 let (name, bytes) = video(v);
                 Some(Texture::from_bytes(&name, bytes.ok()?))
-            });
+            };
+            if let Some(links) = textures_of.get(m) {
+                for prop in links.keys() {
+                    if !["DiffuseColor", "NormalMap", "EmissiveColor"].contains(&prop.as_str()) {
+                        unread.push(prop.clone());
+                    }
+                }
+            }
+            let rgb = |key: &str, factor: &str| {
+                let n = node?;
+                let c = n.p70_vec(key, DVec3::NAN);
+                if !c.is_finite() {
+                    return None;
+                }
+                let f = n.p70_num(factor).unwrap_or(1.0);
+                Some([c.x * f, c.y * f, c.z * f])
+            };
+            Material {
+                name: mname.clone(),
+                color: rgb("DiffuseColor", "DiffuseFactor"),
+                emissive: rgb("EmissiveColor", "EmissiveFactor").unwrap_or([0.0; 3]),
+                opacity: node
+                    .and_then(|n| n.p70_num("Opacity"))
+                    .filter(|x| x.is_finite()),
+                map: texture("DiffuseColor"),
+                normal_map: texture("NormalMap"),
+                emissive_map: texture("EmissiveColor"),
+                ..Default::default()
+            }
+        });
         let name = unique(
             &object_name(o.props.get(1).and_then(Prop::str).unwrap_or("")),
             &mut used,
@@ -1000,6 +1040,11 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
         let geo = geometric(o);
         for g in geometries {
             let (mut solid, uvs, polys) = mesh(g, &name, &geo, unit, &to_kernel, p_det < 0.0)?;
+            if g.all("LayerElementColor").next().is_some() {
+                out.skipped.push(format!(
+                    "{name}: its vertex colours (LayerElementColor) are not read"
+                ));
+            }
             if uvs.is_none() && g.all("LayerElementUV").next().is_some() {
                 out.skipped.push(format!(
                     "{name}: its UV layer misses some corners, so no UVs"
@@ -1036,9 +1081,15 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
                 name: name.clone(),
                 solid,
                 transform,
-                material: materials.first().map(|m| m.1.clone()).unwrap_or_default(),
-                map: map.clone(),
+                material: material.clone().unwrap_or_default(),
+                defaults: Vec::new(),
             });
+            if !unread.is_empty() {
+                out.skipped.push(format!(
+                    "{name}: its material's textures on {} are not read",
+                    unread.join(", ")
+                ));
+            }
         }
     }
     // Texture images.

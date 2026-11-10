@@ -668,6 +668,7 @@ fn dispatch(m: &mut Model, a: &Args) -> Result<(Value, bool), ModelError> {
                         None => None,
                         Some(_) => Some(a.texture("map")?),
                     },
+                    ..Default::default()
                 };
                 if a.opt("mapSize").is_some() && mat.map.is_none() {
                     return Err(a.bad("mapSize", "with a `map` only"));

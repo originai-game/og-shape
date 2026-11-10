@@ -14,12 +14,21 @@ pub use skin::{Bone, Skin, SkinError, Weights};
 
 use std::collections::BTreeMap;
 
-use shape_core::order::{cmp_dvec2, cmp_dvec3, sorted_order};
+use shape_core::order::{cmp_dvec2, cmp_dvec3, cmp_f64, sorted_order};
 use shape_core::{DVec2, DVec3, HashError, OutputHash};
 
 /// One triangle's texture coordinates, a corner each, in the order of
 /// its vertices.
 pub type CornerUvs = [DVec2; 3];
+
+/// One triangle's vertex colours, a corner each, in the order of its
+/// vertices: linear RGBA, each component in 0..=1 (glTF `COLOR_0`).
+pub type CornerColors = [[f64; 4]; 3];
+
+/// The colour a corner gets where a solid has colours and a tool adds a
+/// triangle without saying: opaque white, which multiplies a material by
+/// 1 (glTF's meaning of no `COLOR_0`).
+pub const WHITE: [f64; 4] = [1.0; 4];
 
 /// An undirected edge, by its two vertex indices, smaller first.
 pub type EdgeKey = (u32, u32);
@@ -50,6 +59,12 @@ pub fn edge_key(a: u32, b: u32) -> EdgeKey {
 ///   present it has one entry per triangle; [`Solid::push_triangle`]
 ///   gives a new triangle (0, 0) at every corner, so a tool that adds
 ///   triangles sets their coordinates with [`Solid::push_triangle_uv`].
+/// - `colors`: optional vertex colours, per triangle corner, linear RGBA
+///   in 0..=1, exactly parallel to `uvs`: a hard colour border is two
+///   corners of one vertex with different colours. `None` leaves
+///   canonical order and the hash as they were before colours. A new
+///   triangle gets [`WHITE`] at every corner; set them with
+///   [`Solid::set_colors`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Solid {
     /// Vertex positions.
@@ -68,6 +83,8 @@ pub struct Solid {
     pub skin: Option<Skin>,
     /// Per triangle, its corners' texture coordinates, if it has any.
     pub uvs: Option<Vec<CornerUvs>>,
+    /// Per triangle, its corners' colours (linear RGBA), if it has any.
+    pub colors: Option<Vec<[[f64; 4]; 3]>>,
 }
 
 impl Solid {
@@ -82,6 +99,43 @@ impl Solid {
         if let Some(uvs) = &mut self.uvs {
             uvs.resize(self.triangles.len(), [DVec2::ZERO; 3]);
         }
+        if let Some(colors) = &mut self.colors {
+            colors.resize(self.triangles.len(), [WHITE; 3]);
+        }
+    }
+
+    /// Sets triangle `i`'s corner colours. On a solid with no colours
+    /// yet, every other triangle gets [`WHITE`] at its corners.
+    pub fn set_colors(&mut self, i: usize, c: CornerColors) {
+        let n = self.triangles.len();
+        let colors = self.colors.get_or_insert_with(Vec::new);
+        colors.resize(n, [WHITE; 3]);
+        if let Some(x) = colors.get_mut(i) {
+            *x = c;
+        }
+    }
+
+    /// The colour triangle `i` gives point `p`, interpolated as
+    /// [`Solid::uv_at`] interpolates UVs. `None` when the solid has no
+    /// colours or the triangle has no area.
+    pub fn color_at(&self, i: usize, p: DVec3) -> Option<[f64; 4]> {
+        let c = self.colors.as_ref()?.get(i)?;
+        let t = self.triangles[i];
+        let [a, b, q] = t.map(|v| self.positions[v as usize]);
+        if let Some(k) = [a, b, q].iter().position(|&x| x == p) {
+            return Some(c[k]);
+        }
+        let (e1, e2, d) = (b - a, q - a, p - a);
+        let n = e1.cross(e2);
+        let nn = n.dot(n);
+        if nn == 0.0 {
+            return None;
+        }
+        let w1 = d.cross(e2).dot(n) / nn;
+        let w2 = e1.cross(d).dot(n) / nn;
+        Some(core::array::from_fn(|k| {
+            c[0][k] + (c[1][k] - c[0][k]) * w1 + (c[2][k] - c[0][k]) * w2
+        }))
     }
 
     /// Appends a triangle with its corners' texture coordinates. On a
@@ -125,6 +179,9 @@ impl Solid {
         self.triangles[i].swap(1, 2);
         if let Some(uv) = self.uvs.as_mut().and_then(|u| u.get_mut(i)) {
             uv.swap(1, 2);
+        }
+        if let Some(c) = self.colors.as_mut().and_then(|c| c.get_mut(i)) {
+            c.swap(1, 2);
         }
     }
 
@@ -244,9 +301,9 @@ impl Solid {
     /// Texture coordinates stay with their triangle's corners (rotated
     /// with it). Two triangles on the same corners, surface and names
     /// are ordered by their coordinates, so UVs never reorder a solid
-    /// that has none.
+    /// that has none. Colours likewise, after the UVs.
     ///
-    /// Fails on a NaN position or texture coordinate.
+    /// Fails on a NaN position, texture coordinate or colour.
     pub fn canonicalize(&mut self) -> Result<(), HashError> {
         if self.positions.iter().any(|p| p.is_nan()) {
             return Err(HashError::NaN);
@@ -256,6 +313,12 @@ impl Solid {
                 return Err(HashError::NaN);
             }
             uvs.resize(self.triangles.len(), [DVec2::ZERO; 3]);
+        }
+        if let Some(colors) = &mut self.colors {
+            if colors.iter().flatten().flatten().any(|c| c.is_nan()) {
+                return Err(HashError::NaN);
+            }
+            colors.resize(self.triangles.len(), [WHITE; 3]);
         }
         // Tags in name order first, so ties between triangles break the
         // same way whatever order the names were interned in.
@@ -290,7 +353,7 @@ impl Solid {
         }
         // 2. Triangles: renumbered, degenerate ones dropped, each rotated
         // to start at its smallest index (winding kept).
-        type Tri = ([u32; 3], u32, Vec<Tag>, CornerUvs);
+        type Tri = ([u32; 3], u32, Vec<Tag>, CornerUvs, CornerColors);
         let mut tris: Vec<Tri> = Vec::with_capacity(self.triangles.len());
         for (i, t) in self.triangles.iter().enumerate() {
             let t = t.map(|v| remap[v as usize]);
@@ -303,11 +366,23 @@ impl Solid {
                 let u = u[i];
                 [u[r], u[(r + 1) % 3], u[(r + 2) % 3]]
             });
-            tris.push((t, self.surfaces[i], self.face_tags[i].clone(), uv));
+            let color = self.colors.as_ref().map_or([WHITE; 3], |c| {
+                let c = c[i];
+                [c[r], c[(r + 1) % 3], c[(r + 2) % 3]]
+            });
+            tris.push((t, self.surfaces[i], self.face_tags[i].clone(), uv, color));
         }
         let cmp_uv = |a: &CornerUvs, b: &CornerUvs| {
             (0..3)
                 .map(|k| cmp_dvec2(a[k], b[k]))
+                .find(|o| o.is_ne())
+                .unwrap_or(core::cmp::Ordering::Equal)
+        };
+        let cmp_color = |a: &CornerColors, b: &CornerColors| {
+            a.iter()
+                .flatten()
+                .zip(b.iter().flatten())
+                .map(|(x, y)| cmp_f64(*x, *y))
                 .find(|o| o.is_ne())
                 .unwrap_or(core::cmp::Ordering::Equal)
         };
@@ -316,6 +391,7 @@ impl Solid {
                 .then(a.1.cmp(&b.1))
                 .then_with(|| a.2.cmp(&b.2))
                 .then_with(|| cmp_uv(&a.3, &b.3))
+                .then_with(|| cmp_color(&a.4, &b.4))
         });
         // 3. Surfaces renumbered by first use.
         let mut surface_ids: BTreeMap<u32, u32> = BTreeMap::new();
@@ -326,7 +402,7 @@ impl Solid {
         // 4. Edge names follow their vertices; names on edges that no
         // longer exist are dropped.
         let mut present: BTreeMap<EdgeKey, ()> = BTreeMap::new();
-        for (t, _, _, _) in &tris {
+        for (t, ..) in &tris {
             for k in 0..3 {
                 present.insert(edge_key(t[k], t[(k + 1) % 3]), ());
             }
@@ -346,6 +422,9 @@ impl Solid {
         self.surfaces = tris.iter().map(|t| t.1).collect();
         if self.uvs.is_some() {
             self.uvs = Some(tris.iter().map(|t| t.3).collect());
+        }
+        if self.colors.is_some() {
+            self.colors = Some(tris.iter().map(|t| t.4).collect());
         }
         self.face_tags = tris.into_iter().map(|t| t.2).collect();
         self.edge_tags = edge_tags;
@@ -402,6 +481,14 @@ impl Solid {
                 h.f64s(&[q.x, q.y])?;
             }
         }
+        // And colours.
+        if let Some(colors) = &self.colors {
+            h.str("colors");
+            h.u64(colors.len() as u64);
+            for c in colors.iter().flatten() {
+                h.f64s(c)?;
+            }
+        }
         Ok(())
     }
 
@@ -415,7 +502,8 @@ impl Solid {
     ///
     /// UVs: when either solid has them, the result does; triangles from
     /// the side without get (0, 0) at every corner (a zero-area UV
-    /// triangle, which `measure` counts).
+    /// triangle, which `measure` counts). Colours likewise, [`WHITE`] on
+    /// the side without.
     pub fn append(&mut self, other: &Solid) {
         let base = self.positions.len() as u32;
         let first = self.triangles.len();
@@ -423,6 +511,11 @@ impl Solid {
             self.uvs
                 .get_or_insert_with(Vec::new)
                 .resize(first, [DVec2::ZERO; 3]);
+        }
+        if self.colors.is_some() || other.colors.is_some() {
+            self.colors
+                .get_or_insert_with(Vec::new)
+                .resize(first, [WHITE; 3]);
         }
         if self.skin.is_some() || other.skin.is_some() {
             let mine = self.skin.get_or_insert_with(|| Skin {
@@ -461,6 +554,11 @@ impl Solid {
         if let (Some(mine), Some(theirs)) = (&mut self.uvs, &other.uvs) {
             for (k, uv) in theirs.iter().enumerate() {
                 mine[first + k] = *uv;
+            }
+        }
+        if let (Some(mine), Some(theirs)) = (&mut self.colors, &other.colors) {
+            for (k, c) in theirs.iter().enumerate() {
+                mine[first + k] = *c;
             }
         }
     }
@@ -573,6 +671,43 @@ mod tests {
         bare.hash_into(&mut hb).unwrap();
         a.hash_into(&mut hu).unwrap();
         assert_ne!(hb.finish_hex(), hu.finish_hex());
+    }
+
+    #[test]
+    fn colors_follow_their_corners_through_canonical_order() {
+        // As the UV test: each corner's colour a function of its position
+        // and face, built in either order, must come back on its corner.
+        let color_of = |p: DVec3, side: bool| [p.x, p.y, p.z, if side { 0.5 } else { 1.0 }];
+        let build = |reversed: bool| {
+            let mut s = tetra(DVec3::ZERO, reversed);
+            for i in 0..s.triangles.len() {
+                let side = s.surfaces[i] == 1;
+                let c = s.triangles[i].map(|v| color_of(s.positions[v as usize], side));
+                s.set_colors(i, c);
+            }
+            s.canonicalize().unwrap();
+            s
+        };
+        let (a, b) = (build(false), build(true));
+        assert_eq!(a, b);
+        let side = a.surfaces[a.faces(&["side"]).unwrap()[0] as usize];
+        for (i, t) in a.triangles.iter().enumerate() {
+            for k in 0..3 {
+                let want = color_of(a.positions[t[k] as usize], a.surfaces[i] == side);
+                assert_eq!(a.colors.as_ref().unwrap()[i][k], want);
+            }
+        }
+        // Absent: the hash is the bare one; present, it differs.
+        let mut bare = a.clone();
+        bare.colors = None;
+        let (mut hb, mut hc) = (OutputHash::new(), OutputHash::new());
+        bare.hash_into(&mut hb).unwrap();
+        a.hash_into(&mut hc).unwrap();
+        assert_ne!(hb.finish_hex(), hc.finish_hex());
+        // A triangle added without colours is white.
+        let mut c = a.clone();
+        c.push_triangle([0, 1, 2], 0, &["x"]);
+        assert_eq!(c.colors.as_ref().unwrap().last(), Some(&[WHITE; 3]));
     }
 
     #[test]

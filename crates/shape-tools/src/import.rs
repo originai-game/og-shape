@@ -20,8 +20,13 @@
 //! `TEXCOORD_0`, OBJ `vt`, FBX's first UV layer) goes into
 //! [`Solid::uvs`], per triangle corner, when every triangle of the part
 //! has one; a part where only some do has none, and the import says so
-//! in [`Imported::skipped`]. The base-colour texture of the part's first
-//! material is kept as its file's bytes ([`ImportedPart::map`]).
+//! in [`Imported::skipped`]. Vertex colours (glTF `COLOR_0`, OBJ
+//! `v x y z r g b`) go into [`Solid::colors`], linear RGBA per corner.
+//! The part's first material is kept as a [`Material`]
+//! ([`ImportedPart::material`]): its factors as the file means them
+//! (glTF's defaults where it leaves one unset, listed in
+//! [`ImportedPart::defaults`]) and its maps (base colour, metallic-
+//! roughness, normal, emissive, occlusion) as their files' bytes.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -29,6 +34,7 @@ use std::fmt;
 use shape_core::{DVec2, DVec3, Frame};
 use shape_mesh::{Bone, Skin, Solid, Weights};
 
+use crate::export::{ColorSpace, Material};
 use crate::image::{ImageInfo, Texture};
 use crate::jsonread::{self, Value};
 use crate::place::{Axis, AxisTurn, turned};
@@ -167,13 +173,17 @@ pub struct ImportedPart {
     pub solid: Solid,
     /// Places the part in the model (kernel units).
     pub transform: Affine,
-    /// The name of the first material the part uses, or "".
-    pub material: String,
-    /// That material's base-colour texture (glTF
-    /// `baseColorTexture`, OBJ `map_Kd`, FBX `DiffuseColor`), if it has
-    /// one whose bytes could be read. Its coordinates are the solid's
-    /// [`Solid::uvs`].
-    pub map: Option<Texture>,
+    /// The first material the part uses (its name "" when it has none):
+    /// factors as the file means them, and the maps whose bytes could be
+    /// read (glTF's five; OBJ `map_Kd`, `map_Ke`, `norm`; FBX
+    /// `DiffuseColor`, `EmissiveColor`, `NormalMap`), sampled at the
+    /// solid's [`Solid::uvs`]. glTF's factors are linear
+    /// ([`ColorSpace::Linear`]); MTL's and FBX's colours sRGB.
+    pub material: Material,
+    /// The glTF material factors the file leaves unset, which take the
+    /// specification's defaults (`metallicFactor`: 1, a metal), by their
+    /// glTF names; empty for OBJ and FBX.
+    pub defaults: Vec<String>,
 }
 
 /// What an import read.
@@ -573,8 +583,11 @@ struct Doc<'a> {
 /// bone scaled unevenly or sheared, bones scaled differently, or a skin
 /// that does not check (an unweighted vertex), is
 /// [`ImportError::Unsupported`]. Skipped and listed in
-/// [`Imported::skipped`]: points and lines, morph targets, vertex
-/// colours (`COLOR_0`), and bone weights with no skin. A required
+/// [`Imported::skipped`]: points and lines, morph targets, and bone
+/// weights with no skin. `COLOR_0` (float or normalised integer, RGB or
+/// RGBA, linear as glTF has it) becomes [`Solid::colors`]; a primitive
+/// without it is white, as glTF draws it. The material is read as
+/// [`ImportedPart::material`] says. A required
 /// extension the
 /// importer does not read (Draco, meshopt compression) is
 /// [`ImportError::Unsupported`].
@@ -908,8 +921,9 @@ impl Doc<'_> {
                 .or(mesh.get("name").str())
                 .map_or_else(|| format!("node{i}"), str::to_string);
             let name = unique(&name, &mut used);
-            let (mut part, raw) = self.part(&name, mesh, &world, &mut out)?;
-            part.map = self.map(&name, mesh, &out.images, &image_bytes, &mut out.skipped);
+            let images = out.images.clone();
+            let (mut part, raw) =
+                self.part(&name, mesh, &world, &mut out, (&images, &image_bytes))?;
             let weighted = raw.iter().any(|r| r.iter().any(|p| p.1 > 0.0));
             match n.get("skin").index() {
                 Some(k) => {
@@ -1273,12 +1287,13 @@ impl Doc<'_> {
         mesh: &Value,
         world: &Affine,
         out: &mut Imported,
+        (images, image_bytes): (&[ImageInfo], &[Option<Vec<u8>>]),
     ) -> Result<(ImportedPart, RawWeights), ImportError> {
         let mut solid = Solid::default();
         let mut uvs: Vec<[DVec2; 3]> = Vec::new();
         let mut all_uv = true;
         let mut any_uv = false;
-        let mut material = String::new();
+        let mut materials: Vec<Option<usize>> = Vec::new();
         let mut raw: Vec<Vec<(u32, f64)>> = Vec::new();
         for (pi, prim) in mesh.get("primitives").items().iter().enumerate() {
             let mode = prim.get("mode").index().unwrap_or(4);
@@ -1292,10 +1307,6 @@ impl Doc<'_> {
                     .push(format!("{name}: primitive {pi}'s morph targets"));
             }
             let attrs = prim.get("attributes");
-            if attrs.get("COLOR_0").index().is_some() {
-                out.skipped
-                    .push(format!("{name}: primitive {pi}'s vertex colours (COLOR_0)"));
-            }
             let Some(pa) = attrs.get("POSITION").index() else {
                 return Err(fmt_err(format!("{name}: primitive {pi} has no POSITION")));
             };
@@ -1313,6 +1324,24 @@ impl Doc<'_> {
                         )));
                     }
                     Some(uv)
+                }
+                None => None,
+            };
+            let color = match attrs.get("COLOR_0").index() {
+                Some(ca) => {
+                    let (c, w) = self.accessor(ca)?;
+                    if !(w == 3 || w == 4) || c.len() / w != count {
+                        return Err(fmt_err(format!("{name}: COLOR_0 does not match POSITION")));
+                    }
+                    if c.iter().any(|x| !x.is_finite()) {
+                        return Err(ImportError::NotFinite(name.to_string()));
+                    }
+                    let at = |v: usize| -> [f64; 4] {
+                        let mut q = [1.0; 4];
+                        q[..w].copy_from_slice(&c[v * w..v * w + w]);
+                        q.map(|x| x.clamp(0.0, 1.0))
+                    };
+                    Some((0..count).map(at).collect::<Vec<_>>())
                 }
                 None => None,
             };
@@ -1344,16 +1373,9 @@ impl Doc<'_> {
                     .map(|k| [index[k - 1], index[k], index[0]])
                     .collect(),
             };
-            if material.is_empty()
-                && let Some(mi) = prim.get("material").index()
-            {
-                material = self
-                    .json
-                    .get("materials")
-                    .at(mi)
-                    .get("name")
-                    .str()
-                    .map_or_else(|| format!("material{mi}"), str::to_string);
+            let mi = prim.get("material").index();
+            if !materials.contains(&mi) {
+                materials.push(mi);
             }
             // Bone weights per vertex: (joint, weight) pairs, as the file has
             // them; empty where the primitive has none.
@@ -1389,6 +1411,10 @@ impl Doc<'_> {
             }
             for t in &tris {
                 solid.push_triangle(t.map(|v| v + base), pi as u32, &[name]);
+                if let Some(c) = &color {
+                    let i = solid.triangles.len() - 1;
+                    solid.set_colors(i, t.map(|v| c[v as usize]));
+                }
                 match &uv {
                     Some(uv) => {
                         any_uv = true;
@@ -1404,6 +1430,16 @@ impl Doc<'_> {
                 }
             }
         }
+        if materials.len() > 1 {
+            out.skipped.push(format!(
+                "{name}: its primitives use {} materials; only the first is kept",
+                materials.len()
+            ));
+        }
+        let (material, defaults) = match materials.first() {
+            Some(&mi) => self.material(name, mi, images, image_bytes, &mut out.skipped),
+            None => (Material::default(), Vec::new()),
+        };
         Ok((
             ImportedPart {
                 name: name.to_string(),
@@ -1422,56 +1458,121 @@ impl Doc<'_> {
                     ..solid
                 },
                 material,
-                map: None,
+                defaults,
             },
             raw,
         ))
     }
 
-    /// The base-colour texture of the first material `mesh` uses, if its
-    /// image could be read. What is read past (another UV set, a texture
-    /// transform) is noted in `skipped`.
-    fn map(
+    /// Material `mi` (`None`: glTF's default material) as the file means
+    /// it, and the factors it leaves unset. What is read past (a map on a
+    /// second UV set, a texture transform, a sampler that does not
+    /// repeat) is noted in `skipped`.
+    fn material(
         &self,
         name: &str,
-        mesh: &Value,
+        mi: Option<usize>,
+        images: &[ImageInfo],
+        bytes: &[Option<Vec<u8>>],
+        skipped: &mut Vec<String>,
+    ) -> (Material, Vec<String>) {
+        let m = match mi {
+            Some(mi) => self.json.get("materials").at(mi),
+            None => &Value::Null,
+        };
+        let pbr = m.get("pbrMetallicRoughness");
+        let mut defaults = Vec::new();
+        let mut num = |v: &Value, key: &str, default: f64| -> f64 {
+            match v.get(key).num() {
+                Some(x) if x.is_finite() => x,
+                _ => {
+                    defaults.push(key.to_string());
+                    default
+                }
+            }
+        };
+        let metalness = num(pbr, "metallicFactor", 1.0);
+        let roughness = num(pbr, "roughnessFactor", 1.0);
+        let base = pbr
+            .get("baseColorFactor")
+            .nums()
+            .filter(|v| v.len() == 4 && v.iter().all(|x| x.is_finite()))
+            .unwrap_or_else(|| {
+                defaults.push("baseColorFactor".into());
+                vec![1.0; 4]
+            });
+        let emissive = m
+            .get("emissiveFactor")
+            .nums()
+            .filter(|v| v.len() == 3 && v.iter().all(|x| x.is_finite()))
+            .map_or([0.0; 3], |v| [v[0], v[1], v[2]]);
+        let ext = m.get("extensions");
+        let strength = ext
+            .get("KHR_materials_emissive_strength")
+            .get("emissiveStrength")
+            .num()
+            .filter(|x| x.is_finite() && *x != 1.0);
+        let mode = m.get("alphaMode").str().unwrap_or("OPAQUE");
+        let cutoff = m.get("alphaCutoff").num().filter(|x| x.is_finite());
+        let mut tex =
+            |info: &Value, what: &str| self.texture(name, info, what, images, bytes, skipped);
+        let material = Material {
+            name: match mi {
+                Some(mi) => m
+                    .get("name")
+                    .str()
+                    .map_or_else(|| format!("material{mi}"), str::to_string),
+                None => String::new(),
+            },
+            color: Some([base[0], base[1], base[2]]),
+            metalness,
+            roughness: Some(roughness),
+            emissive,
+            opacity: Some(base[3]),
+            map: tex(pbr.get("baseColorTexture"), "base-colour"),
+            color_space: ColorSpace::Linear,
+            emissive_intensity: strength,
+            transparent: Some(mode == "BLEND"),
+            alpha_test: (mode == "MASK").then(|| cutoff.unwrap_or(0.5)),
+            double_sided: m.get("doubleSided").bool().unwrap_or(false),
+            metalness_map: tex(pbr.get("metallicRoughnessTexture"), "metallic-roughness"),
+            normal_map: tex(m.get("normalTexture"), "normal"),
+            normal_scale: m
+                .get("normalTexture")
+                .get("scale")
+                .num()
+                .filter(|x| x.is_finite() && *x != 1.0),
+            emissive_map: tex(m.get("emissiveTexture"), "emissive"),
+            ao_map: tex(m.get("occlusionTexture"), "occlusion"),
+            ao_map_intensity: m
+                .get("occlusionTexture")
+                .get("strength")
+                .num()
+                .filter(|x| x.is_finite() && *x != 1.0),
+        };
+        for (k, _) in ext.entries() {
+            if k != "KHR_materials_emissive_strength" {
+                skipped.push(format!("{name}: its material's extension {k} is not read"));
+            }
+        }
+        (material, defaults)
+    }
+
+    /// The texture a material's texture info names, if its image could be
+    /// read. What is read past is noted in `skipped`.
+    fn texture(
+        &self,
+        name: &str,
+        info: &Value,
+        what: &str,
         images: &[ImageInfo],
         bytes: &[Option<Vec<u8>>],
         skipped: &mut Vec<String>,
     ) -> Option<Texture> {
-        let mi = mesh
-            .get("primitives")
-            .items()
-            .iter()
-            .find_map(|p| p.get("material").index())?;
-        let material = self.json.get("materials").at(mi);
-        let others: Vec<&str> = [
-            ("normalTexture", "normal"),
-            ("occlusionTexture", "occlusion"),
-            ("emissiveTexture", "emissive"),
-        ]
-        .into_iter()
-        .filter(|(k, _)| !material.get(k).is_null())
-        .map(|(_, n)| n)
-        .chain(
-            (!material
-                .get("pbrMetallicRoughness")
-                .get("metallicRoughnessTexture")
-                .is_null())
-            .then_some("metallic-roughness"),
-        )
-        .collect();
-        if !others.is_empty() {
-            skipped.push(format!(
-                "{name}: its material's {} textures (only the base colour is kept)",
-                others.join(", ")
-            ));
-        }
-        let info = material.get("pbrMetallicRoughness").get("baseColorTexture");
         let ti = info.get("index").index()?;
         if info.get("texCoord").index().unwrap_or(0) != 0 {
             skipped.push(format!(
-                "{name}: its base-colour texture uses a second UV set, which is not read"
+                "{name}: its {what} texture uses a second UV set, which is not read"
             ));
             return None;
         }
@@ -1481,17 +1582,33 @@ impl Doc<'_> {
             .is_null()
         {
             skipped.push(format!(
-                "{name}: its base-colour texture's KHR_texture_transform is not applied to the UVs"
+                "{name}: its {what} texture's KHR_texture_transform is not applied to the UVs"
             ));
         }
         let tex = self.json.get("textures").at(ti);
+        let sampler = self
+            .json
+            .get("samplers")
+            .at(tex.get("sampler").index().unwrap_or(usize::MAX));
+        for key in ["wrapS", "wrapT"] {
+            if let Some(w) = sampler.get(key).index().filter(|&w| w != 10497) {
+                skipped.push(format!(
+                    "{name}: its {what} texture's {key} {w} is written as repeat"
+                ));
+            }
+        }
         let ext = tex.get("extensions");
         let source = tex
             .get("source")
             .index()
             .or(ext.get("EXT_texture_webp").get("source").index())
             .or(ext.get("KHR_texture_basisu").get("source").index())?;
-        let b = bytes.get(source)?.as_ref()?;
+        let Some(b) = bytes.get(source).and_then(Option::as_ref) else {
+            skipped.push(format!(
+                "{name}: its {what} texture's image could not be read"
+            ));
+            return None;
+        };
         let n = images.get(source).map_or("", |i| i.name.as_str());
         Some(Texture::from_bytes(n, b.clone()))
     }
@@ -1499,13 +1616,31 @@ impl Doc<'_> {
 
 // ── OBJ ─────────────────────────────────────────────────────────────────────
 
+/// A material as an MTL file gives it: the statements read, its maps by
+/// keyword (lower case), and the keywords not read.
+#[derive(Clone, Debug, Default)]
+struct Mtl {
+    kd: Option<[f64; 3]>,
+    ke: Option<[f64; 3]>,
+    d: Option<f64>,
+    pr: Option<f64>,
+    pm: Option<f64>,
+    maps: BTreeMap<String, String>,
+    unread: Vec<String>,
+}
+
 /// Reads Wavefront OBJ text. Each `o` starts a part (or each `g`, in a
 /// file with no `o`); `usemtl` starts a new surface. Faces of more than
 /// three corners are triangulated; negative (relative) indices are read;
-/// `vt` becomes [`Solid::uvs`]. `mtllib` files are read through
-/// `resolve` for their texture maps' sizes, and a part's first material's
-/// `map_Kd` becomes its [`ImportedPart::map`]. Points and lines are
-/// skipped.
+/// `vt` becomes [`Solid::uvs`]; `v x y z r g b` becomes
+/// [`Solid::colors`] (sRGB in the file, as three.js reads it, made
+/// linear; a file whose colours exceed 1 is read as 0..=255), white on a
+/// vertex without one. `mtllib` files are read through `resolve` for their
+/// texture maps' sizes, and a part's first material becomes its
+/// [`ImportedPart::material`]: `Kd` (sRGB), `d` or `Tr`, `Ke`, `Pr`, `Pm`
+/// (the PBR extension), `map_Kd`, `map_Ke` and `norm`. Other statements
+/// (specular `Ks`, `Ns`, a `bump` height map, …) are listed in
+/// [`Imported::skipped`], as are points and lines.
 /// Every part's transform is the identity.
 pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported, ImportError> {
     let text = String::from_utf8_lossy(bytes);
@@ -1517,9 +1652,11 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
     let mut texcoords: Vec<DVec2> = Vec::new();
     let mut used = BTreeMap::new();
     let mut image_names: BTreeMap<String, ()> = BTreeMap::new();
-    // Each material's `map_Kd`, and the bytes of every image read.
-    let mut map_kd: BTreeMap<String, String> = BTreeMap::new();
+    // Each material as the MTL gives it, and the bytes of every image read.
+    let mut mtl: BTreeMap<String, Mtl> = BTreeMap::new();
     let mut image_bytes: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    // Per OBJ vertex, its colour as the file gives it.
+    let mut vertex_colors: Vec<Option<[f64; 3]>> = Vec::new();
     // The part being read: name, global → local vertex map, solid, uvs.
     struct Building {
         name: String,
@@ -1531,6 +1668,8 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
         surface: u32,
         material: String,
         materials: BTreeMap<String, u32>,
+        /// Per local vertex, its OBJ vertex.
+        global: Vec<usize>,
     }
     let start = |name: &str, used: &mut BTreeMap<String, ()>| Building {
         name: unique(name, used),
@@ -1542,13 +1681,15 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
         surface: 0,
         material: String::new(),
         materials: BTreeMap::new(),
+        global: Vec::new(),
     };
-    let finish = |b: Building, out: &mut Imported| {
+    let finish = |b: Building, out: &mut Imported, globals: &mut Vec<Vec<usize>>| {
         if !b.solid.triangles.is_empty() {
             if !b.all_uv && b.any_uv {
                 out.skipped
                     .push(format!("{}: vt on some faces only, so no UVs", b.name));
             }
+            globals.push(b.global);
             out.parts.push(ImportedPart {
                 name: b.name,
                 solid: Solid {
@@ -1556,13 +1697,17 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
                     ..b.solid
                 },
                 transform: Affine::IDENTITY,
-                material: b.material,
-                map: None,
+                material: Material {
+                    name: b.material,
+                    ..Default::default()
+                },
+                defaults: Vec::new(),
             });
         }
     };
+    let mut globals: Vec<Vec<usize>> = Vec::new();
     let mut cur: Option<Building> = None;
-    let (mut points, mut lines, mut colours) = (0usize, 0usize, 0usize);
+    let (mut points, mut lines) = (0usize, 0usize);
     let mut joined = String::new();
     for (ln, raw) in text.lines().enumerate() {
         // Backslash continues a line.
@@ -1589,10 +1734,12 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
                     return Err(ImportError::NotFinite("OBJ vertex".into()));
                 }
                 positions.push(p);
-                // `v x y z r g b`: a vertex colour, not read.
-                if tok.clone().nth(2).is_some() {
-                    colours += 1;
-                }
+                // `v x y z r g b`: a vertex colour.
+                vertex_colors.push(if tok.clone().nth(2).is_some() {
+                    Some([num(tok.next())?, num(tok.next())?, num(tok.next())?])
+                } else {
+                    None
+                });
             }
             "vt" => {
                 let u = num(tok.next())?;
@@ -1602,7 +1749,7 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
             "o" | "g" if (key == "o") == has_o => {
                 let name = tok.collect::<Vec<_>>().join(" ");
                 if let Some(b) = cur.take() {
-                    finish(b, &mut out);
+                    finish(b, &mut out, &mut globals);
                 }
                 cur = Some(start(&name, &mut used));
             }
@@ -1618,39 +1765,59 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
             "mtllib" => {
                 let file = tok.collect::<Vec<_>>().join(" ");
                 match fetch(&file, resolve) {
-                    Ok(mtl) => {
+                    Ok(bytes) => {
                         let mut current = String::new();
-                        for l in String::from_utf8_lossy(&mtl).lines() {
-                            let l = l.trim();
-                            let lower = l.to_ascii_lowercase();
-                            if let Some(n) = l.strip_prefix("newmtl ") {
-                                current = n.trim().to_string();
+                        for l in String::from_utf8_lossy(&bytes).lines() {
+                            let l = l.split('#').next().unwrap_or("").trim();
+                            let Some(key) = l.split_whitespace().next() else {
+                                continue;
+                            };
+                            let lower = key.to_ascii_lowercase();
+                            let rest: Vec<&str> = l.split_whitespace().skip(1).collect();
+                            if lower == "newmtl" {
+                                current = rest.join(" ");
+                                mtl.entry(current.clone()).or_default();
+                                continue;
                             }
-                            if lower.starts_with("map_kd ")
-                                && let Some(img) = l.split_whitespace().last()
-                            {
-                                map_kd
-                                    .entry(current.clone())
-                                    .or_insert_with(|| img.to_string());
+                            let m = mtl.entry(current.clone()).or_default();
+                            let nums: Vec<f64> =
+                                rest.iter().filter_map(|x| x.parse().ok()).collect();
+                            let rgb = || (nums.len() >= 3).then(|| [nums[0], nums[1], nums[2]]);
+                            let one = || nums.first().copied();
+                            let is_map = lower.starts_with("map_")
+                                || ["bump", "disp", "norm", "decal", "refl"]
+                                    .contains(&lower.as_str());
+                            let image =
+                                is_map.then(|| rest.last().map(|x| x.to_string())).flatten();
+                            let read = match lower.as_str() {
+                                "kd" => rgb().map(|c| m.kd = Some(c)).is_some(),
+                                "ke" => rgb().map(|c| m.ke = Some(c)).is_some(),
+                                "d" => one().map(|x| m.d = Some(x)).is_some(),
+                                "tr" => one().map(|x| m.d = Some(1.0 - x)).is_some(),
+                                "pr" => one().map(|x| m.pr = Some(x)).is_some(),
+                                "pm" => one().map(|x| m.pm = Some(x)).is_some(),
+                                "map_kd" | "map_ke" | "norm" => {
+                                    if let Some(img) = &image {
+                                        m.maps.entry(lower.clone()).or_insert_with(|| img.clone());
+                                    }
+                                    image.is_some()
+                                }
+                                _ => false,
+                            };
+                            if !read && !m.unread.contains(&key.to_string()) {
+                                m.unread.push(key.to_string());
                             }
-                            if lower.starts_with("map_")
-                                || lower.starts_with("bump ")
-                                || lower.starts_with("disp ")
-                                || lower.starts_with("norm ")
-                            {
-                                let Some(img) = l.split_whitespace().last() else {
-                                    continue;
-                                };
-                                if image_names.insert(img.to_string(), ()).is_some() {
+                            if let Some(img) = image {
+                                if image_names.insert(img.clone(), ()).is_some() {
                                     continue;
                                 }
-                                out.images.push(match fetch(img, resolve) {
+                                out.images.push(match fetch(&img, resolve) {
                                     Ok(b) => {
-                                        let info = ImageInfo::from_bytes(img, &b);
-                                        image_bytes.insert(img.to_string(), b);
+                                        let info = ImageInfo::from_bytes(&img, &b);
+                                        image_bytes.insert(img.clone(), b);
                                         info
                                     }
-                                    Err(e) => ImageInfo::missing(img, &e.to_string()),
+                                    Err(e) => ImageInfo::missing(&img, &e.to_string()),
                                 });
                             }
                         }
@@ -1685,6 +1852,7 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
                     let local = *b.local.entry(vi as u32).or_insert(next);
                     if local == next {
                         b.solid.push_vertex(positions[vi]);
+                        b.global.push(vi);
                     }
                     corners.push(local);
                     corner_uv.push(uv);
@@ -1716,22 +1884,84 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
         }
     }
     if let Some(b) = cur.take() {
-        finish(b, &mut out);
+        finish(b, &mut out, &mut globals);
+    }
+    // Vertex colours: sRGB in the file, linear here; 0..=255 if any
+    // exceeds 1.
+    let colored = vertex_colors.iter().flatten().count();
+    let scale = if vertex_colors.iter().flatten().flatten().any(|&c| c > 1.0) {
+        255.0
+    } else {
+        1.0
+    };
+    let lin = |c: [f64; 3]| {
+        let l = c.map(|x| crate::export::linear(x / scale));
+        [l[0], l[1], l[2], 1.0]
+    };
+    for (p, global) in out.parts.iter_mut().zip(&globals) {
+        if colored == 0 || !global.iter().any(|&g| vertex_colors[g].is_some()) {
+            continue;
+        }
+        let per_vertex: Vec<[f64; 4]> = global
+            .iter()
+            .map(|&g| vertex_colors[g].map_or(shape_mesh::WHITE, lin))
+            .collect();
+        let colors = p
+            .solid
+            .triangles
+            .iter()
+            .map(|t| t.map(|v| per_vertex[v as usize]))
+            .collect();
+        p.solid.colors = Some(colors);
+    }
+    if colored > 0 && colored < vertex_colors.len() {
+        out.skipped.push(format!(
+            "{} of {} vertices have no colour and are white",
+            vertex_colors.len() - colored,
+            vertex_colors.len()
+        ));
     }
     for p in &mut out.parts {
-        p.map = map_kd
-            .get(&p.material)
-            .and_then(|img| Some(Texture::from_bytes(img, image_bytes.get(img)?.clone())));
+        let Some(m) = mtl.get(&p.material.name) else {
+            continue;
+        };
+        let tex = |key: &str| {
+            let img = m.maps.get(key)?;
+            Some(Texture::from_bytes(img, image_bytes.get(img)?.clone()))
+        };
+        p.material = Material {
+            name: p.material.name.clone(),
+            color: m.kd,
+            metalness: m.pm.unwrap_or(0.0),
+            roughness: m.pr,
+            emissive: m.ke.unwrap_or([0.0; 3]),
+            opacity: m.d,
+            map: tex("map_kd"),
+            emissive_map: tex("map_ke"),
+            normal_map: tex("norm"),
+            ..Default::default()
+        };
+        for (key, img) in &m.maps {
+            if !image_bytes.contains_key(img) {
+                out.skipped.push(format!(
+                    "{}: its {key} image {img:?} could not be read",
+                    p.name
+                ));
+            }
+        }
+        if !m.unread.is_empty() {
+            out.skipped.push(format!(
+                "{}: its material's {} are not read",
+                p.name,
+                m.unread.join(", ")
+            ));
+        }
     }
     if points > 0 {
         out.skipped.push(format!("{points} point elements"));
     }
     if lines > 0 {
         out.skipped.push(format!("{lines} line elements"));
-    }
-    if colours > 0 {
-        out.skipped
-            .push(format!("{colours} vertex colours (v x y z r g b)"));
     }
     if out.parts.is_empty() {
         return Err(fmt_err("the file has no faces"));

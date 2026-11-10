@@ -19,6 +19,7 @@ use shape_core::predicates::orient2d;
 use shape_core::{DVec2, DVec3};
 use shape_mesh::{Skin, Solid, edge_key};
 
+use crate::export::{MAP_KINDS, Material};
 use crate::image::ImageInfo;
 use crate::intersect::{degenerate, self_intersections, tris_overlap_2d};
 use crate::json::Json;
@@ -34,6 +35,10 @@ pub struct Measure<'a> {
     pub uv_resolution: u32,
     /// Count pairs of triangles that pass through each other (exact).
     pub intersections: bool,
+    /// The materials the solid is drawn with: each one's maps and their
+    /// sizes, and texture memory per kind of map, are reported. Empty
+    /// leaves both out of the report.
+    pub materials: &'a [Material],
 }
 
 /// One connected piece.
@@ -76,6 +81,13 @@ pub struct TextureMeasures {
     pub decoded_bytes_with_mips: u64,
     /// Images whose size could not be read.
     pub unknown: usize,
+    /// Per material given ([`Measure::materials`]): its name and its
+    /// maps, each with its kind ([`crate::MAP_KINDS`]) and image.
+    pub materials: Vec<(String, Vec<(&'static str, ImageInfo)>)>,
+    /// Decoded bytes with mips per kind of map, over the materials'
+    /// maps (each image counted once per kind it serves), in
+    /// [`crate::MAP_KINDS`] order; kinds no map has are left out.
+    pub by_kind: Vec<(&'static str, u64)>,
 }
 
 /// Everything [`measure`] reports.
@@ -127,6 +139,9 @@ pub struct MeshMeasures {
     pub texture: TextureMeasures,
     /// The solid's skin, if it is skinned (bones, weighted vertices).
     pub skin: Option<Skin>,
+    /// On a solid with vertex colours: edges where a corner's colour
+    /// differs between the edge's two triangles (hard colour borders).
+    pub color_borders: Option<usize>,
 }
 
 /// Measures `s` (and the UVs and images `d` gives).
@@ -299,8 +314,52 @@ pub fn measure(s: &Solid, d: &Measure) -> MeshMeasures {
             None => t.unknown += 1,
         }
     }
+    for mat in d.materials {
+        let maps: Vec<(&'static str, ImageInfo)> = mat
+            .maps()
+            .into_iter()
+            .map(|(k, tex)| (k, ImageInfo::from_bytes(&tex.name, &tex.bytes)))
+            .collect();
+        t.materials.push((mat.name.clone(), maps));
+    }
+    for kind in MAP_KINDS {
+        let mut seen: Vec<&ImageInfo> = Vec::new();
+        let mut bytes = 0;
+        for (_, maps) in &t.materials {
+            for (k, info) in maps {
+                if *k == kind && !seen.contains(&info) {
+                    seen.push(info);
+                    bytes += info.decoded_bytes().map_or(0, |b| b.1);
+                }
+            }
+        }
+        if !seen.is_empty() {
+            t.by_kind.push((kind, bytes));
+        }
+    }
     m.texture = t;
+    m.color_borders = s.colors.as_ref().map(|c| color_borders(s, c));
     m
+}
+
+/// Edges where either end's colour differs between the two triangles
+/// on it.
+fn color_borders(s: &Solid, c: &[shape_mesh::CornerColors]) -> usize {
+    // Per edge, each triangle's colours at its two ends (smaller first).
+    type Ends = ([f64; 4], [f64; 4]);
+    let mut by_edge: BTreeMap<(u32, u32), Vec<Ends>> = BTreeMap::new();
+    for (i, t) in s.triangles.iter().enumerate() {
+        for k in 0..3 {
+            let (a, b) = (t[k], t[(k + 1) % 3]);
+            let (ca, cb) = (c[i][k], c[i][(k + 1) % 3]);
+            let ends = if a < b { (ca, cb) } else { (cb, ca) };
+            by_edge.entry((a.min(b), a.max(b))).or_default().push(ends);
+        }
+    }
+    by_edge
+        .values()
+        .filter(|v| v.len() == 2 && v[0] != v[1])
+        .count()
 }
 
 /// A texel centre on a triangle's edge belongs to it when the edge runs up,
@@ -472,6 +531,69 @@ impl MeshMeasures {
                 ])
             })
             .collect();
+        let mut texture = vec![
+            ("images", Json::Arr(images)),
+            ("decoded_bytes", Json::Int(self.texture.decoded_bytes)),
+            (
+                "decoded_bytes_with_mips",
+                Json::Int(self.texture.decoded_bytes_with_mips),
+            ),
+            ("unknown", count(self.texture.unknown)),
+        ];
+        if !self.texture.materials.is_empty() {
+            let materials = self
+                .texture
+                .materials
+                .iter()
+                .map(|(name, maps)| {
+                    Json::Obj(vec![
+                        ("name", Json::Str(name.clone())),
+                        (
+                            "maps",
+                            Json::Arr(
+                                maps.iter()
+                                    .map(|(k, i)| {
+                                        let mips = i
+                                            .decoded_bytes()
+                                            .map_or(Json::Null, |b| Json::Int(b.1));
+                                        Json::Obj(vec![
+                                            ("kind", Json::Str((*k).into())),
+                                            ("name", Json::Str(i.name.clone())),
+                                            ("format", Json::Str(i.format.clone())),
+                                            (
+                                                "width",
+                                                i.width.map_or(Json::Null, |w| {
+                                                    Json::Int(u64::from(w))
+                                                }),
+                                            ),
+                                            (
+                                                "height",
+                                                i.height.map_or(Json::Null, |h| {
+                                                    Json::Int(u64::from(h))
+                                                }),
+                                            ),
+                                            ("file_bytes", Json::Int(i.file_bytes)),
+                                            ("decoded_bytes_with_mips", mips),
+                                        ])
+                                    })
+                                    .collect(),
+                            ),
+                        ),
+                    ])
+                })
+                .collect();
+            texture.push(("materials", Json::Arr(materials)));
+            texture.push((
+                "by_kind",
+                Json::Obj(
+                    self.texture
+                        .by_kind
+                        .iter()
+                        .map(|(k, b)| (*k, Json::Int(*b)))
+                        .collect(),
+                ),
+            ));
+        }
         let size = self.bounds_max - self.bounds_min;
         let doc = Json::Obj(vec![
             ("units", Json::Str("mm".into())),
@@ -531,19 +653,12 @@ impl MeshMeasures {
                 }),
             ),
             ("uv", uv),
-            (
-                "texture",
-                Json::Obj(vec![
-                    ("images", Json::Arr(images)),
-                    ("decoded_bytes", Json::Int(self.texture.decoded_bytes)),
-                    (
-                        "decoded_bytes_with_mips",
-                        Json::Int(self.texture.decoded_bytes_with_mips),
-                    ),
-                    ("unknown", count(self.texture.unknown)),
-                ]),
-            ),
+            ("texture", Json::Obj(texture)),
         ]);
+        let mut doc = doc;
+        if let (Some(n), Json::Obj(fields)) = (self.color_borders, &mut doc) {
+            fields.push(("colors", Json::Obj(vec![("borders", count(n))])));
+        }
         let mut out = String::new();
         doc.write(&mut out);
         out

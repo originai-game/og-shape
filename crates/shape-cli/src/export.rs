@@ -17,7 +17,7 @@
 use std::path::Path;
 
 use shape_mesh::Solid;
-use shape_tools::{PlainGlb, Texture, glb, glb_plain, obj, stl};
+use shape_tools::{Material, PlainGlb, glb, glb_plain, obj, stl};
 
 use crate::args::{Args, IMPORT_OPTIONS};
 use crate::report::{object, string};
@@ -48,7 +48,7 @@ pub fn encode(source: &Source, out: &Path) -> Result<Vec<u8>, Failure> {
             let placed = mesh.placed()?;
             let mut s = scene(&mesh.name, &placed);
             for (part, p) in s.parts.iter_mut().zip(&mesh.imported.parts) {
-                part.material.map = p.map.clone();
+                part.material = p.material.clone();
             }
             match ext.as_str() {
                 "glb" => glb(&s).map_err(failed),
@@ -76,8 +76,53 @@ pub fn export(files: &dyn Files, source: &Source, out: &Path) -> Result<String, 
                 ("geometry", string(if posed { "posed" } else { "rest" })),
             ])
         }
-        Source::Mesh(_) => written(out, bytes.len()),
+        Source::Mesh(mesh) => {
+            let mut lost = Vec::new();
+            if extension(out) != "glb" {
+                for p in &mesh.imported.parts {
+                    lost.extend(not_written(&p.solid, Some(&p.material), out));
+                }
+                lost.sort();
+                lost.dedup();
+            }
+            written_lost(out, bytes.len(), &lost)
+        }
     })
+}
+
+/// What a solid carries that writing it to `out` leaves out: OBJ and STL
+/// hold positions only.
+pub fn not_written(s: &Solid, m: Option<&Material>, out: &Path) -> Vec<String> {
+    let mut lost = Vec::new();
+    if extension(out) == "glb" {
+        return lost;
+    }
+    if s.uvs.is_some() {
+        lost.push("uvs".to_string());
+    }
+    if s.colors.is_some() {
+        lost.push("colors".to_string());
+    }
+    if m.is_some_and(|m| *m != Material::default()) {
+        lost.push("material".to_string());
+    }
+    lost
+}
+
+/// [`written`], with `not_written` when `lost` names anything.
+fn written_lost(out: &Path, bytes: usize, lost: &[String]) -> String {
+    let mut fields = vec![
+        ("path", string(&out.display().to_string())),
+        ("format", string(&extension(out))),
+        ("bytes", bytes.to_string()),
+    ];
+    if !lost.is_empty() {
+        fields.push((
+            "not_written",
+            crate::report::array(&lost.iter().map(|x| string(x)).collect::<Vec<_>>()),
+        ));
+    }
+    object(&fields)
 }
 
 /// `{"path", "format", "bytes"}` for a file written.
@@ -90,16 +135,24 @@ pub fn written(out: &Path, bytes: usize) -> String {
 }
 
 /// One solid in the format `out`'s extension names: a plain GLB (with
-/// the solid's UVs, and `map` if given), OBJ or STL.
+/// the solid's UVs and colours, and `material` if given), OBJ or STL.
 pub fn encode_solid(
     name: &str,
     s: &Solid,
-    map: Option<&Texture>,
+    material: Option<&Material>,
     out: &Path,
 ) -> Result<Vec<u8>, Failure> {
     let parts = [(name.to_string(), s.clone())];
     match extension(out).as_str() {
-        "glb" => glb_plain(s, &PlainGlb { name, map }).map_err(failed),
+        "glb" => glb_plain(
+            s,
+            &PlainGlb {
+                name,
+                material,
+                ..Default::default()
+            },
+        )
+        .map_err(failed),
         "obj" => obj(&scene(name, &parts))
             .map(String::into_bytes)
             .map_err(failed),
@@ -108,20 +161,25 @@ pub fn encode_solid(
     }
 }
 
-/// Writes one solid to `out` if given; reports the file or null.
+/// Writes one solid to `out` if given; reports the file (with
+/// `not_written` for what an OBJ or STL leaves out) or null.
 pub fn write_solid(
     files: &dyn Files,
     name: &str,
     s: &Solid,
-    map: Option<&Texture>,
+    material: Option<&Material>,
     out: Option<&Path>,
 ) -> Result<String, Failure> {
     match out {
         None => Ok("null".into()),
         Some(out) => {
-            let bytes = encode_solid(name, s, map, out)?;
+            let bytes = encode_solid(name, s, material, out)?;
             files.write(out, &bytes)?;
-            Ok(written(out, bytes.len()))
+            Ok(written_lost(
+                out,
+                bytes.len(),
+                &not_written(s, material, out),
+            ))
         }
     }
 }
