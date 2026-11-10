@@ -1046,9 +1046,12 @@ fn keep_input_colors(before: &Solid, mut after: Solid) -> Result<Solid, RepairEr
     let new = after.colors.get_or_insert_with(|| vec![[WHITE; 3]; n]);
     let dist =
         |a: &[f64; 4], b: &[f64; 4]| (0..4).map(|k| (a[k] - b[k]) * (a[k] - b[k])).sum::<f64>();
+    // Corners the union made, per vertex.
+    let mut made: BTreeMap<u32, Vec<(usize, usize)>> = BTreeMap::new();
     for (t, tri) in after.triangles.iter().enumerate() {
         for (k, &v) in tri.iter().enumerate() {
             let Some(cs) = at.get(&key(after.positions[v as usize])) else {
+                made.entry(v).or_default().push((t, k));
                 continue;
             };
             let here = new[t][k];
@@ -1059,6 +1062,32 @@ fn keep_input_colors(before: &Solid, mut after: Solid) -> Result<Solid, RepairEr
                 }
             }
             new[t][k] = best;
+        }
+    }
+    // A vertex on a cut line is interpolated once per triangle around it,
+    // each rounding its own way: corners that differ by less than half an
+    // 8-bit step take their mean (in sorted order), so rounding makes no
+    // colour border; a larger difference (two sheets of different colour
+    // meeting) stays one.
+    for corners in made.values() {
+        let mut cs: Vec<[f64; 4]> = corners.iter().map(|&(t, k)| new[t][k]).collect();
+        let spread = (0..4)
+            .map(|ch| {
+                let (lo, hi) = cs.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), c| {
+                    (l.min(c[ch]), h.max(c[ch]))
+                });
+                hi - lo
+            })
+            .fold(0.0, f64::max);
+        if spread == 0.0 || spread >= 1.0 / 512.0 {
+            continue;
+        }
+        cs.sort_by(cmp);
+        let n = cs.len() as f64;
+        let mean: [f64; 4] =
+            core::array::from_fn(|ch| cs.iter().map(|c| c[ch]).sum::<f64>() / n);
+        for &(t, k) in corners {
+            new[t][k] = mean;
         }
     }
     after.canonicalize()?;
