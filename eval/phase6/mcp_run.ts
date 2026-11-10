@@ -10,12 +10,18 @@
  * shape-mcp` and `crates/shape-wasm/build.sh`:
  *
  *   node eval/phase6/mcp_run.ts <scratch dir> [model] [object …] [--summary]
+ *       [--run=<name>] [--jobs=<n>]
  *
  * `--summary` runs no agent: it only redoes the previews, measures and
- * the summary table from the programs already in `U/`.
- * Writes `eval/phase6/U/<object>/`: `program.ts` (the last source the
+ * the summary table from the programs already in the run's directory.
+ * `--run` names the run's directory (`U` by default; run `Z`, research
+ * §22, used `Z/Z1` and `Z/Z2`); without objects, run `U` takes its five
+ * and any other run all twenty of `references.json`. `--jobs` caps the
+ * agents running at once (all by default).
+ * Writes `eval/phase6/<run>/<object>/`: `program.ts` (the last source the
  * agent ran), `program.json`, `preview.png`, `measure.json`, `runs.log`
- * (one line per `run_typescript` or `build`), `report.md` (the agent's
+ * (one line per `run_typescript` or `build`), `errors.log` (each failed
+ * build's whole error text), `report.md` (the agent's
  * answer) and `usage.json` (turns and tokens from Claude Code's result);
  * `preview.png` and `measure.json` come from `run.ts` on `program.ts`,
  * as in the other runs. Then prints a table: builds (failed), turns,
@@ -31,9 +37,17 @@ import { fileURLToPath } from "node:url";
 const repo = fileURLToPath(new URL("../../", import.meta.url));
 const argv = process.argv.slice(2);
 const summaryOnly = argv.includes("--summary");
-const [scratch, model = "claude-opus-5-5", ...only] = argv.filter((a) => a !== "--summary");
-if (!scratch) throw new Error("usage: mcp_run.ts <scratch dir> [model] [object …] [--summary]");
-const objects = only.length ? only : ["auto1_curved_tubes", "auto2_lever_knob", "sim2_mouse_and_pad", "obj2_djembe", "obj4_spectacles"];
+const flag = (name: string) => argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
+const run = flag("run") ?? "U";
+const jobs = Number(flag("jobs") ?? 0);
+const [scratch, model = "claude-opus-5-5", ...only] = argv.filter((a) => !a.startsWith("--"));
+if (!scratch) throw new Error("usage: mcp_run.ts <scratch dir> [model] [object …] [--summary] [--run=<name>] [--jobs=<n>]");
+const references = JSON.parse(readFileSync(`${repo}eval/phase6/references.json`, "utf8"));
+const objects = only.length
+  ? only
+  : run === "U"
+    ? ["auto1_curved_tubes", "auto2_lever_knob", "sim2_mouse_and_pad", "obj2_djembe", "obj4_spectacles"]
+    : Object.keys(references);
 
 const PROMPT = `You are building a 3D model with og-shape, through its MCP server (the og-shape tools).
 
@@ -94,8 +108,9 @@ function runOne(object: string): Promise<void> {
 }
 
 function collect(object: string, ws: string, transcript: string, ms: number, code: number) {
-  const dir = `${repo}eval/phase6/U/${object}`;
+  const dir = `${repo}eval/phase6/${run}/${object}`;
   mkdirSync(dir, { recursive: true });
+  const errors: string[] = [];
   const events = transcript
     .split("\n")
     .filter(Boolean)
@@ -131,12 +146,14 @@ function collect(object: string, ws: string, transcript: string, ms: number, cod
             summary = "";
           }
         }
+        if (failed) errors.push(`--- build ${runs.length + 1} (${call.name.replace("mcp__og-shape__", "")})\n${text}`);
         runs.push(`${call.name.replace("mcp__og-shape__", "")} ${failed ? `error ${text.replace(/\s+/g, " ").slice(0, 160)}` : `ok ${summary}`}`);
       }
     }
   }
   const result = events.find((e) => e.type === "result") ?? {};
   writeFileSync(`${dir}/runs.log`, `${runs.join("\n")}\n`);
+  writeFileSync(`${dir}/errors.log`, errors.length ? `${errors.join("\n")}\n` : "");
   writeFileSync(`${dir}/report.md`, `${result.result ?? "(no result)"}\n`);
   if (lastSource) writeFileSync(`${dir}/program.ts`, lastSource.endsWith("\n") ? lastSource : `${lastSource}\n`);
   const usage: Usage = {
@@ -159,7 +176,7 @@ function collect(object: string, ws: string, transcript: string, ms: number, cod
 
 /** The preview and measures, by `run.ts` as for the other runs, and one table row. */
 function summarize(object: string): string {
-  const dir = `${repo}eval/phase6/U/${object}`;
+  const dir = `${repo}eval/phase6/${run}/${object}`;
   const tmp = `${scratch}/${object}.run`;
   rmSync(tmp, { recursive: true, force: true });
   const r = spawnSync("bun", [`${repo}eval/phase6/run.ts`, `${dir}/program.ts`, tmp], { encoding: "utf8" });
@@ -167,7 +184,7 @@ function summarize(object: string): string {
   copyFileSync(`${tmp}/preview.png`, `${dir}/preview.png`);
   copyFileSync(`${tmp}/measure.json`, `${dir}/measure.json`);
   const m = JSON.parse(readFileSync(`${tmp}/measure.json`, "utf8"));
-  const ref = JSON.parse(readFileSync(`${repo}eval/phase6/references.json`, "utf8"))[object];
+  const ref = references[object];
   const dev = Math.max(...m.size.map((v: number, k: number) => Math.abs(v - ref.reference_size_mm[k]) / ref.reference_size_mm[k]));
   const u = JSON.parse(readFileSync(`${dir}/usage.json`, "utf8"));
   const t = u.usage ?? {};
@@ -176,7 +193,13 @@ function summarize(object: string): string {
   return `| ${object} | ${u.builds} (${u.failed}) | ${u.turns} | ${tokens} | ${t.output_tokens} | ${m.triangles} | ${(dev * 100).toFixed(1)} % | ${m.joints.length}/${ref.n_joints} | ${open} |`;
 }
 
-if (!summaryOnly) await Promise.all(objects.map(runOne));
+if (!summaryOnly) {
+  const queue = [...objects];
+  const worker = async () => {
+    for (let o = queue.shift(); o; o = queue.shift()) await runOne(o);
+  };
+  await Promise.all(Array.from({ length: jobs > 0 ? jobs : objects.length }, worker));
+}
 console.log("| object | builds (failed) | turns | tokens (all) | output | triangles | size dev. | joints | open parts |");
 console.log("|---|---|---|---|---|---|---|---|---|");
 for (const o of objects) console.log(summarize(o));

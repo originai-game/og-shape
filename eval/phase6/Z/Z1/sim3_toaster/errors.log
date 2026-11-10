@@ -1,0 +1,16 @@
+--- build 3 (run_typescript)
+error: the program failed (exit status: 1): 
+--- logs ---
+48 |       ],
+49 |       on: og.world.move(0, 0, footH),
+50 |     });
+51 |     const top = s.face(h, "top");
+52 |     s.pocket(h, { profile: og.rect({ width: slotW, height: slotL, radius: 3 }), depth: slotDepth, at: s.grid({ nx: 2, px: slotGap, on: top }) });
+53 |     s.pocket(h, { profile: og.rect({ width: 8, height: 80, radius: 4 }), depth: 15, at: endFrame(0, leverZ - 34) });
+                                                                                                         ^
+ReferenceError: Cannot access 'leverZ' before initialization.
+      at makeHousing (/tmp/shape-mcp-5710-2/program.ts:53:101)
+      at program_default (/tmp/shape-mcp-5710-2/program.ts:7:19)
+      at /tmp/shape-mcp-5710-2/run.ts:25:25
+
+Bun v1.4.4 (Linux x64)

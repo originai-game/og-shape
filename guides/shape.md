@@ -11,7 +11,7 @@ Before writing code, write down from the description and the reference:
    rest. Z is up, the front looks −Y. The description's numbers win over
    the picture; the picture fills in what the words leave out. Match a
    size given per axis even if the object's own front then faces another
-   way.
+   way; §6's axis signs then turn with it.
 2. **The parts.** A part is one material or one motion: a body, a lid, a
    door, a wheel. Pieces the description names separately but that share
    a colour and never move apart are one part.
@@ -61,7 +61,8 @@ export default function (og) {
 - **One function per distinct part**, built about its own origin; each
   dimension named once, the rest derived.
 - **Say each shape with its verb**: turned is `revolve`, hollow `shell`,
-  a bore `hole`, a rod or bent tube `wire` (bends by `fillet`), a pipe
+  a bore `hole`, a rod or bent tube `wire` (bends by `fillet`), a
+  hollow or square bent bar a `sweep` of a ring or `rect`, a pipe
   elbow a part `torus`, a hull or fuselage `body`, a changing section
   `loft`, a draft `extrude` with `taper`, a curved panel the `intersect`
   of a slab and a big cylinder, an arc in an outline a `poly` point's
@@ -97,7 +98,8 @@ Frames to place on:
 - `s.bbox(parts, "+X-Y+Z")`: the centre of a side, edge or corner of the
   whole box, joined details included.
 - `og.world.move(x, y, z)`, `og.frame({ origin })`: world axes; `f.turn`
-  tilts any frame.
+  tilts any frame; `og.frame({ origin, normal: [1, 0, 0] })` points a
+  part's +z (a cylinder's axis) along +X.
 
 Face and box frames are turned (+z outward): use them to put a part *on*
 a face; to put it *at* a point unturned, use `og.frame({ origin:
@@ -169,7 +171,8 @@ An error names the op, its part and your line; fix it there.
    clears its parent (a continuous joint may pass through):
    `s.measure({ posed: true })` lists the parts that meet at the pose,
    and `joints` shows a pivot far from its parent's surface. Read frames
-   before posing. Take the pose out.
+   before posing. Take the pose out. Through MCP, give `preview` and
+   `measure` a `pose` instead: the program stays at rest.
 4. **Fix the program**, one cause at a time, until every measure holds
    and the preview matches the reference.
 

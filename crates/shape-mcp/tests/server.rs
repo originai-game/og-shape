@@ -451,3 +451,43 @@ fn fonts_a_program_names_stay_in_the_workspace() {
     assert!(error_text(&r[1]).contains("not a TrueType"), "{}", r[1]);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// `pose` poses a program for one call without changing it; a view from
+/// below is refused as one, not as a number that is not finite.
+#[test]
+fn a_pose_for_one_call() {
+    let root = workspace("pose");
+    let s = server(&root, TsConfig::default());
+    let lid = json!({"name": "box", "ops": [
+        {"op": "box", "name": "base", "width": 40, "depth": 40, "height": 10},
+        {"op": "box", "name": "lid", "width": 40, "depth": 40, "height": 2,
+         "on": {"origin": [0, 0, 10], "x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}},
+        {"op": "joint", "child": 1, "parent": 0, "name": "lid_slide", "kind": "prismatic",
+         "on": {"origin": [0, 0, 10], "x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]},
+         "axis": "+Z", "range": [0, 30]}]});
+    let r = session(
+        &s,
+        &[
+            call(
+                "measure",
+                json!({"program": lid, "pose": {"lid_slide": 30}}),
+            ),
+            call("measure", json!({"program": lid})),
+            call("measure", json!({"program": lid, "pose": {"no_joint": 1}})),
+            call(
+                "preview",
+                json!({"program": lid, "width": 32, "elevation": -0.5}),
+            ),
+        ],
+    );
+    let posed = report(&r[0]);
+    assert_eq!(posed["posed"], true, "{posed}");
+    assert_eq!(posed["boundsMax"][2], 42.0, "{posed}");
+    assert_eq!(report(&r[1])["boundsMax"][2], 12.0);
+    assert!(
+        error_text(&r[2]).contains("no_joint"),
+        "{}",
+        error_text(&r[2])
+    );
+    assert!(error_text(&r[3]).contains("over 0 and up to pi/2"));
+}

@@ -1,0 +1,8 @@
+{"name": "sweep_end_tangent", "ops": [
+  {"op": "sweep", "name": "quarter", "profile": {"circle": {"radius": 127}},
+   "path": [[0, 0, 0], {"arc": {"through": [80.97, 0, 195.48], "to": [276.39, 0, 276.39]}}],
+   "up": [0, 1, 0]},
+  {"op": "wire", "name": "rod", "diameter": 254,
+   "path": [[0, 0, 0], {"arc": {"through": [80.97, 0, 195.48], "to": [276.39, 0, 276.39]}}],
+   "on": {"origin": [1000, 0, 0], "x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}}
+]}

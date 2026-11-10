@@ -1,0 +1,222 @@
+{
+ "triangles": 2972,
+ "boundsMin": [
+  -70,
+  0,
+  0
+ ],
+ "boundsMax": [
+  70,
+  12.48,
+  26.77
+ ],
+ "size": [
+  140,
+  12.48,
+  26.77
+ ],
+ "joints": [
+  "temple_right_hinge",
+  "temple_left_hinge"
+ ],
+ "parts": [
+  {
+   "name": "lens_right",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 580,
+   "boundsMin": [
+    8,
+    0.5,
+    0
+   ],
+   "boundsMax": [
+    62,
+    5.13,
+    25
+   ]
+  },
+  {
+   "name": "lens_left",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 580,
+   "boundsMin": [
+    -62,
+    0.5,
+    0
+   ],
+   "boundsMax": [
+    -8,
+    5.13,
+    25
+   ]
+  },
+  {
+   "name": "brow_right",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 484,
+   "boundsMin": [
+    5,
+    0,
+    21.77
+   ],
+   "boundsMax": [
+    70,
+    9.5,
+    26.77
+   ]
+  },
+  {
+   "name": "brow_left",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 484,
+   "boundsMin": [
+    -70,
+    0,
+    21.77
+   ],
+   "boundsMax": [
+    -5,
+    12.48,
+    26.77
+   ]
+  },
+  {
+   "name": "bridge",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 164,
+   "boundsMin": [
+    -6.31,
+    1.5,
+    22.87
+   ],
+   "boundsMax": [
+    6.31,
+    2.9,
+    25.9
+   ]
+  },
+  {
+   "name": "nose_pad_right_support",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 76,
+   "boundsMin": [
+    5.1,
+    2.23,
+    7.74
+   ],
+   "boundsMax": [
+    9.4,
+    7.91,
+    13.4
+   ]
+  },
+  {
+   "name": "nose_pad_right",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 224,
+   "boundsMin": [
+    3.94,
+    6.89,
+    3.9
+   ],
+   "boundsMax": [
+    7.06,
+    8.71,
+    9.1
+   ]
+  },
+  {
+   "name": "nose_pad_left_support",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 76,
+   "boundsMin": [
+    -9.4,
+    2.23,
+    7.74
+   ],
+   "boundsMax": [
+    -5.1,
+    7.91,
+    13.4
+   ]
+  },
+  {
+   "name": "nose_pad_left",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 224,
+   "boundsMin": [
+    -7.06,
+    6.89,
+    3.9
+   ],
+   "boundsMax": [
+    -3.94,
+    8.71,
+    9.1
+   ]
+  },
+  {
+   "name": "temple_right",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 40,
+   "boundsMin": [
+    -57,
+    8,
+    3.69
+   ],
+   "boundsMax": [
+    67,
+    9.5,
+    26
+   ]
+  },
+  {
+   "name": "temple_left",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 40,
+   "boundsMin": [
+    -67,
+    10.98,
+    3.69
+   ],
+   "boundsMax": [
+    57,
+    12.48,
+    26
+   ]
+  }
+ ]
+}

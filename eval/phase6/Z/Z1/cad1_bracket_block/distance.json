@@ -1,0 +1,58 @@
+{
+ "samples": 20000,
+ "referenceTriangles": 438,
+ "builtTriangles": 518,
+ "referenceBounds": [
+  [
+   -40,
+   -30,
+   0
+  ],
+  [
+   40,
+   30,
+   20
+  ]
+ ],
+ "builtBounds": [
+  [
+   -40,
+   -30,
+   0
+  ],
+  [
+   40,
+   30,
+   20
+  ]
+ ],
+ "referenceDiagonal": 101.98,
+ "asPlaced": {
+  "builtToReference": 8.19,
+  "referenceToBuilt": 8.069,
+  "mean": 8.129,
+  "p95": 36.271,
+  "hausdorff": 40,
+  "meanOfDiagonal": 0.07971,
+  "hausdorffOfDiagonal": 0.39223
+ },
+ "centred": {
+  "shift": [
+   0,
+   0,
+   0
+  ],
+  "builtToReference": 8.19,
+  "referenceToBuilt": 8.069,
+  "mean": 8.129,
+  "p95": 36.271,
+  "hausdorff": 40,
+  "meanOfDiagonal": 0.07971,
+  "hausdorffOfDiagonal": 0.39223
+ },
+ "centredMeanIf": {
+  "mirrorX": 0.261,
+  "mirrorY": 12.179,
+  "turnZ180": 12.009
+ }
+}

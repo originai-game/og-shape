@@ -1,0 +1,97 @@
+{
+ "triangles": 1172,
+ "boundsMin": [
+  -140,
+  -110,
+  0
+ ],
+ "boundsMax": [
+  140,
+  110,
+  1546
+ ],
+ "size": [
+  280,
+  220,
+  1546
+ ],
+ "joints": [
+  "mid_mast_slide",
+  "top_mast_slide",
+  "stage_rotate"
+ ],
+ "parts": [
+  {
+   "name": "support_frame",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 704,
+   "boundsMin": [
+    -140,
+    -110,
+    0
+   ],
+   "boundsMax": [
+    140,
+    110,
+    1164
+   ]
+  },
+  {
+   "name": "mid_mast",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 32,
+   "boundsMin": [
+    -25,
+    5,
+    16
+   ],
+   "boundsMax": [
+    25,
+    55,
+    1100
+   ]
+  },
+  {
+   "name": "top_mast",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 36,
+   "boundsMin": [
+    -32,
+    -2,
+    300
+   ],
+   "boundsMax": [
+    32,
+    62,
+    1488
+   ]
+  },
+  {
+   "name": "stage_disk",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 400,
+   "boundsMin": [
+    -55,
+    -25,
+    1488
+   ],
+   "boundsMax": [
+    55,
+    85,
+    1546
+   ]
+  }
+ ]
+}

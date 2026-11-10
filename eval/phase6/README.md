@@ -27,10 +27,19 @@ TypeScript programs. Results and failure modes: `docs/research.md` §13.
     Read, with the guides read as MCP resources (research §19.7). Each
     also has the agent's answer (`report.md`) and its turns and tokens
     (`usage.json`).
+  - `Z/Z1`, `Z/Z2`: run `Z` (research §22): all 20 objects through the
+    MCP server as `U` was, with each failed build's text (`errors.log`)
+    and the surface distance to the reference mesh (`distance.json`);
+    `Z2` the four objects with a failed build or more than three builds,
+    with the revised guides. `Z/repro/`: the kernel gaps it found.
+    `Z/distance.ts` also wrote `distance.json` for runs `B` and `U`.
 - `run.ts`: the runner the agents used:
   `bun eval/phase6/run.ts <program.ts> <out dir> [--pose joint=value …]`.
-- `mcp_run.ts`: run `U`'s driver: `node eval/phase6/mcp_run.ts <scratch
-  dir> [model] [object …] [--summary]`.
+- `mcp_run.ts`: runs `U`'s and `Z`'s driver: `node eval/phase6/mcp_run.ts
+  <scratch dir> [model] [object …] [--summary] [--run=<dir>] [--jobs=<n>]`.
+- `Z/fetch_references.ts`: downloads the reference OpenUSD files
+  `references.json` names and checks their SHA-256 (not committed);
+  `bun eval/phase6/Z/distance.ts <refs dir> <run dir>` measures.
 
 The previews and measures were regenerated from each `program.ts` after
 the runs; they are the same bytes as the agents saw. `program.json`

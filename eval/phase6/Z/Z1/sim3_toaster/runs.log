@@ -1,0 +1,4 @@
+run_typescript ok parts 6 open 0 joints 3 triangles 4346
+run_typescript ok parts 3 open 0 joints 2 triangles 2922
+run_typescript error error: the program failed (exit status: 1): --- logs --- 48 | ], 49 | on: og.world.move(0, 0, footH), 50 | }); 51 | const top = s.face(h, "top"); 52 | s.pocket(
+run_typescript ok parts 6 open 0 joints 3 triangles 4346

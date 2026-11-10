@@ -1,0 +1,1 @@
+{"name":"t","ops":[{"op":"extrude","name":"h","height":100,"taper":0.1,"profile":{"rect":{"width":146,"height":284,"radius":24}}},{"op":"fillet","id":0,"radius":10,"edges":"top"}]}

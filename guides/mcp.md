@@ -66,13 +66,18 @@ Tools (arguments are in each tool's schema):
 | tool | takes | gives |
 |---|---|---|
 | `build` | `program` (JSON) or `path` (.json) | parts, joints, measures |
-| `preview` | a program or a mesh file; `views`, `width`, `height`, `columns`, `elevation`, `azimuth` (radians), `no_edges`, `no_ground`, `out`? | a PNG (image content) |
-| `measure` | a program or a mesh file; `intersections` | measures, no thresholds |
-| `export` | a program or a mesh file; `out` (.glb, .obj, .stl) | the file |
+| `preview` | a program or a mesh file; `views`, `width`, `height`, `columns`, `elevation` (over 0, up to π/2), `azimuth` (radians), `no_edges`, `no_ground`, `pose`?, `out`? | a PNG (image content) |
+| `measure` | a program or a mesh file; `intersections`, `posed`, `pose`? | measures, no thresholds |
+| `export` | a program or a mesh file; `out` (.glb, .obj, .stl), `pose`? | the file |
 | `import` | a mesh file; `out`? | parts, materials, UVs, bones, images, what was skipped |
 | `repair`, `decimate`, `unwrap` | a mesh file and the tool's settings; `out`? | what changed, measures after |
 | `process` | a mesh file; `budget`, `repair`, `unwrap`, `out`? | the whole chain's report |
-| `run_typescript` | `source` or `path` (.ts); `program_out`? | parts, measures, the recorded program |
+| `run_typescript` | `source` or `path` (a .ts file already there); `program_out`? | parts, measures, the recorded program, `console.log` output as `logs` |
+
+`pose` (`{"lid_hinge": 1.2}`: radians, or mm for a slide) poses a
+program's joints for that call only; the program stays as it is.
+`measure` with `pose` or `posed` measures at the pose, with each joint's
+seating and the parts that meet.
 
 Resources, to read before writing a program:
 `og-shape://guides/shape.md` (how to model an object: read it first),

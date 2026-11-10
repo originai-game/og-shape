@@ -1,0 +1,150 @@
+{
+ "triangles": 396,
+ "boundsMin": [
+  -1100,
+  -120,
+  0
+ ],
+ "boundsMax": [
+  0,
+  120,
+  300
+ ],
+ "size": [
+  1100,
+  240,
+  300
+ ],
+ "joints": [
+  "middle_slide",
+  "inner_slide"
+ ],
+ "parts": [
+  {
+   "name": "wall_plate",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 28,
+   "boundsMin": [
+    -30,
+    -120,
+    0
+   ],
+   "boundsMax": [
+    0,
+    120,
+    300
+   ]
+  },
+  {
+   "name": "screw_head_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 76,
+   "boundsMin": [
+    -35.5,
+    69,
+    234
+   ],
+   "boundsMax": [
+    -29.5,
+    91,
+    256
+   ]
+  },
+  {
+   "name": "screw_head_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 76,
+   "boundsMin": [
+    -35.5,
+    69,
+    44
+   ],
+   "boundsMax": [
+    -29.5,
+    91,
+    66
+   ]
+  },
+  {
+   "name": "standoff_upper",
+   "closed": true,
+   "components": 2,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 24,
+   "boundsMin": [
+    -71,
+    -15,
+    115
+   ],
+   "boundsMax": [
+    -29.5,
+    15,
+    185
+   ]
+  },
+  {
+   "name": "outer_sleeve",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 96,
+   "boundsMin": [
+    -570,
+    -30,
+    110
+   ],
+   "boundsMax": [
+    -70,
+    30,
+    190
+   ]
+  },
+  {
+   "name": "middle_section",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 56,
+   "boundsMin": [
+    -720,
+    -24,
+    116
+   ],
+   "boundsMax": [
+    -120,
+    24,
+    184
+   ]
+  },
+  {
+   "name": "inner_blade",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 40,
+   "boundsMin": [
+    -1100,
+    -15,
+    135
+   ],
+   "boundsMax": [
+    -300,
+    15,
+    165
+   ]
+  }
+ ]
+}

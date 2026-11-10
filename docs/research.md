@@ -4539,3 +4539,270 @@ measures is the model as posed.
   compare the washing machine's GLB and PNG). Not run: the golden run as
   wasm32-wasip1 under wasmtime (not installable here), aarch64 and
   Windows (CI only).
+
+
+## 22. The evaluation on the finished surface (stream Z, 2026-11-10)
+
+Whether an agent with only the guides and the tools still builds the 20
+phase 6 objects after streams L to W changed the surface, and where the
+guides fall short. Base `b57f2d7`. Results in `eval/phase6/Z/`.
+
+### 22.1 Method
+
+- **As run `U` (§19.7)**, on all 20 objects of §13.1 (12 articulated,
+  24 joints): one headless Claude Code agent per object (`claude -p`,
+  model `claude-opus-5-5`, the stream's), whose only tools were the
+  og-shape MCP server's (`shape-mcp`, release, its root a fresh
+  directory holding `brief.md` and `reference.png`), Read, and Claude
+  Code's resource tools. The prompt is `U`'s, unchanged: read
+  `og-shape://guides/shape.md` and `og-shape://guides/typescript.md` and
+  nothing else but the brief and the render, at most 8 `run_typescript`
+  calls, report iterations and guide problems. Driver:
+  `eval/phase6/mcp_run.ts … --run=Z/Z1 --jobs=5` (it gained `--run`,
+  `--jobs` and `errors.log`, each failed build's whole text).
+- **Not enforced:** that agents read nothing else. Read was allowed (as
+  in `U`); the transcripts show reads of `brief.md`, `reference.png`,
+  the two resources and, in `Z1`, the agent's own `program.json`; no
+  other file.
+- **Measured per object:** built, closed parts, joints against the
+  reference, the largest per-axis size deviation, builds (`run_typescript`
+  calls) and failed builds with their text, turns, output tokens and the
+  last turn's context (as §19.7: not comparable with runs `A`–`M`'s Agent
+  tool totals), previews and posed checks (`preview`/`measure` calls
+  with a pose), the bevel calls in the final program, the new surface
+  the final program names, and the surface distance (§22.4).
+- **`Z2`:** the objects of `Z1` with a failed build or more than three
+  builds (sim2, sim3, auto1, obj4), with the guides and server of §22.3,
+  same prompt. `Z2` ran with an earlier wording of two fixes (the sweep's
+  lead-in "short"; `body`'s ends "where `plan` or the height is not 0
+  are flat"); `Z2`'s agents showed both were wrong, and the committed
+  guides say it as tested (§22.3).
+- **One agent per object**: differences of a build or two are noise
+  (§13.7).
+
+### 22.2 Results
+
+| | M (5) | U (5) | Z1 on U's 5 | Z1 (20) | Z1 on Z2's 4 | Z2 (4) |
+|---|---|---|---|---|---|---|
+| built, every part closed | 5/5 | 5/5 | 5/5 | 20/20 | 4/4 | 4/4 |
+| joints as the reference | 5/5 | 5/5 | 5/5 | 20/20 (24 joints) | 4/4 | 4/4 |
+| builds a object, mean | 4.4 | 2.0 | 2.8 | 2.0 | 3.75 | 3.75 |
+| failed builds | 6 | 1 | 2 | 3 | 3 | 2 |
+| first build ran | — | 5/5 | 4/5 | 19/20 | 3/4 | 3/4 |
+| turns, mean | — | 10.4 | 11.8 | 10.05 | 13.25 | 15.0 |
+| output tokens, mean | — | 7 095 | 7 984 | 5 982 | 11 549 | 13 502 |
+| last context, mean | — | 54 242 | 59 176 | 54 297 | 65 306 | 76 517 |
+
+Run `B` (§13.3; the Agent tool, guide v2) built 20/20 with 2.30
+iterations and 3 failed builds. `Z1`: every object built with every part
+closed and every joint, 2.0 builds an object, 3 failed builds, the first
+build ran on 19. Sizes within 0.0 % on 18; auto2 1.0 % (its knob 50.02
+for 50.54 wide), auto1 7.0 % (x 751 for 702: the agent's tube layout).
+In `Z2` auto1 is within 0.0 % and obj4 is 11.3 % off in y (11.1 for
+12.5 mm deep: the agent noted it and kept its arm fold).
+
+The 12 articulated objects took 2.5 builds (all 3 failed builds were
+theirs); the 8 rigid ones 1.25.
+
+#### Z1, per object
+
+| object | built | closed parts | joints (ref) | max size dev. | builds (failed) | turns | output tokens | final context | triangles | previews / posed checks | bevels in program | surface distance, mm (of diagonal) | least if mirrored or turned | new surface used |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| cad1_bracket_block | yes | 1/1 | 0/0 | 0.0 % | 1 (0) | 8 | 3042 | 45431 | 518 | 1 / 0 | 1 | 8.129 (7.97 %) | 0.261 | — |
+| cad2_mounting_block | yes | 1/1 | 0/0 | 0.0 % | 2 (0) | 11 | 4435 | 48315 | 1062 | 3 / 0 | 1 | 6.468 (3.84 %) | 0.961 | — |
+| cad3_stepped_bracket | yes | 1/1 | 0/0 | 0.0 % | 1 (0) | 9 | 5684 | 47863 | 798 | 2 / 0 | 0 | 4.403 (4.52 %) | 3.006 | — |
+| cad4_curved_plate | yes | 1/1 | 0/0 | 0.0 % | 2 (0) | 10 | 3506 | 46621 | 40 | 2 / 0 | 0 | 30.351 (3.15 %) | 0.718 | — |
+| art1_sunroof_cassette | yes | 15/15 | 2/2 | 0.0 % | 3 (0) | 12 | 9333 | 69571 | 1122 | 3 / 0 | 1 | 1.843 (0.12 %) | 1.842 | opacity |
+| art2_telescoping_slide | yes | 7/7 | 2/2 | 0.0 % | 1 (0) | 8 | 5267 | 50584 | 396 | 1 / 0 | 1 | 33.692 (2.89 %) | 5.311 | — |
+| art3_inspection_arm | yes | 22/22 | 4/4 | 0.0 % | 2 (0) | 11 | 7775 | 70232 | 1468 | 2 / 0 | 0 | 19.501 (0.73 %) | 19.501 | — |
+| art4_telescoping_mast | yes | 4/4 | 3/3 | 0.0 % | 1 (0) | 8 | 5162 | 50066 | 1172 | 1 / 0 | 0 | 30.783 (1.94 %) | 30.756 | — |
+| sim1_closet | yes | 3/3 | 2/2 | 0.0 % | 3 (0) | 11 | 5681 | 52596 | 64 | 2 / 0 | 0 | 3.665 (0.16 %) | 3.662 | — |
+| sim2_mouse_and_pad | yes | 4/4 | 1/1 | 0.0 % | 5 (0) | 20 | 12496 | 71155 | 4306 | 9 / 0 | 2 | 1.689 (0.53 %) | 1.519 | — |
+| sim3_toaster | yes | 6/6 | 3/3 | 0.0 % | 4 (1) | 12 | 14440 | 71461 | 4346 | 2 / 0 | 4 | 7.305 (1.89 %) | 6.495 | merge |
+| sim4_bollard | yes | 1/1 | 0/0 | 0.0 % | 1 (0) | 9 | 1957 | 44723 | 4096 | 2 / 0 | 0 | 7.917 (0.75 %) | 7.917 | — |
+| auto1_curved_tubes | yes | 3/3 | 1/1 | 7.0 % | 3 (1) | 10 | 10234 | 56711 | 16800 | 1 / 0 | 0 | 85.001 (4.55 %) | 82.346 | arc |
+| auto2_lever_knob | yes | 2/2 | 2/2 | 1.0 % | 2 (0) | 10 | 4711 | 51568 | 570 | 2 / 0 | 0 | 1.182 (0.94 %) | 1.182 | — |
+| auto3_hinged_straps | yes | 2/2 | 1/1 | 0.0 % | 2 (0) | 9 | 5180 | 56335 | 5280 | 1 / 0 | 0 | 1.289 (0.14 %) | 1.289 | — |
+| auto4_framed_panel | yes | 2/2 | 1/1 | 0.0 % | 1 (0) | 8 | 2423 | 45126 | 44 | 1 / 0 | 0 | 8.28 (0.68 %) | 0.184 | — |
+| obj1_octagonal_cup | yes | 1/1 | 0/0 | 0.0 % | 1 (0) | 8 | 2243 | 44492 | 152 | 1 / 0 | 1 | 50.436 (11.89 %) | 3.135 | — |
+| obj2_djembe | yes | 29/29 | 0/0 | 0.0 % | 1 (0) | 8 | 3452 | 54549 | 11036 | 1 / 0 | 1 | 11.028 (1.32 %) | 11.028 | — |
+| obj3_lamp | yes | 3/3 | 0/0 | 0.0 % | 1 (0) | 8 | 3593 | 46636 | 184 | 1 / 0 | 0 | 172.843 (19.80 %) | 26.811 | — |
+| obj4_spectacles | yes | 11/11 | 2/2 | 0.0 % | 3 (1) | 11 | 9026 | 61896 | 2972 | 2 / 0 | 0 | 1.825 (1.27 %) | 1.825 | arc, opacity |
+
+#### Z2
+
+| object | built | closed parts | joints (ref) | max size dev. | builds (failed) | turns | output tokens | final context | triangles | previews / posed checks | bevels in program | surface distance, mm (of diagonal) | least if mirrored or turned | new surface used |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| sim2_mouse_and_pad | yes | 4/4 | 1/1 | 0.1 % | 5 (1) | 18 | 10884 | 68421 | 9636 | 5 / 2 | 4 | 0.951 (0.30 %) | 0.777 | — |
+| sim3_toaster | yes | 6/6 | 3/3 | 0.0 % | 7 (1) | 22 | 27184 | 116406 | 7550 | 4 / 5 | 4 | 6.089 (1.57 %) | 6.087 | merge |
+| auto1_curved_tubes | yes | 3/3 | 1/1 | 0.0 % | 1 (0) | 9 | 5195 | 50109 | 17760 | 2 / 1 | 0 | 83.114 (4.45 %) | 80.353 | arc |
+| obj4_spectacles | yes | 13/13 | 2/2 | 11.3 % | 2 (0) | 11 | 10743 | 71132 | 5364 | 2 / 1 | 1 | 2.025 (1.42 %) | 2.025 | arc, opacity |
+
+"New surface used" is what the final program names of streams R and V:
+`opacity`, `merge`, arc pieces in a `wire` or `sweep` path. No final
+program used `superellipse`, `spline`, `og.path`, `stroke`, `hull`, the
+`mirror` profile, `text`, `until`, `helix`, `delete`, `check`, `copy`
+or `s.mirror`; the briefs do not call for most of them. sim1's and
+sim3's `Z1` agents printed `s.measure({ posed: true })` with
+`console.log` to check a pose (then took the pose out); no `Z1` agent
+could pose through the tools. In `Z2`, with `pose` on `preview` and
+`measure`, the four agents made 9 posed checks; sim3's found its lever
+tab passing through the housing at full travel and a stem through its
+slot, and fixed both: 3 of its 7 builds.
+
+### 22.3 Failure classes, and the guide changes
+
+Every failed build and refusal (5 in all):
+
+| run, object, build | error | class |
+|---|---|---|
+| Z1 auto1, 1 | `op 0 sweep "lower_tube": path has no field "path"; it takes: helix`: `og.path([...])` given as a sweep's 3D path | guide gap: "`sweep` and `wire` take 3D paths" right after `og.path`'s description |
+| Z1 sim3, 3 | `ReferenceError: Cannot access 'leverZ' before initialization` | agent error: §2 says to declare shared numbers before the first call |
+| Z1 obj4, 2 | `program.ts: No such file or directory`: `run_typescript` with `path: "program.ts"`, never written | agent error; the tool's description now says the server writes no .ts file |
+| Z2 sim3, 1 | `op 1 fillet "housing": … a bevel along a face whose triangles at this vertex are not in one plane (a twisted or converging face), where the bevel would tilt them is not supported` | kernel gap (§22.5, item 2) |
+| Z2 sim2, 2 | `op 3 body "mouse_shell": body: at y = -57 only one view closes: a body closes to a point where both views close, at an end` | guide gap, made by `Z2`'s own wording ("flat where `plan` or the height is not 0"); corrected |
+
+Refusals that were not builds: `preview` with elevation −0.8 and −0.9
+(Z1 cad2), answered "the preview's elevation is not finite" (a kernel
+message for a finite number out of range; `shape-mcp` now refuses it
+first with the range).
+
+**Bevels:** `Z1`'s final programs hold 14 bevel calls (fillets and
+chamfers of `top`, `bottom`, `side` or every edge, radius 0.8 to 10),
+none refused. `Z2`: one refusal, `s.fillet(h, { radius: 10, edges:
+"top" })` on a `loft` (`steps: 8, curve: "spline"`) of four rounded
+rectangles; the agent rounded the shoulder with more loft sections
+instead.
+
+**Guide problems reported** (list items in the reports): 3.7 an agent
+in `Z1` (U: 4.0), 4.25 in `Z2`.
+The repeated ones, and what changed (`guides/typescript.md` unless
+named):
+
+| problem (agents) | change |
+|---|---|
+| no way to look at a pose without writing it into the program (art1, art3, art4, sim1, sim3; also `U`) | `shape-mcp`: `preview`, `measure`, `export` take `pose`; `measure` takes `posed`. Guides say so (`shape.md` §8, `typescript.md`, `program.md`, `mcp.md`) |
+| `og.path` for a 3D path (auto1) | 3D paths are the list itself |
+| a swept tube 6 mm past each end (auto1) | the gap (§22.5, item 1) and the lead-in workaround |
+| `body`: half or full width, flat ends, smooth overshoot (sim2 ×2) | full width; an end closes only where width and height reach 0; smooth can overshoot |
+| `touching`, `crossings`, `asBuilt`, the box (art4, auto3, sim3 ×2, sim2, obj4) | each said in a line; `program.md` says `touching` |
+| `console.log` output (sim1, sim3) | comes back as `logs` |
+| a hollow or square bent tube (auto1, obj3) | `shape.md` §2: a `sweep` of a ring or `rect` |
+| a cylinder along +X (art3, sim2) | `shape.md` §4: `og.frame({ normal: [1, 0, 0] })` |
+| `og.frame` with `up`: where x goes (auto4, obj4) | x = y × z, with an example |
+| flats of a polygon on the axes (auto2, obj1) | `og.rotate` by π / sides |
+| `grid`'s order (art1); `snap` (sim3); `bulge` (cad4); `sweep`'s `up` (obj3) | one clause each |
+| front along x: joint signs (art1, sim1) | `shape.md` §1: §6's signs turn with it |
+| preview from below (cad2) | the range, in the schema and guide |
+
+Not changed (one agent each, or a brief's question): which side a
+brief's "front" is when its length runs along x; reading "spins" as
+continuous; rest pose against a brief's words; the reference render's
+camera; `merge` patterns; `mirror`'s `.001` names; loft faces all `side`.
+
+**Guide size** (tokens as Claude Code's model counts them: a one-turn
+`claude -p` with the file in the prompt less one without; bytes):
+
+| guide | before | after |
+|---|---|---|
+| `shape.md` | 3 483 (8 932 B) | 3 602 (9 212 B) |
+| `typescript.md` | 3 913 (8 882 B) | 4 483 (10 382 B) |
+| `program.md` | 5 323 (11 661 B) | 5 391 (11 855 B) |
+| `mcp.md` | 1 569 (3 941 B) | 1 708 (4 289 B) |
+
+An agent of these runs reads `shape.md` and `typescript.md`: 7 396 →
+8 085 tokens (+689). The guides' samples are built by
+`crates/shape-wasm/ts/test/guides.test.ts` and `shape-mcp`'s
+`guide_examples_build`, both green.
+
+**`Z2` against `Z1`** on the same four objects: builds 3.75 and 3.75,
+failed builds 3 and 2. auto1: 3 (1) → 1 (0), size 7.0 % → 0.0 %. obj4:
+3 (1) → 2 (0). sim2: 5 (0) → 5 (1), the failure from `Z2`'s own
+`body` wording. sim3: 4 (1) → 7 (1): one refusal (§22.5, item 2) and 3
+builds spent fixing what its new posed checks found. Last context
+65 306 → 76 517 a run, mostly sim3's 22 turns. Four objects, one agent
+each: the change is in which errors occurred, not in the counts.
+
+### 22.4 A shape measure that is not the agent's opinion
+
+`eval/phase6/Z/distance.ts` (bun): a symmetric surface distance between
+the program's mesh and the dataset's own mesh. `references.json` now
+records each object's OpenUSD file (`usda_path`, `usda_sha256`,
+`usda_bytes`, looked up in the Hugging Face dataset server);
+`Z/fetch_references.ts` downloads them and checks the digest (the files
+are CC BY 4.0 and not committed). The reader takes every `Mesh` through
+its ancestors' translate, orient, scale and transform ops and gives
+every reference's bounding box within 0.01 mm of `references.json`'s
+sizes. 20 000 points are sampled on each surface, area-weighted, with a
+fixed generator; each point's distance to the other surface is exact.
+Reported in `distance.json`: each direction's mean, their average
+(`mean`), the 95th percentile and the largest, as placed and with the
+bounding boxes' centres together (`centred`; the briefs give sizes, not
+origins), and the centred mean again with the built mesh mirrored in x,
+in y or turned 180° about z (`centredMeanIf`). No threshold. Inner
+pieces count on both sides; joints at rest.
+
+- `Z1`: median centred mean 8.0 mm, 1.61 % of the reference's diagonal;
+  `B` (the same 20, guide v2): 6.4 mm, 1.27 %. The least of the four
+  placements: medians 3.1 (`Z1`) and 2.9 mm (`B`).
+- Most of the large values are a side chosen differently, not a
+  different shape: the cup's handle (50.4 → 3.1 mm mirrored in y), cad1
+  (8.1 → 0.26 mirrored in x), cad4 (30.4 → 0.72), the lamp (172.8 →
+  26.8 turned), the slide (33.7 → 5.3). The briefs give the size per
+  axis and leave which side a feature is on to a render whose camera
+  they do not state.
+- What stays large is shape: auto1 (80 mm: the tubes' layout), art4
+  (31), art3 (19.5), obj2 (11).
+- `U`'s five: sim2 0.78, auto1 101.7, auto2 1.22, obj2 10.2, obj4
+  1.95 mm; `Z1`'s 1.69, 85.0, 1.18, 11.0, 1.83; `Z2`'s sim2 0.95, auto1
+  83.1, obj4 2.03, sim3 6.09 (`Z1` 7.31).
+
+### 22.5 Kernel gaps, with reproductions
+
+In `eval/phase6/Z/repro/` (README there gives expected and actual):
+
+1. **A sweep's ends square to the chord, not the path** (`shape-gen`;
+   `sweep_end_tangent.json`). A `sweep` or `wire` of radius 127 along an
+   arc tangent to +z at its start reaches z −5.85 and x 282.24 for 0 and
+   276.39: the end sections are square to the first and last chord, an
+   overshoot of r·sin(half a segment). With a 20 mm straight piece at
+   each end the bounds are exact; with 1 mm the overshoot stays (4.6
+   mm), as the mitre reaches past it. auto1's `Z1` agent shrank its bend
+   radius by 11.7 mm to fit the height.
+2. **A fillet of a tapered rounded wall's top edge is refused**
+   (`shape-bevel`, stream X's crate; `bevel_tapered_rounded_extrude.json`,
+   `bevel_curved_loft_top.json`). `extrude` of a rounded `rect` with
+   `taper: 0.1`, or a straight or spline loft of rounded rectangles of
+   different sizes, then `fillet` of `edges: "top"`: "a bevel along a
+   face whose triangles at this vertex are not in one plane". The same
+   fillet on a tapered cylinder and on the untapered extrude builds. It
+   is the refusal stream W introduced in place of a wrong result, met on
+   an ordinary housing.
+
+Not kernel gaps: the preview's "not finite" message (a misleading text,
+now caught before the kernel), the build report's flattened groups
+(documented), and posed interference boxes that seemed not to move (the
+box spans both parts' meeting triangles; on a simple slide it follows
+the pose).
+
+### 22.6 What the orchestrator should know
+
+- `shape-mcp` changed beyond a few lines: `pose` on three tools,
+  `posed` on `measure`, an elevation check (about 60 lines with the
+  test `a_pose_for_one_call`). It answers the most repeated problem of
+  runs `U` and `Z1`.
+- Item 2 of §22.5 is in stream X's crate; item 1 in `shape-gen`, which
+  no stream holds now.
+
+### 22.7 What is untested
+
+- One agent per object and one model; no repeat runs, so no spread.
+- `Z2` ran with two fix wordings later corrected (§22.1); the committed
+  wording was checked by the reproductions and the sweep and `body`
+  errors, not by another agent run.
+- Agents' reading was not confined (Read was allowed, as in `U`).
+- The distance compares at rest, with no alignment of rotation beyond
+  the four placements; hidden inner pieces count; a different part
+  count is not seen as such. The references are the sand3d exports of
+  the datasets, not the source objects.
+- Tokens: Claude Code's figures, as §19.7; not comparable with `A`–`M`.

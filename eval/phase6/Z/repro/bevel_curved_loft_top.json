@@ -1,0 +1,8 @@
+{"name": "bevel_curved_loft_top", "ops": [
+  {"op": "loft", "name": "housing", "steps": 8, "curve": "spline", "sections": [
+    {"profile": {"rect": {"width": 146, "height": 284, "radius": 30}}, "z": 0},
+    {"profile": {"rect": {"width": 155, "height": 290, "radius": 34}}, "z": 45},
+    {"profile": {"rect": {"width": 150, "height": 288, "radius": 32}}, "z": 120},
+    {"profile": {"rect": {"width": 128, "height": 264, "radius": 24}}, "z": 175}]},
+  {"op": "fillet", "id": 0, "radius": 10, "edges": "top"}
+]}
