@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! cargo run --release -- [--thingi DIR] [--suite NAME]... [--engine NAME]...
-//!                        [--grid N] [--crossings] [--uncross]
+//!                        [--grid N] [--crossings] [--no-uncross]
 //!                        [--timeout SECS] [--out FILE] [--hashes FILE]
 //! ```
 //!
@@ -22,9 +22,11 @@
 //! `--hashes` the output hash of every boolean, for comparing hosts. With
 //! `--crossings`, the og-shape engines also count the pairs of triangles of
 //! each f64 output that cross within one shell (outside the timing), and
-//! the summary says how many cases left any. With `--uncross`, the
-//! og-shape engines repair crossings by a rounding error in their outputs
-//! (`shape_bool::uncross_output`, inside the timing).
+//! the summary says how many cases left any, and `--hashes` adds each
+//! boolean's count after its hash. The og-shape engines repair crossings
+//! by a rounding error in their outputs (`shape_bool::uncross_output`,
+//! inside the timing), as `shape_bool::boolean` does; `--no-uncross`
+//! leaves them as built, for comparison.
 
 mod engines;
 mod mesh;
@@ -61,7 +63,7 @@ fn args() -> Args {
         hashes: None,
         inputs: false,
         crossings: false,
-        uncross: false,
+        uncross: true,
     };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
@@ -76,7 +78,7 @@ fn args() -> Args {
             "--hashes" => a.hashes = Some(v().into()),
             "--inputs" => a.inputs = true,
             "--crossings" => a.crossings = true,
-            "--uncross" => a.uncross = true,
+            "--no-uncross" => a.uncross = false,
             _ => panic!("unknown argument {k}"),
         }
     }
@@ -97,7 +99,8 @@ struct Row {
     ms: f64,
     tris: usize,
     detail: String,
-    hashes: Vec<(Op, String)>,
+    /// Each boolean's output hash, and its crossing pairs (`--crossings`).
+    hashes: Vec<(Op, String, Option<usize>)>,
     /// Self-crossing pairs over the three outputs (`--crossings`).
     crossings: Option<usize>,
 }
@@ -122,7 +125,7 @@ fn evaluate(case: &Case, engine: Engine) -> Row {
         used = used.or(r.used);
         match r.result {
             Err(e) => {
-                hashes.push((op, "error".to_string()));
+                hashes.push((op, "error".to_string(), r.crossings));
                 return Row {
                     verdict: Verdict::Refused,
                     ms,
@@ -133,7 +136,7 @@ fn evaluate(case: &Case, engine: Engine) -> Row {
                 };
             }
             Ok(m) => {
-                hashes.push((op, format!("{:016x}", m.hash())));
+                hashes.push((op, format!("{:016x}", m.hash()), r.crossings));
                 if op == Op::Union {
                     tris = m.tris();
                 }
@@ -321,8 +324,8 @@ fn main() {
                 row.tris,
                 row.detail.trim()
             );
-            for (op, h) in &row.hashes {
-                let _ = writeln!(
+            for (op, h, x) in &row.hashes {
+                let _ = write!(
                     hashes,
                     "{} {} {} {:?} {}",
                     case.suite,
@@ -331,6 +334,10 @@ fn main() {
                     op,
                     h
                 );
+                if let Some(n) = x {
+                    let _ = write!(hashes, " crossings {n}");
+                }
+                hashes.push('\n');
             }
             let e = summary
                 .entry((case.suite.to_string(), engine.name()))

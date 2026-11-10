@@ -78,9 +78,10 @@ pub static COUNT_CROSSINGS: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// Whether the og-shape engines repair their outputs' crossings by a
-/// rounding error (`uncross_output`, inside the timing; `--uncross`,
-/// `docs/research.md` §23).
-pub static UNCROSS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// rounding error (`uncross_output`, inside the timing), as
+/// `shape_bool::boolean` does; off with `--no-uncross`
+/// (`docs/research.md` §23, §25).
+pub static UNCROSS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// A mesh welded by exact position, in f64.
 struct Welded {
