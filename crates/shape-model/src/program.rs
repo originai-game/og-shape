@@ -125,6 +125,7 @@ pub struct Session {
     model: Model,
     ops: Vec<Value>,
     fonts: Fonts,
+    textures: Fonts,
 }
 
 /// Fonts a caller supplies, by the name `text` profiles give them: a
@@ -168,6 +169,29 @@ pub fn fonts_named(program: &str) -> Result<Vec<String>, ModelError> {
     Ok(out.into_iter().collect())
 }
 
+/// [`run_with`], with the textures its materials' `map`s name
+/// ([`textures_named`]).
+pub fn run_files(program: &str, fonts: &Fonts, textures: &Fonts) -> Result<Model, ModelError> {
+    Ok(Session::replay_files(program, fonts, textures)?.model)
+}
+
+/// The texture names a program's materials give (`map`), sorted, each
+/// once: what a caller reads (the CLI and MCP read each as a path
+/// relative to the program) and passes to [`run_files`].
+pub fn textures_named(program: &str) -> Result<Vec<String>, ModelError> {
+    let v: Value =
+        serde_json::from_str(program).map_err(|e| ModelError::Program(format!("not JSON: {e}")))?;
+    let mut out = std::collections::BTreeSet::new();
+    for op in v.get("ops").and_then(Value::as_array).into_iter().flatten() {
+        if op.get("op").and_then(Value::as_str) == Some("material")
+            && let Some(f) = op.get("map").and_then(Value::as_str)
+        {
+            out.insert(f.to_string());
+        }
+    }
+    Ok(out.into_iter().collect())
+}
+
 impl Session {
     /// An empty model named `name`.
     pub fn new(name: &str) -> Session {
@@ -175,6 +199,7 @@ impl Session {
             model: Model::new(name),
             ops: Vec::new(),
             fonts: Fonts::new(),
+            textures: Fonts::new(),
         }
     }
 
@@ -190,13 +215,23 @@ impl Session {
         &self.fonts
     }
 
-    /// Replays a program into a session that goes on recording.
-    pub fn replay(program: &str) -> Result<Session, ModelError> {
-        Session::replay_with(program, &Fonts::new())
+    /// Supplies an image (PNG or JPEG) under `name`, the name a
+    /// material's `map` gives it. The program records the name only.
+    pub fn texture(&mut self, name: &str, bytes: Vec<u8>) {
+        self.textures.insert(name.to_string(), bytes);
     }
 
-    /// [`Session::replay`] with fonts supplied ([`Session::font`]).
-    pub fn replay_with(program: &str, fonts: &Fonts) -> Result<Session, ModelError> {
+    /// The textures supplied so far.
+    pub fn textures(&self) -> &Fonts {
+        &self.textures
+    }
+
+    /// [`Session::replay_with`], with textures too ([`Session::texture`]).
+    pub fn replay_files(
+        program: &str,
+        fonts: &Fonts,
+        textures: &Fonts,
+    ) -> Result<Session, ModelError> {
         let v: Value = serde_json::from_str(program)
             .map_err(|e| ModelError::Program(format!("not JSON: {e}")))?;
         let name = v.get("name").and_then(Value::as_str).unwrap_or("model");
@@ -206,10 +241,21 @@ impl Session {
             .ok_or_else(|| ModelError::Program("no \"ops\" list".into()))?;
         let mut s = Session::new(name);
         s.fonts = fonts.clone();
+        s.textures = textures.clone();
         for (i, op) in ops.iter().enumerate() {
             s.apply_at(op, i)?;
         }
         Ok(s)
+    }
+
+    /// Replays a program into a session that goes on recording.
+    pub fn replay(program: &str) -> Result<Session, ModelError> {
+        Session::replay_with(program, &Fonts::new())
+    }
+
+    /// [`Session::replay`] with fonts supplied ([`Session::font`]).
+    pub fn replay_with(program: &str, fonts: &Fonts) -> Result<Session, ModelError> {
+        Session::replay_files(program, fonts, &Fonts::new())
     }
 
     /// The model so far.
@@ -262,6 +308,7 @@ impl Session {
             o,
             op: verb,
             fonts: &self.fonts,
+            textures: &self.textures,
         };
         let result = check_fields(o, verb).and_then(|()| dispatch(&mut self.model, &a));
         match result {
@@ -376,6 +423,10 @@ fn dispatch(m: &mut Model, a: &Args) -> Result<(Value, bool), ModelError> {
                 m.units(u)?;
                 Ok((none(), true))
             }
+            "uvs" => {
+                m.ask_uvs()?;
+                Ok((none(), true))
+            }
             "box" | "cylinder" | "cone" | "sphere" | "dome" | "tube" | "torus" | "wedge"
             | "extrude" | "revolve" | "sweep" | "loft" | "thread" | "wire" | "body" | "knurl"
             | "gear" => {
@@ -391,10 +442,14 @@ fn dispatch(m: &mut Model, a: &Args) -> Result<(Value, bool), ModelError> {
                     }
                     None => None,
                 };
+                let uvs = match a.opt("uvs") {
+                    None => m.wants_uvs(),
+                    Some(_) => a.bool_or("uvs", false)?,
+                };
                 let solid = if a.opt("until").is_some() {
-                    extrude_until(m, a, &on.unwrap_or(Frame::IDENTITY))?
+                    extrude_until(m, a, &on.unwrap_or(Frame::IDENTITY), uvs)?
                 } else {
-                    generate(a)?
+                    generate(a, uvs)?
                 };
                 let i = m.add(a.str("name")?, solid)?;
                 if let Some(f) = on {
@@ -454,6 +509,7 @@ fn dispatch(m: &mut Model, a: &Args) -> Result<(Value, bool), ModelError> {
                         "voids": r.voids,
                         "touchingEdges": r.touching_edges,
                         "touching": r.touching,
+                        "facesWithoutUvs": r.faces_without_uvs,
                     }),
                     true,
                 ))
@@ -598,9 +654,15 @@ fn dispatch(m: &mut Model, a: &Args) -> Result<(Value, bool), ModelError> {
                     roughness: opt_num("roughness")?,
                     emissive: colour("emissive")?.unwrap_or([0.0; 3]),
                     opacity: opt_num("opacity")?,
-                    map: None,
+                    map: match a.opt("map") {
+                        None => None,
+                        Some(_) => Some(a.texture("map")?),
+                    },
                 };
-                m.material(&a.ids("ids")?, &mat)?;
+                if a.opt("mapSize").is_some() && mat.map.is_none() {
+                    return Err(a.bad("mapSize", "with a `map` only"));
+                }
+                m.material_mapped(&a.ids("ids")?, &mat, a.num_or("mapSize", 1.0)?)?;
                 Ok((none(), true))
             }
             "joint" => {
@@ -714,20 +776,35 @@ const OPS: &[(&str, &[&str])] = &[
     ("names", &["id"]),
     ("measure", &["posed"]),
     ("units", &["unit"]),
-    ("box", &["name", "width", "depth", "height", "on"]),
+    ("uvs", &[]),
+    ("box", &["name", "width", "depth", "height", "uvs", "on"]),
     (
         "cylinder",
-        &["name", "radius", "radiusTop", "height", "segments", "on"],
+        &[
+            "name",
+            "radius",
+            "radiusTop",
+            "height",
+            "segments",
+            "uvs",
+            "on",
+        ],
     ),
-    ("cone", &["name", "radius", "height", "segments", "on"]),
-    ("sphere", &["name", "radius", "axis", "segments", "on"]),
+    (
+        "cone",
+        &["name", "radius", "height", "segments", "uvs", "on"],
+    ),
+    (
+        "sphere",
+        &["name", "radius", "axis", "segments", "uvs", "on"],
+    ),
     (
         "dome",
-        &["name", "radius", "height", "axis", "segments", "on"],
+        &["name", "radius", "height", "axis", "segments", "uvs", "on"],
     ),
     (
         "tube",
-        &["name", "outer", "inner", "height", "segments", "on"],
+        &["name", "outer", "inner", "height", "segments", "uvs", "on"],
     ),
     (
         "torus",
@@ -739,10 +816,11 @@ const OPS: &[(&str, &[&str])] = &[
             "axis",
             "segments",
             "tubeSegments",
+            "uvs",
             "on",
         ],
     ),
-    ("wedge", &["name", "width", "height", "depth", "on"]),
+    ("wedge", &["name", "width", "height", "depth", "uvs", "on"]),
     (
         "extrude",
         &[
@@ -753,35 +831,40 @@ const OPS: &[(&str, &[&str])] = &[
             "taper",
             "bothSides",
             "until",
+            "uvs",
             "on",
         ],
     ),
     (
         "revolve",
-        &["name", "profile", "angle", "axis", "segments", "on"],
+        &["name", "profile", "angle", "axis", "segments", "uvs", "on"],
     ),
     (
         "sweep",
-        &["name", "profile", "path", "up", "twist", "scaleEnd", "on"],
+        &[
+            "name", "profile", "path", "up", "twist", "scaleEnd", "uvs", "on",
+        ],
     ),
     (
         "loft",
-        &["name", "sections", "samples", "steps", "curve", "on"],
+        &["name", "sections", "samples", "steps", "curve", "uvs", "on"],
     ),
     (
         "thread",
-        &["name", "radius", "pitch", "length", "depth", "on"],
+        &["name", "radius", "pitch", "length", "depth", "uvs", "on"],
     ),
     (
         "wire",
         &[
-            "name", "path", "diameter", "closed", "fillet", "fillets", "segments", "on",
+            "name", "path", "diameter", "closed", "fillet", "fillets", "segments", "uvs", "on",
         ],
     ),
-    ("body", &["name", "plan", "top", "bottom", "n", "on"]),
+    ("body", &["name", "plan", "top", "bottom", "n", "uvs", "on"]),
     (
         "knurl",
-        &["name", "diameter", "height", "pitch", "straight", "on"],
+        &[
+            "name", "diameter", "height", "pitch", "straight", "uvs", "on",
+        ],
     ),
     (
         "gear",
@@ -794,6 +877,7 @@ const OPS: &[(&str, &[&str])] = &[
             "bore",
             "hub",
             "hubHeight",
+            "uvs",
             "on",
         ],
     ),
@@ -842,6 +926,8 @@ const OPS: &[(&str, &[&str])] = &[
             "roughness",
             "emissive",
             "opacity",
+            "map",
+            "mapSize",
         ],
     ),
     (
@@ -898,72 +984,107 @@ fn hex(s: &str) -> Option<[f64; 3]> {
     Some([c(0)?, c(2)?, c(4)?])
 }
 
-fn generate(a: &Args) -> Result<shape_mesh::Solid, ModelError> {
+/// The generator's solid, with UVs (`shape_gen::solids::textured`) when
+/// `uvs`.
+fn generate(a: &Args, uvs: bool) -> Result<shape_mesh::Solid, ModelError> {
     use shape_gen::solids as g;
+    use shape_gen::solids::Generator as G;
     let segments = || a.u32_or("segments", 0);
+    // Either the generator alone or `textured` of it.
+    macro_rules! pick {
+        ($gen:expr, $plain:expr) => {
+            if uvs { g::textured(&$gen)? } else { $plain? }
+        };
+    }
     Ok(match a.op {
-        "box" => g::cuboid(&BoxDesc {
-            width: a.num("width")?,
-            depth: a.num("depth")?,
-            height: a.num("height")?,
-        })?,
-        "cylinder" => g::cylinder(&CylinderDesc {
-            radius: a.num("radius")?,
-            radius_top: a.num_or("radiusTop", 0.0)?,
-            height: a.num("height")?,
-            segments: segments()?,
-        })?,
-        "cone" => g::cone_desc(&ConeDesc {
-            radius: a.num("radius")?,
-            height: a.num("height")?,
-            segments: segments()?,
-        })?,
-        "sphere" => g::sphere_desc(&SphereDesc {
-            radius: a.num("radius")?,
-            axis: a.axis()?,
-            segments: segments()?,
-        })?,
-        "dome" => g::dome_desc(&DomeDesc {
-            radius: a.num("radius")?,
-            height: a.num_or("height", 0.0)?,
-            axis: a.axis()?,
-            segments: segments()?,
-        })?,
-        "tube" => g::tube_desc(&TubeDesc {
-            outer: a.num("outer")?,
-            inner: a.num("inner")?,
-            height: a.num("height")?,
-            segments: segments()?,
-        })?,
-        "torus" => g::torus_desc(&TorusDesc {
-            radius: a.num("radius")?,
-            tube_radius: a.num("tube")?,
-            axis: a.axis()?,
-            angle: a.num_or("angle", 0.0)?,
-            segments: segments()?,
-            tube_segments: a.u32_or("tubeSegments", 0)?,
-        })?,
-        "wedge" => g::wedge(a.num("width")?, a.num("height")?, a.num("depth")?)?,
-        "extrude" => g::extrude(
-            &a.profile("profile")?,
-            &Extrude {
+        "box" => {
+            let d = BoxDesc {
+                width: a.num("width")?,
+                depth: a.num("depth")?,
+                height: a.num("height")?,
+            };
+            pick!(G::Box(d), g::cuboid(&d))
+        }
+        "cylinder" => {
+            let d = CylinderDesc {
+                radius: a.num("radius")?,
+                radius_top: a.num_or("radiusTop", 0.0)?,
+                height: a.num("height")?,
+                segments: segments()?,
+            };
+            pick!(G::Cylinder(d), g::cylinder(&d))
+        }
+        "cone" => {
+            let d = ConeDesc {
+                radius: a.num("radius")?,
+                height: a.num("height")?,
+                segments: segments()?,
+            };
+            pick!(G::Cone(d), g::cone_desc(&d))
+        }
+        "sphere" => {
+            let d = SphereDesc {
+                radius: a.num("radius")?,
+                axis: a.axis()?,
+                segments: segments()?,
+            };
+            pick!(G::Sphere(d), g::sphere_desc(&d))
+        }
+        "dome" => {
+            let d = DomeDesc {
+                radius: a.num("radius")?,
+                height: a.num_or("height", 0.0)?,
+                axis: a.axis()?,
+                segments: segments()?,
+            };
+            pick!(G::Dome(d), g::dome_desc(&d))
+        }
+        "tube" => {
+            let d = TubeDesc {
+                outer: a.num("outer")?,
+                inner: a.num("inner")?,
+                height: a.num("height")?,
+                segments: segments()?,
+            };
+            pick!(G::Tube(d), g::tube_desc(&d))
+        }
+        "torus" => {
+            let d = TorusDesc {
+                radius: a.num("radius")?,
+                tube_radius: a.num("tube")?,
+                axis: a.axis()?,
+                angle: a.num_or("angle", 0.0)?,
+                segments: segments()?,
+                tube_segments: a.u32_or("tubeSegments", 0)?,
+            };
+            pick!(G::Torus(d), g::torus_desc(&d))
+        }
+        "wedge" => {
+            let (w, h, d) = (a.num("width")?, a.num("height")?, a.num("depth")?);
+            pick!(G::Wedge(w, h, d), g::wedge(w, h, d))
+        }
+        "extrude" => {
+            let p = a.profile("profile")?;
+            let d = Extrude {
                 height: a.num("height")?,
                 twist: a.num_or("twist", 0.0)?,
                 taper: a.num_or("taper", 0.0)?,
                 both_sides: a.bool_or("bothSides", false)?,
-            },
-        )?,
-        "revolve" => g::revolve(
-            &a.profile("profile")?,
-            &Revolve {
+            };
+            pick!(G::Extrude(&p, d), g::extrude(&p, &d))
+        }
+        "revolve" => {
+            let p = a.profile("profile")?;
+            let d = Revolve {
                 angle: a.num_or("angle", 0.0)?,
                 axis: a.axis()?,
                 segments: segments()?,
-            },
-        )?,
-        "sweep" => shape_gen::paths::sweep(
-            &a.profile("profile")?,
-            &Sweep {
+            };
+            pick!(G::Revolve(&p, d), g::revolve(&p, &d))
+        }
+        "sweep" => {
+            let p = a.profile("profile")?;
+            let d = Sweep {
                 path: a.route("path")?.points,
                 up: match a.opt("up") {
                     Some(_) => a.vec3("up")?,
@@ -971,8 +1092,9 @@ fn generate(a: &Args) -> Result<shape_mesh::Solid, ModelError> {
                 },
                 twist: a.num_or("twist", 0.0)?,
                 scale_end: a.num_or("scaleEnd", 0.0)?,
-            },
-        )?,
+            };
+            pick!(G::Sweep(&p, &d), shape_gen::paths::sweep(&p, &d))
+        }
         "loft" => {
             let list = a
                 .get("sections")?
@@ -1010,19 +1132,25 @@ fn generate(a: &Args) -> Result<shape_mesh::Solid, ModelError> {
                     ));
                 }
             };
-            crate::checked::loft(&Loft {
-                sections,
-                samples: a.u32_or("samples", 0)?,
-                steps: a.u32_or("steps", 0)?,
-                curve,
-            })?
+            crate::checked::loft_with(
+                &Loft {
+                    sections,
+                    samples: a.u32_or("samples", 0)?,
+                    steps: a.u32_or("steps", 0)?,
+                    curve,
+                },
+                uvs,
+            )?
         }
-        "thread" => shape_gen::paths::thread(&Thread {
-            radius: a.num("radius")?,
-            pitch: a.num("pitch")?,
-            length: a.num("length")?,
-            depth: a.num("depth")?,
-        })?,
+        "thread" => {
+            let d = Thread {
+                radius: a.num("radius")?,
+                pitch: a.num("pitch")?,
+                length: a.num("length")?,
+                depth: a.num("depth")?,
+            };
+            pick!(G::Thread(d), shape_gen::paths::thread(&d))
+        }
         "wire" => {
             let route = a.route("path")?;
             let fillet = a.num_or("fillet", 0.0)?;
@@ -1044,39 +1172,49 @@ fn generate(a: &Args) -> Result<shape_mesh::Solid, ModelError> {
                     .collect(),
                 None => Vec::new(),
             };
-            shape_gen::wire::wire(&Wire {
+            let d = Wire {
                 path: route.points,
                 diameter: a.num("diameter")?,
                 closed: a.bool_or("closed", false)?,
                 fillet: if fillets.is_empty() { fillet } else { 0.0 },
                 fillets,
                 segments: segments()?,
-            })?
+            };
+            pick!(G::Wire(&d), shape_gen::wire::wire(&d))
         }
-        "body" => shape_gen::body::body(&Body {
-            plan: a.view("plan")?,
-            top: a.view("top")?,
-            bottom: a.view("bottom")?,
-            n: match a.opt("n") {
-                Some(_) => a.view("n")?,
-                None => View::default(),
-            },
-        })?,
-        "knurl" => shape_gen::parts::knurl(&Knurl {
-            diameter: a.num("diameter")?,
-            height: a.num("height")?,
-            pitch: a.num_or("pitch", 0.0)?,
-            straight: a.bool_or("straight", false)?,
-        })?,
-        "gear" => shape_gen::parts::gear_solid(&GearDesc {
-            teeth: a.u32_or("teeth", 0)?,
-            module: a.num("module")?,
-            pressure_angle: a.num_or("pressureAngle", 0.0)?,
-            width: a.num("width")?,
-            bore: a.num_or("bore", 0.0)?,
-            hub: a.num_or("hub", 0.0)?,
-            hub_height: a.num_or("hubHeight", 0.0)?,
-        })?,
+        "body" => {
+            let d = Body {
+                plan: a.view("plan")?,
+                top: a.view("top")?,
+                bottom: a.view("bottom")?,
+                n: match a.opt("n") {
+                    Some(_) => a.view("n")?,
+                    None => View::default(),
+                },
+            };
+            pick!(G::Body(&d), shape_gen::body::body(&d))
+        }
+        "knurl" => {
+            let d = Knurl {
+                diameter: a.num("diameter")?,
+                height: a.num("height")?,
+                pitch: a.num_or("pitch", 0.0)?,
+                straight: a.bool_or("straight", false)?,
+            };
+            pick!(G::Knurl(d), shape_gen::parts::knurl(&d))
+        }
+        "gear" => {
+            let d = GearDesc {
+                teeth: a.u32_or("teeth", 0)?,
+                module: a.num("module")?,
+                pressure_angle: a.num_or("pressureAngle", 0.0)?,
+                width: a.num("width")?,
+                bore: a.num_or("bore", 0.0)?,
+                hub: a.num_or("hub", 0.0)?,
+                hub_height: a.num_or("hubHeight", 0.0)?,
+            };
+            pick!(G::Gear(d), shape_gen::parts::gear_solid(&d))
+        }
         _ => return Err(ModelError::Program(format!("no generator {:?}", a.op))),
     })
 }
@@ -1088,7 +1226,12 @@ fn generate(a: &Args) -> Result<shape_mesh::Solid, ModelError> {
 /// its edges `top` too). `on` is the extrusion's frame. Refused: `height`
 /// with it, or `twist`, `taper`, `bothSides`; a face that is not flat; a
 /// plane the extrusion would meet at or below its profile.
-fn extrude_until(m: &Model, a: &Args, on: &Frame) -> Result<shape_mesh::Solid, ModelError> {
+fn extrude_until(
+    m: &Model,
+    a: &Args,
+    on: &Frame,
+    uvs: bool,
+) -> Result<shape_mesh::Solid, ModelError> {
     for k in ["height", "twist", "taper", "bothSides"] {
         if a.opt(k).is_some() {
             return Err(a.bad(k, "not with `until`, which sets the height"));
@@ -1136,13 +1279,17 @@ fn extrude_until(m: &Model, a: &Args, on: &Frame) -> Result<shape_mesh::Solid, M
     }
     let flat = n.x == 0.0 && n.y == 0.0;
     let height = if flat { q.z } else { hi + hi.max(1.0) };
-    let s = shape_gen::solids::extrude(
-        &prof,
-        &shape_gen::solids::Extrude {
-            height,
-            ..Default::default()
-        },
-    )?;
+    let d = shape_gen::solids::Extrude {
+        height,
+        ..Default::default()
+    };
+    // With UVs, the tilted top (the split's cut) is planar in its own
+    // plane's x and y (`shape_edit::split`).
+    let s = if uvs {
+        shape_gen::solids::textured(&shape_gen::solids::Generator::Extrude(&prof, d))?
+    } else {
+        shape_gen::solids::extrude(&prof, &d)?
+    };
     if flat {
         return Ok(s);
     }
@@ -1812,6 +1959,7 @@ fn parts_value(m: &Model, parts: &[crate::PartMeasures]) -> Value {
     let mut hi = DVec3::splat(f64::NEG_INFINITY);
     let (mut tris, mut verts, mut area, mut volume) = (0usize, 0usize, 0.0, 0.0);
     let mut list = Vec::new();
+    let (mut coverage, mut overlap): (Option<f64>, Option<f64>) = (None, None);
     for p in parts {
         let x = &p.measures;
         if x.vertices > 0 {
@@ -1836,6 +1984,26 @@ fn parts_value(m: &Model, parts: &[crate::PartMeasures]) -> Value {
             "degenerateTriangles": x.degenerate_triangles,
             "components": x.components,
         }));
+        // UVs only on a part that has them, so other reports are as they
+        // were: measured as exported (divided by the map's size).
+        if let Some(u) = m.uv_measures(&p.name)
+            && let Some(Value::Object(o)) = list.last_mut()
+        {
+            coverage = Some(coverage.map_or(u.coverage, |c| c.min(u.coverage)));
+            overlap = Some(overlap.map_or(u.overlap, |c| c.max(u.overlap)));
+            o.insert(
+                "uv".into(),
+                json!({
+                    "area": u.area,
+                    "coverage": u.coverage,
+                    "overlap": u.overlap,
+                    "overlappingPairs": u.overlapping_pairs,
+                    "flipped": u.flipped,
+                    "zeroArea": u.zero_area,
+                    "outside": u.outside,
+                }),
+            );
+        }
     }
     let empty = tris == 0;
     let unit = match m.unit() {
@@ -1855,9 +2023,10 @@ fn parts_value(m: &Model, parts: &[crate::PartMeasures]) -> Value {
         "pivot": v3(DVec3::ZERO),
         "area": area,
         "volume": volume,
-        // No UVs and no textures yet (phase 5).
-        "uvCoverage": Value::Null,
-        "uvOverlap": Value::Null,
+        // Over the parts with UVs: the least coverage, the most overlap
+        // (each part's UVs are its own map's); null when none has UVs.
+        "uvCoverage": coverage.map_or(Value::Null, Value::from),
+        "uvOverlap": overlap.map_or(Value::Null, Value::from),
         "textureBytes": 0,
     })
 }
@@ -1867,12 +2036,40 @@ struct Args<'a> {
     o: &'a Map<String, Value>,
     op: &'a str,
     fonts: &'a Fonts,
+    textures: &'a Fonts,
 }
 
 impl Args<'_> {
     /// A profile field.
     fn profile(&self, k: &str) -> Result<Profile, ModelError> {
         profile(self.get(k)?, self.fonts).map_err(|e| nest(k, e))
+    }
+
+    /// A texture field: the name of an image the caller supplied
+    /// ([`Session::texture`]), PNG or JPEG.
+    fn texture(&self, k: &str) -> Result<shape_tools::Texture, ModelError> {
+        let name = self.str(k)?;
+        let bytes = self.textures.get(name).ok_or_else(|| {
+            self.bad(
+                k,
+                &format!(
+                    "the name of an image the caller supplies; {name:?} was not supplied (the \
+                     CLI and MCP read it as a path relative to the program)"
+                ),
+            )
+        })?;
+        let mime = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+            "image/png"
+        } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+            "image/jpeg"
+        } else {
+            return Err(self.bad(k, &format!("a PNG or JPEG image; {name:?} is neither")));
+        };
+        Ok(shape_tools::Texture {
+            name: name.to_string(),
+            mime: mime.into(),
+            bytes: bytes.clone(),
+        })
     }
 
     /// A path field: points and pieces, or a helix ([`path3`]).

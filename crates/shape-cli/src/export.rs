@@ -21,7 +21,7 @@ use shape_tools::{PlainGlb, Texture, glb, glb_plain, obj, stl};
 
 use crate::args::{Args, IMPORT_OPTIONS};
 use crate::report::{object, string};
-use crate::source::{Local, Source, extension, load, scene};
+use crate::source::{Local, Source, extension, load_uvs, scene};
 use crate::{Failure, Files, failed};
 
 fn bad_extension(out: &Path) -> Failure {
@@ -128,11 +128,11 @@ pub fn write_solid(
 
 /// The command line.
 pub fn run(a: &Args) -> Result<String, Failure> {
-    a.only(&["-o", "--out", IMPORT_OPTIONS[0], IMPORT_OPTIONS[1]])?;
+    a.only(&["-o", "--out", "--uvs", IMPORT_OPTIONS[0], IMPORT_OPTIONS[1]])?;
     let out = a.out()?;
     if !["glb", "obj", "stl"].contains(&extension(&out).as_str()) {
         return Err(bad_extension(&out));
     }
-    let source = load(&Local, &a.input()?, &a.import()?)?;
+    let source = load_uvs(&Local, &a.input()?, &a.import()?, a.switch("--uvs"))?;
     export(&Local, &source, &out)
 }

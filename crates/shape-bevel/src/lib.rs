@@ -22,6 +22,12 @@
 //!   chamfers, and the name is the kind alone.
 //! - Unbevelled edges keep their names; bevelled edges are gone.
 //!
+//! UVs (`Solid::uvs`) are carried by a pass over the result (`uvs.rs`,
+//! `docs/research.md` §21.2): faces the bevel does not touch keep theirs,
+//! trimmed faces are re-fitted to the same map, and new faces take the
+//! map of the old face they face most, projected (a seam along the
+//! middle of a fillet between two charts).
+//!
 //! An offset larger than the faces allow is an error value
 //! ([`BevelError::TooLarge`]); nothing is clipped silently. Every result
 //! is checked (`docs/research.md` §7.7): no two of its triangles cross, no
@@ -34,6 +40,7 @@
 mod bevel;
 mod patch;
 mod profile;
+mod uvs;
 
 use std::collections::BTreeMap;
 
@@ -64,9 +71,6 @@ pub enum BevelError {
     Skinned,
     /// A field holds a value it does not take (the field and why).
     Invalid(&'static str),
-    /// The solid has UVs (`Solid::uvs`): bevels do not carry UVs yet
-    /// (`docs/research.md` §17), and never drop them silently.
-    HasUvs,
     /// An edge joins more than two faces (its ends given), as where two
     /// solids touch along an edge after a join: the solid is not closed.
     NotManifold(DVec3, DVec3),
@@ -105,9 +109,6 @@ impl std::fmt::Display for BevelError {
             ),
             BevelError::Skinned => f.write_str(
                 "the solid is skinned; bevels do not carry skins yet: bevel first, then skin it",
-            ),
-            BevelError::HasUvs => f.write_str(
-                "the solid has UVs; bevels do not carry UVs yet: bevel first, then give it UVs",
             ),
         }
     }
@@ -243,14 +244,22 @@ fn select(s: &Solid, names: &[String], min_turn: f64) -> Result<Vec<EdgeKey>, Be
         .collect())
 }
 
+/// The bevel, its UVs carried when the solid has some (`uvs.rs`).
+fn run(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
+    if s.uvs.is_none() {
+        return bevel::bevel(s, spec);
+    }
+    let mut bare = s.clone();
+    bare.uvs = None;
+    let out = bevel::bevel(&bare, spec)?;
+    uvs::carry(s, out, spec.kind.name())
+}
+
 /// Rounds the named edges with a superellipse profile (a circle by
 /// default). New faces are named `fillet`.
 pub fn fillet(s: &Solid, d: &Fillet) -> Result<Solid, BevelError> {
     if s.skin.is_some() {
         return Err(BevelError::Skinned);
-    }
-    if s.uvs.is_some() {
-        return Err(BevelError::HasUvs);
     }
     let r = positive(d.radius, "radius")?;
     let profile = if d.profile == 0.0 { 0.5 } else { d.profile };
@@ -258,7 +267,7 @@ pub fn fillet(s: &Solid, d: &Fillet) -> Result<Solid, BevelError> {
         return Err(BevelError::NotPositive("profile (between 0 and 1)"));
     }
     let edges = select(s, &d.edges, trig::to_radians(10.0))?;
-    bevel::bevel(
+    run(
         s,
         &Spec {
             edges,
@@ -277,9 +286,6 @@ pub fn chamfer(s: &Solid, d: &Chamfer) -> Result<Solid, BevelError> {
     if s.skin.is_some() {
         return Err(BevelError::Skinned);
     }
-    if s.uvs.is_some() {
-        return Err(BevelError::HasUvs);
-    }
     let d1 = positive(d.distance, "distance")?;
     let offsets = if d.angle != 0.0 {
         let a = positive(d.angle, "angle")?;
@@ -293,7 +299,7 @@ pub fn chamfer(s: &Solid, d: &Chamfer) -> Result<Solid, BevelError> {
         Offsets::Equal(d1)
     };
     let edges = select(s, &d.edges, trig::to_radians(10.0))?;
-    bevel::bevel(
+    run(
         s,
         &Spec {
             edges,
@@ -313,9 +319,6 @@ pub fn soften(s: &Solid, d: &Soften) -> Result<Solid, BevelError> {
     if s.skin.is_some() {
         return Err(BevelError::Skinned);
     }
-    if s.uvs.is_some() {
-        return Err(BevelError::HasUvs);
-    }
     let r = positive(d.radius, "radius")?;
     let angle = if d.angle == 0.0 {
         trig::to_radians(30.0)
@@ -326,7 +329,7 @@ pub fn soften(s: &Solid, d: &Soften) -> Result<Solid, BevelError> {
     if edges.is_empty() {
         return Ok(s.clone());
     }
-    bevel::bevel(
+    run(
         s,
         &Spec {
             edges,

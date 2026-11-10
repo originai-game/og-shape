@@ -5,8 +5,10 @@
 //! `shape_tools::import` (glTF's external buffers and images and OBJ's
 //! material libraries are read beside it, through the same [`Files`]);
 //! any other path is a program (`{"name", "ops"}`) replayed by
-//! `shape_model::program::run_with`, with the fonts its `text` profiles
-//! name read through the same [`Files`], relative to the program.
+//! `shape_model::program::run_files`, with the fonts its `text` profiles
+//! and the images its materials' `map`s name read through the same
+//! [`Files`], relative to the program. [`load_uvs`] asks the program for
+//! UVs first (`--uvs`, MCP `uvs`).
 
 use std::path::{Path, PathBuf};
 
@@ -90,18 +92,36 @@ pub enum Source {
 
 /// Reads an input. `d` says how to read an OBJ file's units and axes.
 pub fn load(files: &dyn Files, input: &Input, d: &Import) -> Result<Source, Failure> {
+    load_uvs(files, input, d, false)
+}
+
+/// [`load`]; with `uvs`, a program is replayed as if it began with the
+/// `uvs` operation (every part it makes gets UVs). A mesh with `uvs` is a
+/// usage error: its UVs are its own, or `unwrap`'s.
+pub fn load_uvs(
+    files: &dyn Files,
+    input: &Input,
+    d: &Import,
+    uvs: bool,
+) -> Result<Source, Failure> {
     match input {
         Input::None => Err(Failure::Usage(
             "no input: give a program or a mesh file".into(),
         )),
-        Input::Program(text) => program(files, text, "program", Path::new("")).map(Source::Program),
+        Input::Path(p) if is_mesh(p) && uvs => Err(Failure::Usage(
+            "uvs asks a program's parts for UVs; a mesh keeps its own, or `unwrap` makes them"
+                .into(),
+        )),
+        Input::Program(text) => {
+            program(files, text, "program", Path::new(""), uvs).map(Source::Program)
+        }
         Input::Path(p) if is_mesh(p) => mesh_file(files, p, d).map(Source::Mesh),
         Input::Path(p) => {
             let bytes = files.read(p)?;
             let text = String::from_utf8(bytes)
                 .map_err(|_| Failure::Failed(format!("{}: not UTF-8 text", p.display())))?;
             let dir = p.parent().map(Path::to_path_buf).unwrap_or_default();
-            program(files, &text, &p.display().to_string(), &dir).map(Source::Program)
+            program(files, &text, &p.display().to_string(), &dir, uvs).map(Source::Program)
         }
     }
 }
@@ -118,19 +138,44 @@ pub fn load_mesh(files: &dyn Files, input: &Input, d: &Import) -> Result<Mesh, F
     }
 }
 
-/// Replays a program, reading the fonts its `text` profiles name as paths
-/// relative to `dir` (the program file's directory; for a program given
-/// as text, the current directory or the server's workspace root).
-fn program(files: &dyn Files, text: &str, what: &str, dir: &Path) -> Result<Model, Failure> {
+/// Replays a program, reading the fonts its `text` profiles and the
+/// images its materials' `map`s name as paths relative to `dir` (the
+/// program file's directory; for a program given as text, the current
+/// directory or the server's workspace root).
+fn program(
+    files: &dyn Files,
+    text: &str,
+    what: &str,
+    dir: &Path,
+    uvs: bool,
+) -> Result<Model, Failure> {
+    use shape_model::program as p;
     let fail = |e: shape_model::ModelError| Failure::Failed(format!("{what}: {e}"));
-    let mut fonts = shape_model::program::Fonts::new();
-    for name in shape_model::program::fonts_named(text).map_err(fail)? {
-        let bytes = files
-            .read(&dir.join(&name))
-            .map_err(|e| Failure::Failed(format!("{what}: font {name:?}: {e}")))?;
-        fonts.insert(name, bytes);
-    }
-    shape_model::program::run_with(text, &fonts).map_err(fail)
+    let read = |kind: &str, names: Vec<String>| -> Result<p::Fonts, Failure> {
+        let mut out = p::Fonts::new();
+        for name in names {
+            let bytes = files
+                .read(&dir.join(&name))
+                .map_err(|e| Failure::Failed(format!("{what}: {kind} {name:?}: {e}")))?;
+            out.insert(name, bytes);
+        }
+        Ok(out)
+    };
+    let fonts = read("font", p::fonts_named(text).map_err(fail)?)?;
+    let textures = read("texture", p::textures_named(text).map_err(fail)?)?;
+    let asked;
+    let text = if uvs {
+        let mut v: serde_json::Value = serde_json::from_str(text)
+            .map_err(|e| Failure::Failed(format!("{what}: not JSON: {e}")))?;
+        if let Some(ops) = v.get_mut("ops").and_then(serde_json::Value::as_array_mut) {
+            ops.insert(0, serde_json::json!({"op": "uvs"}));
+        }
+        asked = v.to_string();
+        asked.as_str()
+    } else {
+        text
+    };
+    p::run_files(text, &fonts, &textures).map_err(fail)
 }
 
 fn mesh_file(files: &dyn Files, path: &Path, d: &Import) -> Result<Mesh, Failure> {

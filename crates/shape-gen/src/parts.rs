@@ -14,7 +14,7 @@ use shape_2d::{Contour, Gear, Profile, Region, gear};
 use shape_core::{DVec2, DVec3, trig};
 use shape_mesh::Solid;
 
-use crate::solids::{GenError, finish, positive, runs};
+use crate::solids::{GenError, arc_end, arc_lengths, finish, positive, push, runs};
 
 /// A spur gear solid.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -52,6 +52,7 @@ fn ring(r: f64) -> Contour {
 /// Fills `outer` minus `hole` at height `z`, facing +z (`up`) or −z.
 fn cap(
     s: &mut Solid,
+    uvs: bool,
     outer: &Contour,
     hole: Option<&Contour>,
     z: f64,
@@ -74,15 +75,26 @@ fn cap(
     let surface = s.surfaces.iter().max().map_or(0, |m| m + 1);
     for t in &fill.triangles {
         let t = if up { *t } else { [t[0], t[2], t[1]] };
-        s.push_triangle(t.map(|i| ids[i as usize]), surface, tags);
+        let uv = t.map(|i| fill.points[i as usize]);
+        push(s, uvs, t.map(|i| ids[i as usize]), surface, tags, uv);
     }
     Ok(())
 }
 
 /// The wall of a contour from `z0` to `z1`, one surface per run between
 /// corners, the rims named `rim0` and `rim1`, sharp verticals `side`.
-/// A counter-clockwise contour faces out, a clockwise one in.
-fn wall(s: &mut Solid, c: &Contour, z0: f64, z1: f64, tags: &[&str], rims: [&[&str]; 2]) {
+/// A counter-clockwise contour faces out, a clockwise one in. UVs (with
+/// `uvs`): u the arc length along the contour from its first point (the
+/// seam there), v the height z.
+fn wall(
+    s: &mut Solid,
+    uvs: bool,
+    c: &Contour,
+    z0: f64,
+    z1: f64,
+    tags: &[&str],
+    rims: [&[&str]; 2],
+) {
     let n = c.points.len();
     let lo: Vec<u32> = c
         .points
@@ -95,11 +107,29 @@ fn wall(s: &mut Solid, c: &Contour, z0: f64, z1: f64, tags: &[&str], rims: [&[&s
         .map(|p| s.push_vertex(p.extend(z1)))
         .collect();
     let first = s.surfaces.iter().max().map_or(0, |m| m + 1);
+    let (along, total) = arc_lengths(&c.points);
     for (surface, (a, b)) in (first..).zip(runs(c)) {
         for i in a..b {
             let (i0, i1) = (i % n, (i + 1) % n);
-            s.push_triangle([lo[i0], lo[i1], hi[i1]], surface, tags);
-            s.push_triangle([lo[i0], hi[i1], hi[i0]], surface, tags);
+            let (u0, u1) = (along[i0], arc_end(&along, total, i0));
+            let (a0, a1) = (DVec2::new(u0, z0), DVec2::new(u1, z0));
+            let (b0, b1) = (DVec2::new(u0, z1), DVec2::new(u1, z1));
+            push(
+                s,
+                uvs,
+                [lo[i0], lo[i1], hi[i1]],
+                surface,
+                tags,
+                [a0, a1, b1],
+            );
+            push(
+                s,
+                uvs,
+                [lo[i0], hi[i1], hi[i0]],
+                surface,
+                tags,
+                [a0, b1, b0],
+            );
         }
     }
     for i in 0..n {
@@ -117,6 +147,13 @@ fn wall(s: &mut Solid, c: &Contour, z0: f64, z1: f64, tags: &[&str], rims: [&[&s
 /// optional hub on its top face (sand3d's `gear(teeth, module, width,
 /// bore)`, plus the hub).
 pub fn gear_solid(d: &GearDesc) -> Result<Solid, GenError> {
+    gear_with(d, false)
+}
+
+/// [`gear_solid`], with UVs when `uvs`: caps planar (x, y); walls u the
+/// arc length along the outline (the seam at its first point, the
+/// middle of the tooth on +x), v the height z.
+pub(crate) fn gear_with(d: &GearDesc, uvs: bool) -> Result<Solid, GenError> {
     let w = positive(d.width, "width")?;
     let outline = gear(&Gear {
         teeth: d.teeth,
@@ -156,15 +193,32 @@ pub fn gear_solid(d: &GearDesc) -> Result<Solid, GenError> {
     }
     let bore_ring = bore.map(ring);
     let mut s = Solid::default();
-    cap(&mut s, outer, bore_ring.as_ref(), 0.0, false, &["bottom"])?;
-    wall(&mut s, outer, 0.0, w, &["side"], [&["bottom"], &["top"]]);
+    cap(
+        &mut s,
+        uvs,
+        outer,
+        bore_ring.as_ref(),
+        0.0,
+        false,
+        &["bottom"],
+    )?;
+    wall(
+        &mut s,
+        uvs,
+        outer,
+        0.0,
+        w,
+        &["side"],
+        [&["bottom"], &["top"]],
+    );
     let top = match hub {
         None => w,
         Some((r, hh)) => {
             let hub_ring = ring(r);
-            cap(&mut s, outer, Some(&hub_ring), w, true, &["top"])?;
+            cap(&mut s, uvs, outer, Some(&hub_ring), w, true, &["top"])?;
             wall(
                 &mut s,
+                uvs,
                 &hub_ring,
                 w,
                 w + hh,
@@ -173,6 +227,7 @@ pub fn gear_solid(d: &GearDesc) -> Result<Solid, GenError> {
             );
             cap(
                 &mut s,
+                uvs,
                 &hub_ring,
                 bore_ring.as_ref(),
                 w + hh,
@@ -183,11 +238,12 @@ pub fn gear_solid(d: &GearDesc) -> Result<Solid, GenError> {
         }
     };
     if hub.is_none() {
-        cap(&mut s, outer, bore_ring.as_ref(), w, true, &["top"])?;
+        cap(&mut s, uvs, outer, bore_ring.as_ref(), w, true, &["top"])?;
     }
     if let Some(b) = &bore_ring {
         wall(
             &mut s,
+            uvs,
             &b.reversed(),
             0.0,
             top,
@@ -226,6 +282,15 @@ fn vee(f: f64) -> f64 {
 /// leaves one helix's creases across the triangles). Flat `bottom` and
 /// `top`.
 pub fn knurl(d: &Knurl) -> Result<Solid, GenError> {
+    knurl_with(d, false)
+}
+
+/// [`knurl`], with UVs when `uvs`: the wall as the cylinder over the
+/// teeth, u the arc length round it at the crest radius from +x (the
+/// seam there), v the height z (the teeth's own ups and downs would
+/// shear a by-surface rule across the diamonds); `bottom` and `top`
+/// planar (x, y).
+pub(crate) fn knurl_with(d: &Knurl, uvs: bool) -> Result<Solid, GenError> {
     let dia = positive(d.diameter, "diameter")?;
     let h = positive(d.height, "height")?;
     let pitch = if d.pitch == 0.0 {
@@ -274,6 +339,9 @@ pub fn knurl(d: &Knurl) -> Result<Solid, GenError> {
     let n = around as usize;
     let z_of = |j: usize| h * (j as f64 / along as f64);
     for (j, w) in rings.windows(2).enumerate() {
+        let uv = |x: usize, y: usize| {
+            DVec2::new(r * trig::TAU * (y as f64 / around as f64), z_of(j + x))
+        };
         for i in 0..n {
             let i1 = (i + 1) % n;
             // Split each quad along the diagonal whose middle lies nearer
@@ -284,12 +352,42 @@ pub fn knurl(d: &Knurl) -> Result<Solid, GenError> {
             let mid = radius((t0 + t1) / 2.0, (z0 + z1) / 2.0);
             let rising = (radius(t0, z0) + radius(t1, z1)) / 2.0;
             let falling = (radius(t1, z0) + radius(t0, z1)) / 2.0;
+            let (a, b, c, e) = (uv(0, i), uv(0, i + 1), uv(1, i), uv(1, i + 1));
+            let side = &["side"];
             if (falling - mid).abs() < (rising - mid).abs() {
-                s.push_triangle([w[0][i], w[0][i1], w[1][i]], 2, &["side"]);
-                s.push_triangle([w[0][i1], w[1][i1], w[1][i]], 2, &["side"]);
+                push(
+                    &mut s,
+                    uvs,
+                    [w[0][i], w[0][i1], w[1][i]],
+                    2,
+                    side,
+                    [a, b, c],
+                );
+                push(
+                    &mut s,
+                    uvs,
+                    [w[0][i1], w[1][i1], w[1][i]],
+                    2,
+                    side,
+                    [b, e, c],
+                );
             } else {
-                s.push_triangle([w[0][i], w[0][i1], w[1][i1]], 2, &["side"]);
-                s.push_triangle([w[0][i], w[1][i1], w[1][i]], 2, &["side"]);
+                push(
+                    &mut s,
+                    uvs,
+                    [w[0][i], w[0][i1], w[1][i1]],
+                    2,
+                    side,
+                    [a, b, e],
+                );
+                push(
+                    &mut s,
+                    uvs,
+                    [w[0][i], w[1][i1], w[1][i]],
+                    2,
+                    side,
+                    [a, e, c],
+                );
             }
         }
     }
@@ -311,7 +409,15 @@ pub fn knurl(d: &Knurl) -> Result<Solid, GenError> {
             .collect();
         for t in &fill.triangles {
             let t = if up { *t } else { [t[0], t[2], t[1]] };
-            s.push_triangle(t.map(|i| ids[i as usize]), surface, &[name]);
+            let uv = t.map(|i| fill.points[i as usize]);
+            push(
+                &mut s,
+                uvs,
+                t.map(|i| ids[i as usize]),
+                surface,
+                &[name],
+                uv,
+            );
         }
         for i in 0..n {
             s.tag_edge(ring[i], ring[(i + 1) % n], &[name]);

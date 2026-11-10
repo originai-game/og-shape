@@ -153,7 +153,7 @@ describe("the rest of the surface (stream R)", () => {
     s.merge(leg, spring);
     const block = s.box({ name: "block", width: 6, depth: 6, height: 6, on: og.world.move(0, 20, 0) });
     const hole = s.box({ name: "hole", width: 2, depth: 2, height: 2, on: og.world.move(0, 20, 2) });
-    expect(s.cut(block, hole, { check: true })).toEqual({ voids: 1, touchingEdges: 0, touching: false });
+    expect(s.cut(block, hole, { check: true })).toEqual({ voids: 1, touchingEdges: 0, touching: false, facesWithoutUvs: 0 });
     const scrap = s.box({ name: "scrap", width: 1, depth: 1, height: 1 });
     s.delete(scrap);
     const legM = s.measure().parts.find((p: any) => p.name === "leg");

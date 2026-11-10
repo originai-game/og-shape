@@ -65,7 +65,9 @@ pub(crate) fn distances(adj: &[Vec<(u32, f64)>], sources: &[u32], limit: f64) ->
 
 /// The solid with each edge of `edges` split at its midpoint. Pieces keep
 /// their triangle's surface and face names; a named edge's halves keep
-/// its names. Not canonicalized.
+/// its names; UVs are interpolated in each piece's triangle (a midpoint
+/// takes the mean of its edge's ends there, so a seam stays a seam). Not
+/// canonicalized.
 pub(crate) fn split_edges(s: &Solid, edges: &BTreeSet<EdgeKey>) -> Solid {
     let mut out = Solid {
         positions: s.positions.clone(),
@@ -80,7 +82,18 @@ pub(crate) fn split_edges(s: &Solid, edges: &BTreeSet<EdgeKey>) -> Solid {
         let tags: Vec<&str> = s.face_tags[i].iter().map(|&x| s.names.name(x)).collect();
         let m = [0, 1, 2].map(|k| mid.get(&edge_key(t[k], t[(k + 1) % 3])).copied());
         for tri in split_triangle(&out.positions, *t, m) {
-            out.push_triangle(tri, s.surfaces[i], &tags);
+            match &s.uvs {
+                Some(uvs) => {
+                    let uv = tri.map(|v| match t.iter().position(|&x| x == v) {
+                        Some(k) => uvs[i][k],
+                        None => (0..3)
+                            .find(|&k| mid.get(&edge_key(t[k], t[(k + 1) % 3])) == Some(&v))
+                            .map_or(uvs[i][0], |k| (uvs[i][k] + uvs[i][(k + 1) % 3]) / 2.0),
+                    });
+                    out.push_triangle_uv(tri, s.surfaces[i], &tags, uv);
+                }
+                None => out.push_triangle(tri, s.surfaces[i], &tags),
+            }
         }
     }
     for (&(a, b), tags) in &s.edge_tags {

@@ -47,10 +47,18 @@ impl Model {
         self.session.font(name, bytes);
     }
 
-    /// Replays `program` into this model, with the fonts supplied so far,
-    /// replacing what it held.
+    /// Supplies an image's bytes (PNG or JPEG) under `name`, the name a
+    /// material's `map` gives it. The program records the name only.
+    pub fn texture(&mut self, name: &str, bytes: Vec<u8>) {
+        self.session.texture(name, bytes);
+    }
+
+    /// Replays `program` into this model, with the fonts and textures
+    /// supplied so far, replacing what it held.
     pub fn replay_into(&mut self, program: &str) -> Result<(), JsError> {
-        self.session = Session::replay_with(program, self.session.fonts()).map_err(js)?;
+        self.session =
+            Session::replay_files(program, self.session.fonts(), self.session.textures())
+                .map_err(js)?;
         Ok(())
     }
 

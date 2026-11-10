@@ -5,7 +5,7 @@
 use shape_tools::Preview;
 
 use crate::args::{Args, IMPORT_OPTIONS};
-use crate::source::{Local, Source, load, scene};
+use crate::source::{Local, Source, load_uvs, scene};
 use crate::{Failure, Files, failed};
 
 /// The views and how to lay them out. The zero value is the kernel's
@@ -48,6 +48,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         "--azimuth",
         "--no-edges",
         "--no-ground",
+        "--uvs",
         IMPORT_OPTIONS[0],
         IMPORT_OPTIONS[1],
     ])?;
@@ -64,7 +65,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         },
         columns: a.number("--columns")?.unwrap_or(0),
     };
-    let source = load(&Local, &a.input()?, &a.import()?)?;
+    let source = load_uvs(&Local, &a.input()?, &a.import()?, a.switch("--uvs"))?;
     Local.write(&out, &render(&source, &d)?)?;
     Ok(String::new())
 }

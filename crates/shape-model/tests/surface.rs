@@ -27,7 +27,7 @@ fn unknown_fields_are_refused_naming_the_field_and_the_accepted_ones() {
     .unwrap_err()
     .to_string();
     assert!(e.contains("\"segmentz\""), "{e}");
-    assert!(e.contains("radiusTop, height, segments, on"), "{e}");
+    assert!(e.contains("radiusTop, height, segments, uvs, on"), "{e}");
     // Inside a profile, a loft section, a frame and a mimic.
     for (op, field) in [
         (

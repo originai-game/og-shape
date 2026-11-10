@@ -18,7 +18,16 @@ use crate::error::ModelError;
 /// surface passes through itself: the message names the lowest pair of
 /// sections a crossing lies between, and how many triangle pairs cross.
 pub fn loft(d: &Loft) -> Result<Solid, ModelError> {
-    let s = shape_gen::paths::loft(d)?;
+    loft_with(d, false)
+}
+
+/// [`loft`], with UVs when `uvs` (`shape_gen::solids::textured`).
+pub fn loft_with(d: &Loft, uvs: bool) -> Result<Solid, ModelError> {
+    let s = if uvs {
+        shape_gen::solids::textured(&shape_gen::solids::Generator::Loft(d))?
+    } else {
+        shape_gen::paths::loft(d)?
+    };
     let pairs = self_crossings(&s.positions, &s.triangles);
     let Some(&(i, j)) = pairs.first() else {
         return Ok(s);

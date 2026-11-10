@@ -38,7 +38,7 @@ use shape_2d::{Contour, Profile, ProfileError, Region};
 use shape_core::{DVec2, DVec3};
 use shape_mesh::Solid;
 
-use crate::solids::{GenError, finish};
+use crate::solids::{GenError, RingUvs, finish, push};
 use crate::spline;
 
 /// How a loft's surface runs between its sections.
@@ -316,6 +316,13 @@ fn slots(d: &Loft) -> Result<Vec<Vec<&Contour>>, GenError> {
 
 /// A surface through the sections, capped `bottom` and `top`.
 pub fn loft(d: &Loft) -> Result<Solid, GenError> {
+    loft_with(d, false)
+}
+
+/// [`loft`], with UVs when `uvs`: walls by [`RingUvs`] (u round each
+/// ring, v up the surface; each wall's seam along its rings' first
+/// sample), caps planar (x, y).
+pub(crate) fn loft_with(d: &Loft, uvs: bool) -> Result<Solid, GenError> {
     let k = d.sections.len();
     if k < 2 {
         return Err(GenError::Profile(ProfileError::TooFewPoints(k)));
@@ -481,12 +488,28 @@ pub fn loft(d: &Loft) -> Result<Solid, GenError> {
             &["side", "inner"]
         };
         let surface = 2 + slot as u32;
-        for w in rings.windows(2) {
+        let grid = RingUvs::new(&s.positions, rings, false);
+        for (i, w) in rings.windows(2).enumerate() {
             let n = w[0].len();
             for j in 0..n {
                 let j1 = (j + 1) % n;
-                s.push_triangle([w[0][j], w[0][j1], w[1][j1]], surface, tags);
-                s.push_triangle([w[0][j], w[1][j1], w[1][j]], surface, tags);
+                let uv = |a: usize, b: usize| grid.at(i + a, j + b);
+                push(
+                    &mut s,
+                    uvs,
+                    [w[0][j], w[0][j1], w[1][j1]],
+                    surface,
+                    tags,
+                    [uv(0, 0), uv(0, 1), uv(1, 1)],
+                );
+                push(
+                    &mut s,
+                    uvs,
+                    [w[0][j], w[1][j1], w[1][j]],
+                    surface,
+                    tags,
+                    [uv(0, 0), uv(1, 1), uv(1, 0)],
+                );
             }
         }
     }
@@ -538,7 +561,9 @@ pub fn loft(d: &Loft) -> Result<Solid, GenError> {
             } else {
                 *t
             };
-            s.push_triangle(t.map(|i| ids[i as usize]), surface, &[name]);
+            let t = t.map(|i| ids[i as usize]);
+            let uv = t.map(|v| s.positions[v as usize].truncate());
+            push(&mut s, uvs, t, surface, &[name], uv);
         }
         for ring in ends {
             let n = ring.len();

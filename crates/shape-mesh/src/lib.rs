@@ -96,6 +96,29 @@ impl Solid {
         }
     }
 
+    /// The texture coordinate triangle `i` gives point `p`: `p` projected
+    /// onto the triangle's plane and interpolated barycentrically there
+    /// (extended affinely past its edges). A point at one of its corners
+    /// takes that corner's coordinate exactly. `None` when the solid has
+    /// no UVs or the triangle has no area.
+    pub fn uv_at(&self, i: usize, p: DVec3) -> Option<DVec2> {
+        let uv = self.uvs.as_ref()?.get(i)?;
+        let t = self.triangles[i];
+        let [a, b, c] = t.map(|v| self.positions[v as usize]);
+        if let Some(k) = [a, b, c].iter().position(|&q| q == p) {
+            return Some(uv[k]);
+        }
+        let (e1, e2, d) = (b - a, c - a, p - a);
+        let n = e1.cross(e2);
+        let nn = n.dot(n);
+        if nn == 0.0 {
+            return None;
+        }
+        let w1 = d.cross(e2).dot(n) / nn;
+        let w2 = e1.cross(d).dot(n) / nn;
+        Some(uv[0] + (uv[1] - uv[0]) * w1 + (uv[2] - uv[0]) * w2)
+    }
+
     /// Turns triangle `i` over (its second and third corners swapped),
     /// with its texture coordinates.
     pub fn reverse_triangle(&mut self, i: usize) {
