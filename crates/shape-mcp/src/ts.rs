@@ -82,6 +82,17 @@ fn logs_of(path: &Path) -> String {
 
 /// Runs the program; its recorded program and logs, or why not.
 pub fn run(cfg: &TsConfig, ws: &Workspace, src: &TsSource) -> Result<TsRun, Failure> {
+    run_polled(cfg, ws, src, &mut || Ok(()))
+}
+
+/// As [`run`], calling `poll` about every 10 ms while bun runs: an error
+/// from it stops bun and is returned (the server's cancellation).
+pub fn run_polled(
+    cfg: &TsConfig,
+    ws: &Workspace,
+    src: &TsSource,
+    poll: &mut dyn FnMut() -> Result<(), Failure>,
+) -> Result<TsRun, Failure> {
     if !cfg.enabled {
         return Err(Failure::Failed(
             "run_typescript is turned off: the server was started with --no-typescript".into(),
@@ -97,7 +108,7 @@ pub fn run(cfg: &TsConfig, ws: &Workspace, src: &TsSource) -> Result<TsRun, Fail
         )));
     }
     let dir = scratch()?;
-    let result = run_in(cfg, ws, src, &index, &dir);
+    let result = run_in(cfg, ws, src, &index, &dir, poll);
     let _ = std::fs::remove_dir_all(&dir);
     result
 }
@@ -108,6 +119,7 @@ fn run_in(
     src: &TsSource,
     index: &Path,
     dir: &Path,
+    poll: &mut dyn FnMut() -> Result<(), Failure>,
 ) -> Result<TsRun, Failure> {
     let io = |p: &Path, e: std::io::Error| Failure::Failed(format!("{}: {e}", p.display()));
     let runner = dir.join("run.ts");
@@ -176,7 +188,14 @@ fn run_in(
                     timeout.as_secs()
                 )));
             }
-            None => std::thread::sleep(Duration::from_millis(10)),
+            None => {
+                if let Err(e) = poll() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(e);
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
         }
     };
     let logs = format!("{}{}", logs_of(&stdout), logs_of(&stderr));

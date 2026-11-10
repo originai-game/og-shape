@@ -17,7 +17,7 @@ use shape_cli::export::{export, written};
 use shape_cli::import::{ImportDesc, import};
 use shape_cli::measure::{MeasureDesc, measure};
 use shape_cli::preview::{PreviewDesc, render};
-use shape_cli::process::{ProcessDesc, process};
+use shape_cli::process::{ProcessDesc, STEPS, process_steps};
 use shape_cli::repair::{RepairDesc, repair};
 use shape_cli::report::{object, string};
 use shape_cli::source::{Source, load};
@@ -26,14 +26,17 @@ use shape_cli::{Failure, Files, Input};
 use shape_tools::{Decimate, Floaters, Import, Preview, Repair, Unwrap};
 
 use crate::Server;
-use crate::ts::{TsSource, run as run_ts};
+use crate::ts::{TsSource, run_polled as run_ts};
+
+/// A tool's handler: the server, its arguments, and whom to tell of its steps.
+type Handler = fn(&Server, &Args, &mut dyn Progress) -> Result<Vec<Value>, Failure>;
 
 /// One tool.
 struct Tool {
     name: &'static str,
     description: &'static str,
     schema: fn() -> Value,
-    handler: fn(&Server, &Args) -> Result<Vec<Value>, Failure>,
+    handler: Handler,
 }
 
 const TOOLS: [Tool; 10] = [
@@ -135,12 +138,48 @@ pub fn list() -> Value {
     json!({ "tools": tools })
 }
 
+/// What a long tool tells its caller between steps, and how it learns
+/// that the call was cancelled. The kernel is never interrupted: a tool
+/// asks only between kernel calls (`process`'s steps), or while it waits
+/// on bun (`run_typescript`).
+pub trait Progress {
+    /// Step `k` (from 0) of `total`, named `what`, is about to run. An
+    /// error stops the tool there and is its result.
+    fn step(&mut self, k: usize, total: usize, what: &str) -> Result<(), Failure>;
+    /// Asked about every 10 ms while the tool waits on a child process;
+    /// an error stops the child and is the tool's result.
+    fn poll(&mut self) -> Result<(), Failure>;
+}
+
+/// Progress nobody hears: no call is ever cancelled.
+pub struct Silent;
+
+impl Progress for Silent {
+    fn step(&mut self, _: usize, _: usize, _: &str) -> Result<(), Failure> {
+        Ok(())
+    }
+    fn poll(&mut self) -> Result<(), Failure> {
+        Ok(())
+    }
+}
+
 /// Runs a tool: its `tools/call` result, or None for a tool that does
 /// not exist.
 pub fn call(server: &Server, name: &str, args: &Map<String, Value>) -> Option<Value> {
+    call_with(server, name, args, &mut Silent)
+}
+
+/// As [`call`], telling `progress` of each step of a long tool.
+pub fn call_with(
+    server: &Server,
+    name: &str,
+    args: &Map<String, Value>,
+    progress: &mut dyn Progress,
+) -> Option<Value> {
     let tool = TOOLS.iter().find(|t| t.name == name)?;
     let schema = (tool.schema)();
-    let result = check_keys(&schema, args).and_then(|()| (tool.handler)(server, &Args { o: args }));
+    let result = check_keys(&schema, args)
+        .and_then(|()| (tool.handler)(server, &Args { o: args }, progress));
     Some(match result {
         Ok(content) => json!({ "content": content, "isError": false }),
         Err(e) => json!({
@@ -582,7 +621,7 @@ fn loaded(server: &Server, a: &Args) -> Result<Source, Failure> {
     load(&server.ws, &a.input(server)?, &a.import()?)
 }
 
-fn build_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
+fn build_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
     let source = loaded(server, a)?;
     let Source::Program(model) = &source else {
         return Err(Failure::Usage(
@@ -606,7 +645,7 @@ fn png_size(png: &[u8]) -> (u32, u32) {
     (be(16), be(20))
 }
 
-fn preview_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
+fn preview_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
     let d = PreviewDesc {
         preview: Preview {
             width: a.u32("width")?,
@@ -643,21 +682,21 @@ fn preview_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
     ])
 }
 
-fn measure_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
+fn measure_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
     let d = MeasureDesc {
         intersections: a.flag("intersections")?,
     };
     Ok(vec![text(measure(&loaded(server, a)?, &d)?)])
 }
 
-fn export_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
+fn export_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
     let out = a
         .path("out")?
         .ok_or_else(|| Failure::Usage("give `out`".into()))?;
     Ok(vec![text(export(&server.ws, &loaded(server, a)?, &out)?)])
 }
 
-fn import_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
+fn import_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
     let d = ImportDesc {
         input: a.mesh_input()?,
         import: a.import()?,
@@ -666,7 +705,7 @@ fn import_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
     Ok(vec![text(import(&server.ws, &d)?)])
 }
 
-fn repair_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
+fn repair_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
     let d = RepairDesc {
         input: a.mesh_input()?,
         import: a.import()?,
@@ -676,7 +715,7 @@ fn repair_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
     Ok(vec![text(repair(&server.ws, &d)?)])
 }
 
-fn decimate_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
+fn decimate_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
     let d = DecimateDesc {
         input: a.mesh_input()?,
         import: a.import()?,
@@ -693,7 +732,7 @@ fn decimate_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
     Ok(vec![text(decimate(&server.ws, &d)?)])
 }
 
-fn unwrap_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
+fn unwrap_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
     let d = UnwrapDesc {
         input: a.mesh_input()?,
         import: a.import()?,
@@ -703,7 +742,7 @@ fn unwrap_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
     Ok(vec![text(unwrap(&server.ws, &d)?)])
 }
 
-fn process_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
+fn process_tool(server: &Server, a: &Args, p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
     let empty = Map::new();
     let none = Args { o: &empty };
     let d = ProcessDesc {
@@ -715,10 +754,13 @@ fn process_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
         intersections: a.flag("intersections")?,
         out: a.path("out")?,
     };
-    Ok(vec![text(process(&server.ws, &d)?)])
+    let total = STEPS.len();
+    Ok(vec![text(process_steps(&server.ws, &d, &mut |k| {
+        p.step(k, total, STEPS[k])
+    })?)])
 }
 
-fn ts_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
+fn ts_tool(server: &Server, a: &Args, p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
     let src = match (a.string("source")?, a.path("path")?) {
         (Some(s), None) => TsSource::Text(s.to_string()),
         (None, Some(p)) => TsSource::Path(p),
@@ -727,7 +769,9 @@ fn ts_tool(server: &Server, a: &Args) -> Result<Vec<Value>, Failure> {
         }
         (None, None) => return Err(Failure::Usage("give `source` or `path`".into())),
     };
-    let run = run_ts(&server.ts, &server.ws, &src)?;
+    p.step(0, 2, "run the program under bun")?;
+    let run = run_ts(&server.ts, &server.ws, &src, &mut || p.poll())?;
+    p.step(1, 2, "replay it natively and measure")?;
     // Replayed natively: the report and measures are the native kernel's.
     let source = load(
         &server.ws,

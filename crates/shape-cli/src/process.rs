@@ -37,13 +37,33 @@ pub struct ProcessDesc {
     pub out: Option<PathBuf>,
 }
 
+/// The chain's steps, in the order [`process_steps`] calls them.
+pub const STEPS: [&str; 6] = [
+    "import", "repair", "decimate", "unwrap", "measure", "export",
+];
+
 /// The chain's report: `import`, `repair`, `decimate` (null when
 /// skipped), `unwrap`, `measures` and `output`.
 pub fn process(files: &dyn Files, d: &ProcessDesc) -> Result<String, Failure> {
+    process_steps(files, d, &mut |_| Ok(()))
+}
+
+/// As [`process`], calling `step(k)` before step `k` of [`STEPS`] (a
+/// front end reports progress there). An error from `step` stops the
+/// chain before that step and is returned; a step itself is never
+/// interrupted.
+pub fn process_steps(
+    files: &dyn Files,
+    d: &ProcessDesc,
+    step: &mut dyn FnMut(usize) -> Result<(), Failure>,
+) -> Result<String, Failure> {
+    step(0)?;
     let mesh = load_mesh(files, &d.input, &d.import)?;
     let imported = report::imported(&mesh.format, &mesh.imported);
     let joined = mesh.joined()?;
+    step(1)?;
     let (fixed, r) = shape_tools::repair(&joined, &d.repair).map_err(failed)?;
+    step(2)?;
     let (low, dec) = if d.budget > 0 && fixed.triangles.len() > d.budget {
         let (low, dr) = shape_tools::decimate(
             &fixed,
@@ -57,7 +77,9 @@ pub fn process(files: &dyn Files, d: &ProcessDesc) -> Result<String, Failure> {
     } else {
         (fixed, "null".to_string())
     };
+    step(3)?;
     let uvs = shape_tools::unwrap(&low, &d.unwrap).map_err(failed)?;
+    step(4)?;
     let m = shape_tools::measure(
         &low,
         &Measure {
@@ -67,6 +89,7 @@ pub fn process(files: &dyn Files, d: &ProcessDesc) -> Result<String, Failure> {
             intersections: d.intersections,
         },
     );
+    step(5)?;
     let output = write_solid(files, &mesh.name, &low, Some(&uvs), d.out.as_deref())?;
     Ok(object(&[
         ("import", imported),

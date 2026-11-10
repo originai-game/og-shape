@@ -75,6 +75,7 @@ Tools (arguments are in each tool's schema):
 | `run_typescript` | `source` or `path` (.ts); `program_out`? | parts, measures, the recorded program |
 
 Resources, to read before writing a program:
+`og-shape://guides/shape.md` (how to model an object: read it first),
 `og-shape://guides/program.md` (the JSON form),
 `og-shape://guides/typescript.md` (the TypeScript API) and
 `og-shape://guides/meshtools.md` (the mesh tools and their measures).

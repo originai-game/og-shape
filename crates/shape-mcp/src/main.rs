@@ -84,9 +84,9 @@ fn main() -> ExitCode {
         }
     };
     eprintln!("shape-mcp: serving {}", server.ws.root().display());
-    let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    match shape_mcp::serve(stdin.lock(), stdout.lock(), &server) {
+    let stdin = std::io::BufReader::new(std::io::stdin());
+    match shape_mcp::serve(stdin, stdout.lock(), &server) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("shape-mcp: {e}");

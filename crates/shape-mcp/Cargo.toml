@@ -24,4 +24,6 @@ serde_json.workspace = true
 workspace = true
 
 [dev-dependencies]
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
+shape-cli = { path = "../shape-cli" }
 shape-model.workspace = true

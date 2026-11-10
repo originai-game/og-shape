@@ -45,7 +45,7 @@ fn session(s: &Server, calls: &[(&str, Value)]) -> Vec<Value> {
         input.push_str(&format!("{m}\n"));
     }
     let mut out = Vec::new();
-    shape_mcp::serve(input.as_bytes(), &mut out, s).unwrap();
+    shape_mcp::serve(std::io::Cursor::new(input.into_bytes()), &mut out, s).unwrap();
     let lines: Vec<Value> = String::from_utf8(out)
         .unwrap()
         .lines()
@@ -161,7 +161,15 @@ fn tools_resources_and_the_workspace() {
         .iter()
         .map(|x| x["uri"].as_str().unwrap())
         .collect();
-    assert_eq!(uris.len(), 3);
+    assert_eq!(
+        uris,
+        [
+            "og-shape://guides/shape.md",
+            "og-shape://guides/program.md",
+            "og-shape://guides/typescript.md",
+            "og-shape://guides/meshtools.md"
+        ]
+    );
     let guide = r[2]["result"]["contents"][0]["text"].as_str().unwrap();
     assert!(guide.contains("\"op\""));
 
