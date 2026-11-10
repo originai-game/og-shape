@@ -25,18 +25,22 @@
 //!    with the normals, uvs and colours of the triangles they came from.
 //!
 //! Crossing points and winding numbers are computed in f64 with `+ - * /`,
-//! `sqrt` and [`crate::trig::atan2`]: the same on every host.
+//! `sqrt` and [`shape_gen::trig::atan2`]: the same on every host.
 //!
 //! [`csg_points`] runs these steps twice when the first result is open
 //! (operands that touch: faces on faces, vertices within an ulp of a face).
 //! The second pass orders points on an edge exactly (`exact`), lays a
 //! triangle out exactly where its rounded outline is not simple, makes
 //! points at one position one point, and classifies faces lying on the
-//! other operand by orientation (`docs/research.md` §5.4, item 5).
+//! other operand by orientation (`docs/research.md` §5.4, item 5). When
+//! the result is still open, or has edges used other than once each way,
+//! the tool's vertices within 2⁻⁴⁰ of the operands' size of a target
+//! vertex are snapped onto it and both passes run again (faces a few ulps
+//! apart, placed by different rounded motions; `docs/research.md` §18).
 
 use glam::{DVec2, DVec3};
 use robust::{Coord, Coord3D, orient2d, orient3d};
-use shape_gen::{Mesh, Placement, normalize, place, trig};
+use shape_gen::{Mesh, Placement, normalize, place};
 use spade::{ConstrainedDelaunayTriangulation, Point2, Triangulation};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -288,7 +292,21 @@ impl Csg {
                         let (a, b, cc) = (c.p(t[0]), c.p(t[1]), c.p(t[2]));
                         let n = (b - a).cross(cc - a);
                         let (dp, dq) = (n.dot(pp - a), n.dot(pq - a));
-                        pp + (pq - pp) * (dp / (dp - dq))
+                        let mut f = dp / (dp - dq);
+                        // An edge almost in the plane: the rounded distances
+                        // can cancel (0/0) or put the point off the edge.
+                        // `orient3d` gives them with their exact signs,
+                        // opposite (the edge crosses the plane strictly), so
+                        // the fraction lies strictly inside the edge
+                        // (`docs/research.md` §18).
+                        if !(0.0..=1.0).contains(&f) {
+                            let (op, oq) = (
+                                orient3d(c3(a), c3(b), c3(cc), c3(pp)),
+                                orient3d(c3(a), c3(b), c3(cc), c3(pq)),
+                            );
+                            f = op / (op - oq);
+                        }
+                        pp + (pq - pp) * f
                     },
                     &[e],
                 );
@@ -1334,35 +1352,34 @@ fn strictly_inside(poly: &[DVec2], q: DVec2) -> bool {
 /// The winding number of a closed mesh round `p` (solid angles, Van
 /// Oosterom and Strackee): 1 inside, 0 outside.
 pub(crate) fn winding(points: &[DVec3], tris: &[[u32; 3]], p: DVec3) -> f64 {
-    let mut sum = 0.0;
-    for t in tris {
-        let a = points[t[0] as usize] - p;
-        let b = points[t[1] as usize] - p;
-        let c = points[t[2] as usize] - p;
-        let (la, lb, lc) = (a.length(), b.length(), c.length());
-        let det = a.dot(b.cross(c));
-        let den = la * lb * lc + a.dot(b) * lc + a.dot(c) * lb + b.dot(c) * la;
-        sum += 2.0 * trig::atan2(det, den);
-    }
-    sum / (4.0 * trig::PI)
+    crate::winding::winding(points, tris, None, p)
 }
 
-/// [`winding`] without triangle `skip`.
-fn winding_except(points: &[DVec3], tris: &[[u32; 3]], skip: usize, p: DVec3) -> f64 {
-    let mut sum = 0.0;
-    for (i, t) in tris.iter().enumerate() {
-        if i == skip {
-            continue;
+/// Which side of thresholds a mesh's winding number lies, for many
+/// points: the direct sum, or for a large mesh and many points, a tree
+/// with the direct sum's decisions (`docs/research.md` §18).
+enum Winder<'a> {
+    Direct(&'a [DVec3], &'a [[u32; 3]]),
+    Tree(crate::winding::Tree<'a>),
+}
+
+impl<'a> Winder<'a> {
+    fn new(points: &'a [DVec3], tris: &'a [[u32; 3]], queries: usize) -> Winder<'a> {
+        if tris.len() >= crate::winding::MIN_TRIS && queries >= 16 {
+            Winder::Tree(crate::winding::Tree::new(points, tris))
+        } else {
+            Winder::Direct(points, tris)
         }
-        let a = points[t[0] as usize] - p;
-        let b = points[t[1] as usize] - p;
-        let c = points[t[2] as usize] - p;
-        let (la, lb, lc) = (a.length(), b.length(), c.length());
-        let det = a.dot(b.cross(c));
-        let den = la * lb * lc + a.dot(b) * lc + a.dot(c) * lb + b.dot(c) * la;
-        sum += 2.0 * trig::atan2(det, den);
     }
-    sum / (4.0 * trig::PI)
+
+    /// The winding number round `p`, triangle `skip` left out, on the same
+    /// side of each of `thresholds` as the direct sum.
+    fn side(&self, p: DVec3, skip: Option<usize>, thresholds: &[f64]) -> f64 {
+        match self {
+            Winder::Direct(points, tris) => crate::winding::winding(points, tris, skip, p),
+            Winder::Tree(t) => t.side(p, skip, thresholds),
+        }
+    }
 }
 
 fn weld(
@@ -1693,6 +1710,14 @@ fn arrange(points: Vec<DVec3>, sa: Solid, sb: Solid, op: CsgOp, robust: bool) ->
     } else {
         BTreeMap::new()
     };
+    let queries = |m: u8| {
+        regions
+            .best
+            .values()
+            .filter(|&&b| pieces[b].mesh != m)
+            .count()
+    };
+    let winders = [0u8, 1].map(|m| Winder::new(&c.points, &c.solids[m as usize].tris, queries(m)));
     for (&r, &b) in &regions.best {
         if let Some(&same) = twins.get(&r) {
             // On the other surface: the other solid lies behind a face
@@ -1702,8 +1727,8 @@ fn arrange(points: Vec<DVec3>, sa: Solid, sb: Solid, op: CsgOp, robust: bool) ->
         }
         let p = &pieces[b];
         let (front, back) = c.probes(p, scale);
-        let other = &c.solids[1 - p.mesh as usize].tris;
-        let inside = |q: DVec3| winding(&c.points, other, q) > 0.5;
+        let other = &winders[1 - p.mesh as usize];
+        let inside = |q: DVec3| other.side(q, None, &[0.5]) > 0.5;
         sides.insert(r, (inside(front), inside(back)));
     }
     let mut choice: Vec<(bool, bool)> = Vec::with_capacity(pieces.len());
@@ -2137,15 +2162,17 @@ fn arrange_self(points: Vec<DVec3>, s: Solid) -> (Csg, Vec<Kept>) {
     // another face lies on the piece, that does not hold; points a small
     // step in front and behind decide there.
     let mut sides: BTreeMap<usize, (bool, bool)> = BTreeMap::new();
+    let winder = Winder::new(&c.points, &tris, regions.best.len());
     for (&r, &b) in &regions.best {
         let p = &pieces[b];
         let side = if partners.contains_key(&p.tri) {
             let (front, back) = c.probes(p, scale);
-            let inside = |q: DVec3| winding(&c.points, &tris, q) > 0.5;
+            let inside = |q: DVec3| winder.side(q, None, &[0.5]) > 0.5;
             (inside(front), inside(back))
         } else {
             let [a, bb, cc] = p.ids.map(|i| c.p(i));
-            let rest = winding_except(&c.points, &tris, p.tri as usize, (a + bb + cc) / 3.0);
+            let centre = (a + bb + cc) / 3.0;
+            let rest = winder.side(centre, Some(p.tri as usize), &[1.0, 0.0]);
             (rest - 0.5 > 0.5, rest + 0.5 > 0.5)
         };
         sides.insert(r, side);
@@ -2341,6 +2368,11 @@ pub struct CsgOutput {
     pub touching_edges: usize,
     /// Other edges used other than once each way.
     pub non_manifold: usize,
+    /// Whether the result was built with the tool's vertices snapped onto
+    /// the target's within a rounding error: the operands as given came
+    /// out open or not manifold, and the snapped ones closer to closed
+    /// (`docs/research.md` §18).
+    pub snapped: bool,
 }
 
 /// [`csg_points`], with where the operands touch.
@@ -2353,13 +2385,18 @@ pub struct CsgOutput {
 /// triangle out exactly where its rounded outline is not simple, and then
 /// makes points at one position one point, collapsing the runs between
 /// them (`docs/research.md` §5.4, item 5). Every closed first-pass result
-/// is returned as before.
+/// is returned as before. If the result is still open, or not manifold,
+/// the tool's vertices within a rounding error of the target's are
+/// snapped onto them ([`snap_onto`]) and both passes run again; the
+/// snapped result is taken if it has fewer unmatched edges, or as many and
+/// fewer edges not used once each way (a union is never empty).
+/// [`CsgOutput::snapped`] says so.
 pub fn csg_points_traced(
     a: (&[DVec3], &[[u32; 3]]),
     b: (&[DVec3], &[[u32; 3]]),
     op: CsgOp,
 ) -> Result<CsgOutput, OperandError> {
-    let pass = |robust: bool| -> Result<CsgOutput, OperandError> {
+    let pass = |robust: bool, b: (&[DVec3], &[[u32; 3]])| -> Result<CsgOutput, OperandError> {
         let mut points = Vec::new();
         let mut at = BTreeMap::new();
         let sa = weld64(0, false, a, &mut points, &mut at)?;
@@ -2403,21 +2440,112 @@ pub fn csg_points_traced(
             unmatched: counts.unmatched,
             touching_edges: counts.touching,
             non_manifold: counts.non_manifold,
+            snapped: false,
         })
     };
-    let first = pass(false)?;
+    // How far a result is from closed: its unmatched edges, and a union of
+    // two closed solids is never empty (a region that leaked across the
+    // operands' seam can drop every piece and balance).
+    let open = |o: &CsgOutput| {
+        if op == CsgOp::Union && o.tris.is_empty() {
+            usize::MAX
+        } else {
+            o.unmatched
+        }
+    };
+    // Then edges not used once each way: where the operands touch along
+    // an edge, or a crack a rounding error wide.
+    let rank = |o: &CsgOutput| (open(o), o.touching_edges + o.non_manifold);
+    let first = pass(false, b)?;
     // Operands that touch can make crossings a rounding error apart that
     // the first pass cannot keep apart; an open result there is built
     // again by the second pass. Every closed result is the first pass's.
-    if first.unmatched == 0 {
+    if rank(&first) == (0, 0) {
         return Ok(first);
     }
-    let second = pass(true)?;
-    if second.unmatched < first.unmatched {
-        Ok(second)
+    let best = if open(&first) == 0 {
+        first
     } else {
-        Ok(first)
+        let second = pass(true, b)?;
+        if open(&second) < open(&first) {
+            second
+        } else {
+            first
+        }
+    };
+    if rank(&best) == (0, 0) {
+        return Ok(best);
     }
+    // Surfaces a rounding error apart that are not exactly one (faces
+    // placed by different rounded motions): the tool's vertices within a
+    // rounding error of the target's are snapped onto them, and both
+    // passes run again on the snapped tool. That result is taken only if
+    // it is closer to closed and manifold (`docs/research.md` §18).
+    let Some(snapped) = snap_onto(a.0, b.0) else {
+        return Ok(best);
+    };
+    let Ok(third) = pass(false, (&snapped, b.1)) else {
+        return Ok(best);
+    };
+    let third = if open(&third) == 0 {
+        third
+    } else {
+        match pass(true, (&snapped, b.1)) {
+            Ok(fourth) if rank(&fourth) < rank(&third) => fourth,
+            _ => third,
+        }
+    };
+    Ok(if rank(&third) < rank(&best) {
+        CsgOutput {
+            snapped: true,
+            ..third
+        }
+    } else {
+        best
+    })
+}
+
+/// The tool's positions `b` with each one that lies within 2⁻⁴⁰ of the
+/// operands' size of a position of the target `a`, but not on one, moved
+/// onto the nearest (the first of equals); None when none moves. The
+/// design's snap before a boolean (`docs/design.md` §6), tried only when
+/// the result is open or not manifold.
+fn snap_onto(a: &[DVec3], b: &[DVec3]) -> Option<Vec<DVec3>> {
+    let (mut lo, mut hi) = (DVec3::INFINITY, DVec3::NEG_INFINITY);
+    for &p in a.iter().chain(b) {
+        lo = lo.min(p);
+        hi = hi.max(p);
+    }
+    let tol = (hi - lo).length() * (1.0 / (1u64 << 40) as f64);
+    let tol2 = tol * tol;
+    // The target's positions by x, for a window search.
+    let mut by_x: Vec<u32> = (0..a.len() as u32).collect();
+    shape_core::sort::sort_by(&mut by_x, |&i, &j| {
+        a[i as usize].x.total_cmp(&a[j as usize].x).then(i.cmp(&j))
+    });
+    let mut out = b.to_vec();
+    let mut moved = false;
+    for p in &mut out {
+        let start = by_x.partition_point(|&i| a[i as usize].x < p.x - tol);
+        let mut best: Option<(f64, u32)> = None;
+        for &i in &by_x[start..] {
+            let q = a[i as usize];
+            if q.x > p.x + tol {
+                break;
+            }
+            let d2 = (q - *p).length_squared();
+            if d2 <= tol2 && best.is_none_or(|(bd, bi)| d2 < bd || (d2 == bd && i < bi)) {
+                best = Some((d2, i));
+            }
+        }
+        if let Some((d2, i)) = best
+            && d2 > 0.0
+        {
+            *p = a[i as usize];
+            moved = true;
+        }
+    }
+    moved.then_some(out)
 }
 
 /// Drops pairs of kept triangles on the same three positions facing

@@ -3627,6 +3627,263 @@ a `DiffuseColor` texture.
 - Determinism of the new hashes: native x86-64 and wasm32 under wasmtime
   here; aarch64 and Windows in CI only.
 
+## 18. The boolean cases still refused (stream T, 2026-11-10)
+
+The open items of §5.4 and §13.6 for `shape-bool`, each refused with an
+error value on a4b6046. Every side is still decided by `orient2d` and
+`orient3d`; nothing below adds a distance test to a decision, except the
+snap of item 1, which only moves a tool's vertex onto a target vertex
+already within 2⁻⁴⁰ of the operands' size.
+
+### 18.1 Turned elbows (§13.6 item 1, §5.4 item 5)
+
+**Cause.** The two elbows are tori turned half a facet about their axis,
+each cut by a box whose face is the world plane z = 0. A part's solid
+lives in its own frame, and the model hands the boolean its tool in the
+target's frame through the world (`placed` twice), so the tool's ring
+face comes back a few ulps off the target's. Measured on the join's
+operands (dumped from `golden/programs/touching_elbows_turned.json`):
+134 of the tool's vertices sit exactly on a target vertex, 126 within
+2⁻⁴⁹ to 2⁻⁴⁴ (≈ 6·10⁻¹⁴ mm at this 1 000 mm scale). The ring faces cross
+at 10⁻¹⁶ angles: both passes stay open (8 unmatched edges), the
+intersection and the cut close.
+
+**Fix: the design's snap, as a third pass** (`csg_points_traced`,
+`snap_onto`). `docs/design.md` §6 already says coordinates within a weld
+distance of the target's are snapped onto them before a boolean; nothing
+did it. It is done now, only where both passes leave the result open or
+not manifold: each tool vertex within 2⁻⁴⁰ of the operands' box diagonal
+of a target vertex, and not on one, moves onto the nearest (ties: lowest
+index), and both passes run again. The snapped result is taken only if it
+has fewer unmatched edges, or as many and fewer edges not used once each
+way. `CsgOutput::snapped` says so. Every result that was closed is built
+as before.
+
+**Found on the way: an empty union.** On solid (unbored) turned elbows,
+the second pass grouped A's ring face with its outer surface into one
+region, dropped it whole, did the same to B, and returned no triangles:
+zero unmatched edges, so it beat the open first pass, and `boolean`
+answered `Empty`. A union of two closed solids is never empty; such a
+result now ranks below any open one, and the snap then closes it (volume
+twice one elbow's, to 10⁻¹⁵).
+
+**Results.** The program joins closed, 9 752 triangles, volume
+16 954 637.804 37 mm³, against 16 954 637.804 37 for the unturned
+elbows (§5.4 item 5). Tests: `elbows_turned_about_their_axis_join_closed`
+(`crates/shape-bool/tests/touching.rs`: the kernel-level case, refused
+with 67 unmatched edges without the snap) and the golden program test,
+now `the_cup_rim_and_the_elbows_join_closed`.
+
+### 18.2 The untangled folded sphere against the centred bar (§5.4 item 3)
+
+Re-measured first: on a4b6046 all three booleans of the untangled
+sphere (984 triangles) with the centred 10 × 10 × 60 bar come out
+closed, by the second pass, with V(∪) + V(∩) = V(A) + V(B) and
+V(−) = V(A) − V(∩) to 10⁻¹² (8 307.82, 1 727.50, 2 307.82 mm³). It was
+already closed before stream O merged (checked at a382068's first
+parent), so stream L's second pass fixed it, not O's sliver flips. The
+test that said the centred bar comes out open now asserts that it closes
+and keeps the identities, centred and moved.
+
+### 18.3 A hierarchical winding number (§5.4 item 3)
+
+`self_union` classified each region by the winding number of every other
+triangle at its largest piece's centre: one direct sum per region, so a
+noisy operand with thousands of regions cost seconds.
+
+`crates/shape-bool/src/winding.rs` builds a hierarchy of triangle
+clusters (median splits along the longest axis of the centroids, eight
+triangles a leaf, ties by index). A cluster far from the point counts by
+the kernel's expansion about its centre `c`, to first order:
+`K(c)·N + Σᵢⱼ ∂ⱼKᵢ(c) Mᵢⱼ`, with `K(x) = (x − p)/|x − p|³`, `N` the
+cluster's vector area and `Mᵢⱼ = Σ vᵢ (g − c)ⱼ` (exact: the integrand is
+linear over each triangle). Its error is at most `4 S / ρ⁴`, where
+`S = ∫|x − c|² dA` and `ρ` is the point's clearance from the cluster's
+ball; `|∂²K| ≤ 6/|x|⁴` (the sup, at x̂ = u = v), taken as 8. A
+first-order bound (`2 r A / ρ³`) was tried first: on a noisy surface it
+opened about half the triangles per query. Near triangles are summed
+term by term with the direct sum's own arithmetic.
+
+**Decisions are the direct sum's.** Each query has thresholds (0.5 for a
+probe; 0 and 1 for a self-union's centre with its own triangle left
+out). The tree's value is used only where it clears every threshold by
+more than its bound, plus 16 ε·π per far triangle (each far term is well
+conditioned) and 4·n·ε of the terms' sizes (either sum's rounding, in any
+order). Clusters are tried coarse first (θ = 1/64 rad per cluster), then
+1/512, then 1/4 096; where none clears, the direct sum decides. Since
+near terms are bit for bit the direct sum's, the two sums differ by at
+most that bound, so the decision, and the output, cannot differ. The
+unit test checks `|tree − direct| ≤ bound` at every θ on a noisy,
+self-crossing ball (every centroid, a grid of probes); it fails with the
+second-order term's sign flipped or the bound 10× too small. On the
+bench's synthetic suite (untangled) no query fell through to the direct
+sum. Counted with an earlier cascade (1/32, 1/256, 1/2 048): on the noisy
+sphere, box, torus and blob nearly every query was decided at the
+coarsest level; on the mug, whose thin walls put sheets close together,
+839 of 3 473 were, and the rest at the next.
+
+The two-operand classification (`arrange`) uses the same tree once a
+mesh has 256 triangles and 16 regions query it.
+
+### 18.4 A countersink's ring of coincident edges (§5.4 item 4)
+
+Tested with the tools unturned: a countersink cone whose narrow end is
+the bore's own 24-gon at the same angles, so its ring of vertices lies on
+the bore's vertex columns and its ring edges in the bore's wall planes
+(the hole tool itself still runs the cone on to 0.9 r).
+
+**Found: a NaN.** With the bore cut first, its wall pieces are bent by
+the first cut's rounding (a corner at z = 3.6·10⁻¹⁵ for 0). A ring edge
+lies in the true wall plane, so `orient3d` sees it cross a bent piece
+strictly, while the f64 plane distances `dp`, `dq` round to equal values:
+`dp / (dp − dq)` is 0/0, and the result was refused as "a position that
+is not finite". Where that fraction falls outside [0, 1], it is now
+taken from `orient3d`'s values instead, whose signs are exact and
+opposite, so the point lies strictly on the edge. Every other point is
+computed as before. The fix also let the turned elbows' first pass
+finish with the right volume but 11 edges used four times (ulp-wide
+cracks between the ring faces); the snap is therefore also tried for a
+closed result with such edges, and taken when cleaner (above).
+
+Measured on a plate 40 × 40 × 10, both cut orders: through bores of
+r 2 (mouth 4) and 3.3 (mouth 6.6), a blind one 6 deep: all closed, the
+two orders' volumes equal to 10⁻¹⁴. Test
+`a_countersink_ending_on_the_bore_closes_in_either_order`
+(`crates/shape-bool/tests/edge_on_edge.rs`); golden
+`touching.countersink.ring`.
+
+### 18.5 Why the kernel's own outputs cross themselves (§5.4 item 3)
+
+**Where the rounding comes from.** An edge of one operand passes within
+rounding of an edge of the other. In exact arithmetic the two surfaces
+then meet along a segment about 10⁻¹⁶ long: edge e crosses triangle T at
+P₁, edge f (of T's operand) crosses triangle S (e's neighbour) at P₂, and
+P₁P₂ is the exact intersection of T and S. The arrangement keeps both
+points and the needles between them, as it must. Rounding P₁ and P₂ to
+f64 moves each by up to half an ulp, which can turn a needle through its
+neighbours: the pairs `crossing_pairs` reports are those. The countersink
+rim: the cone's generators lie at the bore's column angles, but their
+plan positions (`0.9 r·(c, s)`, `R·(c, s)`, plus the hole's offset) round
+independently, so a generator misses its column by an ulp, and each rim
+point is made twice: column through cone (z = 7.999999999999999) and
+generator through wall (z = 7.999999999999998, x one ulp off). With
+`slope = tan(π/4)` exactly 1 the rounding happens to agree and the rim is
+clean; `trig::tan` gives 0.9999999999999999, and the rim has 4 crossing
+pairs (bore first) or 3 (cone first).
+
+**Can the edit tools emit crossing-free rims?** The countersink's, yes:
+turning the cone half a segment about the axis puts its generators
+between the bore's columns, and the rim has no crossing pair in either
+cut order (measured on the hole of `edit.holes.pocket`). That moves
+`edit.holes.pocket`, and only it, so it is **not done**: it needs the
+orchestrator's go-ahead.
+
+**Can the check then be on by default? Not cheaply.** With
+`check_operands` called first in `boolean`, four golden lines move:
+`selfunion.check` (its inputs cross themselves by design; it is refused
+up front instead of after the result), and three chains of the kernel's
+own booleans whose intermediate solids cross themselves:
+`edit.holes.pocket` (the countersink rim, 4 pairs), `smallgaps.knob.program`
+(6 pairs: the band corners of §15.4, two points an ulp apart joined by
+needles) and `touching.program.elbows` (68 pairs: the torus's ring of
+vertices 8·10⁻¹⁴ off the box face). With the countersink turned, the
+last two remain. The cure is snap rounding of the arrangement (rounding
+points to f64 and then splitting every needle that rounding made cross,
+until none does), or a tolerance that makes the two points one, which
+the design avoids. Neither is cheap: the check stays opt-in. The bench's
+`--crossings` count (below) measures how often outputs cross.
+
+### 18.6 Degenerate triangles in `measure` (§13.6 item 12)
+
+**Rule: a triangle is degenerate when its three corners lie exactly on
+one line** (`orient2d` zero in each axis plane). That is the rule of the
+mesh tools' `measure`, `drop_slivers` and the self-crossing check;
+`Solid::measure` (the program's measures) counted a triangle whose f64
+cross product is zero instead. A needle of non-zero exact area is a real
+triangle: the booleans keep it (removing it would open the surface), and
+it is not counted. Its f64 area and normal may still round to zero, so it
+adds nothing to the area and needs no normal of its own when shaded
+smoothly. The knob bands' intersection (§15.4) measured 1 degenerate
+triangle and now 0; no golden line moved. Test
+`a_needle_of_non_zero_exact_area_is_not_degenerate` (`shape-mesh`).
+This is a two-line change in `crates/shape-mesh/src/measure.rs`, outside
+this stream's crates. One test outside them relied on the old rule:
+`shape-bevel`'s `a_hole_s_rims_wider_than_their_pieces` asserted that the
+holed plate has a degenerate triangle to show its rims come in needles;
+it now asserts that directly (a triangle whose f64 cross product is
+zero).
+
+### 18.7 Benchmark (`bench/booleans`, x86-64, release, one thread)
+
+Before (a4b6046) and after, run back to back on one machine, engines
+og-geom, og-shape-checked and og-shape-untangled, every suite (Thingi10K
+downloaded by `fetch-thingi10k.sh`):
+
+| suite | engine | before: ok / refused / wrong, mean ms | after |
+|---|---|---|---|
+| sand3d (17) | og-geom | 17/0/0, 2.9 | 17/0/0, 2.9 |
+| | og-shape-checked | 17/0/0, 4.2 | 17/0/0, 5.0 |
+| | og-shape-untangled | 16/1/0, 5.3 | 16/1/0, 5.7 |
+| Thingi10K (40) | og-geom | 40/0/0, 111.3 | 40/0/0, 116.2 |
+| | og-shape-checked | 38/2/0, 221.7 | 38/2/0, 224.8 |
+| | og-shape-untangled | 40/0/0, 272.3 | 40/0/0, 271.2 |
+| synthetic (40) | og-geom | 19/0/21, 92.5 | 19/0/21, 92.7 |
+| | og-shape-checked | 24/16/0, 329.9 | 24/16/0, 332.3 |
+| | og-shape-untangled | 29/11/0, 926.6 | 29/11/0, **415.9** |
+| touching (7) | og-geom | 4/0/3, 0.5 | 4/0/3, 0.5 |
+| | og-shape-checked | 7/0/0, 22.1 | 7/0/0, 22.8 |
+| | og-shape-untangled | 7/0/0, 28.1 | 7/0/0, 28.1 |
+| scaling (5) | og-geom | 5/0/0, 180.2 | 5/0/0, 172.1 |
+| | og-shape-checked | 5/0/0, 377.6 | 5/0/0, 365.7 |
+| | og-shape-untangled | 5/0/0, 517.4 | 5/0/0, 524.0 |
+
+All 921 output hashes are the same before and after. No verdict moved:
+the bench's meshes are f32, so the cases this stream closes (operands a
+few f64 ulps apart, a countersink ring cut from a bored f64 plate) do not
+occur in it; they are in the tests and the golden. Other differences are
+run-to-run noise (an earlier run of the same before-binary gave 5.1 and
+5.8 ms on sand3d).
+
+Untangling (the untangled engine's operand time, three operations):
+
+| synthetic noise | before ms | after ms | |
+|---|---|---|---|
+| sphere (15 924) | 4 683 | 597 | 7.8× |
+| rounded box (17 584) | 5 181 | 568 | 9.1× |
+| torus (9 456) | 1 674 | 325 | 5.1× |
+| blob (8 236) | 1 583 | 314 | 5.0× |
+| mug (14 220) | 4 696 | 898 | 5.2× |
+
+Operands with few regions (floaters, soup, two overlapping copies) use
+the direct sum as before and take the same time, within noise. What
+remains of a noisy operand's time is the pair tests, the cut and the
+regions (about 100 ms of the mug's self-union), and the mug's
+classification at θ = 1/512.
+
+`--crossings` (outside the timing): of the ok cases' f64 outputs, those
+that cross themselves within one shell are sand3d 0 of 17 and 16,
+Thingi10K 0 of 38 and 40, scaling 0 of 5, synthetic 1 of 24 and 29
+(`rounded.box.degenerate`, 2 pairs: its input's vertices are rounded
+onto grid corners), and touching 1 of 7 (`torus.ring.on.face`: 28 pairs
+checked, 88 untangled; the torus's ring of vertices a rounding error off
+the box face, §18.5).
+
+### 18.8 What is untested
+
+- The snap moves only tool vertices onto target vertices. Faces a few
+  ulps apart whose vertices do not correspond (one ring face triangulated
+  differently from the other, or a vertex near the other's edge rather
+  than its vertex) are not snapped, and may still be refused.
+- The snapped pass is tried only on results that are open or not
+  manifold; a closed result with ulp-wide gaps between faces that should
+  be one is kept as built.
+- The winding tree's remainder constant (6, taken as 8) was found by
+  sampling, not proved here.
+- The edit tools' countersink turn (§18.5) is measured on the plates
+  above only, and not merged.
+- Every new hash is checked natively (x86-64) and as wasm32 under
+  wasmtime by the gate here; aarch64 and Windows run in CI only.
+
 ## 19. Validation with real consumers (stream U, 2026-11-10)
 
 Stream U ran what §8.5, §12.4, §13.7 and §14.5 left untested against

@@ -242,3 +242,47 @@ fn polygon_lofts_stacked_on_a_shared_face_join_manifold() {
         assert_eq!(r.touching_edges, 0);
     }
 }
+
+/// Turns `s` by the frame (c, s) about y, or back with `back`, and puts it
+/// in canonical order, as a part's placement does.
+fn turned(mut s: Solid, (c, sn): (f64, f64), back: bool) -> Solid {
+    let sn = if back { -sn } else { sn };
+    s.map_positions(
+        |p| DVec3::new(c * p.x + sn * p.z, p.y, -sn * p.x + c * p.z),
+        false,
+    );
+    s.canonicalize().unwrap();
+    s
+}
+
+#[test]
+fn elbows_turned_about_their_axis_join_closed() {
+    // Phase 6's elbows (`golden/programs/touching_elbows_turned.json`):
+    // two quarter tori turned half a facet about their axis, each cut by
+    // a box whose face is the world plane z = 0, built in the torus's
+    // frame. The tool comes back to the target's frame through the world,
+    // so its ring face lies a few ulps off the target's: the two cross at
+    // 10⁻¹⁶ angles. Refused as `OpenTouching` before the snap
+    // (`docs/research.md` §18).
+    let a = std::f64::consts::PI / 64.0;
+    let turn = (shape_core::trig::cos(a), shape_core::trig::sin(a));
+    let elbow = |z: f64| {
+        let t = torus(351.0, 127.0).unwrap();
+        let q = turned(
+            moved(block(1000.0, 400.0, 600.0), DVec3::new(500.0, 0.0, z)),
+            turn,
+            true,
+        );
+        boolean(&t, &q, &op(BoolOp::Intersect)).unwrap()
+    };
+    let ea = elbow(0.0);
+    let eb = turned(turned(elbow(-600.0), turn, false), turn, true);
+    let (s, r) = boolean_report(&ea, &eb, &op(BoolOp::Join)).unwrap();
+    let m = s.measure();
+    assert!(m.closed && m.components == 1, "{m:?}");
+    assert_eq!(r.touching_edges, 0);
+    let half = std::f64::consts::PI * std::f64::consts::PI * 351.0 * 127.0 * 127.0;
+    assert!((m.volume - half).abs() / half < 0.01, "{} {half}", m.volume);
+    let v = ea.measure().volume + eb.measure().volume;
+    assert!((m.volume - v).abs() < 1e-9 * v, "{} {v}", m.volume);
+}

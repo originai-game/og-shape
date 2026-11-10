@@ -575,6 +575,27 @@ mod tests {
     }
 
     #[test]
+    fn a_needle_of_non_zero_exact_area_is_not_degenerate() {
+        // 3 · (1/3) rounds to 1, so the f64 cross product is zero, but the
+        // corners are not on one line; exactly collinear ones are.
+        let mut s = Solid::default();
+        let third = 1.0 / 3.0;
+        let p = [
+            DVec3::ZERO,
+            DVec3::new(3.0, 1.0, 0.0),
+            DVec3::new(1.0, third, 0.0),
+            DVec3::new(1.5, 0.5, 0.0),
+        ]
+        .map(|p| s.push_vertex(p));
+        s.push_triangle([p[0], p[1], p[2]], 0, &["needle"]);
+        let a = s.positions[2] - s.positions[0];
+        assert_eq!((s.positions[1] - s.positions[0]).cross(a), DVec3::ZERO);
+        assert_eq!(s.measure().degenerate_triangles, 0);
+        s.push_triangle([p[0], p[1], p[3]], 0, &["line"]);
+        assert_eq!(s.measure().degenerate_triangles, 1);
+    }
+
+    #[test]
     fn welding_averages_the_weights_of_merged_vertices() {
         // Two copies of the tetrahedron's apex with different weights,
         // built in either order, weld to one vertex with their mean.

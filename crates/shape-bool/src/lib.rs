@@ -9,6 +9,8 @@
 //! booleans and moves can round them (`docs/research.md` §15.4).
 //! `exact` holds the expansion arithmetic that orders points on an edge
 //! in the CSG's second pass (`docs/research.md` §5.4, item 5).
+//! `winding` sums winding numbers over a tree of triangle clusters, with
+//! the direct sum's decisions (`docs/research.md` §18).
 #![allow(missing_docs)]
 
 pub mod csg;
@@ -17,6 +19,7 @@ pub mod fracture;
 pub mod named;
 pub mod selfcheck;
 mod sliver;
+mod winding;
 
 pub use csg::{
     CsgOp, CsgOutput, OperandError, SelfUnion, csg, csg_points, csg_points_traced, csg_traced,

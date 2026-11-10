@@ -1589,7 +1589,11 @@ fn plates() -> (Solid, Solid) {
 #[test]
 fn a_hole_s_rims_wider_than_their_pieces() {
     let (cut, plain) = plates();
-    assert!(cut.measure().degenerate_triangles > 0);
+    // Rims in pieces down to 1e-15 long: needles whose f64 area is zero.
+    assert!(cut.triangles.iter().any(|t| {
+        let [a, b, c] = t.map(|v| cut.positions[v as usize]);
+        (b - a).cross(c - a) == DVec3::ZERO
+    }));
     for r in [0.5, 1.5, 2.5] {
         let round = |s: &Solid, edges: &[&str]| {
             fillet(
