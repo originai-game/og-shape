@@ -6531,3 +6531,264 @@ ordinary cases.
   Stable Fast 3D (its outputs' terms), FBX or Draco outputs (none of
   these generators write them), skinned generated characters (none
   here are rigged).
+
+## 32. Decimation that does not fold, and non-manifold repair (stream AK, 2026-11-10)
+
+Base 64af70c. §28.7's gaps of the mesh chain, worked in this order: folding
+in decimation, non-manifold repair, chart merging, fills across seams, the
+fuse step's speed and pockets. Every number below is from
+`bench/generated` (§28.1's 54 files, not committed), re-run before and
+after on the same x86-64 host, release, one thread:
+`bun bench/generated/compare.ts BEFORE/results.jsonl AFTER/results.jsonl`.
+The after-run uses the guide's repair plus `--non-manifold`.
+
+### 32.1 No folding
+
+A collapse is refused when one of the triangles it rewrites would cross
+another triangle (`shape_bool::selfcheck::crossing`, exact: no shared
+corner and touching, or a shared corner or edge and overlapping beyond
+it), or would be flat. Candidates come from a spatial hash over the live
+triangles' boxes (cells twice a mean triangle across, rebuilt with larger
+cells each time the count halves; one query per collapse, for the box of
+the whole fan), so a collapse costs a few dozen exact tests, not a pass
+over the mesh. On an input that already crosses itself, a collapse whose
+fan crosses something is taken only when the fan crossed the same
+partners before and no more pairs: the count never rises. Edges refused
+for folding are tried again when the queue runs dry, until a round takes
+none; elsewhere the order is as before, so an output where nothing would
+have folded keeps its bytes (no golden line moved for it).
+
+When the target is not reached, `DecimateReport::blocked` counts each
+edge left under the first rule that refuses its cheapest collapse:
+`fixed` (no end may move: corners, borders and seams it does not run
+along), `error`, `link`, `turn`, `uv`, `fold`, and `not_retried`
+(collapsible now, but the queue re-plans only edges at the vertex a
+collapse kept; it was left so as not to change outputs). `folds_refused`
+counts refused attempts.
+
+Cost (`shape decimate --target 10000` on a repaired file, import and
+measure included): Hunyuan3D's house (150k) 1.2 → 3.5 s; Unique3D's
+bear (819k) 9.0 → 19.0 s; Meshy's barn (37k) 0.25 → 0.57 s. Per
+`process` run, median 1.0 → 1.7 s; peak memory median 88 → 109 MiB,
+largest 1 372 → 1 868 MiB (Unique3D).
+
+### 32.2 Non-manifold edges (`Repair::non_manifold`)
+
+TRELLIS's edges with more than two faces are almost all four-face edges
+where two sheets meet (a marching-cubes pinch), plus a few three-face
+fins. `split_non_manifold` pairs the faces of each such edge into
+sheets: faces the surface already joins round an end of the edge through
+manifold edges pair up (two sheets meeting at a dimple pair across the
+empty wedge, not the solid one; pairing by the solid wedge first glued
+those fans into one and left 21 of the house's 41 edges); the rest pair by
+their exact order round the edge (`orient3d`), a face running b→a with
+the next face running a→b, which bound one wedge of solid. At each end,
+the faces round the vertex joined by manifold edges and these pairs fall
+into fans; every fan but the first gets its own copy of the vertex.
+Equal positions are welded back by `canonicalize` and by any file
+round-trip, so each copy moves 1 % of its shortest edge towards the mean
+of its fan's other corners, which stays inside the cone its own faces
+span. (Moving against the fan's mean normal sent a dimple's copy across
+the edge into the other sheet: 16 → 383 crossing pairs on the house.)
+A fin's lone face, moved, can pass through the sheets round it:
+`crossings_added` counts those pairs, and the fuse step untangles them
+on a shell that ends closed. Pieces that come apart and are floaters are
+dropped (`sheets_dropped`).
+
+Holes over the fill limit (up to 512 edges) are filled when their
+least-area fill turns no triangle against the fill's mean normal and
+crosses nothing (exact). The cabinet's three holes (65, 74 and 97
+edges, up to 26 cm on a 1 m cabinet) are neither: they stay, reported.
+
+TRELLIS's four: the bear and the armchair end closed (19 and 10 edges
+split; the bear's 10 holes then fill); the house keeps 3 of its 41 edges
+(chains where neither pairing separates the fans at the inner vertices)
+and the cabinet its 3 large holes, so both stay open, and the report says
+so (`non_manifold.left`, `holes_left`).
+
+### 32.3 Chart merging (`Decimate::merge_charts`, off by default)
+
+Islands (triangles joined across edges whose two sides give both ends
+the same UVs) join into one chart when every seam edge between two of
+them gives one rigid move of the UV plane (the edge's two lengths agree
+within the tolerance, and so do the moves) and the move puts the two
+triangles at each such edge on opposite sides (no mirror). A seam inside
+a chart is then not a feature line; a corner across it takes its new UV
+through the two islands' moves. No texture is rewritten.
+
+At 1/4096 (a quarter texel at 1024²), `--merge-charts` on the 12
+Hunyuan3D and SPAR3D files, keep:
+
+| file | islands → charts | 2k: triangles without → with |
+|---|---|---|
+| hunyuan-5 | 2 278 → 2 065 | 7 266 → 6 708 |
+| hunyuan-120 | 1 049 → 991 | 3 526 → 3 364 |
+| hunyuan-300 | 2 604 → 2 350 | 8 724 → 7 964 |
+| hunyuan-420 | 2 224 → 2 067 | 6 352 → 5 894 |
+| hunyuan-480 | 2 848 → 2 784 | 6 520 → 6 290 |
+| spar3d-30 | 5 395 → 2 906 | 7 394 → 6 484 |
+| spar3d-120 | 17 505 → 3 804 | 21 380 → 16 132 (10k too) |
+
+The other five already met 2k. The floor drops 3–25 %; no file reaches
+its budget. Hunyuan3D's neighbouring islands rarely agree rigidly (216
+of 21 940 seam edges on the house), and on SPAR3D's cabinet half the
+seams merge but the ends of those that remain are corners. At 1/1024 the
+house goes to 6 330, the cabinet to 14 722. The surface error at 2k
+rises (the house 84 → 115 mm) and UV overlap a little (0.05 → 0.16 ‰ of
+texels). Files that would still need atlas repacking or baking to keep
+their texture at the budget: 14 at 2k (5 Hunyuan3D, 4 TRELLIS (one,
+the armchair, 2 004 for 2 000, held by folds), 2 SPAR3D, 2 CRM, Meshy's
+robot), 1 at 10k (SPAR3D's cabinet).
+
+### 32.4 Fills across seams
+
+A fill whose rim crosses a UV seam takes one UV at every corner, its
+first rim vertex's: it covers no area of the texture (one colour, the
+rim's), where a fan across charts spanned the atlas. UV overlap after
+keep 10k: Meshy's robot 51 % → 0.006 %, TRELLIS's cabinet 55 % → 0.002 %
+of texels: their level without the fills. The alternative, a small chart
+of its own in unused space, needs atlas packing.
+
+### 32.5 The fuse step
+
+Unique3D's chair (619k triangles in 3 shells, 4 102 crossing pairs in the
+largest): untangling the largest shell takes 5 s, but its self-union is
+48 shells, and `shape_bool::fuse` joined each to the 590k-triangle whole
+with its own boolean: that was the 133 s. Now the repair untangles each
+shell, counts the shells an untangling leaves besides its largest as
+`pockets` (all positive slivers outside the main shell, mostly under
+1 mm³, three of 2 752 to 8 090 triangles), drops those that are floaters
+by the repair's `floaters`, joins by booleans only the shells that meet
+another (exact) or whose box lies in another's, and joins a group's small
+shells among themselves before one boolean with its largest. The chair's
+fuse step: 133 → 24 s (untangling 7 s, one boolean 12.5 s). Nothing in
+`shape-bool` changed: the winding tree was not the cost.
+
+### 32.6 The bench, before and after
+
+#### The chain, before and after
+
+| mode | budget | within budget | closed | within budget and closed | output crosses itself (files; pairs, total) | time (median, max s) | peak memory (median, max MiB) |
+|---|---|---|---|---|---|---|---|
+| keep | 2.0k | 41 → 40 | 50 → 52 | 40 → 40 | 31; 2300 → 2; 10 | 1.0, 97.0 → 1.7, 52.9 | 88, 1372 → 109, 1867 |
+| keep | 10k | 53 → 53 | 50 → 52 | 49 → 51 | 21; 2818 → 2; 28 | 1.0, 94.9 → 1.7, 56.2 | 88, 1372 → 109, 1868 |
+| keep | 50k | 54 → 54 | 50 → 52 | 50 → 52 | 10; 1060 → 2; 72 | 0.9, 92.1 → 1.1, 52.7 | 88, 1372 → 109, 1867 |
+| fresh | 2.0k | 54 → 54 | 50 → 52 | 50 → 52 | 20; 1532 → 2; 13 | 0.9, 92.8 → 1.7, 53.2 | 88, 1372 → 109, 1868 |
+| fresh | 10k | 54 → 54 | 50 → 52 | 50 → 52 | 13; 1063 → 2; 22 | 1.0, 93.2 → 1.6, 53.6 | 88, 1372 → 109, 1868 |
+| fresh | 50k | 54 → 54 | 50 → 52 | 50 → 52 | 8; 1053 → 2; 72 | 1.0, 96.3 → 1.4, 54.2 | 88, 1372 → 109, 1868 |
+
+#### Crossing pairs, per file: the input, and the keep and fresh outputs at 10k (before → after)
+
+| file | input | keep 10k | fresh 10k | keep 2k | collapses refused for folding (keep 10k) |
+|---|---|---|---|---|---|
+| hunyuan-5 | 2 | 93 → 0 | 4 → 0 | 125 → 0 | 70 |
+| hunyuan-30 | 0 | 3 → 0 | 0 → 0 | 5 → 0 | 4 |
+| hunyuan-120 | 2 | 55 → 0 | 5 → 0 | 35 → 0 | 73 |
+| hunyuan-300 | 1 | 8 → 0 | 4 → 0 | 6 → 0 | 42 |
+| hunyuan-420 | 0 | 11 → 0 | 6 → 0 | 6 → 0 | 36 |
+| hunyuan-480 | 1 | 0 → 0 | 0 → 0 | 4 → 0 | 6 |
+| trellis-5 | 16 | 1924 → 3 | 392 → 1 | 1162 → 3 | 949 |
+| trellis-30 | 0 | 2 → 0 | 0 → 0 | 34 → 0 | 2 |
+| trellis-120 | 11 | 48 → 25 | 24 → 21 | 139 → 7 | 48 |
+| trellis-300 | 1 | 4 → 0 | 2 → 0 | 5 → 0 | 20 |
+| trellis-420 | 0 | 0 → 0 | 0 → 0 | 3 → 0 | – |
+| trellis-480 | 0 | 95 → 0 | 22 → 0 | 498 → 0 | 44 |
+| spar3d-30 | 0 | 7 → 0 | 0 → 0 | 21 → 0 | 3 |
+| spar3d-420 | 0 | 0 → 0 | 0 → 0 | 10 → 0 | 0 |
+| spar3d-480 | 0 | 0 → 0 | 0 → 0 | 10 → 0 | 0 |
+| triposr-5 | 0 | 7 → 0 | 7 → 0 | 65 → 0 | 23 |
+| triposr-120 | 0 | 0 → 0 | 0 → 0 | 1 → 0 | 5 |
+| triposr-300 | 1 | 1 → 0 | 1 → 0 | 0 → 0 | 5 |
+| instantmesh-300 | 0 | 0 → 0 | 0 → 0 | 1 → 0 | 0 |
+| crm-5 | 0 | 1 → 0 | 0 → 0 | 0 → 0 | 28 |
+| crm-120 | 0 | 9 → 0 | 0 → 0 | 17 → 0 | 19 |
+| crm-300 | 0 | 0 → 0 | 0 → 0 | 1 → 0 | 1 |
+| crm-420 | 0 | 0 → 0 | 0 → 0 | 4 → 0 | 0 |
+| crm-480 | 0 | 0 → 0 | 0 → 0 | 1 → 0 | 0 |
+| unique3d-300 | 206 | 16 → 0 | 16 → 0 | 8 → 0 | 0 |
+| unique3d-480 | 3688 | 526 → 0 | 526 → 0 | 122 → 0 | 781 |
+| meshy-boat | 0 | 1 → 0 | 0 → 0 | 0 → 0 | 2 |
+| meshy-barn | 0 | 0 → 0 | 0 → 0 | 1 → 0 | 0 |
+| meshy-tree1 | 0 | 1 → 0 | 0 → 0 | 0 → 0 | 9 |
+| meshy-palm_tree | 0 | 0 → 0 | 0 → 0 | 4 → 0 | 0 |
+| meshy-army_man | 1 | 0 → 0 | 0 → 0 | 1 → 0 | 1 |
+| meshy-businessman | 0 | 0 → 0 | 0 → 0 | 2 → 0 | 0 |
+| meshy-robot_mech1 | 531 | 5 → 0 | 54 → 0 | 4 → 0 | 10 |
+| meshy-car_police | 0 | 0 → 0 | 0 → 0 | 2 → 0 | 0 |
+| meshy-burger3 | 0 | 1 → 0 | 0 → 0 | 3 → 0 | 1 |
+
+#### The repair on the files that come in with non-manifold edges or holes left (keep 10k)
+
+| file | non-manifold edges in | split; unpaired; left; crossings added | holes left (before → after) | large holes filled | fuse | closed (before → after) |
+|---|---|---|---|---|---|---|
+| trellis-5 | 41 | 38; 7; 3; 6 | 2 → 0 | 0 | refused → refused | no → no |
+| trellis-120 | 3 | 3; 0; 0; 0 | 3 → 3 | 0 | refused → refused | no → no |
+| trellis-300 | 19 | 19; 8; 0; 3 | 10 → 0 | 0 | ok → ok | no → yes |
+| trellis-480 | 10 | 10; 0; 0; 0 | 0 → 0 | 0 | ok → ok | no → yes |
+| unique3d-480 | 1 | 1; 0; 0; 0 | 0 → 0 | 0 | ok → ok | yes → yes |
+
+#### Pieces and pockets (keep 10k)
+
+| file | pieces in | pieces out (before → after) | pockets the untangling left | dropped as floaters | fuse time (keep 10k run, s; before → after) |
+|---|---|---|---|---|---|
+| unique3d-300 | 1 | 23 → 1 | 31 | 31 | 27.8 → 45.2 |
+| unique3d-480 | 4 | 53 → 6 | 57 | 54 | 94.9 → 56.2 |
+| meshy-robot_mech1 | 57 | 4 → 3 | 1 | 1 | 2.1 → 2.9 |
+
+#### Keep runs over budget: where they stopped and why (after)
+
+| file | budget | triangles | UV islands → charts | edges left: fixed / link / turn / uv / fold / not retried |
+|---|---|---|---|---|
+| hunyuan-5 | 2.0k | 7266 | 2278 → 2278 | 10130 / 49 / 44 / 528 / 20 / 128 |
+| hunyuan-120 | 2.0k | 3526 | 1049 → 1049 | 4900 / 23 / 22 / 246 / 12 / 86 |
+| hunyuan-300 | 2.0k | 8724 | 2604 → 2604 | 12427 / 44 / 36 / 470 / 3 / 106 |
+| hunyuan-420 | 2.0k | 6352 | 2224 → 2224 | 9032 / 37 / 30 / 338 / 2 / 89 |
+| hunyuan-480 | 2.0k | 6520 | 2848 → 2848 | 9270 / 47 / 27 / 318 / 0 / 118 |
+| trellis-5 | 2.0k | 4342 | 1026 → 1026 | 5600 / 94 / 29 / 451 / 268 / 68 |
+| trellis-120 | 2.0k | 3274 | 814 → 814 | 4563 / 17 / 25 / 262 / 38 / 50 |
+| trellis-300 | 2.0k | 2620 | 768 → 768 | 3744 / 17 / 14 / 127 / 1 / 27 |
+| trellis-480 | 2.0k | 2004 | 460 → 460 | 2598 / 15 / 18 / 247 / 95 / 33 |
+| spar3d-30 | 2.0k | 7394 | 5395 → 5395 | 10826 / 13 / 15 / 204 / 2 / 31 |
+| spar3d-120 | 2.0k | 21380 | 17505 → 17505 | 31643 / 9 / 20 / 367 / 0 / 31 |
+| spar3d-120 | 10k | 21380 | 17505 → 17505 | 31643 / 9 / 20 / 367 / 0 / 31 |
+| crm-5 | 2.0k | 5042 | 1708 → 1708 | 7197 / 29 / 18 / 249 / 3 / 67 |
+| crm-120 | 2.0k | 3050 | 920 → 920 | 4327 / 26 / 12 / 170 / 9 / 31 |
+| meshy-robot_mech1 | 2.0k | 3384 | 1086 → 1086 | 4858 / 22 / 38 / 130 / 8 / 20 |
+
+`self_intersections` above counts the output's pairs; the inputs that
+cross (TRELLIS's house 16, cabinet 11) keep a few: the house 3, the
+cabinet 25, whose 64-edge fill crosses before decimation (51 after
+repair). Unique3D's bear (819k) takes longer (27.8 → 45.2 s, decimation),
+the chair less (94.9 → 56.2 s).
+
+Booleans on the keep 10k outputs (`cargo run --release -- OUT`):
+
+| | closed | refused: operand not closed | refused: operand crosses itself | tool missed | max time |
+|---|---|---|---|---|---|
+| before | 132 | 13 | 6 | 3 | 6.5 s |
+| after | 143 | 7 | 0 | 4 | 0.35 s |
+
+The 7 refused are TRELLIS's house and cabinet; the fourth miss is a box
+over a gap in Unique3D's bear, which lost its 31 pockets.
+
+### 32.7 Golden
+
+`mcp.process.ball_defects` moved: its report gains `folds_refused`,
+`blocked`, `uv_islands`, `uv_charts`, `non_manifold` (null),
+`large_holes_filled`, `pockets`, `pockets_dropped` and
+`pocket_triangles_dropped`; the written GLB is the same bytes. No other
+line moved. New: `meshtools.decimate.fold`, `meshtools.decimate.charts`,
+`meshtools.repair.non_manifold`, `meshtools.repair.large_hole`,
+`meshtools.repair.seam_fill`, `meshtools.repair.pockets`.
+
+### 32.8 What is not done
+
+- TRELLIS's house (3 non-manifold edges in chains) and cabinet (3 holes
+  that no flat clear fill closes) stay open.
+- Keeping UVs, 14 files miss 2k: atlas repacking or baking.
+- `not_retried` edges: re-planning every edge a collapse touches would
+  move clean outputs; left for the owner to decide.
+- Decimation is 2–3× slower; the hash is rebuilt on halving, and the
+  exact tests are a third of the added time.
+- Not run here: `cargo deny` and the wasm32 golden comparison
+  (`wasmtime` is not installed and could not be).
