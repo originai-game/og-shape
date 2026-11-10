@@ -7521,3 +7521,188 @@ line moved. New: `meshtools.decimate.fold`, `meshtools.decimate.charts`,
   exact tests are a third of the added time.
 - Not run here: `cargo deny` and the wasm32 golden comparison
   (`wasmtime` is not installed and could not be).
+
+## 33. The four mesh-tool streams merged (stream AL, 2026-11-10)
+
+Streams AH (§29), AI (§30), AJ (§31) and AK (§32) ran in parallel from
+64af70c. AJ and AK were merged on a530b3c; this stream merged AH and then
+AI onto it with two merge commits, so each stream's history stays, then
+made the three changes the owner approved: emissive in the preview, a
+switch to cross colour borders in decimation, and the README.
+
+### 33.1 What collided, and what was chosen
+
+- **Decimation** (`decimate.rs`). AH made a corner's carried value an
+  attribute of UV and colour (`Attr`, `attr_moves`); AK, in the same
+  functions, added refusal reasons, the fold check and chart merging.
+  The merged code matches a corner's UV and colour together through the
+  edge's triangles, as AH's did, and falls back to AK's `across` for a
+  corner over a merged seam. There the UV goes through the two islands'
+  rigid moves, and the colour does not: the corner's colour must equal
+  the edge triangle's at that end (else the collapse is refused, as
+  `Refusal::Uv`), and it takes that triangle's colour at the other end
+  (their mean at a midpoint). The seam rule: a UV seam inside a merged
+  chart is not a feature line, but an edge whose colours differ across
+  it is, chart or not.
+- **Repair** (`repair.rs`). AK's large flat fills, one-UV seam fills,
+  non-manifold splitting and shell-by-shell fuse, with AH's colours
+  through every fill (a fill across a UV seam takes one UV but its rim's
+  colours) and `keep_input_colors`, which wraps the one call site both
+  fuse paths return through (`fuse_shells` falls back to
+  `shape_bool::fuse` itself). `shape_bool::components`, which AK's path
+  uses, already carried colours (AH).
+- **One decoder: AH's.** It decodes everything the preview needs on
+  the bench: PNG of every colour type and depth, Adam7, palettes with
+  `tRNS`, and baseline JPEG. All 43 JPEGs in the 54 files are baseline
+  (SOF0, checked by marker), and so are both fixtures
+  (`golden/programs/label.jpg`, `golden/meshes/stripes_420.jpg`); none
+  needs progressive decoding. AI's `decode.rs` is now the preview's
+  door to `texture::decode`: it keeps the preview's 2²⁶-pixel cap, read
+  from the header before anything is decoded, and AI's decoder tests
+  run against the shared code (16-bit rounding, palettes, Adam7 and the
+  label all pass unchanged). `jpeg-decoder` left the workspace and
+  `Cargo.lock`; `cargo deny` is clean.
+- **`Solid::colors`**: AH's field, which `canonicalize` rotates with
+  each triangle. A CLI test previews an OBJ box coloured red above and
+  blue below, written so that `canonicalize` rotates its faces, and
+  reads the pixels; with the rotation of colours taken out of
+  `canonicalize` it fails. AI wrote no scratch code into the tree (its
+  stand-in reader was never committed).
+- **The mesh preview's material.** AI's branch gave a mesh file's parts
+  only their base-colour map; AH's importer gives the whole material,
+  whose factors are linear (`ColorSpace::Linear`). The preview takes
+  `color` as sRGB, so it now converts a linear colour first; a program's
+  sRGB colours are drawn as before. `shape place` likewise writes each
+  part's whole material (AJ wrote the map only, which AH's
+  `ImportedPart` no longer has).
+- CLI (`SWITCHES` 12 + 3 = 15, then 16 with the new switch), MCP
+  schemas, guides, README, CHANGELOG and this file keep every option and
+  sentence of the four; the guide's steps are now import, join, repair,
+  decimate, place, unwrap, measure, preview, shrink the textures,
+  export.
+
+### 33.2 Golden lines
+
+Each line below was traced before it was blessed; every other line kept
+its value from a530b3c, AH's branch or AI's branch (they agree where
+they overlap).
+
+| line | moved by | why | checked |
+|---|---|---|---|
+| `mcp.process.ball_defects` | the AH merge | the report gains AH's fields beside AK's | report keys only; the GLB is the bytes of 64af70c |
+| `place.process` | the AH merge | as above (`material`, `textures`, the import's `look`) | report keys only; GLB as a530b3c |
+| `place.command` | the AH merge | AJ's case; its import report gains AH's `colors` and `look` | report keys only; GLB as a530b3c |
+| `mcp.process.look` | the AH merge | AH's case; its process report gains AK's repair and decimation fields | report keys only; both GLB and OBJ as AH's branch |
+| `tools.preview.textured`, `tools.preview.uv` | the AI merge | AI's cases draw `label.jpg`; the two decoders give its texels within 3 levels (mean 0.035; 482 of 16 384 bytes differ) | with AI's JPEG path put back in a scratch copy, both lines return to AI's values |
+| `tools.preview`, `tools.preview.png` | emissive (owner's leave) | the tools scene's wheel, `emissive` [0.1, 0, 0] | the only lines to move, native and wasm32 |
+
+`place.command` and `mcp.process.look` were not on the list of lines
+expected to move; they move for the same reason as the two that were
+(a case of one stream whose report the other stream extended), and
+nothing they write changed. The comparison: each case's hashed chunks
+dumped on both trees and compared, report JSON key by key.
+
+### 33.3 Two changes the owner approved
+
+- **Emissive in the preview.** The emissive factor, times
+  `emissive_intensity`, in the material's colour space, is added to the
+  lit colour in linear light before blending. A part with no emissive
+  takes the old path, to the byte. No specular term.
+- **`Decimate::cross_color_borders`**, off by default (CLI
+  `--cross-color-borders`, MCP `cross_color_borders`). With it a colour
+  border is no feature line, corners are matched by UV alone, and a
+  removed vertex's corners take the kept vertex's colour on the
+  collapsed edge (the mean of its colours there when the edge's two
+  triangles differ; at a midpoint, the mean with their own). A mesh
+  without borders decimates to the same bytes with it (tested). On
+  Unique3D's chair, `process` with the guide's repair, keeping UVs:
+
+  | budget | borders kept | `--cross-color-borders` |
+  |---|---|---|
+  | 10 000 | 10 000 triangles, 5.8 mm | 10 000 triangles, 1.98 mm |
+  | 2 000 | 8 078 triangles, 194 mm (`blocked.fixed` 10 964) | 2 000 triangles, 7.4 mm |
+
+  The number to beat was 2.0 mm at 10 000 without colours (§28); the
+  switch gives 1.98 mm. Borders left in the output: 6 997 kept, 1 948
+  and 560 crossed. Even with borders kept the chair now reaches
+  10 000, which it did not on AH's branch (10 294 triangles, 215 mm):
+  after repair alone AH's binary leaves 617 932 triangles and 8 748
+  borders, the merged one 613 412 and 7 033. The 4 520 triangles are
+  AK's 54 pocket floaters (4 518 triangles, §32.5), and the borders
+  went with them.
+
+### 33.4 The bench on the merged tree
+
+`bench/generated` on the 54 files (fetched and checked against the
+manifest), x86-64, release; the runs shared four cores with each other,
+so the times are not compared. `run.ts` (keep and fresh at 2k, 10k,
+50k, the guide's repair with `--non-manifold`), `compare.ts`, the
+booleans (`cargo run --release -- OUT`), AH's `look.ts` with and without
+`--texture-max 1024`, AJ's `place.ts`.
+
+| headline (section) | stream's value | merged |
+|---|---|---|
+| material factors kept, at 10k (§29.6) | 54 of 54 | 54 of 54 |
+| every map kept (§29.6) | 40 of 40 | 40 of 40 |
+| vertex colours kept (§29.6) | 14 of 14 | 14 of 14 |
+| files over 16 MiB of texture with mips, `--texture-max 1024` (§29.6) | 0 (16 without; largest 10.7 MiB) | 0 (16 without; largest 10.7 MiB) |
+| texture memory by kind with the budget, MiB in → out (§29.6) | 661 → 213, 512 → 80, 32 → 32 | 661 → 213, 512 → 80, 32 → 32 |
+| placed on z = 0, origin at the base's centre (§31.3) | 54 of 54, 0 mm | 54 of 54, 0 mm |
+| size asked = size after (§31.3) | 54; 4e-8 | 54; 4e-8 |
+| up readings right of 54: mass low, most area down, flattest down, as read (§31.4) | 22, 9, 21, 42 | 22, 9, 21, 42 |
+| keep 2k / 10k / 50k within budget (§32.6) | 40 / 53 / 54 | 39 / 53 / 54 |
+| keep 2k / 10k / 50k within budget and closed (§32.6) | 40 / 51 / 52 | 39 / 51 / 52 |
+| fresh 2k / 10k / 50k within budget (§32.6) | 54 / 54 / 54 | 53 / 54 / 54 |
+| closed, every run (§32.6) | 52 | 52 |
+| outputs crossing themselves, keep 2k / 10k / 50k (files; pairs) (§32.6) | 2; 10 / 2; 28 / 2; 72 | 2; 10 / 2; 28 / 2; 72 |
+| outputs crossing themselves, fresh 2k / 10k / 50k (§32.6) | 2; 13 / 2; 22 / 2; 72 | 2; 13 / 2; 22 / 2; 72 |
+| booleans on keep 10k: closed, refused, missed; max time (§32.6) | 143, 7, 4; 0.35 s | 143, 7, 4; 0.38 s |
+| peak memory per `process`, median and max (§32.6) | 109, 1 868 MiB | 148, 3 347 MiB |
+| Unique3D's chair at 10k: triangles, error | 10 000, 2.0 mm (AK, no colours); 10 294, 215 mm (AH) | 10 000, 5.8 mm; 1.98 mm with the switch |
+| Unique3D's chair at 2k (keep and fresh) | within (AK); 10 294 (AH) | 8 078, 194 mm; 2 000, 7.4 mm with the switch |
+
+The rows that got worse, traced:
+
+- **Within budget at 2k, keep and fresh, one file fewer**: Unique3D's
+  chair, whose colour borders hold it at 8 078; every other file is as
+  AK had it (keep 2k still misses AK's 14 over-floor files, fresh 2k
+  only the chair). AH's §29.6 reported the same two rows dropping by
+  one for the same reason; `--cross-color-borders` reaches 2 000.
+- **Peak memory.** On Unique3D's bear (`process --budget 10000`, the
+  guide's repair) AK's binary peaks at 1 752 MiB, AH's at 2 575 MiB,
+  the merged one at 3 081 MiB; on TRELLIS's mugs 82, 104 and 118 MiB,
+  on Meshy's barn 77, 99 and 99 MiB. Each stream's binary costs more
+  than the base on its own, and the merged peak is about the two costs
+  added; where inside each stream the memory goes was not traced. Not
+  reduced here.
+
+### 33.5 Seen
+
+`docs/previews/generated/merged-*.png`: 13 files through the merged
+path in one go, `shape process` (guide's repair, `--budget 10000`
+keeping UVs, `--texture-max 1024`, the generator's `up` and `front`,
+`--pivot base` and a real size) and `shape preview` of the GLB written.
+Every map and colour set was drawn (`undrawn` empty); the horses' and
+the chair's vertex colours, the police car's lettering, the bear's and
+the cabinet's maps sit where the files put them, on their bases.
+
+### 33.6 Gate
+
+`scripts/check.sh` ran here in full (cargo-deny, wasm-bindgen 0.2.130
+and wasmtime installed for it): lint, 328 tests, golden native and
+wasm32 and the binding's tests under bun and node. CI on the pushed
+branch runs the gate on its five targets.
+
+### 33.7 Not done, and for the orchestrator
+
+- **Memory** on vertex-coloured files of 600 000–800 000 triangles
+  (3.0–3.3 GiB, §33.4). A wasm32 host with a 4 GiB memory would not
+  take much more.
+- **Whether `cross_color_borders` should default on for files whose
+  colours were sampled per vertex** (TripoSR, InstantMesh, Unique3D).
+  Left off, as asked; the guide says when to use it.
+- The preview does not draw normal, metallic-roughness or emissive
+  maps, metalness or roughness, nor an imported file's `alphaMode`
+  (a `BLEND` material with opacity 1 draws opaque).
+- Progressive JPEG is still refused by the one decoder, in the budget
+  (kept as it is, with the reason) and in the preview (`undrawn`).

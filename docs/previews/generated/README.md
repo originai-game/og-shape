@@ -29,4 +29,12 @@ scratch reader standing in for the importer's (stream AH).
 `meshy-car_police-handoff.png`: `shape preview --each --views 4 --fov 0.7
 --unlit --no-edges --no-ground`, the views a texturing step takes.
 
+`merged-<name>.png` (`docs/research.md` §33): the four streams'
+path in one: `shape process` with the guide's repair, `--budget 10000`
+keeping the file's UVs, `--texture-max 1024`, the generator's `up` and
+`front`, `--pivot base` and a real size, then `shape preview` of the GLB
+written (3 views, 200 px): the importer's material, maps and vertex
+colours, through the chain, drawn by the preview. 13 files; nothing was
+left undrawn.
+
 The URL and SHA-256 of each file are in `bench/generated/manifest.tsv`.

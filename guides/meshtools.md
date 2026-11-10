@@ -86,7 +86,15 @@ import → join → repair → decimate → place → unwrap → measure → pre
    (joints) are kept by preference, so the mesh bends as before; the
    price is a little more surface error elsewhere at the same count
    (`docs/research.md` §11.5). `cross_bone_borders` turns this off for a
-   mesh that will not be posed.
+   mesh that will not be posed. On a mesh with vertex colours, a hard
+   colour border is a feature line, as a UV seam is.
+   `cross_color_borders` (`--cross-color-borders`) collapses across
+   borders as anywhere: use it when the colours were sampled per vertex
+   and a border marks no edge of the object (TripoSR, InstantMesh and
+   Unique3D write such colours), and the budget is missed with
+   `blocked.fixed` high or `colors.borders` in the thousands. A border
+   then moves and blurs by up to an edge, so leave it off where a sharp
+   colour line matters (a painted stripe, a decal).
 5. **Place** (`place`), for a mesh that goes into a game as it is:
    - **turn** it so its up is +Z and its front faces −Y (the side
      `preview` shows first): `up` and `front` as at import, then `turn`
@@ -117,7 +125,8 @@ import → join → repair → decimate → place → unwrap → measure → pre
    `uv.flipped` should be what they were before (a file's own mirrored
    charts count as flipped).
 8. **Preview** and look at it. It draws the base-colour map (PNG or
-   JPEG) and vertex colours; its `undrawn` lists a map it could not
+   JPEG), vertex colours and the material's colour and emissive colour
+   (not its other maps, metalness or roughness); its `undrawn` lists a map it could not
    draw (WebP, KTX2, progressive JPEG, no UVs). `--uv` (MCP `uv`) shows
    the UV layout over the map: dark lines are chart outlines, dimmed
    texels are unused. For a texturing step: `--each --fov 0.7` gives one
@@ -216,9 +225,11 @@ Measured on 54 outputs of eight generators (`docs/research.md` §28):
   their handedness.
 - Hard colour borders are kept by decimation as UV seams are. Fusing a
   vertex-coloured mesh that crosses itself joins sheets of different
-  colour, and each meeting edge is a border: Unique3D's chair gets 8 699
-  and stops at 10 294 triangles for a budget of 10 000. Compare
-  `colors.borders` before and after repair.
+  colour, and each meeting edge is a border: Unique3D's chair keeps
+  6 997 and stops at 8 078 triangles for a budget of 2 000 (194 mm of
+  error); with `cross_color_borders` it reaches 2 000 at 7.4 mm, and
+  10 000 at 2.0 mm (`docs/research.md` §33). Compare `colors.borders`
+  before and after repair.
 
 ## Models from a program
 

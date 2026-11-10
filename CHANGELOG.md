@@ -1198,3 +1198,32 @@
 - `bench/generated`: the guide's repair adds `--non-manifold`;
   `run.ts --merge-charts UV --modes keep`; `compare.ts` prints two runs
   side by side (`docs/research.md` §32).
+- The four mesh-tool streams merged (stream AL, `docs/research.md` §33):
+  - Decimation carries a corner's UV and colour together and keeps
+    AK's refusals, fold check and chart merging: a corner across a
+    merged seam takes its UV through the charts' moves and its colour
+    from its own side; a seam inside a merged chart stays a feature
+    line where the colours differ across it. Repair's colours run
+    through the large and seam-crossing fills, and after the
+    shell-by-shell fuse as after the plain one.
+  - One image decoder: the preview reads maps with the texture budget's
+    (`shape_tools::decode`); `jpeg-decoder` is no longer a dependency. A
+    progressive JPEG is listed in the preview's `undrawn`.
+  - `shape preview` of a mesh file draws each part's whole imported
+    material (it drew the base-colour map only), reading its linear
+    colour factors as such; `shape place` writes each part's whole
+    material (it wrote the base-colour map only).
+  - Golden: `mcp.process.ball_defects`, `place.process`, `place.command`
+    and `mcp.process.look` moved for the report fields the other streams
+    added (each GLB written is the same bytes); `tools.preview.textured`
+    and `tools.preview.uv` for the JPEG decoder (within 3 levels of
+    AI's on `label.jpg`).
+- `Decimate::cross_color_borders` (CLI `--cross-color-borders` on
+  `decimate` and `process`, MCP `cross_color_borders`): collapse across
+  hard vertex-colour borders, off by default. Unique3D's chair reaches
+  2 000 triangles with it (8 078 without) and 10 000 at 2.0 mm of error
+  (5.8 mm without).
+- The preview adds a material's emissive colour (times
+  `emissive_intensity`) to the lit colour, in linear light. Golden
+  `tools.preview` and `tools.preview.png` moved for it (the tools
+  scene's wheel glows red); no other line.
