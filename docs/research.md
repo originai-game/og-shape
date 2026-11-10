@@ -5147,6 +5147,9 @@ In `eval/phase6/Z/repro/` (README there gives expected and actual):
    fillet on a tapered cylinder and on the untapered extrude builds. It
    is the refusal stream W introduced in place of a wrong result, met on
    an ordinary housing.
+   **After the merge with stream X (§7.8):** the tapered extrude's
+   fillet builds; the curved loft's (`bevel_curved_loft_top.json`) is
+   still refused.
 
 Not kernel gaps: the preview's "not finite" message (a misleading text,
 now caught before the kernel), the build report's flattened groups
@@ -5279,7 +5282,9 @@ or a pair), exact in what it keeps, and a no-op where nothing crosses.
 What it does not do: split a face that a rounded point passed through
 (no case needed it), or move an operand's vertex.
 
-**Not on in `boolean`.** `named.rs`'s `UNCROSS` is `false`. Turned on,
+**On in `boolean` since the merge** (the owner's decision; the seven
+lines below were blessed then, and are exactly the ones that moved).
+As the stream left it: `named.rs`'s `UNCROSS` was `false`. Turned on,
 these golden lines move: `smallgaps.knob.program` and
 `touching.program.elbows` (allowed by the stream), and also
 `smallgaps.hole.diagonal`, `touching.countersink.ring`,

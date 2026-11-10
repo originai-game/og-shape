@@ -917,3 +917,13 @@
   and SHA-256; `Z/distance.ts` measures a symmetric surface distance
   between a built program and its reference mesh (also written for runs
   `B` and `U`).
+- `boolean` (cut, join, intersect) repairs a result that crosses itself by
+  a rounding error (`shape_bool::uncross_output`, `docs/research.md`
+  §23.2): constructed points a rounding error apart are merged and needles
+  split, each change kept only where exact predicates find fewer crossing
+  pairs. A result that does not cross itself is returned as built. Golden
+  lines moved, with the owner's leave, each from an output that crossed
+  itself to one that does not, the volume equal to 1e-13:
+  `smallgaps.hole.diagonal`, `smallgaps.knob.program`,
+  `touching.countersink.ring`, `touching.lofts.cut`, `touching.lofts.join`,
+  `touching.program.elbows`, `touching.torus.ring`.

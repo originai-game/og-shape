@@ -446,10 +446,9 @@ pub fn check_operands(target: &Solid, tool: &Solid) -> Result<(), BoolError> {
 }
 
 /// Whether [`boolean`] repairs a result that crosses itself by a
-/// rounding error ([`uncross_output`]). Off until the seven golden lines
-/// it moves, whose outputs crossed themselves, are reviewed
-/// (`docs/research.md` §23); `uncross_output` applies it on request.
-const UNCROSS: bool = false;
+/// rounding error ([`uncross_output`]): on (`docs/research.md` §23.2). A
+/// result that does not cross itself is returned as built.
+const UNCROSS: bool = true;
 
 fn boolean_once(
     target: &Solid,
