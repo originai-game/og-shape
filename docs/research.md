@@ -1477,6 +1477,193 @@ refused now.
 - Tips at both ends are refused, not slid: Blender's slide by the offset
   would tilt a faceted wall, as §7.4 found.
 
+### 7.8 Edges that taper to a tip at both ends (stream X, 2026-11-10)
+
+**Sources.** Nothing new from Blender: the two published design notes of
+§7.1 only (Trickey's Bevel page and the Bevel V2 issue #98674). Neither
+covers a bevel whose both ends are tips inside a longer crease, faces cut
+along their folds, or checks on a result; every choice below is ours.
+Blender's source and the Mesh Bevel node PR were not opened.
+
+**Reproduced.** The scan of §7.6 on `b57f2d7` gives §7.7's numbers
+exactly (6 012 ok, 168 `TooLarge`, 308 `NotManifold`, 10 812 tip
+refusals, 216 tilt refusals).
+
+**What the 10 812 tip refusals select** (item 1). None comes from a
+selection an author would write: 5 908 are the scan's single edges and
+4 904 its random subsets; no `all` and no name. By the geometry of the
+refused edge (each end has exactly one other real edge, unselected),
+over the 5 908 single edges:
+
+| class | single edges | subsets holding one |
+|---|---|---|
+| a lone piece of a curved crease (both neighbours turn away): a rim of a cylinder, tube, cone, dome, revolve, bore or hole; a straight side of a rounded rectangle, slot or D-slot meeting arcs tangentially | 4 044 (3 608 curved and flat face, 436 two curved faces: the twisted prisms, apex revolve, post, hole) | 5 248 |
+| a piece of a rim a boolean split, one neighbour in line | 1 636 (bores, holes, counterbore, cross bore) | 1 200 |
+| a rim chord in several pieces, both neighbours in line | 204 (counterbore 180, cross bore, blind hole and bore) | 364 |
+| a short straight edge between two tips (a boolean's cut edge in pieces) | 24 (join, notch, cross bar) | 168 |
+
+(A subset counts once per class it holds.)
+
+**Real programs** (item 2). Every `fillet`, `chamfer` and `soften` in
+`eval/phase6/**` and `golden/programs/` (28 programs) was built on
+`a4b6046`, on `b57f2d7` and here. Stream W refuses one: run A's toaster,
+`op 1 fillet "housing"` (`fillet(14, top)` on a loft), with the tilt
+refusal, not the tip one; it was a result before W. No program hits the
+tip refusal. Here the toaster builds, and the other 27 give the same
+bytes as on `b57f2d7`. The guides' samples fillet whole names (`top`,
+`side`) on plain solids; the binding's tests build them.
+
+**A lone piece tapers to a tip at both ends** (item 3, `tips.rs`). The
+tips stay at the edge's ends (slide zero, §7.4), so nothing at the
+vertices moves. The width grows inside the edge: on each face the offset
+line leaves each tip at 45° to the edge and runs at the offset between,
+so the strip has a profile at a station one offset in from each end, and
+fans from each tip to the nearer station; a piece shorter than twice the
+largest offset has one station, in the middle, at half its length. Each
+station's two points lie in the plane of the edge's own triangle on that
+face, square to the edge, and are added to that triangle's outline, so no
+face leaves its plane. Where a point falls outside its triangle the
+triangle's planar face is rebuilt from its outline (§7.4); where the face
+is that one triangle, the attempt is `TooLarge`. Blender's slide by the
+offset would tilt a faceted wall (§7.4); this does not slide at all.
+
+Checked: a cylinder's rim piece, `chamfer(1.5)`, removes exactly
+`(L/2)³/3` (two tetrahedra; L the piece's length) to 1e-9; a rounded
+rectangle's straight top edge, `chamfer(1.5)`, removes exactly
+`d²/2 (L − 2d) + d³/3`; a middle piece of the twisted prism's helical
+edge builds with every old vertex and centroid on the input to 1e-9.
+
+**Where the taper does not fit**, the error is `BevelError::LonePiece(a,
+b, names)`: "the edge a–b is a piece of a longer crease whose neighbours
+are not bevelled, and its bevel, tapering to a tip at both ends, does not
+fit: select the whole crease (named …)". It is given where the bevel
+is `TooLarge` or the tilt refusal and the selection without its lone
+pieces fits (or has nothing else), so a failure caused by other edges
+keeps its own error. In the scan: 46, on a counterbore's floor rim
+beside a wall triangle the boolean left as a sliver (its point falls
+outside the triangle and the wall there is not planar; 0.1 fits, 0.5
+does not), and on random subsets at 1.5 (ring revolves, notch, cross bar,
+twisted prisms, apex revolve) where a piece's taper meets another bevel.
+
+**Faces not in one plane, cut on their folds** (item 4). The cut bands
+of §7.6 need a band to end on an unbevelled real edge, so on a smooth
+faceted wall whose rows are twisted (a loft between sections of
+different corner radii, a twisted prism, a cone's fan at an apex) they
+give up, at any radius; the toaster's loft failed at r 0.2. Where every
+earlier attempt fails and the classic layout would tilt a face, the
+layout is tried once more taking every **fold** of a face (two of its
+triangles at the vertex not in one plane, normals beyond 1 − 1e-12) as a
+real edge. The gap then has a point on each fold, where the offset line
+crosses it, and §7.4's Full Vertex Bevel joins them; a face bounded by a
+fold is cut straight across, on the offset line, in its own plane (a
+profile around the vertex there scalloped every row and pushed the
+corner patch through the wall at r 14). Every replaced corner then lies
+on its triangle's edges and the tilt check passes at 1e-9. Measured:
+the toaster's `fillet(14, top)` removes 31 567 mm³ (a square-edged
+estimate over its rim, 31 925), its old faces on the input to 4e-14;
+the twisted prism's every edge, `fillet(1.5)`, removes 108.5 mm³ of
+7 593.2 (the tapered prism 101); `side` at 0.5, the apex revolve's
+`start` at 0.5 and §7.5's ridge build with every old face in its plane.
+
+Of the 216 tilt refusals, 194 are results; of the 186 left (164 are
+subsets that held a lone piece and fail the same way on their other
+edges),
+the fold layout is `TooLarge` at the twisted prism's top corners and the
+apex revolve's end-cap corners: at 1.5 the offset line passes beyond the
+corner triangles' folds there. Two are `all` on the apex revolve at 1.5.
+
+**The final check, cheaper** (item 5, `check.rs`). The input passed the
+exact check, so a result triangle whose corners are, in order, those of
+an input triangle (kept) cannot cross another kept one: the result is
+canonical, so its vertex ids are its positions, and two input triangles
+meeting at a position without sharing that vertex would have touched and
+been refused. Only pairs with a triangle the bevel made or moved are
+tested; the crossing pairs, and the first one that names the error, are
+the full check's. The broad phase is our own (not `shape-bool`'s
+`box_pairs`): a tree of boxes split at the median along the widest axis,
+walked in pairs of nodes, a pair of subtrees holding only kept triangles
+skipped. Measured, the check alone (x86-64, release, best of 15):
+
+| result | triangles | full check | now |
+|---|---|---|---|
+| box, twelve edges, `fillet(3)`, 32 seg | 13 068 | 42 ms | 16–18 ms |
+| same, 8 seg | 972 | 1.2 ms | 1.3 ms |
+| cylinder 64, rims, 8 seg | 2 300 | 3.1 ms | 4.4 ms |
+| cylinder 64, one rim piece | 270 | 1.6–1.8 ms | 1.3–1.5 ms |
+
+§7.7 put nearly all the cost in the broad phase: at 32 segments
+`box_pairs` takes 39 of the 42 ms, the exact tests 3.6. A uniform grid is
+slow on a bevel's long thin strip triangles (40 mm by 0.15); the tree
+splits them apart. On the cylinder, almost every triangle is moved (each
+wall triangle has a rim corner) and its fan caps' slivers overlap, so
+there is nothing to skip. The scan's 17 516 outcomes and hashes are
+byte for byte those of the full check.
+
+**`TooLarge` left** (item 6; the 168 of §7.7, all at 1.5). By group:
+- thin box (36): its sides are 2.5 tall under two 1.5 bevels;
+- tube (6): the top ring is 3 wide, two 1.5 rims meet exactly (refused
+  since §7.2);
+- counterbore (4): the ledge is 2 wide; cross bore (2): 2.5 above the
+  bore; cross bar (38): the bar stands 2 above the top, under a 1.5
+  bevel and a 1.5 concave seam bevel;
+- join (32): fits to 1.4; at 1.5, after the straight-run retry, the
+  big box's top between the small box's foot (x 7) and its own edge
+  (x 10) is 3 wide under two 1.5 bevels, which meet exactly;
+- notch (44): the boolean leaves a separate coplanar surface (one
+  triangle, legs 0.8 and 1.0) in the corner of the notch's wall, so the
+  wall has a real seam edge 1 mm from the corner and the top and vertical
+  edges are split there. Any bevel over about 0.8 of those edges is
+  `TooLarge`; the straight-run retry cannot dissolve a vertex on a seam.
+  This is the boolean's output, for `shape-bool`; not changed here.
+- ring 2 (2, a subset) and apex revolve (4, single edges): not analysed.
+No bevel bug was found among them.
+
+**The scan** (`cargo run --release -p shape-bevel --example scan --
+out.txt`; 17 516 bevels):
+
+| outcome | `a4b6046` | before (`b57f2d7`) | now |
+|---|---|---|---|
+| ok | 16 304 | 6 012 | 16 564 |
+| `TooLarge` | 446 | 168 | 412 |
+| crossing triangles | 458 | 0 | 0 |
+| `NotClosed` | 308 | 0 | 0 |
+| `NotManifold` | – | 308 | 308 |
+| `Unsupported`: tip at both ends | – | 10 812 | 0 |
+| `LonePiece` | – | – | 46 |
+| `Unsupported`: faces not in one plane | – | 216 | 186 |
+
+By line, from `b57f2d7`: 10 358 tip refusals became results, 46
+`LonePiece`, 244 `TooLarge` and 164 the tilt refusal (each of those 408
+fails the same way with its lone pieces taken out); 194 tilt refusals
+became results (twisted 56, twisted tapered 116, apex revolve 22). The
+6 012 results ok before keep their bytes, and no other line changed.
+`TooLarge` rose from 168 to 412 only by those 244. The scan takes 65 s
+(x86-64, release, one thread).
+
+**Previews** (`cargo run --release -p shape-bevel --example phase3 --
+docs/previews/phase3`; earlier images not regenerated: the renderer has
+changed since, and every one of them would move without a bevel change):
+`lone_rim_piece` (a close-up of one rim piece of a cylinder r 5,
+`fillet(1.5)`: volume 776.414, quads 0/8, its fans), `lone_straight_edge`
+(`chamfer(1.5)` on a rounded rectangle's straight top edge: 3 491.660,
+2/4), `loft_top_folds` (the toaster's housing, `fillet(14, top)`:
+6 839 258.220, 3 744/3 980, worst fold 159.4°, in the fold patches at the
+rows' junctions), `twisted_all` (`fillet(1.5)` every edge: 7 484.682,
+984/1 248, worst fold 108.3°).
+
+**Not done.**
+- The taper's shape is fixed (45°, one offset in): no width or slide
+  control for tips. A piece whose station point falls outside a
+  non-planar triangle is `LonePiece`; moving the station to where the
+  triangle is deep enough is not tried.
+- The fold layout's corner patches are ADJ patches with straight sides on
+  the folds; at the twisted prism's top corners and the apex revolve's
+  end-cap corners at 1.5 they do not fit, and those stay the tilt
+  refusal.
+- The notch's coplanar seam sliver is the boolean's (for `shape-bool`).
+- The check costs as much as before where nearly every triangle moves
+  and caps are fans of slivers (the 64-segment cylinder's rims, +1.3 ms).
+
 ## 8. Phase 4: parts, joints, the CLI and the wasm binding (stream E, 2026-11-09)
 
 ### 8.1 Sources

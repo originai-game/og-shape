@@ -132,9 +132,7 @@ impl Build<'_> {
         let r0 = (0..k).find(|&i| bevelled(&f, i)).unwrap_or(0);
         f.tris.rotate_left(r0);
         f.spokes.rotate_left(r0);
-        let real: Vec<bool> = (0..k)
-            .map(|i| s.surfaces[f.tris[(i + k - 1) % k]] != s.surfaces[f.tris[i]])
-            .collect();
+        let real: Vec<bool> = (0..k).map(|i| self.real(&f, i)).collect();
         let bidx: Vec<usize> = (0..k).filter(|&i| bevelled(&f, i)).collect();
         Ok(Layout { f, real, bidx })
     }
@@ -446,7 +444,17 @@ impl Build<'_> {
                         pts: vec![ids[0]],
                     });
                     for w in 0..c - 1 {
-                        let pts = self.run(ids[w + 1], ids[w], p, &mut sides);
+                        // A face between two real edges is cut on a
+                        // profile around the vertex; one bounded by a fold
+                        // (`folds`, `docs/research.md` §7.8) straight
+                        // across, on the offset line, in its own plane.
+                        let fold = |i: usize| s.surfaces[f.tris[i - 1]] == s.surfaces[f.tris[i]];
+                        let c = if fold(inner[w]) || fold(inner[w + 1]) {
+                            (self.pos[ids[w] as usize] + self.pos[ids[w + 1] as usize]) / 2.0
+                        } else {
+                            p
+                        };
+                        let pts = self.run(ids[w + 1], ids[w], c, &mut sides);
                         spans.push(Span {
                             lo: inner[w],
                             hi: inner[w + 1],

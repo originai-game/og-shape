@@ -73,6 +73,14 @@ pub fn cases() -> Vec<Case> {
             name: "bevel.sound",
             run: sound,
         },
+        Case {
+            name: "bevel.tips",
+            run: tips,
+        },
+        Case {
+            name: "bevel.folds",
+            run: folds,
+        },
     ]
 }
 
@@ -938,4 +946,129 @@ fn sound(h: &mut OutputHash) -> Result<(), HashError> {
         p.z == 10.0 && p.x > 4.8 && p.y >= 0.0
     });
     solid(h, fillet(&rim, &round(0.5, &["pick"], 4)))
+}
+
+/// Lone pieces of a crease, tapering to a tip at both ends
+/// (`docs/research.md` §7.8): a short rim piece, a long straight edge
+/// meeting arcs tangentially, a piece a boolean split from a rim, and one
+/// whose taper does not fit (the error names it).
+fn tips(h: &mut OutputHash) -> Result<(), HashError> {
+    let pin = cylinder(&CylinderDesc {
+        radius: 5.0,
+        height: 10.0,
+        ..Default::default()
+    })
+    .unwrap_or_default();
+    let rim = tag(&pin, "pick", |p| p.z == 10.0 && p.x > 4.8 && p.y >= 0.0);
+    let slot = extrude(
+        &shape_2d::rect(&shape_2d::Rect {
+            width: 30.0,
+            height: 20.0,
+            radius: 4.0,
+        })
+        .unwrap_or_default(),
+        &Extrude {
+            height: 6.0,
+            ..Default::default()
+        },
+    )
+    .unwrap_or_default();
+    let straight = tag(&slot, "pick", |p| p.z == 6.0 && p.y == 10.0);
+    let plate = cuboid(&BoxDesc {
+        width: 30.0,
+        depth: 30.0,
+        height: 10.0,
+    })
+    .unwrap_or_default();
+    let cb = hole(
+        &plate,
+        &Hole {
+            diameter: 5.0,
+            counterbore: (9.0, 3.0),
+            at: vec![above(-3.0, 2.0)],
+            ..Default::default()
+        },
+    )
+    .unwrap_or_default();
+    let near = |p: DVec3, x: f64, y: f64| (p - DVec3::new(x, y, 7.0)).length() < 1e-3;
+    let floor = tag(&cb, "pick", |p| {
+        near(p, -0.75, -1.8971) || near(p, 0.18198, -1.18198)
+    });
+    for s in [&rim, &straight, &floor] {
+        for d in [0.5, 1.5] {
+            solid(h, fillet(s, &round(d, &["pick"], 4)))?;
+            solid(
+                h,
+                chamfer(
+                    s,
+                    &Chamfer {
+                        distance: d,
+                        edges: names(&["pick"]),
+                        ..Default::default()
+                    },
+                ),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Faces whose triangles at a vertex are not one plane, cut on their folds
+/// (`docs/research.md` §7.8): a loft's top (run A's toaster housing), the
+/// twisted prism's sides, and the apex revolve's start cap.
+fn folds(h: &mut OutputHash) -> Result<(), HashError> {
+    let rr = |w: f64, d: f64, r: f64| {
+        shape_2d::rect(&shape_2d::Rect {
+            width: w,
+            height: d,
+            radius: r,
+        })
+        .unwrap_or_default()
+    };
+    let housing = shape_gen::loft::loft(&shape_gen::loft::Loft {
+        sections: vec![
+            (rr(155.0, 285.0, 30.0), 0.0),
+            (rr(151.0, 281.0, 32.0), 61.25),
+            (rr(125.0, 275.0, 24.0), 175.0),
+        ],
+        ..Default::default()
+    })
+    .unwrap_or_default();
+    solid(h, fillet(&housing, &round(14.0, &["top"], 0)))?;
+    let square = [(-10.0, -10.0), (10.0, -10.0), (10.0, 10.0), (-10.0, 10.0)];
+    let twisted = prism(
+        &square,
+        &Extrude {
+            height: 20.0,
+            twist: 1.0,
+            ..Default::default()
+        },
+    );
+    solid(h, fillet(&twisted, &round(0.5, &["side"], 4)))?;
+    solid(
+        h,
+        chamfer(
+            &twisted,
+            &Chamfer {
+                distance: 0.5,
+                edges: names(&["side"]),
+                ..Default::default()
+            },
+        ),
+    )?;
+    let apex = revolve(
+        &shape_2d::Profile::from_contour(shape_2d::Contour::corners(vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(8.0, 0.0),
+            DVec2::new(8.0, 4.0),
+            DVec2::new(0.0, 10.0),
+        ])),
+        &Revolve {
+            angle: 3.0,
+            axis: Axis::Z,
+            ..Default::default()
+        },
+    )
+    .unwrap_or_default();
+    solid(h, fillet(&apex, &round(0.5, &["start"], 4)))
 }
