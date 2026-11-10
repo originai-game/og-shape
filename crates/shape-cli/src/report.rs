@@ -7,7 +7,7 @@
 //! write one kernel report each, in `shape-tools`' snake_case.
 
 use serde_json::{Value, json};
-use shape_tools::{Blocked, DecimateReport, Imported, RepairReport, Uvs};
+use shape_tools::{Blocked, DecimateReport, Imported, NonManifold, RepairReport, Uvs};
 
 /// `{"k": v, …}` from keys and values that are JSON text already.
 pub fn object(fields: &[(&str, String)]) -> String {
@@ -42,7 +42,12 @@ pub fn repair(r: &RepairReport) -> String {
         ("floaters", r.floaters.to_string()),
         ("floater_triangles", r.floater_triangles.to_string()),
         ("flipped", r.flipped.to_string()),
+        (
+            "non_manifold",
+            r.non_manifold.as_ref().map_or("null".into(), non_manifold),
+        ),
         ("holes_filled", r.holes_filled.to_string()),
+        ("large_holes_filled", r.large_holes_filled.to_string()),
         ("fill_triangles", r.fill_triangles.to_string()),
         ("uv_seam_fills", r.uv_seam_fills.to_string()),
         ("holes_left", r.holes_left.to_string()),
@@ -52,6 +57,24 @@ pub fn repair(r: &RepairReport) -> String {
             "self_intersections",
             r.self_intersections
                 .map_or("null".into(), |n| n.to_string()),
+        ),
+    ])
+}
+
+/// What splitting non-manifold edges did.
+fn non_manifold(n: &NonManifold) -> String {
+    object(&[
+        ("edges", n.edges.to_string()),
+        ("split", n.split.to_string()),
+        ("unpaired", n.unpaired.to_string()),
+        ("left", n.left.to_string()),
+        ("vertices", n.vertices.to_string()),
+        ("moved", Value::from(n.moved).to_string()),
+        ("crossings_added", n.crossings_added.to_string()),
+        ("sheets_dropped", n.sheets_dropped.to_string()),
+        (
+            "sheet_triangles_dropped",
+            n.sheet_triangles_dropped.to_string(),
         ),
     ])
 }

@@ -324,6 +324,7 @@ impl Args<'_> {
             weld: self.num("weld")?,
             weld_all: self.flag("weld_all")?,
             floaters,
+            non_manifold: self.flag("non_manifold")?,
             max_hole_edges: self.uint("max_hole_edges")? as usize,
             fuse: self.flag("fuse")?,
             min_edge: self.num("min_edge")?,
@@ -457,6 +458,13 @@ fn repair_props() -> Vec<(&'static str, Value)> {
                 },
                 "additionalProperties": false,
             }),
+        ),
+        (
+            "non_manifold",
+            boolean(
+                "Split edges with more than two faces into manifold sheets, by the faces' order \
+                 round the edge; then drop the pieces that come apart and are floaters.",
+            ),
         ),
         (
             "max_hole_edges",

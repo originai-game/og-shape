@@ -29,7 +29,8 @@
 //!   solid with its [`Affine`] transform, per-corner UVs and its textures'
 //!   sizes ([`ImageInfo`]).
 //! - [`repair()`]: [`Repair`] runs [`weld`], [`remove_degenerate`],
-//!   [`remove_floaters`], [`orient`], [`close_holes`] and a self-union of
+//!   [`remove_floaters`], [`orient`], [`split_non_manifold`],
+//!   [`close_holes`] and a self-union of
 //!   interpenetrating shells; [`apply_transform`] and [`join`] place and
 //!   merge parts.
 //! - [`decimate()`] and [`lods`]: quadric error metrics; closed stays
@@ -79,7 +80,8 @@ pub use meshglb::{PlainGlb, PlainGlbError, glb_plain};
 pub use png::png;
 pub use preview::{Image, Preview, preview, sheet};
 pub use repair::{
-    Floaters, Repair, RepairError, RepairReport, Weld, apply_transform, close_holes, join, orient,
-    remove_degenerate, remove_floaters, repair, weld,
+    Floaters, Holes, LARGE_HOLE_EDGES, NonManifold, Repair, RepairError, RepairReport, Weld,
+    apply_transform, close_holes, join, orient, remove_degenerate, remove_floaters, repair,
+    split_non_manifold, weld,
 };
 pub use unwrap::{Unwrap, UnwrapError, Uvs, unwrap};

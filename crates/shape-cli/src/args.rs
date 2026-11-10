@@ -16,7 +16,7 @@ pub struct Args {
 }
 
 /// Flags that take no value.
-const SWITCHES: [&str; 10] = [
+const SWITCHES: [&str; 11] = [
     "--uvs",
     "--unwrap",
     "--posed",
@@ -24,6 +24,7 @@ const SWITCHES: [&str; 10] = [
     "--no-ground",
     "--weld-all",
     "--fuse",
+    "--non-manifold",
     "--lock-border",
     "--intersections",
     "--z-up",
