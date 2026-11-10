@@ -15,6 +15,7 @@ mod meshtools;
 mod model;
 mod selfunion;
 mod skin;
+mod smallgaps;
 mod solids;
 mod surface;
 mod tools;

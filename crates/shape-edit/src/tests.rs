@@ -286,3 +286,102 @@ fn split_seat_merge_dent() {
         .fold(f64::INFINITY, f64::min);
     assert!((lowest_top - 25.0).abs() < 1e-9, "{lowest_top}");
 }
+
+/// `docs/research.md` §13.6, item 13: an axis through an edge shared by
+/// two triangles meets the solid. On a turned box, a hole whose axis runs
+/// along a face's normal through a point of the face's diagonal missed
+/// both triangles by floating point `u, v` (`Misses`); it is decided by
+/// `orient3d` now.
+#[test]
+fn an_axis_through_a_face_diagonal_meets_the_solid() {
+    let (s, c) = trig::sin_cos(21.0 * 0.0137);
+    let (s2, c2) = trig::sin_cos(21.0 * 0.0137 * 1.7);
+    let z = DVec3::new(s * c2, s * s2, c).normalize();
+    let turned = Frame::from_normal(DVec3::new(0.3, -0.2, 0.1), z, DVec3::X).unwrap();
+    let mut b = boxed(10.0, 10.0, 10.0);
+    b.map_positions(|p| turned.point_to_world(p), false);
+    // 3/8 of the way along the top face's diagonal, looking down its normal.
+    let at = Frame::from_normal(
+        DVec3::new(4.014963521695149, 2.3280884594923625, 9.206745564330646),
+        DVec3::new(0.2504811681798565, 0.13331104117759812, 0.9588990304966416),
+        DVec3::X,
+    )
+    .unwrap();
+    let before = closed(&b);
+    let s = hole(
+        &b,
+        &Hole {
+            diameter: 1.0,
+            depth: 3.0,
+            at: vec![at],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let v = closed(&s);
+    assert!(before - v > 2.0 && before - v < 2.4, "{before} {v}");
+}
+
+/// `docs/research.md` §13.6, item 13 as phase 6 met it: a through hole
+/// down a boss, then a pocket from the bottom face's centre. The pocket's
+/// axis runs inside the hole and meets no face; the error says so, with
+/// the frame's origin, the direction and the hole's clearance.
+#[test]
+fn an_axis_inside_a_through_hole_is_reported_with_its_clearance() {
+    let b = boxed(80.0, 80.0, 80.0);
+    let s = hole(
+        &b,
+        &Hole {
+            diameter: 6.0,
+            at: vec![above(0.0, 0.0)],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let bottom = Frame::from_normal(DVec3::ZERO, -DVec3::Z, DVec3::X).unwrap();
+    let e = pocket(
+        &s,
+        &Pocket {
+            profile: rect(&Rect {
+                width: 56.0,
+                height: 56.0,
+                ..Default::default()
+            })
+            .unwrap(),
+            depth: 20.0,
+            at: vec![bottom],
+        },
+    )
+    .unwrap_err();
+    let EditError::Misses {
+        origin,
+        direction,
+        clearance,
+    } = e
+    else {
+        panic!("{e}");
+    };
+    assert_eq!((origin, direction), (DVec3::ZERO, DVec3::Z));
+    // The bore is a polygon inscribed in the 3 mm circle.
+    assert!(clearance > 2.9 && clearance <= 3.0, "{clearance}");
+    // A pocket clear of the hole's axis cuts as asked.
+    let off = Frame {
+        origin: DVec3::new(10.0, 0.0, 0.0),
+        ..bottom
+    };
+    let p = pocket(
+        &s,
+        &Pocket {
+            profile: rect(&Rect {
+                width: 10.0,
+                height: 10.0,
+                ..Default::default()
+            })
+            .unwrap(),
+            depth: 20.0,
+            at: vec![off],
+        },
+    )
+    .unwrap();
+    closed(&p);
+}

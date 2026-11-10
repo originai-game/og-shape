@@ -174,6 +174,11 @@ fn motion(from: &Frame, to: &Frame) -> Frame {
 fn placed(mut s: Solid, f: &Frame) -> Solid {
     s.map_positions(|p| f.point_to_world(p), false);
     let _ = s.canonicalize();
+    // Rounding can put a needle a rounding error wide onto one line
+    // (`docs/research.md` §15.4): such slivers are flipped away, exactly.
+    if shape_bool::drop_slivers(&mut s) {
+        let _ = s.canonicalize();
+    }
     s
 }
 

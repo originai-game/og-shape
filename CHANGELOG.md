@@ -465,3 +465,35 @@
   corners; N's interference field in the measures), and
   `touching.program.elbows_turned` (still refused; M's errors now name the
   operation). No hash that was on main before moved.
+- Fixed (`docs/research.md` §13.6, item 12; §15.4): joining tapered
+  extrudes left a zero-area triangle in a closed result. Cause: one
+  operand's edge passes a rounding error off the other's (the lever knob's
+  `band_7` corner edge off `band_6`'s top diagonal), so the edge through
+  the face and the diagonal through the side are two crossings, distinct
+  by the exact predicates, less than an ulp apart; with a third point of
+  the cut they rounded onto one line. A boolean's output triangle whose
+  corners are distinct positions on one line (exactly, `orient2d` in each
+  axis plane) is now flipped into its neighbour across its long edge,
+  which is split at the middle corner; no tolerance. The same runs when a
+  model part is moved (`at`, `transform`, export), since rounding there
+  can put a needle a rounding error wide onto a line. New
+  `shape_bool::drop_slivers`. The phase 6 knob measures closed with no
+  degenerate triangle (it had 2).
+- Two golden hashes moved, each because one such triangle is gone:
+  `touching.strap` (on the plate's top edge, z = 38.14 at x = 457.2) and
+  `edit.holes.pocket` (from the countersink hole on, at the countersink's
+  rim, z = 4 to 8). Checked: triangle counts, `closed`, volume and area
+  are as before (to the last digit printed), and the degenerate count goes
+  from 1 to 0.
+- Fixed (`docs/research.md` §13.6, item 13): where a hole's or pocket's
+  axis meets the solid is decided by `orient3d` of the axis with each
+  triangle's edges, so an axis through an edge or a corner meets the
+  triangles there; the floating point `u, v` test missed both triangles
+  of a turned face's diagonal. Phase 6's error ("the axis from [≈0, ≈0,
+  0] does not meet the solid") was correct: a through hole ran down the
+  boss, and a pocket at the bottom face's centre had its axis inside the
+  bore. **Breaking:** `EditError::Misses` is now `{ origin, direction,
+  clearance }`, and its message names the direction into the part and the
+  distance from the axis to the nearest edge (the bore's radius there).
+- Golden cases `smallgaps.knob.bands`, `smallgaps.knob.program`,
+  `smallgaps.hole.diagonal` and `smallgaps.pocket.through_hole`.

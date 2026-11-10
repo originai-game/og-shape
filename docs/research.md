@@ -2521,11 +2521,22 @@ marked. None was fixed in this stream.
     allow" (reproduced); `soften` on a loft's top edge throws at any
     radius tried (reported).
 12. **Joining overlapping tapered extrudes leaves 2 degenerate
-    triangles** (reported). **Not fixed**: reproduced, the cause is in
-    `shape-bool`, handed to stream L (§15.4).
+    triangles** (reported). **Done** (stream O, §15.4): exactly
+    collinear output triangles are flipped away, in booleans and when a
+    part is moved. A needle with a non-zero exact area whose f64 cross
+    product rounds to zero is still counted by `measure` (the bands'
+    intersection has one).
 13. **A through hole on a boss over a bottom pocket** threw "the axis from
     [≈0, ≈0, 0] does not meet the solid", naming a point that is not the
-    frame given (reported, not reproduced).
+    frame given (reported, not reproduced). **Done** (stream O, §15.4):
+    reproduced from `eval/phase6/B/cad2_mounting_block` with the boss hole
+    made through (`depth` 0). The refusal was right: the pocket's frame is
+    the bottom face's centroid (≈0 by rounding, the point named), and its
+    axis runs inside the 6 mm bore, so it meets no face. The error now
+    names the direction and the axis's clearance to the nearest edge
+    (2.97, the bore's polygon). `entry` also decides hits by `orient3d`
+    now, so an axis through a shared edge meets the solid; the floating
+    point test missed a turned box's face diagonal.
 14. **The preview** ignores `opacity` and shades smoothly across a loft's
     facets.
 15. **`shape-mcp` does not serve `guides/shape.md`** as a resource (it
@@ -2909,6 +2920,32 @@ apart, and the sliver between the copies has zero area. The generator's
 vertices are exact (the taper scales the hexagon's corners), so the
 cause is in `shape-bool`'s intersection points; it is left to L.
 Reproduce: ops 15 and 17 of that program, then `join` 0 with 1.
+
+**Cause and fix (stream O).** The two copies are not one point reached
+twice. Point 28 is `band_6`'s top diagonal (edge 2–9) through
+`band_7`'s side; point 29 is `band_7`'s corner edge (21–23) through
+`band_6`'s top. Each crossing is strictly inside, by `orient3d`, so they
+are two exact points; in rationals they lie 9·10⁻¹⁶ apart (about an ulp
+in x and in y), so even correctly rounded positions differ. The cause is
+in the inputs: `band_6`'s top corner, 13.2848 scaled by its taper, and
+`band_7`'s bottom corner, 9.8192, differ by an ulp, so the corner edge
+misses the diagonal by a rounding error. Making them one point would take
+a tolerance. Instead the zero-area triangle is removed exactly
+(`shape_bool::sliver`): a triangle whose three corners are distinct
+positions on one line (`orient2d` zero in each axis plane) has its middle
+corner strictly between the others, so the triangle across its long edge
+is split there into two that tile it exactly, and the sliver is dropped.
+Every edge stays balanced. A half that lands on a needle facing the other
+way cancels with it. It runs on every boolean's output and in the model's
+`placed` (a move): the knob's `at` moved it by −1.8·10⁻¹⁵ in x, which put
+another 1-ulp needle onto a line. The knob now measures closed with no
+degenerate triangle, as built and as moved.
+
+Left: every band corner of the knob still has such a pair of points an
+ulp apart, joined by needles of non-zero exact area. A later rounding can
+put one on a line (then flipped away when the part moves), and one whose
+f64 cross product rounds to zero is counted by `measure` though its exact
+area is not zero: the bands' intersection has one, 17 mm long.
 
 ### 15.5 What is untested
 

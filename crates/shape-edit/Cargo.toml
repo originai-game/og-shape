@@ -13,6 +13,7 @@ shape-2d.workspace = true
 shape-mesh.workspace = true
 shape-gen.workspace = true
 shape-bool.workspace = true
+robust.workspace = true
 
 [lints]
 workspace = true
