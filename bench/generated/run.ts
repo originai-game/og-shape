@@ -4,6 +4,7 @@
 //   cargo build --release -p shape-cli
 //   bun bench/generated/fetch.ts DIR
 //   bun bench/generated/run.ts DIR OUT [--only NAME,...] [--budgets 2000,10000,50000]
+//                              [--merge-charts UV] [--modes keep,fresh]
 //   bun bench/generated/table.ts OUT/results.jsonl
 //
 // Per file, into OUT/results.jsonl (one JSON object a line):
@@ -15,8 +16,9 @@
 //   --intersections`, as they print them;
 // - `runs`: `shape process --budget B` for each budget, keeping the
 //   file's UVs and texture (`keep`) and with `--unwrap` (`fresh`), each
-//   with the repair the guide uses (weld 1 µm, floaters 5 %, holes up to
-//   64 edges, fuse) and `--intersections`; the result's texture from
+//   with the repair the guide uses (weld 1 µm, floaters 5 %, non-manifold
+//   edges split, holes up to 64 edges, fuse) and `--intersections`;
+//   `--merge-charts UV` passes it to the keep runs (§32); the result's texture from
 //   `shape import` of the output; wall time and peak memory (the child's
 //   VmHWM, read every 5 ms);
 // - `lods`: `shape decimate --ratio 0.5 --lods 3` of the largest `keep`
@@ -28,7 +30,7 @@ import { readManifest } from "./fetch.ts";
 
 const here = dirname(new URL(import.meta.url).pathname);
 const shape = join(here, "../../target/release/shape");
-const REPAIR = ["--weld", "0.001", "--floaters", "0.05", "--holes", "64", "--fuse"];
+const REPAIR = ["--weld", "0.001", "--floaters", "0.05", "--non-manifold", "--holes", "64", "--fuse"];
 
 function peakKiB(pid: number): number {
   try {
@@ -287,6 +289,8 @@ if (import.meta.main) {
   };
   const only = opt("--only")?.split(",");
   const budgets = (opt("--budgets") ?? "2000,10000,50000").split(",").map(Number);
+  const merge = opt("--merge-charts");
+  const modes = (opt("--modes") ?? "keep,fresh").split(",");
   mkdirSync(join(out, "glb"), { recursive: true });
   const results = join(out, "results.jsonl");
   if (!only) writeFileSync(results, "");
@@ -298,11 +302,12 @@ if (import.meta.main) {
     const imp = await cli(["import", path]);
     const meas = await cli(["measure", path, "--intersections"]);
     const runs: any[] = [];
-    for (const mode of ["keep", "fresh"]) {
+    for (const mode of modes) {
       for (const b of budgets) {
         const o = join(out, "glb", `${e.name}.${mode}.${b}.glb`);
         const argv = ["process", path, "--budget", String(b), "-o", o, "--intersections", ...REPAIR];
         if (mode === "fresh") argv.push("--unwrap", "--resolution", "1024");
+        else if (merge) argv.push("--merge-charts", merge);
         const r = await cli(argv);
         const tex = r.ok ? textureOut((await cli(["import", o])).report) : null;
         const rep = r.report;

@@ -34,17 +34,19 @@
 //! of its UVs, so a seam keeps its sides), not an interpolation, so
 //! neighbours agree and no seam appears where the file had none. A hole fill
 //! takes, at each rim vertex, the UV its rim triangle gives it, and its
-//! centre vertex (if any) their mean; a rim that crosses a UV seam gives
-//! a stretched fill, which [`RepairReport::uv_seam_fills`] counts.
+//! centre vertex (if any) their mean; a fill whose rim crosses a UV seam
+//! would fan across the texture's atlas, so it takes one UV at every
+//! corner instead ([`RepairReport::uv_seam_fills`] counts those).
 //! [`join`] gives the triangles of parts without UVs (0, 0) at every
 //! corner when another part has them: zero-area UV triangles, which
 //! `measure` counts.
 //!
 //! A single closed surface that folds through itself is untangled by the
 //! fuse step too (`shape_bool::self_union`: the space it winds round at
-//! least once). An open one cannot be: [`repair`] reports its intersecting
-//! triangle pairs and leaves it, and booleans refuse it
-//! (`docs/research.md` §5.4, §9).
+//! least once); the pockets an untangling leaves as shells of their own
+//! are counted, and dropped when they are floaters. An open one cannot
+//! be: [`repair`] reports its intersecting triangle pairs and leaves it,
+//! and booleans refuse it (`docs/research.md` §5.4, §9, §32).
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -1084,6 +1086,9 @@ pub fn split_non_manifold(s: &Solid) -> Result<(Solid, NonManifold), RepairError
     Ok((s, r))
 }
 
+/// A fill triangle: corners, surface, names, UVs.
+type Fill = ([u32; 3], u32, Vec<Tag>, [DVec2; 3]);
+
 /// What [`close_holes`] did.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Holes {
@@ -1191,7 +1196,6 @@ pub fn close_holes(s: &Solid, max_edges: usize) -> Result<(Solid, Holes), Repair
             h.left += 1;
         }
     }
-    type Fill = ([u32; 3], u32, Vec<Tag>, [DVec2; 3]);
     let mut new_tris: Vec<Fill> = Vec::new();
     for (rim, rim_tris) in loops {
         if rim.len() < 3 || rim.len() > max_edges.max(LARGE_HOLE_EDGES) {
@@ -1298,7 +1302,7 @@ fn flat(s: &Solid, tris: &[[u32; 3]]) -> bool {
 
 /// A triangle of the fill crosses the mesh, another fill triangle, or a
 /// fill already made (exactly; corners shared by index are joins).
-fn crosses(s: &Solid, tris: &[[u32; 3]], made: &[([u32; 3], u32, Vec<Tag>, [DVec2; 3])]) -> bool {
+fn crosses(s: &Solid, tris: &[[u32; 3]], made: &[Fill]) -> bool {
     let at = |t: [u32; 3]| t.map(|v| s.positions[v as usize]);
     let others: Vec<[u32; 3]> = s
         .triangles

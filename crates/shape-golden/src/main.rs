@@ -12,6 +12,7 @@ mod gen2;
 mod geom;
 mod interference;
 mod mcp;
+mod meshrepair;
 mod meshtools;
 mod model;
 mod rest;

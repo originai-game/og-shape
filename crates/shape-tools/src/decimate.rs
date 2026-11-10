@@ -59,7 +59,11 @@
 //! midpoint gives both ends' corners the mean of their UVs. A collapse
 //! whose corners cannot be matched (more than one UV side on one end, no
 //! seam to say which) or that would turn a UV triangle over or flatten it
-//! (`orient2d`, exact) is refused, as a turned-over face is.
+//! (`orient2d`, exact) is refused, as a turned-over face is. With
+//! `Decimate::merge_charts`, islands that agree across a seam up to a
+//! rigid move of the UV plane are one chart ([`merge_charts`]): that seam
+//! is no feature line, and a corner across it takes its new UV through
+//! the two islands' moves (`docs/research.md` §32).
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BinaryHeap};
@@ -564,6 +568,9 @@ pub fn merge_charts(s: &Solid, tol: f64) -> Option<(Vec<u32>, Vec<Rigid>, usize)
     Some((tri_chart, tri_frame, islands))
 }
 
+/// A triangle near a fan: its index, corners, positions and box.
+type Near = (u32, [u32; 3], [DVec3; 3], (DVec3, DVec3));
+
 /// A triangle's box.
 fn bounds(t: [DVec3; 3]) -> (DVec3, DVec3) {
     (t[0].min(t[1]).min(t[2]), t[0].max(t[1]).max(t[2]))
@@ -802,7 +809,7 @@ impl Mesh {
             });
         // One query for the whole fan; each candidate's box against each
         // triangle's.
-        let mut near: Vec<(u32, [u32; 3], [DVec3; 3], (DVec3, DVec3))> = Vec::new();
+        let mut near: Vec<Near> = Vec::new();
         let mut ids: Vec<u32> = Vec::new();
         grid.near(lo, hi, &mut ids);
         for c in ids {
