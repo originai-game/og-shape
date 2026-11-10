@@ -4,9 +4,9 @@
 //! strap plate along a tube's vertex column with flush ends, boxes sharing
 //! only an edge, a box face on a tube's vertex column, a tool wholly inside
 //! (a void), and the phase 6 programs: a cup's rim on its shelled wall, two
-//! elbows sharing a ring face, and the same elbows turned (still refused,
-//! with the faces named). Each case hashes the solid and its report, or the
-//! error.
+//! elbows sharing a ring face, and the same elbows turned about their axis
+//! (joined by snapping the tool onto the target, `docs/research.md` §18).
+//! Each case hashes the solid and its report, or the error.
 
 use shape_bool::{BoolOp, BoolReport, Boolean, boolean_report};
 use shape_core::{DVec3, HashError, OutputHash};
@@ -81,6 +81,13 @@ pub fn cases() -> Vec<Case> {
                 let a = block(40.0, 40.0, 40.0)?;
                 let b = moved(block(10.0, 10.0, 10.0)?, DVec3::new(0.0, 0.0, 15.0));
                 both(h, &a, &b, BoolOp::Cut)
+            },
+        },
+        Case {
+            name: "touching.elbows.turned",
+            run: |h| {
+                let (a, b) = turned_elbows()?;
+                both(h, &a, &b, BoolOp::Join)
             },
         },
         Case {
@@ -171,6 +178,37 @@ fn strap() -> Result<(Solid, Solid), HashError> {
     Ok((plate, t))
 }
 
+/// Two quarter tori turned half a facet about their axis, cut by boxes
+/// whose faces lie on the world plane z = 0 in the tori's frame, the
+/// second brought back through the world (as a part's placement does): ring
+/// faces a few ulps apart (`docs/research.md` §18).
+fn turned_elbows() -> Result<(Solid, Solid), HashError> {
+    let a = std::f64::consts::PI / 64.0;
+    let (c, s) = (shape_core::trig::cos(a), shape_core::trig::sin(a));
+    let turn = |mut m: Solid, s: f64| -> Result<Solid, HashError> {
+        m.map_positions(
+            |p| DVec3::new(c * p.x + s * p.z, p.y, -s * p.x + c * p.z),
+            false,
+        );
+        m.canonicalize()?;
+        Ok(m)
+    };
+    let elbow = |z: f64| -> Result<Solid, HashError> {
+        let t = torus(351.0, 127.0).map_err(fail)?;
+        let q = turn(
+            moved(block(1000.0, 400.0, 600.0)?, DVec3::new(500.0, 0.0, z)),
+            -s,
+        )?;
+        let d = Boolean {
+            op: BoolOp::Intersect,
+            ..Default::default()
+        };
+        shape_bool::boolean(&t, &q, &d).map_err(fail)
+    };
+    let b = turn(turn(elbow(-600.0)?, s)?, -s)?;
+    Ok((elbow(0.0)?, b))
+}
+
 fn both(h: &mut OutputHash, a: &Solid, b: &Solid, op: BoolOp) -> Result<(), HashError> {
     let d = Boolean {
         op,
@@ -211,18 +249,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn elbows_turned_are_refused_naming_the_faces_that_touch() {
-        let Err(e) = program::run(ELBOWS_TURNED) else {
-            panic!("the turned elbows joined");
-        };
-        let e = e.to_string();
-        assert!(e.contains("where the operands touch"), "{e}");
-        assert!(e.contains("qa.bottom") && e.contains("qb.top"), "{e}");
-    }
-
-    #[test]
-    fn the_cup_rim_and_untilted_elbows_join_closed() {
-        for json in [RIM, ELBOWS] {
+    fn the_cup_rim_and_the_elbows_join_closed() {
+        for json in [RIM, ELBOWS, ELBOWS_TURNED] {
             let m = program::run(json).unwrap();
             let v = program::measures_json(&m).unwrap();
             assert!(

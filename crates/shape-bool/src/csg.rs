@@ -32,7 +32,11 @@
 //! The second pass orders points on an edge exactly (`exact`), lays a
 //! triangle out exactly where its rounded outline is not simple, makes
 //! points at one position one point, and classifies faces lying on the
-//! other operand by orientation (`docs/research.md` §5.4, item 5).
+//! other operand by orientation (`docs/research.md` §5.4, item 5). When
+//! both leave it open, the tool's vertices within 2⁻⁴⁰ of the operands'
+//! size of a target vertex are snapped onto it and both passes run again
+//! (faces a few ulps apart, placed by different rounded motions;
+//! `docs/research.md` §18).
 
 use glam::{DVec2, DVec3};
 use robust::{Coord, Coord3D, orient2d, orient3d};
@@ -2341,6 +2345,10 @@ pub struct CsgOutput {
     pub touching_edges: usize,
     /// Other edges used other than once each way.
     pub non_manifold: usize,
+    /// Whether the result was built with the tool's vertices snapped onto
+    /// the target's within a rounding error (both passes on the operands
+    /// as given came out open; `docs/research.md` §18).
+    pub snapped: bool,
 }
 
 /// [`csg_points`], with where the operands touch.
@@ -2353,13 +2361,16 @@ pub struct CsgOutput {
 /// triangle out exactly where its rounded outline is not simple, and then
 /// makes points at one position one point, collapsing the runs between
 /// them (`docs/research.md` §5.4, item 5). Every closed first-pass result
-/// is returned as before.
+/// is returned as before. If both are open, the tool's vertices within a
+/// rounding error of the target's are snapped onto them ([`snap_onto`])
+/// and both passes run again; the result with the fewest unmatched edges
+/// is taken (a union is never empty). [`CsgOutput::snapped`] says so.
 pub fn csg_points_traced(
     a: (&[DVec3], &[[u32; 3]]),
     b: (&[DVec3], &[[u32; 3]]),
     op: CsgOp,
 ) -> Result<CsgOutput, OperandError> {
-    let pass = |robust: bool| -> Result<CsgOutput, OperandError> {
+    let pass = |robust: bool, b: (&[DVec3], &[[u32; 3]])| -> Result<CsgOutput, OperandError> {
         let mut points = Vec::new();
         let mut at = BTreeMap::new();
         let sa = weld64(0, false, a, &mut points, &mut at)?;
@@ -2403,21 +2414,104 @@ pub fn csg_points_traced(
             unmatched: counts.unmatched,
             touching_edges: counts.touching,
             non_manifold: counts.non_manifold,
+            snapped: false,
         })
     };
-    let first = pass(false)?;
+    // How far a result is from closed: its unmatched edges, and a union of
+    // two closed solids is never empty (a region that leaked across the
+    // operands' seam can drop every piece and balance).
+    let open = |o: &CsgOutput| {
+        if op == CsgOp::Union && o.tris.is_empty() {
+            usize::MAX
+        } else {
+            o.unmatched
+        }
+    };
+    let first = pass(false, b)?;
     // Operands that touch can make crossings a rounding error apart that
     // the first pass cannot keep apart; an open result there is built
     // again by the second pass. Every closed result is the first pass's.
-    if first.unmatched == 0 {
+    if open(&first) == 0 {
         return Ok(first);
     }
-    let second = pass(true)?;
-    if second.unmatched < first.unmatched {
-        Ok(second)
+    let second = pass(true, b)?;
+    let best = if open(&second) < open(&first) {
+        second
     } else {
-        Ok(first)
+        first
+    };
+    if open(&best) == 0 {
+        return Ok(best);
     }
+    // Surfaces a rounding error apart that are not exactly one (faces
+    // placed by different rounded motions): the tool's vertices within a
+    // rounding error of the target's are snapped onto them, and both
+    // passes run again on the snapped tool (`docs/research.md` §18).
+    let Some(snapped) = snap_onto(a.0, b.0) else {
+        return Ok(best);
+    };
+    let Ok(third) = pass(false, (&snapped, b.1)) else {
+        return Ok(best);
+    };
+    let third = if open(&third) == 0 {
+        third
+    } else {
+        match pass(true, (&snapped, b.1)) {
+            Ok(fourth) if open(&fourth) < open(&third) => fourth,
+            _ => third,
+        }
+    };
+    Ok(if open(&third) < open(&best) {
+        CsgOutput {
+            snapped: true,
+            ..third
+        }
+    } else {
+        best
+    })
+}
+
+/// The tool's positions `b` with each one that lies within 2⁻⁴⁰ of the
+/// operands' size of a position of the target `a`, but not on one, moved
+/// onto the nearest (the first of equals); None when none moves. The
+/// design's snap before a boolean (`docs/design.md` §6), taken only when
+/// both passes leave the result open.
+fn snap_onto(a: &[DVec3], b: &[DVec3]) -> Option<Vec<DVec3>> {
+    let (mut lo, mut hi) = (DVec3::INFINITY, DVec3::NEG_INFINITY);
+    for &p in a.iter().chain(b) {
+        lo = lo.min(p);
+        hi = hi.max(p);
+    }
+    let tol = (hi - lo).length() * (1.0 / (1u64 << 40) as f64);
+    let tol2 = tol * tol;
+    // The target's positions by x, for a window search.
+    let mut by_x: Vec<u32> = (0..a.len() as u32).collect();
+    shape_core::sort::sort_by(&mut by_x, |&i, &j| {
+        a[i as usize].x.total_cmp(&a[j as usize].x).then(i.cmp(&j))
+    });
+    let mut out = b.to_vec();
+    let mut moved = false;
+    for p in &mut out {
+        let start = by_x.partition_point(|&i| a[i as usize].x < p.x - tol);
+        let mut best: Option<(f64, u32)> = None;
+        for &i in &by_x[start..] {
+            let q = a[i as usize];
+            if q.x > p.x + tol {
+                break;
+            }
+            let d2 = (q - *p).length_squared();
+            if d2 <= tol2 && best.is_none_or(|(bd, bi)| d2 < bd || (d2 == bd && i < bi)) {
+                best = Some((d2, i));
+            }
+        }
+        if let Some((d2, i)) = best
+            && d2 > 0.0
+        {
+            *p = a[i as usize];
+            moved = true;
+        }
+    }
+    moved.then_some(out)
 }
 
 /// Drops pairs of kept triangles on the same three positions facing

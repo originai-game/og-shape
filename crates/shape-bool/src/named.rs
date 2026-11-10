@@ -903,17 +903,26 @@ mod tests {
         // Every face keeps its names.
         assert!(u.face_tags.iter().all(|t| !t.is_empty()));
         assert!(!u.edges(&["cut"]).unwrap().is_empty());
-        // The untangled ball takes booleans. (With the bar centred they
-        // come out open where its faces meet the fold's slivers: a limit of
-        // the two-operand CSG, `docs/research.md` §5.4.)
+        // The untangled ball takes booleans, with the bar centred too,
+        // where its faces meet the fold's slivers (down to 7·10⁻¹⁶ mm²;
+        // open until the second pass, `docs/research.md` §18), and keeps
+        // the volume identities.
         let mut moved = bar();
         moved.map_positions(|p| p + DVec3::new(0.31, 0.17, 0.05), false);
-        for op in [BoolOp::Join, BoolOp::Cut, BoolOp::Intersect] {
-            let d = Boolean {
-                op,
-                ..Default::default()
+        for tool in [bar(), moved] {
+            let vol = |op| {
+                let d = Boolean {
+                    op,
+                    ..Default::default()
+                };
+                let r = boolean(&u, &tool, &d).unwrap().measure();
+                assert!(r.closed, "{op:?}");
+                r.volume
             };
-            assert!(boolean(&u, &moved, &d).unwrap().measure().closed, "{op:?}");
+            let [j, i, c] = [BoolOp::Join, BoolOp::Intersect, BoolOp::Cut].map(vol);
+            let (va, vb) = (m.volume, tool.measure().volume);
+            assert!((j + i - va - vb).abs() < 1e-9 * (va + vb), "{j} {i}");
+            assert!((c - (va - i)).abs() < 1e-9 * (va + vb), "{c} {i}");
         }
         // fuse untangles a single shell too.
         assert_eq!(fuse(&ball).unwrap().measure().volume, m.volume);
