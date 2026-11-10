@@ -26,6 +26,13 @@
 //!
 //! Crossing points and winding numbers are computed in f64 with `+ - * /`,
 //! `sqrt` and [`crate::trig::atan2`]: the same on every host.
+//!
+//! [`csg_points`] runs these steps twice when the first result is open
+//! (operands that touch: faces on faces, vertices within an ulp of a face).
+//! The second pass orders points on an edge exactly (`exact`), lays a
+//! triangle out exactly where its rounded outline is not simple, makes
+//! points at one position one point, and classifies faces lying on the
+//! other operand by orientation (`docs/research.md` §5.4, item 5).
 
 use glam::{DVec2, DVec3};
 use robust::{Coord, Coord3D, orient2d, orient3d};
@@ -33,7 +40,7 @@ use shape_gen::{Mesh, Placement, normalize, place, trig};
 use spade::{ConstrainedDelaunayTriangulation, Point2, Triangulation};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::selfcheck;
+use crate::{exact, selfcheck};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CsgOp {
@@ -59,6 +66,13 @@ struct Solid {
     min: DVec3,
     max: DVec3,
 }
+
+/// Two triangles, each `(mesh, triangle)`.
+type TriPair = ((u8, u32), (u8, u32));
+
+/// A region's boundary: its edges by sorted ids, each with how many times
+/// more it runs low to high than back.
+type Boundary = Vec<((u32, u32), i32)>;
 
 /// An edge of mesh `0` (A) or `1` (B), by its sorted point ids.
 type EdgeKey = (u8, u32, u32);
@@ -101,6 +115,9 @@ struct Csg {
     /// The edges each point lies on (beyond its own mesh's corners).
     on: Vec<Vec<EdgeKey>>,
     made: BTreeMap<Origin, u32>,
+    /// What made each point (None for the operands' own vertices); a point
+    /// two crossings rounded to keeps the first.
+    origin_of: Vec<Option<Origin>>,
     /// Each made point by its exact position.
     made_at: BTreeMap<[u64; 3], u32>,
     solids: [Solid; 2],
@@ -108,7 +125,20 @@ struct Csg {
     crossings: BTreeSet<(u32, u32)>,
     /// Pairs of triangles cut in one plane (`coplanar`), each as
     /// `((mesh, tri), (mesh, tri))`: where one surface lies on another.
-    coplanar_pairs: Vec<((u8, u32), (u8, u32))>,
+    coplanar_pairs: Vec<TriPair>,
+    /// Pairs of triangles that meet without crossing: one lies on one side
+    /// of the other's plane and touches it (a vertex or an edge on it).
+    touch_pairs: Vec<TriPair>,
+    /// The second pass, for operands that touch (`docs/research.md` §5.4,
+    /// item 5): crossings that round to one position stay two points,
+    /// points on an edge are ordered exactly, and a triangle whose rounded
+    /// outline spade cannot keep is triangulated in an exact layout.
+    robust: bool,
+    /// Second pass: pairs of points that one triangle's layout could not
+    /// tell apart; they are made one point everywhere ([`merge_points`]).
+    merges: std::cell::RefCell<Vec<(u32, u32)>>,
+    /// Second pass: each cut triangle's outline, in order.
+    chains: std::cell::RefCell<Vec<Vec<u32>>>,
 }
 
 fn c3(p: DVec3) -> Coord3D<f64> {
@@ -188,7 +218,9 @@ impl Csg {
         // They are made one point, on the edges of both, so the triangles
         // of both meshes cut at it agree on it.
         let key = pos.to_array().map(|x| (x + 0.0).to_bits());
-        if let Some(&id) = self.made_at.get(&key) {
+        if !self.robust
+            && let Some(&id) = self.made_at.get(&key)
+        {
             for &e in on {
                 self.note_on(id, e);
             }
@@ -198,6 +230,7 @@ impl Csg {
         let id = self.points.len() as u32;
         self.points.push(pos);
         self.on.push(on.to_vec());
+        self.origin_of.push(Some(origin));
         self.made.insert(origin, id);
         self.made_at.insert(key, id);
         id
@@ -343,6 +376,10 @@ impl Csg {
         if oa == [0; 3] {
             self.coplanar((ma, ia), (mb, ib));
             return;
+        }
+        let touch = |o: [i32; 3]| o.iter().all(|&s| s >= 0) || o.iter().all(|&s| s <= 0);
+        if touch(oa) || touch(ob) {
+            self.touch_pairs.push(((ma, ia), (mb, ib)));
         }
         let mut found: Vec<u32> = Vec::new();
         // Vertices of one triangle in the other's plane and inside it.
@@ -574,9 +611,9 @@ impl Csg {
         self.crossings.insert((id.min(b), id.max(b)));
     }
 
-    /// Triangle `tri` of mesh `m` cut into pieces (global ids, the
-    /// triangle's own winding).
-    fn pieces(&self, m: u8, tri: u32) -> Vec<[u32; 3]> {
+    /// [`Csg::pieces`] in the first pass: positions as rounded, and spade
+    /// keeps what it can (the result's check refuses an open result).
+    fn pieces_plain(&self, m: u8, tri: u32) -> Vec<[u32; 3]> {
         let t = self.solids[m as usize].tris[tri as usize];
         let Some(cut) = self.cuts[m as usize].get(&tri) else {
             return vec![t];
@@ -729,6 +766,548 @@ impl Csg {
         }
         out
     }
+
+    /// The points `ids` on edge `e`, in order from its end `from`: sorted
+    /// by their rounded positions, and where two of those lie within 2⁻³⁰
+    /// of the edge of each other, by their exact places on it
+    /// ([`Csg::param`]), so the two triangles that share the edge put them
+    /// in one order, and in the order the operands give them.
+    fn along_edge(&self, e: EdgeKey, mut ids: Vec<u32>, from: u32) -> Vec<u32> {
+        let (p, q) = (self.p(e.1), self.p(e.2));
+        let d = q - p;
+        let u = |i: u32| (self.p(i) - p).dot(d);
+        shape_core::sort::sort_by(&mut ids, |&x, &y| u(x).total_cmp(&u(y)).then(x.cmp(&y)));
+        let tol = d.length_squared() * (1.0 / (1u64 << 30) as f64);
+        let mut start = 0;
+        while start < ids.len() {
+            let mut end = start + 1;
+            while end < ids.len() && u(ids[end]) - u(ids[end - 1]) <= tol {
+                end += 1;
+            }
+            if end - start > 1 {
+                let params: Vec<(u32, Option<exact::Fraction>)> = ids[start..end]
+                    .iter()
+                    .map(|&i| (i, self.param(i, e)))
+                    .collect();
+                let cmp = |a: &(u32, Option<exact::Fraction>),
+                           b: &(u32, Option<exact::Fraction>)| {
+                    match (&a.1, &b.1) {
+                        (Some(x), Some(y)) => x.cmp(y),
+                        _ => u(a.0).total_cmp(&u(b.0)),
+                    }
+                    .then(a.0.cmp(&b.0))
+                };
+                // Insertion sort: it never needs the order to be total.
+                let mut run = params;
+                for i in 1..run.len() {
+                    let mut j = i;
+                    while j > 0 && cmp(&run[j - 1], &run[j]) == std::cmp::Ordering::Greater {
+                        run.swap(j - 1, j);
+                        j -= 1;
+                    }
+                }
+                for (k, (i, _)) in run.into_iter().enumerate() {
+                    ids[start + k] = i;
+                }
+            }
+            start = end;
+        }
+        if from != e.1 {
+            ids.reverse();
+        }
+        ids
+    }
+
+    /// Where point `x` lies along edge `e` (from its lower id), exactly:
+    /// for an operand's vertex on the edge, a crossing of the edge with a
+    /// triangle's plane, or with another edge. None for a point that only
+    /// rounded onto the edge, or a self-union's triple point.
+    fn param(&self, x: u32, e: EdgeKey) -> Option<exact::Fraction> {
+        let arr = |i: u32| self.p(i).to_array();
+        let (p, q) = (arr(e.1), arr(e.2));
+        match self.origin_of[x as usize] {
+            None => {
+                let d = self.p(e.2) - self.p(e.1);
+                let k = drop_axis(d);
+                let v = arr(x);
+                exact::Fraction::new(exact::Exp::diff(v[k], p[k]), exact::Exp::diff(q[k], p[k]))
+            }
+            Some(Origin::EdgeTri(f, om, tri)) if f == e => {
+                let t = self.solids[om as usize].tris[tri as usize].map(arr);
+                let dp = exact::orient3d(t[0], t[1], t[2], p);
+                let dq = exact::orient3d(t[0], t[1], t[2], q);
+                let den = dp.sub(&dq);
+                exact::Fraction::new(dp, den)
+            }
+            Some(Origin::EdgeEdge(f, g)) if f == e || g == e => {
+                let o = if f == e { g } else { f };
+                let n = (self.p(e.2) - self.p(e.1)).cross(self.p(o.2) - self.p(o.1));
+                let axis = drop_axis(n);
+                let pr = |i: u32| project(self.p(i), axis).to_array();
+                let dp = exact::orient2d(pr(o.1), pr(o.2), pr(e.1));
+                let dq = exact::orient2d(pr(o.1), pr(o.2), pr(e.2));
+                let den = dp.sub(&dq);
+                exact::Fraction::new(dp, den)
+            }
+            _ => None,
+        }
+    }
+
+    /// Triangle `tri` of mesh `m` cut into pieces (global ids, the
+    /// triangle's own winding).
+    fn pieces(&self, m: u8, tri: u32) -> Vec<[u32; 3]> {
+        if !self.robust {
+            return self.pieces_plain(m, tri);
+        }
+        let t = self.solids[m as usize].tris[tri as usize];
+        let Some(cut) = self.cuts[m as usize].get(&tri) else {
+            return vec![t];
+        };
+        let normal = self.tri_normal(t);
+        let axis = drop_axis(normal);
+        // The outline: each edge with the points on it, in order.
+        let mut chain: Vec<u32> = Vec::new();
+        let mut sides: Vec<usize> = Vec::new();
+        for k in 0..3 {
+            let (a, b) = (t[k], t[(k + 1) % 3]);
+            let e = edge_key(m, a, b);
+            let along: Vec<u32> = cut
+                .points
+                .iter()
+                .copied()
+                .filter(|&i| i != a && i != b && self.on[i as usize].contains(&e))
+                .collect();
+            let along = self.along_edge(e, along, a);
+            chain.push(a);
+            sides.push(3);
+            sides.extend(along.iter().map(|_| k));
+            chain.extend(along);
+        }
+        // A point made inside the triangle (an edge through it) can round to
+        // a position on or past its outline, as seen in the projection: past
+        // a corner's edge, or past a point rounded off an edge. Its segments
+        // would then run along the outline or through an outline point, and
+        // spade would merge or drop them, so regions would leak or pieces be
+        // lost. It is placed in the triangulation just inside the outline
+        // instead; its own position (shared with the other mesh) is
+        // unchanged, as are which segments end at it (`docs/research.md`
+        // §5.4, follow-up 4).
+        self.chains.borrow_mut().push(chain.clone());
+        let outline: Vec<DVec2> = chain.iter().map(|&i| project(self.p(i), axis)).collect();
+        let v = t.map(|i| project(self.p(i), axis));
+        let turn = o2(v[0], v[1], v[2]);
+        let at = |i: u32| {
+            let q = project(self.p(i), axis);
+            // A point of the other mesh's at one of ours keeps its place, so
+            // spade merges the two.
+            let shared = chain.iter().any(|&j| self.p(j) == self.p(i));
+            if turn == 0 || shared || chain.contains(&i) {
+                return q;
+            }
+            inward(&outline, (v[0] + v[1] + v[2]) / 3.0, q)
+        };
+        if let Some(out) = self.triangulate(&chain, cut, at, turn < 0) {
+            return out;
+        }
+        // The rounded outline is not a simple polygon, or a segment was lost
+        // or merged into another: points made a rounding error from a corner
+        // or from each other (operands that touch, `docs/research.md` §5.4,
+        // item 5). The triangle is triangulated again in a layout of its
+        // own where the outline is exact: the corners at (0, 0), (1, 0) and
+        // (0, 1), and each point on an edge at a distinct multiple of 2⁻⁵²
+        // along it, in its order. Points inside are placed by their
+        // barycentric coordinates, just inside the outline. Only which
+        // points the pieces join comes from the layout; every position is
+        // unchanged.
+        let layout = self.exact_layout(t, axis, &chain, &sides);
+        let corners = [DVec2::ZERO, DVec2::X, DVec2::Y];
+        let square: Vec<DVec2> = chain.iter().map(|i| layout[i]).collect();
+        let centre = (corners[0] + corners[1] + corners[2]) / 3.0;
+        let mut place: BTreeMap<u32, DVec2> = layout.clone();
+        // Where each place is taken, and by which position.
+        let mut taken: BTreeMap<[u64; 2], u32> = BTreeMap::new();
+        for (&i, q) in &layout {
+            taken.insert(q.to_array().map(f64::to_bits), i);
+        }
+        for &i in &cut.points {
+            if place.contains_key(&i) {
+                continue;
+            }
+            if let Some(&j) = chain.iter().find(|&&j| self.p(j) == self.p(i)) {
+                place.insert(i, layout[&j]);
+                continue;
+            }
+            let q = project(self.p(i), axis);
+            let den = (v[1] - v[0]).perp_dot(v[2] - v[0]);
+            let b = if den != 0.0 {
+                DVec2::new(
+                    (q - v[0]).perp_dot(v[2] - v[0]) / den,
+                    (v[1] - v[0]).perp_dot(q - v[0]) / den,
+                )
+            } else {
+                centre
+            };
+            let mut q = inward(&square, centre, b);
+            // Two points at different positions that this layout cannot
+            // tell apart: the later one moves along one of its segments
+            // (towards the point at its other end, as rounded) by the
+            // smallest step that frees it, staying inside.
+            let busy = |q: DVec2, taken: &BTreeMap<[u64; 2], u32>| {
+                taken
+                    .get(&q.to_array().map(f64::to_bits))
+                    .is_some_and(|&j| self.p(j) != self.p(i))
+            };
+            if busy(q, &taken) {
+                let toward = cut
+                    .segments
+                    .iter()
+                    .find_map(|s| {
+                        let k = if s[0] == i {
+                            s[1]
+                        } else if s[1] == i {
+                            s[0]
+                        } else {
+                            return None;
+                        };
+                        Some(place.get(&k).copied().unwrap_or(centre))
+                    })
+                    .unwrap_or(centre);
+                let mut step = f64::EPSILON;
+                while step < 0.5 {
+                    let r = q + (toward - q) * step;
+                    if !busy(r, &taken) && strictly_inside(&square, r) {
+                        q = r;
+                        break;
+                    }
+                    step *= 2.0;
+                }
+            }
+            taken.entry(q.to_array().map(f64::to_bits)).or_insert(i);
+            place.insert(i, q);
+        }
+        let at = |i: u32| place.get(&i).copied().unwrap_or(centre);
+        self.triangulate(&chain, cut, at, false)
+            .unwrap_or_else(|| self.triangulate_lossy(&chain, cut, at, false))
+    }
+
+    /// Each outline point's place in [`Csg::pieces`]' exact layout: the
+    /// corners at (0, 0), (1, 0), (0, 1), and the points of edge `k` at
+    /// distinct multiples of 2⁻⁵² along it, in chain order, as near their
+    /// own fraction of the edge as that allows.
+    fn exact_layout(
+        &self,
+        t: [u32; 3],
+        axis: usize,
+        chain: &[u32],
+        sides: &[usize],
+    ) -> BTreeMap<u32, DVec2> {
+        const N: i64 = 1 << 52;
+        let mut layout: BTreeMap<u32, DVec2> = BTreeMap::new();
+        let corners = [DVec2::ZERO, DVec2::X, DVec2::Y];
+        for k in 0..3 {
+            layout.insert(t[k], corners[k]);
+            let (a, b) = (t[k], t[(k + 1) % 3]);
+            let ids: Vec<u32> = chain
+                .iter()
+                .zip(sides)
+                .filter(|&(_, &s)| s == k)
+                .map(|(&i, _)| i)
+                .collect();
+            if ids.is_empty() {
+                continue;
+            }
+            let (pa, pb) = (project(self.p(a), axis), project(self.p(b), axis));
+            let d = pb - pa;
+            let l2 = d.length_squared();
+            let raw: Vec<i64> = ids
+                .iter()
+                .map(|&i| {
+                    let u = if l2 > 0.0 {
+                        (project(self.p(i), axis) - pa).dot(d) / l2
+                    } else {
+                        0.5
+                    };
+                    (u.clamp(0.0, 1.0) * N as f64) as i64
+                })
+                .collect();
+            // Points at one position share a place, and so does every
+            // point between two of them (they are made one point later,
+            // `merge_points`); so do points at a corner's position, with
+            // the corner.
+            let key = |i: u32| self.p(i).to_array().map(|x| (x + 0.0).to_bits());
+            let mut group: Vec<usize> = (0..ids.len()).collect();
+            let mut first: BTreeMap<[u64; 3], usize> = BTreeMap::new();
+            for (k, &i) in ids.iter().enumerate() {
+                match first.get(&key(i)) {
+                    Some(&j) => {
+                        let gj = group[j];
+                        for g in &mut group[j..=k] {
+                            *g = gj;
+                        }
+                    }
+                    None => {
+                        first.insert(key(i), k);
+                    }
+                }
+            }
+            let at_a = |i: u32| key(i) == key(a);
+            let at_b = |i: u32| key(i) == key(b);
+            let mut ks: Vec<i64> = vec![0; ids.len()];
+            let mut prev = 0;
+            for k in 0..ids.len() {
+                ks[k] = if k > 0 && group[k] == group[k - 1] {
+                    ks[k - 1]
+                } else if group[..=k]
+                    .iter()
+                    .zip(&ids)
+                    .any(|(&g, &i)| g == group[k] && at_a(i))
+                {
+                    0
+                } else {
+                    raw[k].max(prev + 1)
+                };
+                prev = ks[k];
+            }
+            let mut next = N;
+            for k in (0..ids.len()).rev() {
+                let same = k + 1 < ids.len() && group[k] == group[k + 1];
+                let tail = group[k..]
+                    .iter()
+                    .zip(&ids[k..])
+                    .any(|(&g, &i)| g == group[k] && at_b(i));
+                ks[k] = if same {
+                    ks[k + 1]
+                } else if tail {
+                    N
+                } else if ks[k] == 0 && at_a(ids[k]) {
+                    0
+                } else {
+                    ks[k].min(next - 1)
+                };
+                next = ks[k];
+            }
+            for (&i, &x) in ids.iter().zip(&ks) {
+                let (f, g) = (x as f64 / N as f64, (N - x) as f64 / N as f64);
+                let q = match k {
+                    0 => DVec2::new(f, 0.0),
+                    1 => DVec2::new(g, f),
+                    _ => DVec2::new(0.0, g),
+                };
+                layout.insert(i, q);
+            }
+        }
+        layout
+    }
+
+    /// The pieces of a cut triangle, from a constrained Delaunay
+    /// triangulation of its outline (`chain`) and segments with each point
+    /// at `at`; None unless every outline edge and segment came out as one
+    /// edge and no two points at different positions merged.
+    fn triangulate(
+        &self,
+        chain: &[u32],
+        cut: &Cut,
+        at: impl Fn(u32) -> DVec2,
+        flip: bool,
+    ) -> Option<Vec<[u32; 3]>> {
+        self.cdt_pieces(chain, cut, at, flip, true)
+    }
+
+    /// [`Csg::triangulate`], keeping what it can when the triangulation is
+    /// not faithful (the result's check then refuses an open result).
+    fn triangulate_lossy(
+        &self,
+        chain: &[u32],
+        cut: &Cut,
+        at: impl Fn(u32) -> DVec2,
+        flip: bool,
+    ) -> Vec<[u32; 3]> {
+        self.cdt_pieces(chain, cut, at, flip, false)
+            .unwrap_or_default()
+    }
+
+    fn cdt_pieces(
+        &self,
+        chain: &[u32],
+        cut: &Cut,
+        at: impl Fn(u32) -> DVec2,
+        flip: bool,
+        strict: bool,
+    ) -> Option<Vec<[u32; 3]>> {
+        let mut cdt: ConstrainedDelaunayTriangulation<Point2<f64>> =
+            ConstrainedDelaunayTriangulation::new();
+        let mut id_of: BTreeMap<usize, u32> = BTreeMap::new();
+        let mut handle_of: BTreeMap<u32, spade::handles::FixedVertexHandle> = BTreeMap::new();
+        let mut faithful = true;
+        for &i in chain.iter().chain(cut.points.iter()) {
+            if handle_of.contains_key(&i) {
+                continue;
+            }
+            let q = at(i);
+            let Ok(h) = cdt.insert(Point2::new(q.x, q.y)) else {
+                faithful = false;
+                continue;
+            };
+            match id_of.get(&h.index()) {
+                Some(&j) if self.p(j) != self.p(i) => {
+                    if strict {
+                        faithful = false;
+                    } else if self.robust {
+                        self.merges.borrow_mut().push((j, i));
+                    }
+                }
+                Some(&j) => {
+                    if self.robust {
+                        self.merges.borrow_mut().push((j, i));
+                    }
+                }
+                None => {
+                    id_of.insert(h.index(), i);
+                }
+            }
+            handle_of.insert(i, h);
+        }
+        let mut boundary: BTreeSet<(usize, usize)> = BTreeSet::new();
+        for k in 0..chain.len() {
+            let (a, b) = (chain[k], chain[(k + 1) % chain.len()]);
+            let (Some(&ha), Some(&hb)) = (handle_of.get(&a), handle_of.get(&b)) else {
+                continue;
+            };
+            if ha != hb {
+                if cdt.try_add_constraint(ha, hb).len() != 1 {
+                    faithful = false;
+                }
+                boundary.insert((ha.index().min(hb.index()), ha.index().max(hb.index())));
+            }
+        }
+        for s in &cut.segments {
+            let (Some(&ha), Some(&hb)) = (handle_of.get(&s[0]), handle_of.get(&s[1])) else {
+                continue;
+            };
+            if ha != hb
+                && cdt.try_add_constraint(ha, hb).len() != 1
+                && !cdt.exists_constraint(ha, hb)
+            {
+                faithful = false;
+            }
+        }
+        if strict && !faithful {
+            return None;
+        }
+        let faces: Vec<[usize; 3]> = cdt
+            .inner_faces()
+            .map(|f| f.vertices().map(|v| v.fix().index()))
+            .collect();
+        // Flood from the hull through every edge that is not the outline:
+        // what it reaches lies outside the triangle.
+        let key = |a: usize, b: usize| (a.min(b), a.max(b));
+        let mut by_edge: BTreeMap<(usize, usize), Vec<usize>> = BTreeMap::new();
+        for (fi, f) in faces.iter().enumerate() {
+            for k in 0..3 {
+                by_edge
+                    .entry(key(f[k], f[(k + 1) % 3]))
+                    .or_default()
+                    .push(fi);
+            }
+        }
+        let mut outside = vec![false; faces.len()];
+        let mut queue: Vec<usize> = Vec::new();
+        for (fi, f) in faces.iter().enumerate() {
+            for k in 0..3 {
+                let e = key(f[k], f[(k + 1) % 3]);
+                if by_edge[&e].len() == 1 && !boundary.contains(&e) && !outside[fi] {
+                    outside[fi] = true;
+                    queue.push(fi);
+                }
+            }
+        }
+        while let Some(fi) = queue.pop() {
+            let f = faces[fi];
+            for k in 0..3 {
+                let e = key(f[k], f[(k + 1) % 3]);
+                if boundary.contains(&e) {
+                    continue;
+                }
+                for &g in &by_edge[&e] {
+                    if !outside[g] {
+                        outside[g] = true;
+                        queue.push(g);
+                    }
+                }
+            }
+        }
+        // spade's faces turn counter-clockwise in the layout; the
+        // triangle's own winding there decides whether they turn back.
+        let mut out = Vec::new();
+        for (fi, f) in faces.iter().enumerate() {
+            if outside[fi] {
+                continue;
+            }
+            let ids = f.map(|h| id_of[&h]);
+            if ids[0] == ids[1] || ids[1] == ids[2] || ids[0] == ids[2] {
+                continue;
+            }
+            out.push(if flip { [ids[0], ids[2], ids[1]] } else { ids });
+        }
+        if strict {
+            // Every outline edge borders one piece, and every segment
+            // inside two: the rounded outline was a simple polygon and the
+            // segments lie inside it.
+            let mut uses: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+            for t in &out {
+                for k in 0..3 {
+                    let (a, b) = (t[k], t[(k + 1) % 3]);
+                    *uses.entry((a.min(b), a.max(b))).or_default() += 1;
+                }
+            }
+            let id = |a: u32| {
+                handle_of
+                    .get(&a)
+                    .and_then(|h| id_of.get(&h.index()))
+                    .copied()
+                    .unwrap_or(a)
+            };
+            let n = |a: u32, b: u32| {
+                let (a, b) = (id(a), id(b));
+                uses.get(&(a.min(b), a.max(b))).copied().unwrap_or(0)
+            };
+            let mut outline: BTreeSet<(u32, u32)> = BTreeSet::new();
+            for k in 0..chain.len() {
+                let (a, b) = (chain[k], chain[(k + 1) % chain.len()]);
+                outline.insert((id(a).min(id(b)), id(a).max(id(b))));
+                if id(a) != id(b) && n(a, b) != 1 {
+                    return None;
+                }
+            }
+            for s in &cut.segments {
+                let (a, b) = (s[0], s[1]);
+                if id(a) != id(b)
+                    && !outline.contains(&(id(a).min(id(b)), id(a).max(id(b))))
+                    && n(a, b) != 2
+                {
+                    return None;
+                }
+            }
+        }
+        Some(out)
+    }
+}
+
+/// `q`, or if it is not strictly inside `outline`, the smallest step from
+/// it towards `centre`, by powers of two, that is.
+fn inward(outline: &[DVec2], centre: DVec2, q: DVec2) -> DVec2 {
+    if strictly_inside(outline, q) {
+        return q;
+    }
+    let mut step = f64::EPSILON;
+    while step < 0.5 {
+        let r = q + (centre - q) * step;
+        if strictly_inside(outline, r) {
+            return r;
+        }
+        step *= 2.0;
+    }
+    centre
 }
 
 /// Whether `q` lies inside the closed polygon and on none of its edges,
@@ -878,7 +1457,7 @@ pub fn csg_traced(
     let mut at = BTreeMap::new();
     let sa = weld(a, pa, &mut points, &mut at).map_err(|e| format!("a: {e}"))?;
     let sb = weld(b, pb, &mut points, &mut at).map_err(|e| format!("b: {e}"))?;
-    let (c, kept) = arrange(points, sa, sb, op);
+    let (c, kept) = arrange(points, sa, sb, op, false);
     // 4. What the operation keeps.
     let colors = !a.colors.is_empty() || !b.colors.is_empty();
     let mut out = Mesh::default();
@@ -974,15 +1553,21 @@ struct Regions {
 impl Csg {
     fn new(points: Vec<DVec3>, solids: [Solid; 2]) -> Csg {
         let on = vec![Vec::new(); points.len()];
+        let origin_of = vec![None; points.len()];
         Csg {
             points,
             on,
             made: BTreeMap::new(),
+            origin_of,
             made_at: BTreeMap::new(),
             solids,
             cuts: [BTreeMap::new(), BTreeMap::new()],
             crossings: BTreeSet::new(),
             coplanar_pairs: Vec::new(),
+            touch_pairs: Vec::new(),
+            robust: false,
+            merges: std::cell::RefCell::new(Vec::new()),
+            chains: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -1073,8 +1658,9 @@ impl Csg {
 }
 
 /// Steps 1 to 3 and the choice of step 4: which pieces `op` keeps.
-fn arrange(points: Vec<DVec3>, sa: Solid, sb: Solid, op: CsgOp) -> (Csg, Vec<Kept>) {
+fn arrange(points: Vec<DVec3>, sa: Solid, sb: Solid, op: CsgOp, robust: bool) -> (Csg, Vec<Kept>) {
     let mut c = Csg::new(points, [sa, sb]);
+    c.robust = robust;
     // 1. Every pair of triangles whose boxes overlap.
     let box_a = (c.solids[0].min, c.solids[0].max);
     let box_b = (c.solids[1].min, c.solids[1].max);
@@ -1093,20 +1679,34 @@ fn arrange(points: Vec<DVec3>, sa: Solid, sb: Solid, op: CsgOp) -> (Csg, Vec<Kep
         c.pair((0, ia), (1, ib));
     }
     // 2. The pieces.
-    let pieces = c.all_pieces(2);
+    let mut pieces = c.all_pieces(2);
+    if robust {
+        pieces = merge_points(&mut c, pieces);
+    }
     // 3. Regions, each classified by the other mesh's winding number.
     let regions = c.regions(&pieces);
     let scale = c.scale();
     // (inside the other mesh in front, behind).
     let mut sides: BTreeMap<usize, (bool, bool)> = BTreeMap::new();
+    let twins = if robust {
+        coincident_regions(&c, &pieces, &regions)
+    } else {
+        BTreeMap::new()
+    };
     for (&r, &b) in &regions.best {
+        if let Some(&same) = twins.get(&r) {
+            // On the other surface: the other solid lies behind a face
+            // facing the same way, in front of one facing the other way.
+            sides.insert(r, (!same, same));
+            continue;
+        }
         let p = &pieces[b];
         let (front, back) = c.probes(p, scale);
         let other = &c.solids[1 - p.mesh as usize].tris;
         let inside = |q: DVec3| winding(&c.points, other, q) > 0.5;
         sides.insert(r, (inside(front), inside(back)));
     }
-    let mut kept = Vec::new();
+    let mut choice: Vec<(bool, bool)> = Vec::with_capacity(pieces.len());
     for (pi, p) in pieces.iter().enumerate() {
         let (front, back) = sides[&regions.root[pi]];
         let (keep, flip) = if p.mesh == 0 {
@@ -1125,17 +1725,373 @@ fn arrange(points: Vec<DVec3>, sa: Solid, sb: Solid, op: CsgOp) -> (Csg, Vec<Kep
                 CsgOp::Subtract => (front, true),
             }
         };
-        if !keep {
-            continue;
+        choice.push((keep, flip));
+    }
+    if robust {
+        close_slivers(&c, &pieces, &regions, op, scale, &mut choice);
+    }
+    let mut kept = Vec::new();
+    for (p, &(keep, flip)) in pieces.iter().zip(&choice) {
+        if keep {
+            kept.push(Kept {
+                mesh: p.mesh,
+                tri: p.tri,
+                ids: p.ids,
+                flip,
+            });
         }
-        kept.push(Kept {
-            mesh: p.mesh,
-            tri: p.tri,
-            ids: p.ids,
-            flip,
-        });
     }
     (c, kept)
+}
+
+/// Makes points that must be one point one: each pair a triangle's layout
+/// merged, every set of points at one position (the result is welded by
+/// position), and along each cut triangle's outline, the run between two
+/// places where one position comes back (a crossing rounded onto a point
+/// past others that lie, in exact order, between them: a run a few ulps
+/// long). Repeated until nothing changes. The lowest id stands for each
+/// set, in the pieces and in the crossings; pieces left with two equal
+/// corners are dropped. Each step collapses edges of the arrangement, so
+/// a closed surface stays closed (`docs/research.md` §5.4, item 5).
+fn merge_points(c: &mut Csg, pieces: Vec<Piece>) -> Vec<Piece> {
+    let merges = std::mem::take(&mut *c.merges.borrow_mut());
+    let chains = std::mem::take(&mut *c.chains.borrow_mut());
+    let mut parent: BTreeMap<u32, u32> = BTreeMap::new();
+    fn find(parent: &BTreeMap<u32, u32>, mut i: u32) -> u32 {
+        while let Some(&p) = parent.get(&i) {
+            if p == i {
+                break;
+            }
+            i = p;
+        }
+        i
+    }
+    fn union(parent: &mut BTreeMap<u32, u32>, a: u32, b: u32) -> bool {
+        let (ra, rb) = (find(parent, a), find(parent, b));
+        if ra == rb {
+            return false;
+        }
+        parent.insert(ra.max(rb), ra.min(rb));
+        true
+    }
+    for (a, b) in merges {
+        union(&mut parent, a, b);
+    }
+    // Every point a piece uses, by position.
+    let mut used: BTreeSet<u32> = BTreeSet::new();
+    for p in &pieces {
+        used.extend(p.ids);
+    }
+    let key = |c: &Csg, i: u32| c.points[i as usize].to_array().map(|x| (x + 0.0).to_bits());
+    let tiny = c.scale() * (1.0 / (1u64 << 30) as f64);
+    loop {
+        let mut changed = false;
+        let mut at: BTreeMap<[u64; 3], u32> = BTreeMap::new();
+        for &i in &used {
+            let r = find(&parent, i);
+            let k = key(c, r);
+            match at.get(&k) {
+                Some(&j) => changed |= union(&mut parent, j, r),
+                None => {
+                    at.insert(k, r);
+                }
+            }
+        }
+        for chain in &chains {
+            let mut seq: Vec<u32> = Vec::new();
+            for &i in chain {
+                let r = find(&parent, i);
+                if seq.last() != Some(&r) {
+                    seq.push(r);
+                }
+            }
+            while seq.len() > 1 && seq.first() == seq.last() {
+                seq.pop();
+            }
+            let n = seq.len();
+            let mut first: BTreeMap<u32, usize> = BTreeMap::new();
+            for (k, &r) in seq.iter().enumerate() {
+                if let Some(&j) = first.get(&r) {
+                    // The shorter way round from j to k collapses.
+                    let run: Vec<u32> = if k - j <= n - (k - j) {
+                        seq[j..=k].to_vec()
+                    } else {
+                        seq[k..].iter().chain(&seq[..=j]).copied().collect()
+                    };
+                    // Only a run a rounding error long: a longer one is
+                    // left, and the result's check refuses what follows.
+                    let (mut lo, mut hi) = (DVec3::INFINITY, DVec3::NEG_INFINITY);
+                    for &i in &run {
+                        lo = lo.min(c.points[i as usize]);
+                        hi = hi.max(c.points[i as usize]);
+                    }
+                    if (hi - lo).length() > tiny {
+                        continue;
+                    }
+                    for w in run.windows(2) {
+                        changed |= union(&mut parent, w[0], w[1]);
+                    }
+                } else {
+                    first.insert(r, k);
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    if parent.is_empty() {
+        return pieces;
+    }
+    let crossings = std::mem::take(&mut c.crossings);
+    c.crossings = crossings
+        .into_iter()
+        .map(|(a, b)| {
+            let (a, b) = (find(&parent, a), find(&parent, b));
+            (a.min(b), a.max(b))
+        })
+        .filter(|(a, b)| a != b)
+        .collect();
+    pieces
+        .into_iter()
+        .filter_map(|p| {
+            let ids = p.ids.map(|i| find(&parent, i));
+            (ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2]).then_some(Piece { ids, ..p })
+        })
+        .collect()
+}
+
+/// The second pass's last resort for regions no probe can classify: a
+/// region whose largest piece has an inradius under 2⁻³⁰ of the operands'
+/// size (a sliver between surfaces a rounding error apart) keeps its
+/// probe's answer unless the result is open along it. Then, for each
+/// cluster of such regions on the open edges (at most 12, joined by
+/// edges), the choice of which to keep that leaves the fewest unmatched
+/// edges is taken: fewest changes first, then the lowest-numbered.
+/// Regions a probe can resolve are never changed, and a kept piece faces
+/// as the operation turns it (`docs/research.md` §5.4, item 5).
+fn close_slivers(
+    c: &Csg,
+    pieces: &[Piece],
+    regions: &Regions,
+    op: CsgOp,
+    scale: f64,
+    choice: &mut [(bool, bool)],
+) {
+    let directed = |p: &Piece, flip: bool| {
+        let ids = if flip {
+            [p.ids[0], p.ids[2], p.ids[1]]
+        } else {
+            p.ids
+        };
+        (0..3).map(move |k| (ids[k], ids[(k + 1) % 3]))
+    };
+    let balance = |choice: &[(bool, bool)]| {
+        let mut b: BTreeMap<(u32, u32), i64> = BTreeMap::new();
+        for (p, &(keep, flip)) in pieces.iter().zip(choice) {
+            if keep {
+                for (x, y) in directed(p, flip) {
+                    *b.entry((x.min(y), x.max(y))).or_default() += if x < y { 1 } else { -1 };
+                }
+            }
+        }
+        b
+    };
+    let base = balance(choice);
+    let open: BTreeSet<(u32, u32)> = base
+        .iter()
+        .filter(|(_, n)| **n != 0)
+        .map(|(&e, _)| e)
+        .collect();
+    if open.is_empty() {
+        return;
+    }
+    let inradius = |p: &Piece| {
+        let [a, b, cc] = p.ids.map(|i| c.points[i as usize]);
+        let perimeter = (b - a).length() + (cc - b).length() + (a - cc).length();
+        (b - a).cross(cc - a).length() / perimeter.max(1e-300)
+    };
+    let tiny = scale * (1.0 / (1u64 << 30) as f64);
+    // Unreliable regions on an open edge, with their pieces.
+    let mut members: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (pi, &r) in regions.root.iter().enumerate() {
+        members.entry(r).or_default().push(pi);
+    }
+    let edges_of = |r: usize| -> BTreeSet<(u32, u32)> {
+        members[&r]
+            .iter()
+            .flat_map(|&pi| directed(&pieces[pi], false).map(|(x, y)| (x.min(y), x.max(y))))
+            .collect()
+    };
+    let unsure: Vec<usize> = regions
+        .best
+        .iter()
+        .filter(|&(&r, &b)| {
+            inradius(&pieces[b]) < tiny && edges_of(r).iter().any(|e| open.contains(e))
+        })
+        .map(|(&r, _)| r)
+        .collect();
+    // Clusters: regions sharing an edge.
+    let mut cluster: BTreeMap<usize, usize> = unsure.iter().map(|&r| (r, r)).collect();
+    fn find(c: &mut BTreeMap<usize, usize>, mut r: usize) -> usize {
+        while c[&r] != r {
+            r = c[&r];
+        }
+        r
+    }
+    for (i, &a) in unsure.iter().enumerate() {
+        let ea = edges_of(a);
+        for &b in &unsure[i + 1..] {
+            if edges_of(b).iter().any(|e| ea.contains(e)) {
+                let (x, y) = (find(&mut cluster, a), find(&mut cluster, b));
+                if x != y {
+                    cluster.insert(x.max(y), x.min(y));
+                }
+            }
+        }
+    }
+    let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for &r in &unsure {
+        let k = find(&mut cluster, r);
+        groups.entry(k).or_default().push(r);
+    }
+    // How a region's pieces face when kept.
+    let flip_of = |m: u8| m == 1 && op == CsgOp::Subtract;
+    let mut base = base;
+    for rs in groups.values() {
+        if rs.len() > 12 {
+            continue;
+        }
+        let add = |b: &mut BTreeMap<(u32, u32), i64>, pi: usize, flip: bool, sign: i64| {
+            for (x, y) in directed(&pieces[pi], flip) {
+                *b.entry((x.min(y), x.max(y))).or_default() += sign * if x < y { 1 } else { -1 };
+            }
+        };
+        // The rest of the result, without the cluster.
+        let mut rest = base.clone();
+        for &r in rs {
+            for &pi in &members[&r] {
+                if choice[pi].0 {
+                    add(&mut rest, pi, choice[pi].1, -1);
+                }
+            }
+        }
+        let touched: BTreeSet<(u32, u32)> = rs.iter().flat_map(|&r| edges_of(r)).collect();
+        let now: u32 = rs
+            .iter()
+            .enumerate()
+            .filter(|&(_, &r)| choice[members[&r][0]].0)
+            .map(|(i, _)| 1 << i)
+            .sum();
+        let mut best: Option<(u64, u32, u32)> = None;
+        for mask in 0u32..(1 << rs.len()) {
+            let mut b = rest.clone();
+            for (i, &r) in rs.iter().enumerate() {
+                if mask & (1 << i) != 0 {
+                    for &pi in &members[&r] {
+                        add(&mut b, pi, flip_of(pieces[pi].mesh), 1);
+                    }
+                }
+            }
+            let cost: u64 = touched
+                .iter()
+                .map(|e| b.get(e).map_or(0, |n| n.unsigned_abs()))
+                .sum();
+            let key = (cost, (mask ^ now).count_ones(), mask);
+            if best.is_none_or(|bk| key < bk) {
+                best = Some(key);
+            }
+        }
+        let Some((_, _, mask)) = best else {
+            continue;
+        };
+        for (i, &r) in rs.iter().enumerate() {
+            let keep = mask & (1 << i) != 0;
+            for &pi in &members[&r] {
+                choice[pi] = (keep, keep && flip_of(pieces[pi].mesh));
+            }
+        }
+        // The cluster's choice is part of the result the next one sees.
+        for &r in rs {
+            for &pi in &members[&r] {
+                if choice[pi].0 {
+                    add(&mut rest, pi, choice[pi].1, 1);
+                }
+            }
+        }
+        base = rest;
+    }
+}
+
+/// The second pass's regions that lie on the other mesh's surface,
+/// decided symbolically: a region of one mesh whose boundary is the
+/// boundary of a region of the other, edge for edge (by point ids, after
+/// [`merge_points`]), every triangle of each lying in one plane with a
+/// triangle of the other (`coplanar`, exact). Each maps to whether the two
+/// face the same way. A sliver a rounding error wide, which no probe can
+/// classify, is decided so (`docs/research.md` §5.4, item 5).
+fn coincident_regions(c: &Csg, pieces: &[Piece], regions: &Regions) -> BTreeMap<usize, bool> {
+    let mut partners: BTreeMap<(u8, u32), BTreeSet<(u8, u32)>> = BTreeMap::new();
+    for &(a, b) in &c.coplanar_pairs {
+        partners.entry(a).or_default().insert(b);
+        partners.entry(b).or_default().insert(a);
+    }
+    // Each region's triangles, but for pieces whose corners are exactly
+    // collinear (they bound nothing).
+    let mut tris: BTreeMap<usize, BTreeSet<(u8, u32)>> = BTreeMap::new();
+    for (pi, p) in pieces.iter().enumerate() {
+        let e = tris.entry(regions.root[pi]).or_default();
+        if c.tri_normal(p.ids) != DVec3::ZERO {
+            e.insert((p.mesh, p.tri));
+        }
+    }
+    let on = |r: usize, o: usize| {
+        tris[&r].iter().all(|t| {
+            partners
+                .get(t)
+                .is_some_and(|ps| ps.iter().any(|q| tris[&o].contains(q)))
+        })
+    };
+    // Each region's boundary: directed edges not cancelled within it.
+    let mut edges: BTreeMap<usize, BTreeMap<(u32, u32), i32>> = BTreeMap::new();
+    for (pi, p) in pieces.iter().enumerate() {
+        let e = edges.entry(regions.root[pi]).or_default();
+        for k in 0..3 {
+            let (a, b) = (p.ids[k], p.ids[(k + 1) % 3]);
+            *e.entry((a.min(b), a.max(b))).or_default() += if a < b { 1 } else { -1 };
+        }
+    }
+    let mut by_boundary: BTreeMap<Boundary, Vec<usize>> = BTreeMap::new();
+    let mut mesh_of: BTreeMap<usize, u8> = BTreeMap::new();
+    for (&r, e) in &edges {
+        let b: Vec<((u32, u32), i32)> = e
+            .iter()
+            .filter(|(_, n)| **n != 0)
+            .map(|(&k, &n)| (k, n))
+            .collect();
+        if b.is_empty() {
+            continue;
+        }
+        mesh_of.insert(r, pieces[regions.best[&r]].mesh);
+        by_boundary.entry(b).or_default().push(r);
+    }
+    let mut twins: BTreeMap<usize, bool> = BTreeMap::new();
+    for (b, rs) in &by_boundary {
+        let flipped: Vec<((u32, u32), i32)> = b.iter().map(|&(k, n)| (k, -n)).collect();
+        for &r in rs {
+            let m = mesh_of[&r];
+            let twin = |o: usize| mesh_of[&o] != m && on(r, o) && on(o, r);
+            if rs.iter().any(|&o| twin(o)) {
+                twins.insert(r, true);
+            } else if by_boundary
+                .get(&flipped)
+                .is_some_and(|os| os.iter().any(|&o| twin(o)))
+            {
+                twins.insert(r, false);
+            }
+        }
+    }
+    twins
 }
 
 /// The self-union's steps: one mesh's arrangement with itself, keeping the
@@ -1356,13 +2312,213 @@ pub fn csg_points(
     b: (&[DVec3], &[[u32; 3]]),
     op: CsgOp,
 ) -> Result<(Vec<DVec3>, Vec<[u32; 3]>, Vec<(u8, u32)>), OperandError> {
-    let mut points = Vec::new();
-    let mut at = BTreeMap::new();
-    let sa = weld64(0, false, a, &mut points, &mut at)?;
-    let sb = weld64(1, false, b, &mut points, &mut at)?;
-    let (c, kept) = arrange(points, sa, sb, op);
-    let (points, tris, origins, _) = emit(&c, &kept);
-    Ok((points, tris, origins))
+    csg_points_traced(a, b, op).map(|r| (r.points, r.tris, r.origins))
+}
+
+/// What [`csg_points_traced`] returns.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CsgOutput {
+    /// The points the triangles use.
+    pub points: Vec<DVec3>,
+    /// The result's triangles.
+    pub tris: Vec<[u32; 3]>,
+    /// Each triangle's source `(operand, input triangle)`.
+    pub origins: Vec<(u8, u32)>,
+    /// Pairs `(A's triangle, B's triangle)`, input indices, that lie in one
+    /// plane and overlap, in the order found.
+    pub coplanar: Vec<(u32, u32)>,
+    /// Pairs that meet without crossing: one lies on one side of the
+    /// other's plane, touching it (tangent faces, a vertex on a face).
+    pub touching: Vec<(u32, u32)>,
+    /// Whether the second pass (`docs/research.md` §5.4, item 5) built the
+    /// result: the first came out open.
+    pub second_pass: bool,
+    /// Directed edges, after welding by exact position, used more often
+    /// one way than the other: 0 for a closed result.
+    pub unmatched: usize,
+    /// Edges used four times, by two faces of each operand, one each way:
+    /// where the operands touch along an edge.
+    pub touching_edges: usize,
+    /// Other edges used other than once each way.
+    pub non_manifold: usize,
+}
+
+/// [`csg_points`], with where the operands touch.
+///
+/// The first pass is og-geom's arrangement. When its result is open
+/// (operands that touch: faces on faces, a vertex an ulp off a face), the
+/// arrangement is built again by a second pass, and its result is taken
+/// if it has fewer unmatched edges. The second pass keeps crossings that
+/// round to one position apart, orders points on an edge exactly, lays a
+/// triangle out exactly where its rounded outline is not simple, and then
+/// makes points at one position one point, collapsing the runs between
+/// them (`docs/research.md` §5.4, item 5). Every closed first-pass result
+/// is returned as before.
+pub fn csg_points_traced(
+    a: (&[DVec3], &[[u32; 3]]),
+    b: (&[DVec3], &[[u32; 3]]),
+    op: CsgOp,
+) -> Result<CsgOutput, OperandError> {
+    let pass = |robust: bool| -> Result<CsgOutput, OperandError> {
+        let mut points = Vec::new();
+        let mut at = BTreeMap::new();
+        let sa = weld64(0, false, a, &mut points, &mut at)?;
+        let sb = weld64(1, false, b, &mut points, &mut at)?;
+        let (c, kept) = arrange(points, sa, sb, op, robust);
+        let (points, tris, origins, _) = emit(&c, &kept);
+        let w = weld_ids(&points);
+        let mut counts = edge_counts(&w, &tris, &origins);
+        let (tris, origins) = if counts.non_manifold + counts.touching > 0 {
+            let (t, o) = cancel_fins(&w, tris, origins);
+            counts = edge_counts(&w, &t, &o);
+            (t, o)
+        } else {
+            (tris, origins)
+        };
+        let source = |pairs: &[TriPair]| {
+            let mut v: Vec<(u32, u32)> = Vec::new();
+            for &((ma, ia), (_, ib)) in pairs {
+                let (sa, sb) = (
+                    c.solids[0].source[ia as usize],
+                    c.solids[1].source[ib as usize],
+                );
+                if ma == 0 && !v.contains(&(sa, sb)) {
+                    v.push((sa, sb));
+                }
+            }
+            v
+        };
+        Ok(CsgOutput {
+            coplanar: source(&c.coplanar_pairs),
+            touching: source(&c.touch_pairs),
+            points,
+            tris,
+            origins,
+            second_pass: robust,
+            unmatched: counts.unmatched,
+            touching_edges: counts.touching,
+            non_manifold: counts.non_manifold,
+        })
+    };
+    let first = pass(false)?;
+    // Operands that touch can make crossings a rounding error apart that
+    // the first pass cannot keep apart; an open result there is built
+    // again by the second pass. Every closed result is the first pass's.
+    if first.unmatched == 0 {
+        return Ok(first);
+    }
+    let second = pass(true)?;
+    if second.unmatched < first.unmatched {
+        Ok(second)
+    } else {
+        Ok(first)
+    }
+}
+
+/// Drops pairs of kept triangles on the same three positions facing
+/// opposite ways: a piece of each operand where their surfaces lie on one
+/// another, both kept because a sliver a rounding error wide was
+/// classified on each side. Such a pair bounds no volume, and its edges
+/// cancel, so a closed result stays closed; without it, its edges are
+/// used four times (`docs/research.md` §5.4, item 5). Pairs are taken in
+/// output order.
+fn cancel_fins(
+    w: &[u32],
+    tris: Vec<[u32; 3]>,
+    origins: Vec<(u8, u32)>,
+) -> (Vec<[u32; 3]>, Vec<(u8, u32)>) {
+    // Each triangle by its sorted corners, and whether its winding is the
+    // sorted order's (an even permutation).
+    let key = |t: [u32; 3]| {
+        let t = t.map(|v| w[v as usize]);
+        let mut s = t;
+        s.sort_unstable();
+        let r = (0..3).find(|&k| t[k] == s[0]).unwrap_or(0);
+        (s, t[(r + 1) % 3] == s[1])
+    };
+    let mut by: BTreeMap<[u32; 3], (Vec<usize>, Vec<usize>)> = BTreeMap::new();
+    for (i, &t) in tris.iter().enumerate() {
+        let (s, even) = key(t);
+        if s[0] == s[1] || s[1] == s[2] {
+            continue;
+        }
+        let e = by.entry(s).or_default();
+        if even { e.0.push(i) } else { e.1.push(i) }
+    }
+    let mut drop = vec![false; tris.len()];
+    for (pos, neg) in by.values() {
+        for (&i, &j) in pos.iter().zip(neg) {
+            drop[i] = true;
+            drop[j] = true;
+        }
+    }
+    if !drop.contains(&true) {
+        return (tris, origins);
+    }
+    tris.into_iter()
+        .zip(origins)
+        .zip(drop)
+        .filter(|(_, d)| !d)
+        .map(|(x, _)| x)
+        .unzip()
+}
+
+/// Each point's id after welding by exact position (first-seen order).
+fn weld_ids(points: &[DVec3]) -> Vec<u32> {
+    let mut id: BTreeMap<[u64; 3], u32> = BTreeMap::new();
+    points
+        .iter()
+        .map(|p| {
+            let n = id.len() as u32;
+            *id.entry(p.to_array().map(|x| (x + 0.0).to_bits()))
+                .or_insert(n)
+        })
+        .collect()
+}
+
+/// [`CsgOutput`]'s edge counts.
+struct EdgeCounts {
+    unmatched: usize,
+    touching: usize,
+    non_manifold: usize,
+}
+
+/// How a result's edges are used, after welding (`w`), zero-area
+/// triangles skipped: directed edges that do not balance, edges where the
+/// operands touch (two faces of each, one each way), and other edges not
+/// used once each way.
+fn edge_counts(w: &[u32], tris: &[[u32; 3]], origins: &[(u8, u32)]) -> EdgeCounts {
+    // Per edge, low id first: uses by (operand, low to high).
+    let mut uses: BTreeMap<(u32, u32), [u32; 4]> = BTreeMap::new();
+    for (t, &(m, _)) in tris.iter().zip(origins) {
+        let t = t.map(|v| w[v as usize]);
+        if t[0] == t[1] || t[1] == t[2] || t[0] == t[2] {
+            continue;
+        }
+        for k in 0..3 {
+            let (a, b) = (t[k], t[(k + 1) % 3]);
+            let slot = 2 * (m.min(1) as usize) + usize::from(a > b);
+            uses.entry((a.min(b), a.max(b))).or_default()[slot] += 1;
+        }
+    }
+    let mut c = EdgeCounts {
+        unmatched: 0,
+        touching: 0,
+        non_manifold: 0,
+    };
+    for u in uses.values() {
+        let (fwd, back) = (u[0] + u[2], u[1] + u[3]);
+        c.unmatched += fwd.abs_diff(back) as usize;
+        if fwd == 1 && back == 1 {
+            continue;
+        }
+        if *u == [1, 1, 1, 1] {
+            c.touching += 1;
+        } else {
+            c.non_manifold += 1;
+        }
+    }
+    c
 }
 
 /// A self-union's output ([`self_union_points`]).

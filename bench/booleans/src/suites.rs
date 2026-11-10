@@ -613,3 +613,125 @@ pub fn scaling() -> Vec<Case> {
         })
         .collect()
 }
+
+// ── suite 5: operands that only touch (docs/research.md §5.4, item 5) ───────
+
+/// A shape-gen solid as the benchmark's mesh (positions rounded to f32,
+/// as every suite's are).
+fn solid(positions: &[shape_core::DVec3], triangles: &[[u32; 3]]) -> Tri {
+    Tri {
+        pos: positions
+            .iter()
+            .map(|p| p.to_array().map(|x| x as f32))
+            .collect(),
+        idx: triangles.iter().flatten().copied().collect(),
+    }
+}
+
+/// Phase 6's touching failures (`docs/research.md` §13.6, item 1), each
+/// rebuilt from the kernel's generators: faces on faces, vertices a
+/// rounding error off a face, a plate along a tube's vertex columns, boxes
+/// sharing only an edge, and a tool wholly inside.
+pub fn touching() -> Vec<Case> {
+    let s = "touching";
+    let v = DVec3::new;
+    let t = |x: &shape_mesh::Solid| solid(&x.positions, &x.triangles);
+    let circle = |r: f64| {
+        shape_2d::circle(&shape_2d::Circle {
+            radius: r,
+            segments: 0,
+        })
+        .expect("circle")
+    };
+    let loft = |a: f64, b: f64, h: f64| {
+        shape_gen::loft::loft(&shape_gen::loft::Loft {
+            sections: vec![(circle(a), 0.0), (circle(b), h)],
+            ..Default::default()
+        })
+        .expect("loft")
+    };
+    let block = |w: f64, d: f64, h: f64| {
+        shape_gen::solids::cuboid(&shape_gen::solids::BoxDesc {
+            width: w,
+            depth: d,
+            height: h,
+        })
+        .expect("box")
+    };
+    let torus = t(&shape_gen::solids::torus(351.0, 127.0).expect("torus"));
+    let tube = t(&shape_gen::solids::tube(10.0, 8.0, 30.0).expect("tube"));
+    let curl = t(&shape_gen::solids::tube(2.86, 1.66, 914.4).expect("tube"))
+        .map(|p| v(-457.2 + p.z, p.x, 38.14 + p.y));
+    vec![
+        Case::new(
+            s,
+            "lofts.shared.face",
+            t(&loft(10.0, 8.0, 20.0)),
+            t(&loft(8.0, 5.0, 10.0)).translate(v(0.0, 0.0, 20.0)),
+        ),
+        Case::new(
+            s,
+            "lofts.hexagon.shared.face",
+            {
+                let p = |r: f64| {
+                    shape_2d::polygon(&shape_2d::Polygon {
+                        sides: 6,
+                        radius: r,
+                    })
+                    .expect("polygon")
+                };
+                let a = shape_gen::loft::loft(&shape_gen::loft::Loft {
+                    sections: vec![(p(10.0), 0.0), (p(8.0), 20.0)],
+                    ..Default::default()
+                })
+                .expect("loft");
+                t(&a)
+            },
+            {
+                let p = |r: f64| {
+                    shape_2d::polygon(&shape_2d::Polygon {
+                        sides: 6,
+                        radius: r,
+                    })
+                    .expect("polygon")
+                };
+                let b = shape_gen::loft::loft(&shape_gen::loft::Loft {
+                    sections: vec![(p(8.0), 0.0), (p(5.0), 15.0)],
+                    ..Default::default()
+                })
+                .expect("loft");
+                t(&b).translate(v(0.0, 0.0, 20.0))
+            },
+        ),
+        Case::new(
+            s,
+            "torus.ring.on.face",
+            torus,
+            t(&block(600.0, 400.0, 600.0)).translate(v(300.0, 0.0, 0.0)),
+        ),
+        Case::new(
+            s,
+            "strap.plate.on.tube",
+            t(&block(914.4, 1.2, 38.14)).translate(v(0.0, -2.26, 0.0)),
+            curl,
+        ),
+        Case::new(
+            s,
+            "boxes.shared.edge",
+            t(&block(10.0, 10.0, 10.0)),
+            t(&block(10.0, 10.0, 10.0)).translate(v(10.0, 10.0, 0.0)),
+        ),
+        Case::new(
+            s,
+            "tube.tangent.box",
+            tube,
+            t(&block(20.0, 20.0, 20.0)).translate(v(20.0, 0.0, 5.0)),
+        ),
+        Case::new(
+            s,
+            "tool.inside",
+            t(&block(40.0, 40.0, 40.0)),
+            t(&block(10.0, 10.0, 10.0)).translate(v(0.0, 0.0, 15.0)),
+        ),
+    ]
+}

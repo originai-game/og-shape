@@ -16,6 +16,7 @@ mod selfunion;
 mod skin;
 mod solids;
 mod tools;
+mod touching;
 
 use std::process::ExitCode;
 

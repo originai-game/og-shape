@@ -236,6 +236,9 @@ fn main() {
     if want("synthetic") {
         cases.extend(suites::synthetic(a.grid));
     }
+    if want("touching") {
+        cases.extend(suites::touching());
+    }
     if want("scaling") {
         cases.extend(suites::scaling());
     }

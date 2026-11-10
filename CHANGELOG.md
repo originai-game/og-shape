@@ -368,3 +368,37 @@
   dataset objects rebuilt by agents from a description and a picture,
   and again by translating the sand3d program; programs, previews and the
   runner (`eval/phase6/run.ts`) committed, datasets attributed.
+- `shape-bool`: booleans on operands that only touch (faces on faces,
+  vertices within an ulp of a face or an edge) close, or are refused
+  saying why (`docs/research.md` §5.4, item 5; §13.6, items 1, 2, 5).
+  When og-geom's arrangement comes out open, a second pass builds it
+  again. It orders points on an edge exactly (expansion arithmetic),
+  triangulates in an exact layout where the rounded outline is not
+  simple, makes points at one position one point, and classifies faces
+  lying on the other operand by orientation. A sliver no probe can
+  resolve is kept or dropped to close the surface. Closed first-pass
+  results are unchanged. Stacked lofts, a plate along a tube's vertex
+  columns, a box through a torus's ring of vertices, a cup rim on its
+  shelled wall and untilted elbows sharing a ring face now join closed.
+- `shape-bool`: a boolean never returns a result that `measure` reports
+  not closed, except a union that is non-manifold where the operands
+  touch along an edge (two boxes sharing only an edge). Before, an edge
+  used twice each way passed the result check, so `join` could return
+  `closed: false` with no error. Other non-manifold results are refused
+  as the new `BoolError::NotManifold`.
+- `shape-bool`: `boolean_report` returns the result with a `BoolReport`:
+  the edges where the operands touch, the voids left (a cut whose tool
+  lies wholly inside keeps the void, which is the correct result), and
+  whether the operands touch. `fuse` cuts an inward-facing shell from the
+  rest instead of joining it, so later booleans keep a void.
+  `csg_points_traced` returns where the operands lie in one plane or
+  touch, and the result's edge counts.
+- `shape-bool`: an open result is diagnosed before blame. The
+  self-crossing check runs only then; operands that touch give the new
+  `BoolError::OpenTouching`, which names up to six faces of each
+  ("…where the operands touch along coplanar or tangent faces (target:
+  …; tool: …)"). `OpenResult` no longer says an operand most likely
+  passes through itself.
+- Golden cases `touching.*` (11, of which three replay
+  `golden/programs/touching_*.json`); no existing hash moved.
+  `bench/booleans` gains a `touching` suite.

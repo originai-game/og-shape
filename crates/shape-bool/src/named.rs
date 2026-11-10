@@ -13,13 +13,27 @@
 //! ([`BoolError::SelfIntersecting`]): by [`check_operands`] before any
 //! work, or by [`boolean`] when its result comes out open. [`self_union`]
 //! untangles one.
+//!
+//! What a result may be (`docs/research.md` §5.4, item 5):
+//! - closed: every edge used once each way, after welding by position;
+//! - or, where the operands touch along an edge (two boxes sharing only an
+//!   edge, a box face on a tube's vertex column), non-manifold: each such
+//!   edge is used by two faces of each operand, one each way. That is the
+//!   correct union of solids that touch; [`BoolReport::touching_edges`]
+//!   counts the edges. Any other non-manifold result is refused
+//!   ([`BoolError::NotManifold`]), and an open one always
+//!   ([`BoolError::OpenResult`], [`BoolError::OpenTouching`]).
+//! - A cut whose tool lies wholly inside the target leaves a void: a
+//!   closed inner shell facing in. That is the correct result (the volume
+//!   drops by the tool's); [`BoolReport::voids`] counts such shells, and
+//!   later booleans keep them ([`fuse`]).
 
 use std::collections::BTreeMap;
 
 use shape_core::DVec3;
 use shape_mesh::{EdgeKey, Solid, edge_key};
 
-use crate::csg::{CsgOp, OperandError, csg_points, self_union_points};
+use crate::csg::{CsgOp, OperandError, csg_points_traced, self_union_points};
 use crate::selfcheck;
 
 /// The operation.
@@ -58,12 +72,33 @@ pub enum BoolError {
     /// skins yet, and never drop one silently.
     Skinned(&'static str),
     /// The result came out open: `boundary` edges are not matched the
-    /// other way. Both operands were closed and oriented, so one of them
-    /// most likely passes through itself (`docs/research.md` §5.4). The
-    /// open result is never returned.
+    /// other way, though both operands were closed and oriented, neither
+    /// passes through itself, and they do not touch: a limit of the
+    /// boolean on these operands. The open result is never returned.
     OpenResult {
         /// Directed edges with no twin.
         boundary: usize,
+    },
+    /// The result came out open where the operands touch: faces of one lie
+    /// on faces of the other (coplanar), or meet them without crossing
+    /// (tangent). `target` and `tool` name the faces involved (their face
+    /// names, sorted; at most six each). The open result is never
+    /// returned.
+    OpenTouching {
+        /// Directed edges with no twin.
+        boundary: usize,
+        /// The target's faces that touch the tool.
+        target: Vec<String>,
+        /// The tool's faces that touch the target.
+        tool: Vec<String>,
+    },
+    /// The result is closed but not manifold beyond where the operands
+    /// touch along an edge: `edges` edges are used by more than two faces
+    /// in another way than two of each operand (`docs/research.md` §5.4,
+    /// item 5). It is never returned.
+    NotManifold {
+        /// Such edges.
+        edges: usize,
     },
     /// An operand ("target"/"tool") passes through itself: `pairs` pairs
     /// of its triangles, within one shell, cross where its surface does
@@ -89,7 +124,21 @@ impl std::fmt::Display for BoolError {
             BoolError::Empty => f.write_str("the result is empty"),
             BoolError::OpenResult { boundary } => write!(
                 f,
-                "the result is open ({boundary} unmatched edges): an operand most likely passes through itself; repair or fuse its parts first"
+                "the result is open ({boundary} unmatched edges); neither operand passes through itself and they do not touch: a limit of the boolean on these operands, which moving the tool slightly may avoid"
+            ),
+            BoolError::OpenTouching {
+                boundary,
+                target,
+                tool,
+            } => write!(
+                f,
+                "the result is open ({boundary} unmatched edges) where the operands touch along coplanar or tangent faces (target: {}; tool: {}); overlap them by a small amount, or separate them",
+                names_or_none(target),
+                names_or_none(tool)
+            ),
+            BoolError::NotManifold { edges } => write!(
+                f,
+                "the result is not manifold: {edges} edges are shared by more than two faces where the operands touch; overlap them by a small amount, or separate them"
             ),
             BoolError::SelfIntersecting { operand, pairs } => write!(
                 f,
@@ -104,6 +153,30 @@ impl std::fmt::Display for BoolError {
 }
 
 impl std::error::Error for BoolError {}
+
+fn names_or_none(v: &[String]) -> String {
+    if v.is_empty() {
+        "unnamed faces".into()
+    } else {
+        v.join(", ")
+    }
+}
+
+/// What a boolean did that its result alone does not say
+/// ([`boolean_report`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BoolReport {
+    /// Edges of the result shared by four faces, two of each operand:
+    /// where the operands touch along an edge. The result is then the
+    /// correct non-manifold union, and `measure` reports it not closed.
+    pub touching_edges: usize,
+    /// Closed shells of the result facing in: voids, as a cut whose tool
+    /// lies wholly inside the target leaves.
+    pub voids: usize,
+    /// Whether the operands touch: faces of one lie on faces of the other,
+    /// or meet them without crossing.
+    pub touching: bool,
+}
 
 const CAPS: [&str; 4] = ["top", "bottom", "start", "end"];
 /// cos 0.5°: faces closer than this are coplanar for the naming rule.
@@ -160,8 +233,9 @@ pub fn components(s: &Solid) -> Vec<Solid> {
 /// Fuses a solid made of several closed shells (`merge`, or a provider's
 /// interpenetrating parts) into one: each shell that passes through itself
 /// is untangled first ([`self_union`]), then the shells are joined in
-/// turn. A solid of one shell that does not pass through itself comes back
-/// as it is.
+/// turn. A shell facing in (a void a cut left) is cut from the rest
+/// instead, so the void stays. A solid of one shell that does not pass
+/// through itself comes back as it is.
 pub fn fuse(s: &Solid) -> Result<Solid, BoolError> {
     if s.skin.is_some() {
         return Err(BoolError::Skinned("target"));
@@ -176,13 +250,26 @@ pub fn fuse(s: &Solid) -> Result<Solid, BoolError> {
             Ok(p)
         }
     };
-    let mut parts = components(s).into_iter();
+    let (shells, voids): (Vec<Solid>, Vec<Solid>) = components(s)
+        .into_iter()
+        .partition(|p| p.measure().volume >= 0.0);
+    let mut parts = shells.into_iter();
     let Some(first) = parts.next() else {
         return Err(BoolError::Empty);
     };
     let mut acc = untangled(first)?;
     for p in parts {
-        acc = boolean_once(&acc, &untangled(p)?, &Boolean::default())?;
+        acc = boolean_once(&acc, &untangled(p)?, &Boolean::default())?.0;
+    }
+    for mut v in voids {
+        for t in &mut v.triangles {
+            t.swap(1, 2);
+        }
+        let d = Boolean {
+            op: BoolOp::Cut,
+            ..Default::default()
+        };
+        acc = boolean_once(&acc, &v, &d)?.0;
     }
     Ok(acc)
 }
@@ -280,14 +367,28 @@ pub fn self_union(s: &Solid) -> Result<Solid, BoolError> {
 }
 
 /// `target op tool`, with names carried through. An operand of several
-/// shells is fused first ([`fuse`]).
+/// shells is fused first ([`fuse`]). [`boolean_report`] also says what the
+/// result alone does not.
 ///
-/// Refused: a skinned operand ([`BoolError::Skinned`]); an open result
-/// ([`BoolError::OpenResult`]), never returned. When the result is open
-/// and an operand passes through itself, the refusal says so instead
-/// ([`BoolError::SelfIntersecting`]). [`check_operands`] refuses such an
-/// operand before any work.
+/// Refused: a skinned operand ([`BoolError::Skinned`]); an open result,
+/// never returned; a non-manifold one beyond where the operands touch
+/// along an edge ([`BoolError::NotManifold`]). An open result is
+/// diagnosed: an operand that passes through itself
+/// ([`BoolError::SelfIntersecting`]), operands that touch
+/// ([`BoolError::OpenTouching`]), or neither ([`BoolError::OpenResult`]).
+/// [`check_operands`] refuses an operand that passes through itself before
+/// any work.
 pub fn boolean(target: &Solid, tool: &Solid, d: &Boolean) -> Result<Solid, BoolError> {
+    boolean_report(target, tool, d).map(|(s, _)| s)
+}
+
+/// [`boolean`], with what the result alone does not say: where the
+/// operands touch, and the voids left ([`BoolReport`]).
+pub fn boolean_report(
+    target: &Solid,
+    tool: &Solid,
+    d: &Boolean,
+) -> Result<(Solid, BoolReport), BoolError> {
     if target.skin.is_some() {
         return Err(BoolError::Skinned("target"));
     }
@@ -302,9 +403,11 @@ pub fn boolean(target: &Solid, tool: &Solid, d: &Boolean) -> Result<Solid, BoolE
         }
     };
     match boolean_once(&fused(target)?, &fused(tool)?, d) {
-        Err(BoolError::OpenResult { boundary }) => {
+        Err(e @ (BoolError::OpenResult { .. } | BoolError::OpenTouching { .. })) => {
+            // Diagnose before blaming: an operand that passes through
+            // itself first, then the touching faces the error names.
             check_operands(target, tool)?;
-            Err(BoolError::OpenResult { boundary })
+            Err(e)
         }
         r => r,
     }
@@ -328,13 +431,17 @@ pub fn check_operands(target: &Solid, tool: &Solid) -> Result<(), BoolError> {
     Ok(())
 }
 
-fn boolean_once(target: &Solid, tool: &Solid, d: &Boolean) -> Result<Solid, BoolError> {
+fn boolean_once(
+    target: &Solid,
+    tool: &Solid,
+    d: &Boolean,
+) -> Result<(Solid, BoolReport), BoolError> {
     let op = match d.op {
         BoolOp::Join => CsgOp::Union,
         BoolOp::Cut => CsgOp::Subtract,
         BoolOp::Intersect => CsgOp::Intersect,
     };
-    let (points, tris, origins) = csg_points(
+    let out = csg_points_traced(
         (&target.positions, &target.triangles),
         (&tool.positions, &tool.triangles),
         op,
@@ -345,23 +452,92 @@ fn boolean_once(target: &Solid, tool: &Solid, d: &Boolean) -> Result<Solid, Bool
         OperandError::NotFinite(0) => BoolError::NotFinite("target"),
         OperandError::NotFinite(_) => BoolError::NotFinite("tool"),
     })?;
-    if tris.is_empty() {
+    let touching = !out.coplanar.is_empty() || !out.touching.is_empty();
+    if out.tris.is_empty() {
         return Err(BoolError::Empty);
     }
     // Never return open output (`docs/design.md` §6): every directed edge,
     // after welding by exact position, needs a twin the other way.
-    let boundary = open_edges(&points, &tris);
+    let boundary = out.unmatched;
     if boundary > 0 {
-        return Err(BoolError::OpenResult { boundary });
+        if !touching {
+            return Err(BoolError::OpenResult { boundary });
+        }
+        let names = |s: &Solid, tris: &mut dyn Iterator<Item = u32>| {
+            let mut v: Vec<String> = Vec::new();
+            for t in tris {
+                for &x in &s.face_tags[t as usize] {
+                    let n = s.names.name(x).to_string();
+                    if !v.contains(&n) {
+                        v.push(n);
+                    }
+                }
+            }
+            v.sort();
+            v.truncate(6);
+            v
+        };
+        let pairs: Vec<(u32, u32)> = out.coplanar.iter().chain(&out.touching).copied().collect();
+        return Err(BoolError::OpenTouching {
+            boundary,
+            target: names(target, &mut pairs.iter().map(|p| p.0)),
+            tool: names(tool, &mut pairs.iter().map(|p| p.1)),
+        });
     }
-    named_result(
-        points,
-        &tris,
-        &origins,
+    // Directed edges that balance can still be used four times or more
+    // (two coincident faces kept, a pinch): only an edge where the operands
+    // touch, two faces of each, one each way, is a correct non-manifold
+    // result.
+    if out.non_manifold > 0 {
+        return Err(BoolError::NotManifold {
+            edges: out.non_manifold,
+        });
+    }
+    let touching_edges = out.touching_edges;
+    let s = named_result(
+        out.points,
+        &out.tris,
+        &out.origins,
         [(target, d.target), (tool, d.tool)],
         d,
         |_, ms| ms.contains(&0) && ms.contains(&1),
-    )
+    )?;
+    let voids = void_shells(&s);
+    Ok((
+        s,
+        BoolReport {
+            touching_edges,
+            voids,
+            touching,
+        },
+    ))
+}
+
+/// Shells (pieces sharing a vertex) whose signed volume is negative: they
+/// face in, voids inside another shell.
+fn void_shells(s: &Solid) -> usize {
+    let mut parent: Vec<u32> = (0..s.positions.len() as u32).collect();
+    fn find(p: &mut [u32], mut i: u32) -> u32 {
+        while p[i as usize] != i {
+            p[i as usize] = p[p[i as usize] as usize];
+            i = p[i as usize];
+        }
+        i
+    }
+    for t in &s.triangles {
+        for k in 1..3 {
+            let (a, b) = (find(&mut parent, t[0]), find(&mut parent, t[k]));
+            if a != b {
+                parent[a.max(b) as usize] = a.min(b);
+            }
+        }
+    }
+    let mut volume: BTreeMap<u32, f64> = BTreeMap::new();
+    for t in &s.triangles {
+        let [a, b, c] = t.map(|v| s.positions[v as usize]);
+        *volume.entry(find(&mut parent, t[0])).or_default() += a.dot(b.cross(c)) / 6.0;
+    }
+    volume.values().filter(|&&v| v < 0.0).count()
 }
 
 /// The output of a boolean (or self-union) as a solid with names:
