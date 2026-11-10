@@ -7,7 +7,7 @@
 //! write one kernel report each, in `shape-tools`' snake_case.
 
 use serde_json::{Value, json};
-use shape_tools::{DecimateReport, Imported, RepairReport, Uvs};
+use shape_tools::{Blocked, DecimateReport, Imported, NonManifold, RepairReport, Uvs};
 
 /// `{"k": v, …}` from keys and values that are JSON text already.
 pub fn object(fields: &[(&str, String)]) -> String {
@@ -42,16 +42,45 @@ pub fn repair(r: &RepairReport) -> String {
         ("floaters", r.floaters.to_string()),
         ("floater_triangles", r.floater_triangles.to_string()),
         ("flipped", r.flipped.to_string()),
+        (
+            "non_manifold",
+            r.non_manifold.as_ref().map_or("null".into(), non_manifold),
+        ),
         ("holes_filled", r.holes_filled.to_string()),
+        ("large_holes_filled", r.large_holes_filled.to_string()),
         ("fill_triangles", r.fill_triangles.to_string()),
         ("uv_seam_fills", r.uv_seam_fills.to_string()),
         ("holes_left", r.holes_left.to_string()),
         ("fused", fused.to_string()),
+        ("pockets", r.pockets.to_string()),
+        ("pockets_dropped", r.pockets_dropped.to_string()),
+        (
+            "pocket_triangles_dropped",
+            r.pocket_triangles_dropped.to_string(),
+        ),
         ("short_edges", r.short_edges.to_string()),
         (
             "self_intersections",
             r.self_intersections
                 .map_or("null".into(), |n| n.to_string()),
+        ),
+    ])
+}
+
+/// What splitting non-manifold edges did.
+fn non_manifold(n: &NonManifold) -> String {
+    object(&[
+        ("edges", n.edges.to_string()),
+        ("split", n.split.to_string()),
+        ("unpaired", n.unpaired.to_string()),
+        ("left", n.left.to_string()),
+        ("vertices", n.vertices.to_string()),
+        ("moved", Value::from(n.moved).to_string()),
+        ("crossings_added", n.crossings_added.to_string()),
+        ("sheets_dropped", n.sheets_dropped.to_string()),
+        (
+            "sheet_triangles_dropped",
+            n.sheet_triangles_dropped.to_string(),
         ),
     ])
 }
@@ -63,6 +92,24 @@ pub fn decimate(r: &DecimateReport) -> String {
         ("triangles", r.triangles.to_string()),
         ("target", r.target.to_string()),
         ("error", Value::from(r.error).to_string()),
+        ("folds_refused", r.folds_refused.to_string()),
+        ("uv_islands", r.uv_islands.to_string()),
+        ("uv_charts", r.uv_charts.to_string()),
+        ("blocked", blocked(&r.blocked)),
+    ])
+}
+
+/// Why the edges left after a decimation that missed its target cannot
+/// collapse (all zero when it reached it).
+fn blocked(b: &Blocked) -> String {
+    object(&[
+        ("fixed", b.fixed.to_string()),
+        ("error", b.error.to_string()),
+        ("link", b.link.to_string()),
+        ("turn", b.turn.to_string()),
+        ("uv", b.uv.to_string()),
+        ("fold", b.fold.to_string()),
+        ("not_retried", b.not_retried.to_string()),
     ])
 }
 

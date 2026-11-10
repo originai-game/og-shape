@@ -2,6 +2,9 @@
 //! degenerate and duplicate triangles, remove floaters, orient faces
 //! consistently, close small holes, and fuse interpenetrating shells.
 //!
+//! Non-manifold edges (more than two faces) are split into manifold
+//! sheets when asked ([`split_non_manifold`]), after orienting.
+//!
 //! Entry: [`repair`] runs the steps in that order from a [`Repair`] desc
 //! and reports what each changed in a [`RepairReport`]. Every step is also
 //! its own function.
@@ -31,22 +34,26 @@
 //! of its UVs, so a seam keeps its sides), not an interpolation, so
 //! neighbours agree and no seam appears where the file had none. A hole fill
 //! takes, at each rim vertex, the UV its rim triangle gives it, and its
-//! centre vertex (if any) their mean; a rim that crosses a UV seam gives
-//! a stretched fill, which [`RepairReport::uv_seam_fills`] counts.
+//! centre vertex (if any) their mean; a fill whose rim crosses a UV seam
+//! would fan across the texture's atlas, so it takes one UV at every
+//! corner instead ([`RepairReport::uv_seam_fills`] counts those).
 //! [`join`] gives the triangles of parts without UVs (0, 0) at every
 //! corner when another part has them: zero-area UV triangles, which
 //! `measure` counts.
 //!
 //! A single closed surface that folds through itself is untangled by the
 //! fuse step too (`shape_bool::self_union`: the space it winds round at
-//! least once). An open one cannot be: [`repair`] reports its intersecting
-//! triangle pairs and leaves it, and booleans refuse it
-//! (`docs/research.md` §5.4, §9).
+//! least once); the pockets an untangling leaves as shells of their own
+//! are counted, and dropped when they are floaters. An open one cannot
+//! be: [`repair`] reports its intersecting triangle pairs and leaves it,
+//! and booleans refuse it (`docs/research.md` §5.4, §9, §32).
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
 
 use shape_core::order::sorted_order;
+use shape_core::predicates::{orient2d, orient3d};
 use shape_core::{DVec2, DVec3, HashError};
 use shape_mesh::skin::Mat4;
 use shape_mesh::{Bone, Skin, Solid, Tag, Weights, edge_key};
@@ -77,6 +84,11 @@ pub struct Repair {
     pub weld_all: bool,
     /// Small pieces to drop.
     pub floaters: Floaters,
+    /// Splits edges with more than two faces into manifold sheets
+    /// ([`split_non_manifold`]) after orienting, then drops the pieces
+    /// that come apart and are floaters (by `floaters`), before holes are
+    /// closed.
+    pub non_manifold: bool,
     /// Closes holes whose rim has at most this many edges (0: none).
     pub max_hole_edges: usize,
     /// Joins closed, interpenetrating shells into one by self-union
@@ -112,8 +124,13 @@ pub struct RepairReport {
     /// Triangles turned over to agree with their neighbours or to face
     /// out.
     pub flipped: usize,
+    /// What splitting non-manifold edges did, if asked.
+    pub non_manifold: Option<NonManifold>,
     /// Holes closed, and triangles added to close them.
     pub holes_filled: usize,
+    /// Of `holes_filled`, holes with more than `max_hole_edges` edges,
+    /// closed because their fill is flat and crosses nothing.
+    pub large_holes_filled: usize,
     /// Triangles added by closing holes.
     pub fill_triangles: usize,
     /// Holes left open: too large, or with a rim that does not close (it
@@ -122,13 +139,23 @@ pub struct RepairReport {
     /// The outcome of fusing, if asked: `Some(Ok(pieces before))`, or why
     /// it was not done.
     pub fused: Option<Result<usize, String>>,
+    /// Shells the fuse step's untangling left besides each untangled
+    /// shell's largest: pockets the surface folded round.
+    pub pockets: usize,
+    /// Of those, dropped as floaters (by `floaters`), and their
+    /// triangles.
+    pub pockets_dropped: usize,
+    /// See `pockets_dropped`.
+    pub pocket_triangles_dropped: usize,
     /// Vertices removed by collapsing short edges.
     pub short_edges: usize,
     /// Self-intersecting triangle pairs at the end, if asked.
     pub self_intersections: Option<usize>,
     /// Filled holes whose rim crosses a UV seam (a rim vertex with
-    /// different UVs on its two rim triangles): the fill's UVs stretch
-    /// across the seam. 0 on a solid without UVs.
+    /// different UVs on its two rim triangles): the fill takes one UV at
+    /// every corner (one colour, covering no area of the texture), as a
+    /// fan across the seam would span the atlas. 0 on a solid without
+    /// UVs.
     pub uv_seam_fills: usize,
 }
 
@@ -723,6 +750,371 @@ pub fn orient(s: &Solid) -> Result<(Solid, usize), RepairError> {
     Ok((s, turned))
 }
 
+/// What [`split_non_manifold`] did.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct NonManifold {
+    /// Edges with more than two faces, found.
+    pub edges: usize,
+    /// Of those, edges split into manifold sheets.
+    pub split: usize,
+    /// Faces on a split edge that pair with none (an odd fan, or a fin
+    /// sheet): the edge is open on their side now.
+    pub unpaired: usize,
+    /// Edges left with more than two faces: their faces' directions do
+    /// not alternate round the edge (not one oriented surface), or the
+    /// sheets are joined round both ends, so no vertex could be split.
+    pub left: usize,
+    /// Vertices copied, one copy per extra sheet through the vertex.
+    pub vertices: usize,
+    /// The largest distance a copy was moved into its own fan's cone, mm
+    /// (1 % of its shortest edge), so that the sheets stay apart once
+    /// written to a file and read back.
+    pub moved: f64,
+    /// Crossing pairs the moves made (a fin's lone face moved through the
+    /// sheets round it), counted as `measure` counts them.
+    pub crossings_added: usize,
+    /// Pieces dropped as floaters once the sheets came apart (with the
+    /// repair's `floaters` setting).
+    pub sheets_dropped: usize,
+    /// Triangles those pieces had.
+    pub sheet_triangles_dropped: usize,
+}
+
+/// A triangle by its corners' positions, sorted: the same triangle
+/// whatever its vertex numbers.
+type TriKey = [[u64; 3]; 3];
+
+fn tri_key(s: &Solid, t: u32) -> TriKey {
+    let mut k = s.triangles[t as usize].map(|v| {
+        let p = s.positions[v as usize];
+        [p.x + 0.0, p.y + 0.0, p.z + 0.0].map(f64::to_bits)
+    });
+    k.sort_unstable();
+    k
+}
+
+/// The touching pairs of `s` (as `measure` counts them, on vertices
+/// welded where positions are equal), each by its triangles' keys,
+/// sorted.
+fn crossing_keys(s: &Solid) -> Vec<(TriKey, TriKey)> {
+    let (positions, triangles) = crate::measure::weld_exact(s);
+    let mut out: Vec<(TriKey, TriKey)> = self_intersections(&positions, &triangles)
+        .into_iter()
+        .map(|(i, j)| {
+            let (a, b) = (tri_key(s, i), tri_key(s, j));
+            (a.min(b), a.max(b))
+        })
+        .collect();
+    out.sort_unstable();
+    out
+}
+
+/// Where the face with third corner `c` lies round the edge `a → b`,
+/// against the reference face's third corner `c0`: 0 on its half-plane, 1
+/// in the half turn after it, 2 on the half-plane opposite, 3 in the
+/// half turn back. Exact.
+fn half_turn(a: DVec3, b: DVec3, c0: DVec3, c: DVec3) -> u8 {
+    match orient3d(a, b, c0, c) {
+        Ordering::Less => 1,
+        Ordering::Greater => 3,
+        Ordering::Equal => {
+            // In the reference plane: the same side of the line a b as c0,
+            // in the projection that drops the plane's largest normal axis
+            // (exact: a coordinate dropped, nothing computed).
+            let n = (b - a).cross(c0 - a).abs();
+            let f = |p: DVec3| {
+                if n.x >= n.y && n.x >= n.z {
+                    DVec2::new(p.y, p.z)
+                } else if n.y >= n.z {
+                    DVec2::new(p.z, p.x)
+                } else {
+                    DVec2::new(p.x, p.y)
+                }
+            };
+            if orient2d(f(a), f(b), f(c0)) == orient2d(f(a), f(b), f(c)) {
+                0
+            } else {
+                2
+            }
+        }
+    }
+}
+
+/// Splits each edge with more than two faces into manifold sheets. The
+/// faces are put in their order round the edge (exactly: `orient3d`), and
+/// each face running `b → a` pairs with the next face round, running
+/// `a → b`: the two bound one wedge of solid, so they are one sheet. At
+/// each end of the edge, the faces round the vertex joined through
+/// manifold edges and these pairs fall into fans; every fan but the
+/// first gets its own copy of the vertex, moved towards the mean of the
+/// fan's other corners (inside the cone its faces span) by 1 % of its
+/// shortest edge there: two sheets
+/// that touched along an edge are then apart, and stay apart in a file
+/// (where equal positions would be welded back). Faces that pair with
+/// none are left open along the edge. Run after [`orient`]. Names, UVs
+/// and skins are kept (a copy takes its vertex's weights).
+pub fn split_non_manifold(s: &Solid) -> Result<(Solid, NonManifold), RepairError> {
+    let mut s = s.clone();
+    s.canonicalize()?;
+    let mut r = NonManifold::default();
+    let mut by_edge: BTreeMap<(u32, u32), Vec<u32>> = BTreeMap::new();
+    for (i, t) in s.triangles.iter().enumerate() {
+        for k in 0..3 {
+            by_edge
+                .entry(edge_key(t[k], t[(k + 1) % 3]))
+                .or_default()
+                .push(i as u32);
+        }
+    }
+    let wide: Vec<(u32, u32)> = by_edge
+        .iter()
+        .filter(|e| e.1.len() > 2)
+        .map(|e| *e.0)
+        .collect();
+    r.edges = wide.len();
+    if wide.is_empty() {
+        return Ok((s, r));
+    }
+    let mut touched: Vec<u32> = wide.iter().flat_map(|&(a, b)| [a, b]).collect();
+    touched.sort_unstable();
+    touched.dedup();
+    let mut around: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for (i, t) in s.triangles.iter().enumerate() {
+        for &v in t {
+            if touched.binary_search(&v).is_ok() {
+                around.entry(v).or_default().push(i as u32);
+            }
+        }
+    }
+    // Fans round each vertex: its faces joined across manifold edges from
+    // it, and across the pairs given (one sheet through a split edge).
+    let fans_of = |v: u32, pairs: &BTreeMap<(u32, u32), Vec<(u32, u32)>>| -> Vec<u32> {
+        let tris = &around[&v];
+        let mut parent: Vec<u32> = (0..tris.len() as u32).collect();
+        let at = |t: u32| tris.binary_search(&t).map_or(0, |i| i as u32);
+        let join = |x: u32, y: u32, parent: &mut Vec<u32>| {
+            let (x, y) = (find(parent, x), find(parent, y));
+            if x != y {
+                parent[x.max(y) as usize] = x.min(y);
+            }
+        };
+        let mut others: Vec<u32> = tris
+            .iter()
+            .flat_map(|&t| s.triangles[t as usize])
+            .filter(|&x| x != v)
+            .collect();
+        others.sort_unstable();
+        others.dedup();
+        for x in others {
+            let e = edge_key(v, x);
+            let faces = &by_edge[&e];
+            if faces.len() == 2 {
+                join(at(faces[0]), at(faces[1]), &mut parent);
+            } else if let Some(ps) = pairs.get(&e) {
+                for &(f, g) in ps {
+                    join(at(f), at(g), &mut parent);
+                }
+            }
+        }
+        (0..tris.len() as u32)
+            .map(|i| find(&mut parent, i))
+            .collect()
+    };
+    let none = BTreeMap::new();
+    let manifold: BTreeMap<u32, Vec<u32>> =
+        touched.iter().map(|&v| (v, fans_of(v, &none))).collect();
+    let runs = |t: [u32; 3], a: u32, b: u32| (0..3).any(|k| t[k] == a && t[(k + 1) % 3] == b);
+    // Per non-manifold edge, the pairs of faces that are one sheet.
+    let mut pairs: BTreeMap<(u32, u32), Vec<(u32, u32)>> = BTreeMap::new();
+    for &(a, b) in &wide {
+        let faces = &by_edge[&(a, b)];
+        let k = faces.len();
+        // Faces the surface already joins round either end, through
+        // manifold edges: those pairs are given.
+        let fan = |v: u32, t: u32| {
+            let tris = &around[&v];
+            manifold[&v][tris.binary_search(&t).unwrap_or(0)]
+        };
+        let mut sheet: Vec<(u32, u32)> = Vec::new();
+        let mut paired = vec![false; k];
+        let mut clash = false;
+        for i in 0..k {
+            for j in i + 1..k {
+                let (f, g) = (faces[i], faces[j]);
+                if fan(a, f) == fan(a, g) || fan(b, f) == fan(b, g) {
+                    if paired[i] || paired[j] {
+                        clash = true;
+                    }
+                    paired[i] = true;
+                    paired[j] = true;
+                    sheet.push((f, g));
+                }
+            }
+        }
+        if clash {
+            r.left += 1;
+            continue;
+        }
+        // The rest by their order round the edge (exactly: `orient3d`):
+        // a face running b → a pairs with the next one round, running
+        // a → b; the two bound one wedge of solid.
+        let rest: Vec<u32> = (0..k).filter(|&i| !paired[i]).map(|i| faces[i]).collect();
+        if rest.len() >= 2 {
+            let (pa, pb) = (s.positions[a as usize], s.positions[b as usize]);
+            let third = |t: u32| {
+                let tri = s.triangles[t as usize];
+                s.positions[tri[(0..3).find(|&q| tri[q] != a && tri[q] != b).unwrap_or(0)] as usize]
+            };
+            let c0 = third(rest[0]);
+            let mut round: Vec<(u8, u32)> = rest
+                .iter()
+                .map(|&t| (half_turn(pa, pb, c0, third(t)), t))
+                .collect();
+            round.sort_by(|x, y| {
+                x.0.cmp(&y.0).then_with(|| {
+                    if x.0 % 2 == 0 {
+                        return x.1.cmp(&y.1);
+                    }
+                    // y after x within the half turn: on x's normal side.
+                    match orient3d(pa, pb, third(x.1), third(y.1)) {
+                        Ordering::Equal => x.1.cmp(&y.1),
+                        o => o,
+                    }
+                })
+            });
+            let n = round.len();
+            let forward: Vec<bool> = round
+                .iter()
+                .map(|&(_, t)| runs(s.triangles[t as usize], a, b))
+                .collect();
+            let mut taken = vec![false; n];
+            for i in 0..n {
+                let j = (i + 1) % n;
+                if i != j && !forward[i] && forward[j] && !taken[i] && !taken[j] {
+                    taken[i] = true;
+                    taken[j] = true;
+                    sheet.push((round[i].1, round[j].1));
+                }
+            }
+            r.unpaired += taken.iter().filter(|&&x| !x).count();
+        } else {
+            r.unpaired += rest.len();
+        }
+        pairs.insert((a, b), sheet);
+    }
+    let split: Vec<(u32, Vec<Vec<u32>>)> = touched
+        .iter()
+        .map(|&v| {
+            let roots = fans_of(v, &pairs);
+            let mut fans: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+            for (i, &t) in around[&v].iter().enumerate() {
+                fans.entry(roots[i]).or_default().push(t);
+            }
+            (v, fans.into_values().skip(1).collect())
+        })
+        .collect();
+    let mut renames: Vec<(u32, u32, u32)> = Vec::new();
+    // Each copy and the vertex it copies.
+    let mut copies: Vec<(u32, u32)> = Vec::new();
+    for (v, fans) in split {
+        for fan in &fans {
+            // Towards the mean of the fan's other corners: inside the cone
+            // its own faces span, away from the other sheets through v.
+            let p = s.positions[v as usize];
+            let mut corners: Vec<u32> = fan
+                .iter()
+                .flat_map(|&t| s.triangles[t as usize])
+                .filter(|&w| w != v)
+                .collect();
+            corners.sort_unstable();
+            corners.dedup();
+            let mut mean = DVec3::ZERO;
+            let mut shortest = f64::INFINITY;
+            for &w in &corners {
+                let q = s.positions[w as usize];
+                mean += q;
+                shortest = shortest.min((q - p).length());
+            }
+            let dir = mean / corners.len().max(1) as f64 - p;
+            let len = dir.length();
+            if !(len > 0.0 && shortest.is_finite() && shortest > 0.0) {
+                continue;
+            }
+            let step = 0.01 * shortest;
+            let copy = s.push_vertex(p + dir / len * step);
+            if let Some(k) = &mut s.skin {
+                k.weights[copy as usize] = k.weights[v as usize];
+            }
+            copies.push((copy, v));
+            for &t in fan {
+                renames.push((t, v, copy));
+            }
+        }
+    }
+    let before = crossing_keys(&s);
+    for (t, v, copy) in renames {
+        for w in &mut s.triangles[t as usize] {
+            if *w == v {
+                *w = copy;
+            }
+        }
+    }
+    // A fin's lone face, its corner moved, can pass through the sheets
+    // round it: those pairs are counted (the fuse step untangles a closed
+    // shell).
+    let after = crossing_keys(&s);
+    r.crossings_added = after
+        .iter()
+        .filter(|k| before.binary_search(k).is_err())
+        .count();
+    for (copy, v) in copies {
+        r.vertices += 1;
+        r.moved = r
+            .moved
+            .max((s.positions[copy as usize] - s.positions[v as usize]).length());
+    }
+    s.canonicalize()?;
+    // What is still non-manifold.
+    let mut count: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+    for t in &s.triangles {
+        for k in 0..3 {
+            *count.entry(edge_key(t[k], t[(k + 1) % 3])).or_default() += 1;
+        }
+    }
+    r.left = count.values().filter(|&&n| n > 2).count();
+    r.split = r.edges.saturating_sub(r.left);
+    Ok((s, r))
+}
+
+/// A fill triangle: corners, surface, names, UVs.
+type Fill = ([u32; 3], u32, Vec<Tag>, [DVec2; 3]);
+
+/// What [`close_holes`] did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Holes {
+    /// Holes closed.
+    pub filled: usize,
+    /// Triangles added to close them.
+    pub triangles: usize,
+    /// Of the holes closed, those with more than `max_edges` edges (up to
+    /// [`LARGE_HOLE_EDGES`]): their least-area fill turns no triangle
+    /// against the fill's mean normal and crosses nothing.
+    pub large: usize,
+    /// Holes left open: larger than `max_edges` and not flat or clear
+    /// enough to fill, larger than [`LARGE_HOLE_EDGES`], or with a rim
+    /// that does not close (it runs into a non-manifold edge).
+    pub left: usize,
+    /// Filled holes whose rim crosses a UV seam (a rim vertex with
+    /// different UVs on its two rim triangles). Their fill takes one UV
+    /// at every corner (its first rim vertex's), so it covers no area of
+    /// the texture: one colour, the rim's there, and nothing overlaps.
+    pub uv_seam_fills: usize,
+}
+
+/// The largest hole, in rim edges, filled when it has more edges than
+/// asked (and is flat and clear enough): the fill costs O(n³).
+pub const LARGE_HOLE_EDGES: usize = 512;
+
 /// Closes every hole whose rim has at most `max_edges` edges, after
 /// [`orient`]. A rim is traced along boundary edges; a rim that passes a
 /// vertex twice (pinched) is cut there into simple loops, each closed on
@@ -731,19 +1123,19 @@ pub fn orient(s: &Solid) -> Result<(Solid, usize), RepairError> {
 /// O(n³)), wound to match the faces around it; a triangle whose new edge
 /// already exists in the mesh is not allowed, so the result stays
 /// manifold; a rim with no such fill is fanned from a new vertex at its
-/// centre instead. Returns the solid
-/// and the counts `(holes filled, triangles added, holes left, fills
-/// across a UV seam)`.
+/// centre instead. A hole with more edges than `max_edges` (up to
+/// [`LARGE_HOLE_EDGES`]) is closed too when its least-area fill is flat
+/// enough and clear: no fill triangle faces against the fill's
+/// area-weighted mean normal, and none crosses the mesh or another fill
+/// (`shape_bool::selfcheck::crossing`, exact). Returns the solid and
+/// what was done ([`Holes`]).
 ///
 /// UVs: each rim vertex takes the UV its corner has in the rim triangle
 /// of the rim edge leaving it; a centre vertex takes their mean. A rim
-/// vertex whose two rim triangles give it different UVs sits on a seam:
-/// the fill stretches across it, and the fourth count says how many
-/// fills do.
-pub fn close_holes(
-    s: &Solid,
-    max_edges: usize,
-) -> Result<(Solid, usize, usize, usize, usize), RepairError> {
+/// vertex whose two rim triangles give it different UVs sits on a seam,
+/// and a fan through it would stretch across the texture's atlas: such
+/// a fill takes its first rim vertex's UV at every corner instead.
+pub fn close_holes(s: &Solid, max_edges: usize) -> Result<(Solid, Holes), RepairError> {
     let mut s = s.clone();
     s.canonicalize()?;
     let mut directed: BTreeMap<(u32, u32), u32> = BTreeMap::new();
@@ -763,7 +1155,7 @@ pub fn close_holes(
         }
     }
     let mut used: BTreeMap<(u32, u32), ()> = BTreeMap::new();
-    let (mut filled, mut added, mut left) = (0, 0, 0);
+    let mut h = Holes::default();
     let starts: Vec<(u32, u32)> = out_edges
         .iter()
         .flat_map(|(&v, es)| es.iter().map(move |&(w, _)| (v, w)))
@@ -801,15 +1193,26 @@ pub fn close_holes(
         }
         // Whatever did not close (a rim through a non-manifold edge).
         if path.len() > 1 {
-            left += 1;
+            h.left += 1;
         }
     }
-    type Fill = ([u32; 3], u32, Vec<Tag>, [DVec2; 3]);
     let mut new_tris: Vec<Fill> = Vec::new();
-    let mut seams = 0;
     for (rim, rim_tris) in loops {
-        if rim.len() < 3 || rim.len() > max_edges {
-            left += 1;
+        if rim.len() < 3 || rim.len() > max_edges.max(LARGE_HOLE_EDGES) {
+            h.left += 1;
+            continue;
+        }
+        let large = rim.len() > max_edges;
+        let large_fill = if large {
+            match fill(&s, &rim, &undirected) {
+                Some(tris) if flat(&s, &tris) && !crosses(&s, &tris, &new_tris) => Some(tris),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if large && large_fill.is_none() {
+            h.left += 1;
             continue;
         }
         // Each rim vertex's UV in its rim triangles: leaving (j) and
@@ -821,28 +1224,29 @@ pub fn close_holes(
         };
         let n = rim.len();
         let rim_uv: Vec<DVec2> = (0..n).map(|j| uv_in(rim_tris[j], rim[j])).collect();
-        if s.uvs.is_some() && (0..n).any(|j| uv_in(rim_tris[(j + n - 1) % n], rim[j]) != rim_uv[j])
-        {
-            seams += 1;
-        }
+        let seam = s.uvs.is_some()
+            && (0..n).any(|j| uv_in(rim_tris[(j + n - 1) % n], rim[j]) != rim_uv[j]);
         let centre_uv = rim_uv.iter().copied().sum::<DVec2>() / n as f64;
-        let tris = fill(&s, &rim, &undirected).unwrap_or_else(|| {
-            // Every chord already exists: fan from a new vertex at the
-            // rim's centre, whose edges are all new.
-            let c = rim.iter().map(|&v| s.positions[v as usize]).sum::<DVec3>() / rim.len() as f64;
-            let ci = s.push_vertex(c);
-            if let Some(k) = &mut s.skin {
-                // The centre takes the blend of its rim's weights.
-                let items: Vec<(Weights, f64)> = rim
-                    .iter()
-                    .map(|&v| (k.weights[v as usize], 1.0 / rim.len() as f64))
-                    .collect();
-                k.weights[ci as usize] = Weights::blend(&items);
-            }
-            (0..rim.len())
-                .map(|k| [rim[k], rim[(k + 1) % rim.len()], ci])
-                .collect()
-        });
+        let tris = large_fill
+            .or_else(|| fill(&s, &rim, &undirected))
+            .unwrap_or_else(|| {
+                // Every chord already exists: fan from a new vertex at the
+                // rim's centre, whose edges are all new.
+                let c =
+                    rim.iter().map(|&v| s.positions[v as usize]).sum::<DVec3>() / rim.len() as f64;
+                let ci = s.push_vertex(c);
+                if let Some(k) = &mut s.skin {
+                    // The centre takes the blend of its rim's weights.
+                    let items: Vec<(Weights, f64)> = rim
+                        .iter()
+                        .map(|&v| (k.weights[v as usize], 1.0 / rim.len() as f64))
+                        .collect();
+                    k.weights[ci as usize] = Weights::blend(&items);
+                }
+                (0..rim.len())
+                    .map(|k| [rim[k], rim[(k + 1) % rim.len()], ci])
+                    .collect()
+            });
         let mut tags: Vec<Tag> = vec![s.names.intern("fill")];
         for &t in &rim_tris {
             tags.extend(&s.face_tags[t as usize]);
@@ -851,6 +1255,9 @@ pub fn close_holes(
         tags.dedup();
         let surface = s.surfaces[rim_tris[0] as usize];
         let uv_of = |v: u32| {
+            if seam {
+                return rim_uv[0];
+            }
             rim.iter()
                 .position(|&x| x == v)
                 .map_or(centre_uv, |j| rim_uv[j])
@@ -862,8 +1269,10 @@ pub fn close_holes(
                     .or_default() += 1;
             }
         }
-        added += tris.len();
-        filled += 1;
+        h.triangles += tris.len();
+        h.filled += 1;
+        h.large += usize::from(large);
+        h.uv_seam_fills += usize::from(seam);
         new_tris.extend(
             tris.into_iter()
                 .map(|t| (t, surface, tags.clone(), t.map(uv_of))),
@@ -878,7 +1287,59 @@ pub fn close_holes(
         }
     }
     s.canonicalize()?;
-    Ok((s, filled, added, left, seams))
+    Ok((s, h))
+}
+
+/// No triangle of the fill faces against its area-weighted mean normal.
+fn flat(s: &Solid, tris: &[[u32; 3]]) -> bool {
+    let normal = |t: &[u32; 3]| {
+        let [a, b, c] = t.map(|v| s.positions[v as usize]);
+        (b - a).cross(c - a)
+    };
+    let mean: DVec3 = tris.iter().map(normal).sum();
+    tris.iter().all(|t| normal(t).dot(mean) > 0.0)
+}
+
+/// A triangle of the fill crosses the mesh, another fill triangle, or a
+/// fill already made (exactly; corners shared by index are joins).
+fn crosses(s: &Solid, tris: &[[u32; 3]], made: &[Fill]) -> bool {
+    let at = |t: [u32; 3]| t.map(|v| s.positions[v as usize]);
+    let others: Vec<[u32; 3]> = s
+        .triangles
+        .iter()
+        .copied()
+        .chain(made.iter().map(|m| m.0))
+        .chain(tris.iter().copied())
+        .collect();
+    let boxes: Vec<(DVec3, DVec3)> = others
+        .iter()
+        .map(|&t| {
+            let p = at(t);
+            (p[0].min(p[1]).min(p[2]), p[0].max(p[1]).max(p[2]))
+        })
+        .collect();
+    let first = others.len() - tris.len();
+    for (k, &t) in tris.iter().enumerate() {
+        let p = at(t);
+        if degenerate(p) {
+            return true;
+        }
+        let (lo, hi) = boxes[first + k];
+        for (j, &o) in others.iter().enumerate() {
+            if j == first + k {
+                continue;
+            }
+            let (olo, ohi) = boxes[j];
+            if !(lo.cmple(ohi).all() && olo.cmple(hi).all()) {
+                continue;
+            }
+            let q = at(o);
+            if !degenerate(q) && shape_bool::selfcheck::crossing(t, p, o, q) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// The least-area triangulation of a rim, avoiding edges the mesh already
@@ -982,6 +1443,142 @@ fn keep_input_uvs(before: &Solid, mut after: Solid) -> Result<Solid, RepairError
     Ok(after)
 }
 
+/// The fuse step: `shape_bool::fuse`, made to scale on a large shell that
+/// passes through itself. Each shell is untangled on its own
+/// (`shape_bool::self_union`); the shells an untangling leaves besides its
+/// largest are pockets the surface folded round ([`RepairReport::pockets`]),
+/// and those that are floaters by `floaters` are dropped. Then only the
+/// shells that meet another (exact, `selfcheck::tris_meet`) or may lie
+/// inside one (its box within the other's) are joined by booleans, group
+/// by group; the rest are kept as they are, since their union is
+/// themselves. Before, every pocket was joined to the whole by its own
+/// boolean: 133 s on a 619 000-triangle chair (`docs/research.md` §32).
+fn fuse_shells(s: &Solid, floaters: &Floaters, r: &mut RepairReport) -> Result<Solid, String> {
+    let comps = shape_bool::components(s);
+    let tangled: Vec<bool> = comps
+        .iter()
+        .map(|c| shape_bool::crossing_pairs(c) > 0)
+        .collect();
+    if !tangled.iter().any(|&t| t) {
+        // Nothing to untangle: the booleans' own fuse, as before.
+        return shape_bool::fuse(s).map_err(|e| e.to_string());
+    }
+    let mut all = Solid::default();
+    let mut whole: Option<Solid> = None;
+    for (c, t) in comps.iter().zip(&tangled) {
+        let shells = if *t {
+            match shape_bool::self_union(c) {
+                Ok(u) => {
+                    let parts = shape_bool::components(&u);
+                    if comps.len() == 1 && parts.len() == 1 {
+                        whole = Some(u);
+                    }
+                    parts
+                }
+                Err(_) => vec![c.clone()],
+            }
+        } else {
+            vec![c.clone()]
+        };
+        for x in &shells {
+            all.append(x);
+        }
+        r.pockets += shells.len().saturating_sub(1);
+    }
+    all.canonicalize().map_err(|e| e.to_string())?;
+    if let Some(u) = whole {
+        // One shell, untangled whole: the self-union is the result.
+        return Ok(u);
+    }
+    let (all, dropped, gone) = remove_floaters(&all, floaters).map_err(|e| e.to_string())?;
+    r.pockets_dropped = dropped;
+    r.pocket_triangles_dropped = gone;
+    // Which shells must be joined: they meet, or one's box holds the
+    // other's.
+    let shells = shape_bool::components(&all);
+    if shells.len() <= 1 {
+        return Ok(all);
+    }
+    let mut points: Vec<DVec3> = Vec::new();
+    let mut tris: Vec<[u32; 3]> = Vec::new();
+    let mut owner: Vec<u32> = Vec::new();
+    let mut boxes: Vec<(DVec3, DVec3)> = Vec::new();
+    for (k, x) in shells.iter().enumerate() {
+        let base = points.len() as u32;
+        points.extend(&x.positions);
+        let (mut lo, mut hi) = (DVec3::INFINITY, DVec3::NEG_INFINITY);
+        for p in &x.positions {
+            lo = lo.min(*p);
+            hi = hi.max(*p);
+        }
+        boxes.push((lo, hi));
+        for t in &x.triangles {
+            tris.push(t.map(|v| v + base));
+            owner.push(k as u32);
+        }
+    }
+    let mut parent: Vec<u32> = (0..shells.len() as u32).collect();
+    let join = |parent: &mut Vec<u32>, a: u32, b: u32| {
+        let (a, b) = (find(parent, a), find(parent, b));
+        if a != b {
+            parent[a.max(b) as usize] = a.min(b);
+        }
+    };
+    for (i, j) in shape_bool::selfcheck::box_pairs(&points, &tris) {
+        let (a, b) = (owner[i as usize], owner[j as usize]);
+        if a != b
+            && find(&mut parent, a) != find(&mut parent, b)
+            && shape_bool::selfcheck::tris_meet(
+                tris[i as usize].map(|v| points[v as usize]),
+                tris[j as usize].map(|v| points[v as usize]),
+            )
+        {
+            join(&mut parent, a, b);
+        }
+    }
+    for a in 0..shells.len() {
+        for b in 0..shells.len() {
+            let ((alo, ahi), (blo, bhi)) = (boxes[a], boxes[b]);
+            if a != b && blo.cmple(alo).all() && ahi.cmple(bhi).all() {
+                join(&mut parent, a as u32, b as u32);
+            }
+        }
+    }
+    let mut groups: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    for k in 0..shells.len() {
+        groups
+            .entry(find(&mut parent, k as u32))
+            .or_default()
+            .push(k);
+    }
+    let mut out = Solid::default();
+    for members in groups.values() {
+        if members.len() == 1 {
+            out.append(&shells[members[0]]);
+            continue;
+        }
+        // The largest shell against the others joined first among
+        // themselves: one boolean on the large one, not one per shell.
+        let big = *members
+            .iter()
+            .max_by_key(|&&k| (shells[k].triangles.len(), std::cmp::Reverse(k)))
+            .unwrap_or(&members[0]);
+        let mut rest = Solid::default();
+        for &k in members {
+            if k != big {
+                rest.append(&shells[k]);
+            }
+        }
+        rest.canonicalize().map_err(|e| e.to_string())?;
+        let rest = shape_bool::fuse(&rest).map_err(|e| e.to_string())?;
+        let joined = shape_bool::boolean(&shells[big], &rest, &shape_bool::Boolean::default())
+            .map_err(|e| e.to_string())?;
+        out.append(&joined);
+    }
+    out.canonicalize().map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
 /// Runs the repair steps in order (weld, degenerate and duplicate
 /// triangles, floaters, orientation, holes, fuse, short edges) and reports
 /// what each changed. The result is in canonical order.
@@ -1003,12 +1600,27 @@ pub fn repair(s: &Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairErro
     r.floater_triangles = ft;
     let (s, flipped) = orient(&s)?;
     r.flipped = flipped;
+    let s = if d.non_manifold {
+        let (s, mut nm) = split_non_manifold(&s)?;
+        // Sheets apart now may be floaters, and orientation can now run
+        // across the edges that were split.
+        let (s, f, ft) = remove_floaters(&s, &d.floaters)?;
+        nm.sheets_dropped = f;
+        nm.sheet_triangles_dropped = ft;
+        let (s, more) = orient(&s)?;
+        r.flipped += more;
+        r.non_manifold = Some(nm);
+        s
+    } else {
+        s
+    };
     let s = if d.max_hole_edges > 0 {
-        let (s, filled, added, left, seams) = close_holes(&s, d.max_hole_edges)?;
-        r.uv_seam_fills = seams;
-        r.holes_filled = filled;
-        r.fill_triangles = added;
-        r.holes_left = left;
+        let (s, h) = close_holes(&s, d.max_hole_edges)?;
+        r.uv_seam_fills = h.uv_seam_fills;
+        r.holes_filled = h.filled;
+        r.large_holes_filled = h.large;
+        r.fill_triangles = h.triangles;
+        r.holes_left = h.left;
         // Filling can join pieces that were apart; orient once more.
         let (s, more) = orient(&s)?;
         r.flipped += more;
@@ -1025,7 +1637,7 @@ pub fn repair(s: &Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairErro
             r.fused = Some(Ok(n));
             s
         } else {
-            match shape_bool::fuse(&s) {
+            match fuse_shells(&s, &d.floaters, &mut r) {
                 Ok(f) if f.measure().closed => {
                     r.fused = Some(Ok(n));
                     keep_input_uvs(&s, f)?
@@ -1231,5 +1843,137 @@ mod tests {
         )
         .unwrap();
         assert!(r.self_intersections.unwrap() > 0);
+    }
+
+    #[test]
+    fn fuse_drops_the_pockets_an_untangling_leaves() {
+        // A ball whose vertices are moved by up to 1.5 per axis
+        // (splitmix64): it folds through itself, and its self-union is a
+        // main shell and three small pockets the surface folded round.
+        let mut ball = shape_gen::solids::sphere(10.0).unwrap();
+        let mut state = 5u64;
+        let mut next = || {
+            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^= z >> 31;
+            (z >> 11) as f64 / (1u64 << 52) as f64 - 1.0
+        };
+        for p in &mut ball.positions {
+            *p += DVec3::new(next(), next(), next()) * 1.5;
+        }
+        let d = Repair {
+            fuse: true,
+            floaters: Floaters {
+                fraction: 0.05,
+                ..Default::default()
+            },
+            check_intersections: true,
+            ..Default::default()
+        };
+        let (out, r) = repair(&ball, &d).unwrap();
+        assert_eq!(r.fused, Some(Ok(1)));
+        assert_eq!((r.pockets, r.pockets_dropped), (3, 3), "{r:?}");
+        assert_eq!(r.self_intersections, Some(0));
+        assert_eq!(pieces(&out).1, 1);
+        assert!(out.measure().closed);
+    }
+
+    #[test]
+    fn two_cubes_on_one_edge_come_apart_closed() {
+        // Two cubes touching along one edge: four faces on it.
+        let mut s = cube(DVec3::ZERO, 10.0);
+        s.append(&cube(DVec3::new(10.0, 10.0, 0.0), 10.0));
+        s.canonicalize().unwrap();
+        assert_eq!(s.measure().non_manifold_edges, 1);
+        let (out, r) = repair(
+            &s,
+            &Repair {
+                non_manifold: true,
+                check_intersections: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let nm = r.non_manifold.unwrap();
+        assert_eq!(
+            (nm.edges, nm.split, nm.left, nm.unpaired),
+            (1, 1, 0, 0),
+            "{nm:?}"
+        );
+        assert_eq!(nm.vertices, 2);
+        let m = out.measure();
+        assert!(m.closed, "{m:?}");
+        assert_eq!(pieces(&out).1, 2);
+        assert_eq!(r.self_intersections, Some(0));
+        // Each copy moved into its own cube, 1 % of its shortest edge.
+        assert!((nm.moved - 0.1).abs() < 1e-12, "{nm:?}");
+    }
+
+    #[test]
+    fn a_fill_across_a_uv_seam_covers_no_texture() {
+        let ball = shape_gen::solids::textured(&shape_gen::solids::Generator::Sphere(
+            shape_gen::solids::SphereDesc {
+                radius: 7.3,
+                ..Default::default()
+            },
+        ))
+        .unwrap();
+        // A vertex on the seam (two UVs), away from the poles: its fan
+        // removed leaves a hole whose rim crosses the seam.
+        let uvs = ball.uvs.as_ref().unwrap();
+        let mut at: BTreeMap<u32, Vec<[u64; 2]>> = BTreeMap::new();
+        for (t, tri) in ball.triangles.iter().enumerate() {
+            for k in 0..3 {
+                let u = uvs[t][k];
+                at.entry(tri[k])
+                    .or_default()
+                    .push([u.x.to_bits(), u.y.to_bits()]);
+            }
+        }
+        let v = *at
+            .iter()
+            .find(|(v, u)| {
+                let mut u = (*u).clone();
+                u.sort_unstable();
+                u.dedup();
+                u.len() == 2 && ball.positions[**v as usize].z.abs() < 3.0
+            })
+            .unwrap()
+            .0;
+        let mut open = ball.clone();
+        let keep: Vec<usize> = (0..open.triangles.len())
+            .filter(|&t| !open.triangles[t].contains(&v))
+            .collect();
+        let remap: Vec<u32> = (0..open.positions.len() as u32).collect();
+        open = drop_unused(&rebuild(&open, &keep, &remap, open.positions.clone()));
+        let (out, h) = close_holes(&open, 64).unwrap();
+        assert_eq!((h.filled, h.uv_seam_fills), (1, 1), "{h:?}");
+        let fill = out.faces(&["fill"]).unwrap();
+        assert!(!fill.is_empty());
+        let uvs = out.uvs.as_ref().unwrap();
+        for t in fill {
+            let u = uvs[t as usize];
+            assert!(u[0] == u[1] && u[1] == u[2], "{u:?}");
+        }
+        assert!(out.measure().closed);
+    }
+
+    #[test]
+    fn a_hole_over_the_limit_is_filled_when_flat_and_clear() {
+        // A cube without one face: a square hole of four edges.
+        let mut s = cube(DVec3::ZERO, 10.0);
+        for _ in 0..2 {
+            s.triangles.pop();
+            s.surfaces.pop();
+            s.face_tags.pop();
+        }
+        let (out, h) = close_holes(&s, 3).unwrap();
+        assert_eq!((h.filled, h.large, h.left), (1, 1, 0), "{h:?}");
+        assert!(out.measure().closed);
+        // Within the limit it is an ordinary fill.
+        let (_, h) = close_holes(&s, 4).unwrap();
+        assert_eq!((h.filled, h.large), (1, 0));
     }
 }

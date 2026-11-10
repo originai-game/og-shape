@@ -44,14 +44,36 @@ import → join → repair → decimate → place → unwrap → measure → pre
    - `floaters.fraction: 0.05`: drops specks under 5 % of the largest
      piece. Look at `measure`'s `largest_pieces` first: eyes, teeth and
      buttons are pieces too.
-   - `max_hole_edges: 64`: closes holes up to 64 edges round. Fills are
-     named `fill`; preview them.
-   - `fuse: true` joins interpenetrating closed parts; the report says
-     when it could not (always on a skinned mesh: booleans carry no skin).
+   - `non_manifold: true`: splits edges with more than two faces (two
+     sheets touching along an edge, a fin) into manifold sheets, moving
+     each extra sheet's copy of a vertex 1 % of its shortest edge into
+     its own fan. Read `non_manifold` in the report: `left` edges could
+     not be split (the mesh stays open), `crossings_added` pairs the moves
+     made cross (the fuse step untangles them on a closed shell).
+   - `max_hole_edges: 64`: closes holes up to 64 edges round, and larger
+     ones (up to 512) whose fill is flat and crosses nothing
+     (`large_holes_filled`); the rest stay in `holes_left`. Fills are
+     named `fill`; preview them. A fill whose rim crosses a UV seam
+     takes one UV (`uv_seam_fills`): one colour, the rim's, instead of a
+     fan across the texture.
+   - `fuse: true` joins interpenetrating closed parts and untangles a
+     shell that passes through itself; the report says when it could
+     not (always on a skinned mesh: booleans carry no skin). Untangling
+     can leave pockets the surface folded round as shells of their own:
+     `pockets` counts them, and those that are floaters by `floaters`
+     are dropped (`pockets_dropped`).
    - `min_edge: 0.001` collapses the slivers a union leaves.
 4. **Decimate** to the budget (`decimate`, `target` or `ratio`), or make
    LODs (`lods`). The report's `error` is how far the surface moved, in
-   mm. On a skinned mesh, the rows of vertices where weights change
+   mm. No collapse makes the surface pass through itself; where the
+   budget cannot be met, `triangles` is above `target` and `blocked`
+   counts the edges left by what stops each: `fixed` (corners, and
+   seams or borders it does not run along), `uv` (the UVs cannot
+   follow), `fold` (it would pass through itself), `link`, `turn`,
+   `error`. Keeping a file's UVs, `merge_charts: 0.00025` (a quarter
+   texel at 1024²) treats islands that agree across a seam up to a
+   rigid move as one chart, which lowers the floor a little
+   (`docs/research.md` §32). On a skinned mesh, the rows of vertices where weights change
    (joints) are kept by preference, so the mesh bends as before; the
    price is a little more surface error elsewhere at the same count
    (`docs/research.md` §11.5). `cross_bone_borders` turns this off for a
@@ -96,7 +118,7 @@ import → join → repair → decimate → place → unwrap → measure → pre
 | `closed` | every edge has two faces, wound opposite ways | `true` for anything a boolean, a 3D print or a texturing service takes |
 | `boundary_loops` | holes left | 0, unless the object is a sheet |
 | `non_manifold_edges`, `inconsistent_edges` | edges with three faces or more; faces that disagree | 0 |
-| `self_intersections` | pairs of faces passing through each other | 0 for booleans; a few are harmless for rendering |
+| `self_intersections` | pairs of faces passing through each other | 0 for booleans; a few are harmless for rendering; decimation does not add any |
 | `floaters`, `largest_pieces` | pieces besides the largest | only the ones the object should have |
 | `degenerate_triangles`, `duplicate_triangles` | faces with no area; repeated faces | 0 |
 | `shortest_edge` | in mm; below about 1e-5 mm, f32 export merges vertices | well above 1e-5 |
@@ -142,10 +164,11 @@ Measured on 54 outputs of eight generators (`docs/research.md` §28):
   the prompt image shows: a horse photographed from its side faces
   front side-on, and a `turn` of 90 or -90 points its head forward.
 - Keeping the file's UVs, decimation stops at about three triangles a
-  UV island (thousands on an atlas of 2 000 islands). Below that,
-  `--unwrap` reaches the budget and drops the texture.
-- A hole filled across UV seams can cover half the texture: compare
-  `uv.overlap` before and after repair.
+  UV island (thousands on an atlas of 2 000 islands); `blocked.fixed`
+  says so. `merge_charts` lowers it by 8–31 % on the atlases measured.
+  Below that, `--unwrap` reaches the budget and drops the texture.
+- TRELLIS's meshes have non-manifold edges: repair with `non_manifold`.
+- A hole filled across UV seams takes one colour (`uv_seam_fills`).
 - Only the base colour is kept: metallic-roughness and normal maps,
   vertex colours and the material's metallic and roughness factors
   are not (`skipped` names the maps and the colours).
@@ -169,4 +192,5 @@ above 0) cannot be untangled. Booleans refuse it. Close its holes first
 (`max_hole_edges`), or get another mesh.
 
 Untangling is slow on heavy noise: about 2 s for 30k triangles with
-thousands of folds.
+thousands of folds, 24 s for the fuse step on a 619k-triangle chair with
+4 000 crossing pairs.

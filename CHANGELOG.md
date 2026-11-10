@@ -1070,3 +1070,50 @@
   OBJs (`--up -z --front +x`) can be read. `z_up` now applies to glTF
   too and is refused together with `up` or `front`; FBX refuses all
   three (it says its axes). No golden line moved; new cases `place.*`.
+- `decimate` no longer folds the surface through itself: a collapse
+  whose rewritten triangles would cross another triangle (exact,
+  `shape_bool::selfcheck::crossing`, against the triangles near them in
+  a spatial hash) is not taken. On an input that already crosses itself
+  the count never rises. A decimation that misses its target says why:
+  `DecimateReport::blocked` counts the edges left by the rule that
+  refuses each (`fixed`, `error`, `link`, `turn`, `uv`, `fold`,
+  `not_retried`), and `folds_refused` the collapses refused for folding
+  (`docs/research.md` §32). The report also gives `uv_islands` and
+  `uv_charts`.
+- `Decimate::merge_charts` (`--merge-charts UV` on `shape decimate` and
+  `shape process`, `merge_charts` in the MCP tools): UV islands that meet
+  along an edge and agree there up to a rigid move in UV space are one
+  chart for the seam rule, so their shared seam no longer pins the
+  decimation; the texture is not rewritten. Off by default.
+- `repair`: `Repair::non_manifold` (`--non-manifold`, MCP
+  `non_manifold`) splits edges with more than two faces into manifold
+  sheets (`split_non_manifold`): faces the surface already joins round
+  an end of the edge pair up, the rest by their exact order round it;
+  every extra sheet through a vertex gets its own copy of it, moved 1 %
+  of its shortest edge into its own fan so a file does not weld it back.
+  The pieces that come apart and are floaters are dropped. The report's
+  `non_manifold` says what was split, left and moved.
+- `close_holes` fills a hole over the edge limit (up to 512 edges) when
+  its least-area fill is flat (no triangle against the mean normal) and
+  crosses nothing; `RepairReport::large_holes_filled` counts them.
+  `close_holes` returns a `Holes` report.
+- A hole fill whose rim crosses a UV seam takes one UV at every corner
+  (its first rim vertex's): it no longer fans across the atlas (51–55 %
+  of texels overlapped on two generated meshes, back to their level
+  without fills). `uv_seam_fills` counts these fills.
+- The fuse step untangles each shell on its own and joins only the
+  shells that meet or may nest, the small ones among themselves first:
+  133 s → 24 s on a 619 000-triangle chair. The shells an untangling
+  leaves besides its largest are reported (`pockets`) and dropped when
+  they are floaters by the repair's `floaters` (`pockets_dropped`,
+  `pocket_triangles_dropped`).
+- Golden: `mcp.process.ball_defects` moved for the report's new fields
+  (`folds_refused`, `blocked`, `uv_islands`, `uv_charts`,
+  `non_manifold`, `large_holes_filled`, `pockets`, `pockets_dropped`,
+  `pocket_triangles_dropped`); its mesh is the same bytes. New cases
+  `meshtools.decimate.fold`, `meshtools.decimate.charts`,
+  `meshtools.repair.non_manifold`, `meshtools.repair.large_hole`,
+  `meshtools.repair.seam_fill`, `meshtools.repair.pockets`.
+- `bench/generated`: the guide's repair adds `--non-manifold`;
+  `run.ts --merge-charts UV --modes keep`; `compare.ts` prints two runs
+  side by side (`docs/research.md` §32).

@@ -29,7 +29,8 @@
 //!   solid with its [`Affine`] transform, per-corner UVs and its textures'
 //!   sizes ([`ImageInfo`]).
 //! - [`repair()`]: [`Repair`] runs [`weld`], [`remove_degenerate`],
-//!   [`remove_floaters`], [`orient`], [`close_holes`] and a self-union of
+//!   [`remove_floaters`], [`orient`], [`split_non_manifold`],
+//!   [`close_holes`] and a self-union of
 //!   interpenetrating shells; [`apply_transform`] and [`join`] place and
 //!   merge parts.
 //! - [`decimate()`] and [`lods`]: quadric error metrics; closed stays
@@ -66,7 +67,10 @@ mod skin;
 mod surface;
 mod unwrap;
 
-pub use decimate::{Decimate, DecimateError, DecimateReport, collapse_short_edges, decimate, lods};
+pub use decimate::{
+    Blocked, Decimate, DecimateError, DecimateReport, Rigid, collapse_short_edges, decimate, lods,
+    merge_charts,
+};
 pub use export::{
     ExportError, Joint, JointKind, Material, Mimic, Part, Placement, Scene, glb, obj, obj_at,
     posed, stl, stl_at,
@@ -86,7 +90,8 @@ pub use place::{
 pub use png::png;
 pub use preview::{Image, Preview, preview, sheet};
 pub use repair::{
-    Floaters, Repair, RepairError, RepairReport, Weld, apply_transform, close_holes, join, orient,
-    remove_degenerate, remove_floaters, repair, weld,
+    Floaters, Holes, LARGE_HOLE_EDGES, NonManifold, Repair, RepairError, RepairReport, Weld,
+    apply_transform, close_holes, join, orient, remove_degenerate, remove_floaters, repair,
+    split_non_manifold, weld,
 };
 pub use unwrap::{Unwrap, UnwrapError, Uvs, unwrap};

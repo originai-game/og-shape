@@ -62,6 +62,7 @@ Run on `main` on 2026-11-10; each line says where the numbers come from.
 | Booleans against outside meshes | 109 cases from sand3d, Thingi10K, synthetic defects and touching operands; no ok output crosses itself with the repair on | `bench/booleans` (`docs/research.md` §25.2) |
 | Real generated meshes | 54 files from 8 image- and text-to-3D generators (Hunyuan3D-2, TRELLIS, SPAR3D, TripoSR, InstantMesh, CRM, Unique3D, Meshy): within budget and closed keeping their UVs and texture 40, 49 and 50 at 2 000, 10 000 and 50 000 triangles, 50 at each with fresh UVs (the other 4 are open TRELLIS meshes); 132 of 154 booleans on the results closed, 19 refused with a cause, 3 missed | `bench/generated` (`docs/research.md` §28) |
 | Generated meshes placed for a game | all 54 stand on z = 0 with the origin at the base's centre, at the size asked to 4e-8, facing front, with each generator's frame given as `up` and `front` (TripoSR `+z`/`+x`, InstantMesh `-z`/`+x`, SPAR3D and CRM `+y`/`-z`); no simple reading of the axis measures stands more than 22 up | `bench/generated/place.ts` (`docs/research.md` §31) |
+| Real generated meshes | 54 files from 8 image- and text-to-3D generators (Hunyuan3D-2, TRELLIS, SPAR3D, TripoSR, InstantMesh, CRM, Unique3D, Meshy): within budget and closed keeping their UVs and texture 40, 51 and 52 at 2 000, 10 000 and 50 000 triangles, 52 at each with fresh UVs (the other 2 are open TRELLIS meshes); decimation folds none through itself (outputs crossing themselves at 10k: 21 files before, 2 after, both inputs that crossed); 143 of 154 booleans on the results closed, 7 refused with a cause, 4 missed | `bench/generated` (`docs/research.md` §28, §32) |
 | The mesh chain on a damaged mesh | open, 2 pieces, 79 flipped faces → closed, 1 piece, on budget, unwrapped with no UV overlap | `shape process golden/meshes/ball_defects.obj` |
 | Outside files | glTF, OBJ and FBX from three.js's and Khronos's samples import; textured and skinned ones keep UVs, bones and weights through repair and decimation to half | `docs/research.md` §9, §11.5, §17 |
 | three.js reads the output | the washing machine's joints move and a skinned figure poses in headless Chromium; vertex positions match the kernel's own pose | `docs/research.md` §19 |
@@ -83,6 +84,13 @@ silent returns a result with no error:
   an edge with more than two faces (308).
 - The unwrap is planar per chart, with no atlas packing; the preview
   draws no textures.
+- Keeping a file's UVs, decimation stops at about three triangles a UV
+  island: 14 of 54 generated meshes miss 2 000 triangles (the report's
+  `blocked` says why); merging rigidly matching islands lowers that
+  3–25 %, and atlas repacking or baking is not done.
+- Repair leaves open, and reports, non-manifold edges that no pairing of
+  their faces separates and holes over 64 edges that no flat clear fill
+  closes: 2 of TRELLIS's 6 meshes (`docs/research.md` §32).
 - Not read: Draco and meshopt-compressed glTF, morph targets, vertex
   colours. No USD or URDF export.
 - `place` turns, sizes and moves a mesh to its base, but does not
@@ -113,7 +121,8 @@ shape build   model.json                     # parts and joints as JSON
 shape preview model.json -o model.png        # a turntable, CPU-rendered
 shape export  model.json -o model.glb        # or .obj, .stl
 shape process scan.glb --budget 40000 --weld 0.001 --floaters 0.05 \
-              --holes 64 --fuse -o asset.glb # repair, decimate, unwrap
+              --non-manifold --holes 64 --fuse -o asset.glb
+                                             # repair, decimate, unwrap
 ```
 
 ## Read

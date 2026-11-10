@@ -10,17 +10,17 @@
 //!                [--azimuth RAD] [--no-edges] [--no-ground]
 //! shape import   <mesh> [-o out]
 //! shape repair   <mesh> [-o out] [--weld MM] [--weld-all] [--floaters F]
-//!                [--floater-size MM] [--holes N] [--fuse] [--min-edge MM]
-//!                [--intersections]
+//!                [--floater-size MM] [--non-manifold] [--holes N] [--fuse]
+//!                [--min-edge MM] [--intersections]
 //! shape decimate <mesh> (--ratio R | --target N) [--max-error MM]
-//!                [--lock-border] [--lods N] [-o out]
+//!                [--lock-border] [--merge-charts UV] [--lods N] [-o out]
 //! shape unwrap   <mesh> [-o out.glb] [--angle DEG] [--resolution PX]
 //!                [--padding TEXELS]
 //! shape place    <mesh> [-o out] [--up AXIS] [--front AXIS] [--turn DEG]
 //!                [--longest L | --height L | --width L | --depth L | --scale F]
 //!                [--pivot base|center|X,Y,Z]
-//! shape process  <mesh> [--budget N] [-o out.glb] [repair, unwrap and
-//!                place options] [--intersections]
+//! shape process  <mesh> [--budget N] [--merge-charts UV] [-o out.glb]
+//!                [repair, unwrap and place options] [--intersections]
 //! ```
 //!
 //! An input is a program (the JSON a binding records,
@@ -57,15 +57,17 @@ const USAGE: &str = "usage: shape <command> <input> [options]
            [--columns N] [--elevation RAD] [--azimuth RAD] [--no-edges] [--no-ground]
   import   <mesh> [-o out.glb|obj|stl]          parts, images and what was skipped
   repair   <mesh> [-o out] [--weld MM] [--weld-all] [--floaters FRACTION]
-           [--floater-size MM] [--holes N] [--fuse] [--min-edge MM] [--intersections]
+           [--floater-size MM] [--non-manifold] [--holes N] [--fuse] [--min-edge MM]
+           [--intersections]
   decimate <mesh> (--ratio R | --target N) [--max-error MM] [--lock-border]
-           [--lods N] [-o out]
+           [--merge-charts UV] [--lods N] [-o out]
   unwrap   <mesh> [-o out.glb] [--angle DEG] [--resolution PX] [--padding TEXELS]
   place    <mesh> [-o out] [--up AXIS] [--front AXIS] [--turn DEG]
            [--longest L | --height L | --width L | --depth L | --scale F]
            [--pivot base|center|X,Y,Z]      turn, size (L with a unit: 1.2m, 90cm,
                                                 900mm) and origin, before and after
-  process  <mesh> [--budget N] [-o out.glb] [repair, unwrap and place options]
+  process  <mesh> [--budget N] [--merge-charts UV] [-o out.glb]
+           [repair, unwrap and place options]
            [--intersections]";
 
 fn main() -> ExitCode {
