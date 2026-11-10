@@ -70,6 +70,33 @@ describe("errors are thrown with the kernel's message", () => {
     const s = washerOpen(og);
     expect(() => s.pose("door_hinge", og.deg(150))).toThrow(/outside its range/);
   });
+  test("a frame read off a posed part", () => {
+    const s = og.model({ name: "p" });
+    const base = s.box({ name: "base", width: 40, depth: 40, height: 10 });
+    const lid = s.box({ name: "lid", width: 40, depth: 40, height: 2, on: s.face(base, "top") });
+    s.joint(lid, { name: "flip", parent: base, on: s.bbox(lid, "-Y-Z"), axis: "-X", range: [0, 2] });
+    s.pose("flip", 1);
+    expect(() => s.face(lid, "top")).toThrow(/at rest.*"flip"/);
+    expect(s.face(base, "top").origin).toEqual([0, 0, 10]);
+  });
+});
+
+describe("the pose", () => {
+  test("measure({ posed: true }) measures at the pose, with the joints", () => {
+    const s = washerOpen(og);
+    const rest = s.measure();
+    const posed = s.measure({ posed: true });
+    expect(posed.posed).toBe(true);
+    expect(posed.pose.drawer_slide).toBe(120);
+    expect(posed.joints.map((j: any) => j.name)).toEqual(["door_hinge", "drum_spin", "drawer_slide", "dial_turn"]);
+    // The open door reaches beyond the rest's bounds; the volume is the rest's.
+    expect(posed.boundsMax[0]).toBeGreaterThan(rest.boundsMax[0]);
+    expect(Math.abs(posed.volume - rest.volume)).toBeLessThan(1e-3);
+    expect(() => s.measure({ pose: true } as any)).toThrow(/posed/);
+  });
+  test("OBJ at the pose", () => {
+    expect(washerOpen(og).obj().split("\n")[0]).toEndWith(", posed");
+  });
 });
 
 describe("errors say where", () => {

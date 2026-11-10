@@ -8,7 +8,9 @@ use shape_bool::{BoolOp, Boolean};
 use shape_core::{DVec3, Frame};
 use shape_edit::{Dent, Hole, Keep, Pocket, Shell};
 use shape_mesh::{Measures, Solid};
-use shape_tools::{Image, Interfering, JointKind, Material, Mimic, Part, Preview, Scene};
+use shape_tools::{
+    Image, Interfering, JointKind, Material, Mimic, Part, Placement, Preview, Scene,
+};
 
 use crate::error::ModelError;
 use crate::place::{self, Path};
@@ -93,6 +95,36 @@ struct JointRec {
     /// Unit world axis (none for fixed and floating).
     axis: Option<DVec3>,
     value: f64,
+    /// The parent's own space seen from the pivot when the joint was
+    /// declared (`on⁻¹ ∘ parent placement`): [`Model::seating`] measures
+    /// how far the parent has moved off it since.
+    seat: Frame,
+}
+
+/// How a joint holds, measured at rest in the model's unit
+/// ([`Model::seating`]). Measurements only: no threshold.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Seating {
+    /// The joint.
+    pub joint: String,
+    /// The node it moves.
+    pub child: String,
+    /// The node it hangs on.
+    pub parent: String,
+    /// Its value now (a follower's from its leader).
+    pub value: f64,
+    /// From the pivot's origin to the nearest point of the parent's
+    /// parts (those under it but not under the child); `None` when the
+    /// parent has no triangles.
+    pub pivot_to_parent: Option<f64>,
+    /// From the pivot's origin to the nearest point of the child's parts.
+    pub pivot_to_child: Option<f64>,
+    /// How far the parent's own space has moved from the pivot since the
+    /// joint was declared: a parent moved (`at`, `transform`) without its
+    /// child leaves the pivot, and the child, where they were.
+    pub parent_moved: f64,
+    /// How far it has turned since, in radians.
+    pub parent_turned: f64,
 }
 
 /// One part's measures in the world, in the model's unit.
@@ -146,7 +178,12 @@ impl Built {
 ///   [`ModelError::UsedUp`] after.
 /// - Joints hang a child (a part or a group) on a parent part. Several on
 ///   one child compose in declaration order, the first nearest the parent.
-///   [`Model::pose`] sets a value; geometry is always read at rest.
+///   [`Model::pose`] sets a value. Frames are read at rest only: a read
+///   of a part a non-zero joint value moves ([`Model::bbox`],
+///   [`Model::face`], [`Model::edge`], [`Model::snap`],
+///   [`Model::placement`], [`Model::local`], [`Model::anchor`]) is
+///   refused with [`ModelError::Posed`]. Export, preview and
+///   [`Model::measure_posed`] show the pose.
 #[derive(Clone, Debug, Default)]
 pub struct Model {
     name: String,
@@ -370,6 +407,7 @@ impl Model {
     /// The anchor `name` of an assembly, where the assembly is now.
     pub fn anchor(&self, assembly: Id, name: &str) -> Result<Frame, ModelError> {
         let n = self.node(assembly)?;
+        self.at_rest("anchor", &[assembly])?;
         let local = n.anchors.get(name).ok_or_else(|| {
             ModelError::Refused(
                 n.name.clone(),
@@ -441,16 +479,20 @@ impl Model {
 
     /// `id`'s placement: its own space in the world.
     pub fn placement(&self, id: Id) -> Result<Frame, ModelError> {
-        Ok(self.node(id)?.placement)
+        let p = self.node(id)?.placement;
+        self.at_rest("placement", &[id])?;
+        Ok(p)
     }
 
     /// A frame given in `id`'s own space (where it was built), in the
     /// world: a source's joint origin, as written.
     pub fn local(&self, id: Id, frame: &Frame) -> Result<Frame, ModelError> {
-        Ok(self.node(id)?.placement.compose(frame))
+        let p = self.node(id)?.placement;
+        self.at_rest("local", &[id])?;
+        Ok(p.compose(frame))
     }
 
-    /// A part's solid in the world, at rest.
+    /// A part's solid in the world, at rest (whatever the pose).
     pub fn world_solid(&self, id: Id) -> Result<Solid, ModelError> {
         let n = self.node(id)?;
         let s = self.solid_of(id)?.clone();
@@ -476,7 +518,9 @@ impl Model {
     /// `"+X"` a side's centre, `"+X-Y"` an edge's middle, `"+X-Y+Z"` a
     /// corner; its normal looks the first way named.
     pub fn bbox(&self, ids: &[Id], which: &str) -> Result<Frame, ModelError> {
-        place::bbox(&self.points(ids)?, which)
+        let points = self.points(ids)?;
+        self.at_rest("bbox", ids)?;
+        place::bbox(&points, which)
     }
 
     /// The frame on part `id`'s face named `which` (or furthest along a
@@ -484,6 +528,7 @@ impl Model {
     /// normal ([`place::face`]).
     pub fn face(&self, id: Id, which: &str) -> Result<Frame, ModelError> {
         let s = self.world_solid(id)?;
+        self.at_rest("face", &[id])?;
         place::face(&s, &self.nodes[id.0 as usize].name, which)
     }
 
@@ -491,6 +536,7 @@ impl Model {
     /// ([`place::edge`]).
     pub fn edge(&self, id: Id, which: &str) -> Result<Path, ModelError> {
         let s = self.world_solid(id)?;
+        self.at_rest("edge", &[id])?;
         place::edge(&s, &self.nodes[id.0 as usize].name, which)
     }
 
@@ -505,6 +551,7 @@ impl Model {
             .iter()
             .map(|&t| self.world_solid(t))
             .collect::<Result<_, _>>()?;
+        self.at_rest("snap", targets)?;
         let refs: Vec<&Solid> = solids.iter().collect();
         Ok(place::snap(&refs, points, direction))
     }
@@ -533,15 +580,16 @@ impl Model {
 
     // ── copies ───────────────────────────────────────────────────────────────
 
-    /// Copies `id` and everything under it, apart from joints, with the
-    /// geometry each node gets from `geometry`. The copy's root takes
-    /// `name`, the nodes under it their own names with a free suffix.
+    /// Copies `id` and everything under it with the geometry each node
+    /// gets from `geometry`. The copy's root takes `name`, the nodes under
+    /// it their own names with a free suffix. Answers the copy's root and
+    /// each copied node's id by the original's.
     fn duplicate(
         &mut self,
         id: Id,
         name: &str,
         geometry: impl Fn(&Node) -> (Option<Solid>, Frame),
-    ) -> Result<Id, ModelError> {
+    ) -> Result<(Id, BTreeMap<Id, Id>), ModelError> {
         self.node(id)?;
         self.check_name(name)?;
         let tree = self.subtree(id);
@@ -570,26 +618,99 @@ impl Model {
             });
             map.insert(old, new);
         }
-        Ok(map[&id])
+        Ok((map[&id], map))
+    }
+
+    /// `name` if no joint has it, else `name.001`, `name.002`…
+    fn unique_joint(&self, name: &str) -> String {
+        let taken = |n: &str| self.joints.iter().any(|j| j.desc.name == n);
+        let mut out = name.to_string();
+        let mut k = 0;
+        while taken(&out) {
+            k += 1;
+            out = format!("{name}.{k:03}");
+        }
+        out
+    }
+
+    /// Copies every joint whose child was copied (`map`: original id to
+    /// copy), in declaration order, onto the copies: each named with a
+    /// free suffix (`hinge.001`), hanging on the parent's copy when the
+    /// parent was copied too and on the same parent otherwise, following
+    /// its leader's copy when that was copied. `image` maps the pivot, the
+    /// axis (world) and the explicit axis of a joint of kind `kind`.
+    fn copy_joints(
+        &mut self,
+        map: &BTreeMap<Id, Id>,
+        image: impl Fn(JointKind, &Frame, Option<DVec3>, DVec3) -> (Frame, Option<DVec3>, DVec3),
+    ) {
+        let mut names: BTreeMap<String, String> = BTreeMap::new();
+        let copied: Vec<JointRec> = self
+            .joints
+            .iter()
+            .filter(|j| map.contains_key(&j.child))
+            .cloned()
+            .collect();
+        for j in copied {
+            let name = self.unique_joint(&j.desc.name);
+            names.insert(j.desc.name.clone(), name.clone());
+            let parent = map.get(&j.parent).copied().unwrap_or(j.parent);
+            let (on, axis, explicit) = image(j.desc.kind, &j.desc.on, j.axis, j.desc.axis);
+            let mimic = j.desc.mimic.as_ref().map(|m| Mimic {
+                joint: names.get(&m.joint).cloned().unwrap_or(m.joint.clone()),
+                multiplier: m.multiplier,
+            });
+            let seat = on
+                .inverse()
+                .compose(&self.nodes[parent.0 as usize].placement);
+            self.joints.push(JointRec {
+                child: map[&j.child],
+                parent,
+                desc: JointDesc {
+                    name,
+                    on,
+                    axis: explicit,
+                    mimic,
+                    ..j.desc
+                },
+                axis,
+                value: j.value,
+                seat,
+            });
+        }
     }
 
     /// A copy of `id` and everything under it, in the same place, named
     /// `name` (the nodes under it keep their names with a suffix:
-    /// `.001`…). Joints are not copied: declare the copy's own.
+    /// `.001`…). The joints of the parts and groups copied come with them
+    /// at the same pose, named with a free suffix (`hinge.001`): a copied
+    /// part hangs on its parent's copy when the parent was copied too, on
+    /// the same parent otherwise; a follower follows its leader's copy
+    /// when that was copied.
     pub fn copy(&mut self, id: Id, name: &str) -> Result<Id, ModelError> {
-        self.duplicate(id, name, |n| (n.solid.clone(), n.placement))
+        let (root, map) = self.duplicate(id, name, |n| (n.solid.clone(), n.placement))?;
+        self.copy_joints(&map, |_, on, axis, explicit| (*on, axis, explicit));
+        Ok(root)
     }
 
     /// The mirror image of `id` and everything under it across `plane`'s
     /// XY plane (its normal is +Z), named `name`. Each part's image is
     /// built into its solid (a mirror is no placement), so the copy's
-    /// parts sit with their own space on the world's. Joints are not
-    /// copied.
+    /// parts sit with their own space on the world's.
+    ///
+    /// Joints come as [`Model::copy`] brings them, each moving as the
+    /// image of the original's motion (sand3d: "the image of the
+    /// motion"): the pivot's origin mirrored, its x and y mirrored and its
+    /// z their cross product. A slide's axis is the axis's mirror image; a
+    /// turn's is the image negated (a mirror reverses the sense of a
+    /// turn). Ranges, values and mimics are kept, so the same value poses
+    /// the copy as the image of the original at that value.
     pub fn mirror(&mut self, id: Id, plane: &Frame, name: &str) -> Result<Id, ModelError> {
         finite_frame(plane, "mirror")?;
         let (o, n) = (plane.origin, plane.z);
         let image = move |p: DVec3| p - n * (2.0 * (p - o).dot(n));
-        self.duplicate(id, name, |node| {
+        let turn = move |v: DVec3| v - n * (2.0 * v.dot(n));
+        let (root, map) = self.duplicate(id, name, |node| {
             let solid = node.solid.clone().map(|mut s| {
                 let f = node.placement;
                 s.map_positions(|p| image(f.point_to_world(p)), true);
@@ -597,7 +718,31 @@ impl Model {
                 s
             });
             (solid, Frame::IDENTITY)
-        })
+        })?;
+        self.copy_joints(&map, |kind, on, axis, explicit| {
+            let x = turn(on.x);
+            let y = turn(on.y);
+            let pivot = Frame {
+                origin: image(on.origin),
+                x,
+                y,
+                z: x.cross(y),
+            };
+            // A turn's axis is a pseudovector: its image is negated. A
+            // slide's is a plain direction; its default (the pivot's z)
+            // is written out, since the new pivot's z is the negated one.
+            let slide = kind == JointKind::Prismatic;
+            let image_of = |v: DVec3| if slide { turn(v) } else { -turn(v) };
+            let explicit = if explicit != DVec3::ZERO {
+                image_of(explicit)
+            } else if slide {
+                turn(on.z)
+            } else {
+                DVec3::ZERO
+            };
+            (pivot, axis.map(image_of), explicit)
+        });
+        Ok(root)
     }
 
     // ── materials ────────────────────────────────────────────────────────────
@@ -974,19 +1119,24 @@ impl Model {
                 _ => {}
             }
         }
+        let seat =
+            d.on.inverse()
+                .compose(&self.nodes[parent.0 as usize].placement);
         self.joints.push(JointRec {
             child,
             parent,
             desc: d.clone(),
             axis,
             value: 0.0,
+            seat,
         });
         Ok(())
     }
 
     /// Poses joint `name` at `value` (radians for turns, the unit for
     /// slides), within its range. Followers move with it; 0 is the rest.
-    /// Geometry is still read at rest; export and preview show the pose.
+    /// Export, preview and [`Model::measure_posed`] show the pose; frames
+    /// are not read off it ([`ModelError::Posed`]).
     pub fn pose(&mut self, name: &str, value: f64) -> Result<(), ModelError> {
         let k = self.joint_index(name)?;
         if !value.is_finite() {
@@ -1024,6 +1174,128 @@ impl Model {
         self.joints.iter().map(|j| j.desc.name.clone()).collect()
     }
 
+    /// The value of the joint at `k`: its own, or a follower's leader's ×
+    /// its multiplier.
+    fn value_of(&self, k: usize) -> f64 {
+        let j = &self.joints[k];
+        match &j.desc.mimic {
+            None => j.value,
+            Some(m) => self
+                .joint_index(&m.joint)
+                .map_or(0.0, |l| self.value_of(l) * m.multiplier),
+        }
+    }
+
+    /// The pose: every joint that can be posed (not a follower, fixed or
+    /// floating) with its value, in declaration order.
+    pub fn pose_values(&self) -> Vec<(String, f64)> {
+        self.joints
+            .iter()
+            .filter(|j| {
+                j.desc.mimic.is_none()
+                    && !matches!(j.desc.kind, JointKind::Fixed | JointKind::Floating)
+            })
+            .map(|j| (j.desc.name.clone(), j.value))
+            .collect()
+    }
+
+    /// Whether any joint has a value other than 0: export writes OBJ and
+    /// STL posed then ([`Model::obj`]).
+    pub fn posed(&self) -> bool {
+        self.joints.iter().any(|j| j.value != 0.0)
+    }
+
+    /// The first joint (nearest the node, then up through its parents)
+    /// with a non-zero value that moves node `id`.
+    fn moved_by(&self, id: Id) -> Option<usize> {
+        let mut seen = BTreeSet::new();
+        let mut at = self.body(id);
+        while let Some(b) = at {
+            if !seen.insert(b) {
+                break;
+            }
+            let chain: Vec<usize> = (0..self.joints.len())
+                .filter(|&k| self.joints[k].child == b)
+                .collect();
+            if let Some(&k) = chain.iter().rev().find(|&&k| self.value_of(k) != 0.0) {
+                return Some(k);
+            }
+            at = chain
+                .first()
+                .and_then(|&k| self.body(self.joints[k].parent));
+        }
+        None
+    }
+
+    /// Refuses a read (`what`) of nodes the pose moves: every frame the
+    /// model gives is at rest.
+    fn at_rest(&self, what: &str, ids: &[Id]) -> Result<(), ModelError> {
+        for &id in ids {
+            for i in self.subtree(id) {
+                if let Some(k) = self.moved_by(i) {
+                    return Err(ModelError::Posed {
+                        read: what.into(),
+                        part: self.nodes[i.0 as usize].name.clone(),
+                        joint: self.joints[k].desc.name.clone(),
+                        value: self.value_of(k),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// How each joint holds, at rest, in declaration order ([`Seating`]):
+    /// the pivot's distance to the parent's and the child's surfaces, and
+    /// how far the parent has moved off the pivot since the joint was
+    /// declared. A joint frame read on another part than the parent, or a
+    /// parent moved after, shows here; nothing is refused.
+    pub fn seating(&self) -> Result<Vec<Seating>, ModelError> {
+        let nearest = |ids: &[Id], p: DVec3| -> Result<Option<f64>, ModelError> {
+            let solids: Vec<Solid> = ids
+                .iter()
+                .map(|&i| self.world_solid(i))
+                .collect::<Result<_, _>>()?;
+            let refs: Vec<&Solid> = solids.iter().collect();
+            Ok(place::snap(&refs, &[p], None)
+                .first()
+                .map(|f| (f.origin - p).length()))
+        };
+        let live = |root: Id, not: Option<Id>| -> Vec<Id> {
+            self.subtree(root)
+                .into_iter()
+                .filter(|&i| {
+                    let n = &self.nodes[i.0 as usize];
+                    !n.used_up && n.solid.is_some() && not.is_none_or(|c| !self.under(i, c))
+                })
+                .collect()
+        };
+        let mut out = Vec::with_capacity(self.joints.len());
+        for (k, j) in self.joints.iter().enumerate() {
+            let now = j
+                .desc
+                .on
+                .inverse()
+                .compose(&self.nodes[j.parent.0 as usize].placement);
+            // The turn between the two: ‖R − I‖ = 2√2 sin(θ/2), exact
+            // enough near 0 where acos is not.
+            let d = [now.x - j.seat.x, now.y - j.seat.y, now.z - j.seat.z];
+            let norm = d.iter().map(|v| v.length_squared()).sum::<f64>().sqrt();
+            let half = (norm / (2.0 * 2.0f64.sqrt())).min(1.0);
+            out.push(Seating {
+                joint: j.desc.name.clone(),
+                child: self.nodes[j.child.0 as usize].name.clone(),
+                parent: self.nodes[j.parent.0 as usize].name.clone(),
+                value: self.value_of(k),
+                pivot_to_parent: nearest(&live(j.parent, Some(j.child)), j.desc.on.origin)?,
+                pivot_to_child: nearest(&live(j.child, None), j.desc.on.origin)?,
+                parent_moved: (now.origin - j.seat.origin).length(),
+                parent_turned: 2.0 * shape_core::trig::asin(half),
+            });
+        }
+        Ok(out)
+    }
+
     // ── building ─────────────────────────────────────────────────────────────
 
     /// Every live part in the world at rest, in id order.
@@ -1048,6 +1320,43 @@ impl Model {
                 })
             })
             .collect()
+    }
+
+    /// Measures of every part in the world at the pose (each joint at its
+    /// value), in id order, in the model's unit. A part no non-zero joint
+    /// value moves measures as at rest, bit for bit; a moved part as moved
+    /// (`shape_tools::posed`): counts, area and closure are the rest's,
+    /// bounds the pose's, and the volume may differ in its last bits.
+    pub fn measure_posed(&self) -> Result<Vec<PartMeasures>, ModelError> {
+        if !self.posed() {
+            return self.measure();
+        }
+        let built = self.build()?;
+        let solids = shape_tools::posed(&built.scene())?;
+        let k = self.unit.millimetres();
+        let mut out = Vec::new();
+        for i in self.parts() {
+            let n = &self.nodes[i.0 as usize];
+            let measures = if self.moved_by(i).is_none() {
+                self.world_solid(i)?.measure()
+            } else {
+                let at = built
+                    .parts
+                    .iter()
+                    .position(|p| p.0 == n.name)
+                    .ok_or_else(|| ModelError::Refused(n.name.clone(), "not built".into()))?;
+                let mut s = solids[at].clone();
+                if k != 1.0 {
+                    s.map_positions(|p| p / k, false);
+                }
+                s.measure()
+            };
+            out.push(PartMeasures {
+                name: n.name.clone(),
+                measures,
+            });
+        }
+        Ok(out)
     }
 
     /// Pairs of parts that pass through each other, touch, or hold one
@@ -1218,14 +1527,33 @@ impl Model {
         Ok(shape_tools::glb(&self.build()?.scene())?)
     }
 
-    /// The model's meshes as OBJ text, at rest.
-    pub fn obj(&self) -> Result<String, ModelError> {
-        Ok(shape_tools::obj(&self.build()?.scene())?)
+    /// Where [`Model::obj`] and [`Model::stl`] put the parts: at the pose
+    /// when any joint has a value other than 0, else at rest.
+    pub fn mesh_placement(&self) -> Placement {
+        if self.posed() {
+            Placement::Pose
+        } else {
+            Placement::Rest
+        }
     }
 
-    /// The model's meshes as binary STL, at rest.
+    /// The model's meshes as OBJ text, at its pose when one is set (the
+    /// header then ends `posed`; [`Model::mesh_placement`]), else at rest.
+    /// Parts no joint moves keep their rest positions bit for bit.
+    pub fn obj(&self) -> Result<String, ModelError> {
+        Ok(shape_tools::obj_at(
+            &self.build()?.scene(),
+            self.mesh_placement(),
+        )?)
+    }
+
+    /// The model's meshes as binary STL, at its pose when one is set (the
+    /// header then ends `posed`), else at rest.
     pub fn stl(&self) -> Result<Vec<u8>, ModelError> {
-        Ok(shape_tools::stl(&self.build()?.scene())?)
+        Ok(shape_tools::stl_at(
+            &self.build()?.scene(),
+            self.mesh_placement(),
+        )?)
     }
 
     /// A turntable of the posed model (`shape_tools::preview`).

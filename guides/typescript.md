@@ -86,7 +86,9 @@ Placement (readers answer frames and are not recorded):
 
 Structure: `group({ name, children })`, `assembly({ name, children,
 anchors? })`, `attach(assembly, { name, children })`, `copy(part, name)`,
-`mirror(part, { plane, name })` (`plane` a frame; across its xy).
+`mirror(part, { plane, name })` (`plane` a frame; across its xy). Both
+bring the joints of what they copy (`hinge.001`…); a mirrored joint moves
+as the image of the original, posed by the same values.
 
 Edits (a tool must be a part; it is used up; the target keeps its name):
 - `cut`, `join`, `intersect(target, tool)`; `seat(host, part)` cuts
@@ -97,7 +99,8 @@ Edits (a tool must be a part; it is used up; the target keeps its name):
   through; `counterbore: [d, depth]`, `countersink: [d, full angle]`.
 - `pocket(part, { profile, depth?, at? })`: centred on each `at` frame,
   `depth` measured from it along −z. `shell(part, { thickness, open? })`:
-  inward; `open` names the faces left open (none: a sealed hollow).
+  inward; `open` names the faces left open (none: a sealed hollow), or
+  `"+z"`… for the face furthest along the part's own axis, as built.
   `split(part, { frame, keep? })`, `dent(part, { at, radius, depth })`.
 - `fillet(part, { radius, edges?, segments? })`, `chamfer(part, {
   distance, distance2?, angle?, edges? })`, `soften(part, { radius,
@@ -116,9 +119,13 @@ Materials, joints, pose:
   `parent` a part or group; `axis` a world direction (`on`'s +z by
   default); kinds `revolute` (default), `continuous`, `prismatic`,
   `fixed`, `floating`; revolute and prismatic need a `range` holding 0.
-- `pose(joint, value)`: export and preview only.
+- `pose(joint, value)`: export, preview and `measure({ posed: true })`.
+  Read frames before posing: `face`, `bbox`, `edge`, `snap` of a part a
+  posed joint moves throw.
 
-Output: `measure()` (per solid part, at rest), `glb()`, `obj()`, `stl()`,
+Output: `measure()` (per solid part, at rest; `{ posed: true }` at the
+pose, with `joints` and `interference`), `glb()`, `obj()` and `stl()`
+(at the pose if one is set),
 `preview({ width?, views?, columns?, elevation?, azimuth?, noEdges?,
 noGround? })` (PNG; views from −Y, then +X, +Y, −X, 25° up),
 `program()`.

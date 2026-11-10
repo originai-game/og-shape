@@ -54,7 +54,91 @@ pub fn cases() -> Vec<Case> {
                 })
             },
         },
+        Case {
+            name: "tools.preview.facets",
+            run: facets,
+        },
     ]
+}
+
+/// A hexagonal loft (facets past the crease angle: flat), a 48-sided
+/// cylinder (smooth), and a pane of glass at opacity 0.4 in front of
+/// both, three views of 96²: the preview's crease and blending rules
+/// (`docs/research.md` §20).
+fn facets(h: &mut OutputHash) -> Result<(), HashError> {
+    use shape_2d::{Polygon, polygon};
+    use shape_gen::paths::{Loft, loft};
+    let built = (|| -> Result<(Solid, Solid, Solid), String> {
+        let hex = |r: f64| {
+            polygon(&Polygon {
+                sides: 6,
+                radius: r,
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
+        };
+        let tower = loft(&Loft {
+            sections: vec![(hex(12.0)?, 0.0), (hex(7.0)?, 30.0)],
+            ..Default::default()
+        })
+        .map_err(|e| e.to_string())?;
+        let mut drum = cylinder(&CylinderDesc {
+            radius: 10.0,
+            height: 20.0,
+            segments: 48,
+            ..Default::default()
+        })
+        .map_err(|e| e.to_string())?;
+        drum.map_positions(|p| p + DVec3::new(28.0, 6.0, 0.0), false);
+        let mut pane = shape_gen::solids::cuboid(&shape_gen::solids::BoxDesc {
+            width: 60.0,
+            depth: 2.0,
+            height: 26.0,
+        })
+        .map_err(|e| e.to_string())?;
+        pane.map_positions(|p| p + DVec3::new(14.0, -20.0, 2.0), false);
+        Ok((tower, drum, pane))
+    })();
+    let (tower, drum, pane) = match built {
+        Ok(b) => b,
+        Err(e) => {
+            h.str(&format!("error: {e}"));
+            return Ok(());
+        }
+    };
+    let painted = |rgb: [f64; 3], opacity: Option<f64>| Material {
+        color: Some(rgb),
+        opacity,
+        ..Default::default()
+    };
+    let scene = Scene {
+        name: "facets".into(),
+        parts: vec![
+            Part {
+                material: painted([0.8, 0.5, 0.3], None),
+                ..Part::new("tower", &tower)
+            },
+            Part {
+                material: painted([0.4, 0.6, 0.8], None),
+                ..Part::new("drum", &drum)
+            },
+            Part {
+                material: painted([0.6, 0.9, 0.7], Some(0.4)),
+                ..Part::new("pane", &pane)
+            },
+        ],
+    };
+    let d = Preview {
+        width: 96,
+        views: 3,
+        elevation: Some(0.4),
+        ..Default::default()
+    };
+    match preview(&scene, &d) {
+        Ok(views) => h.bytes(&png(&sheet(&views, 3))),
+        Err(e) => h.str(&format!("error: {e}")),
+    }
+    Ok(())
 }
 
 /// A plate with a twisted, holed riser, a turning wheel and a ball that

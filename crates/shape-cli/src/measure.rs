@@ -1,6 +1,8 @@
 //! `shape measure <program.json | mesh>`: measures as JSON
 //! (`docs/design.md` §7), with no thresholds. A program gives every part
-//! and the whole model (`shape_model::program::measures_json`); a mesh
+//! and the whole model at rest (`shape_model::program::measures_json`);
+//! with `--posed`, at its pose, with how each joint holds and the
+//! interference at the pose (`shape_model::program::posed_json`); a mesh
 //! file gives every part placed, and the parts joined
 //! (`shape_tools::MeshMeasures`, null for a skinned file, which cannot be
 //! joined).
@@ -26,6 +28,17 @@ pub fn measure(source: &Source, d: &MeasureDesc) -> Result<String, Failure> {
     match source {
         Source::Program(m) => shape_model::program::measures_json(m).map_err(failed),
         Source::Mesh(mesh) => mesh_measures(mesh, d),
+    }
+}
+
+/// A program's measures at its pose (`shape_model::program::posed_json`).
+/// A mesh file has no joints: refused.
+pub fn measure_posed(source: &Source) -> Result<String, Failure> {
+    match source {
+        Source::Program(m) => shape_model::program::posed_json(m).map_err(failed),
+        Source::Mesh(_) => Err(Failure::Usage(
+            "--posed measures a program at its pose; a mesh file has no joints".into(),
+        )),
     }
 }
 
@@ -69,8 +82,16 @@ fn mesh_measures(mesh: &Mesh, d: &MeasureDesc) -> Result<String, Failure> {
 
 /// The command line.
 pub fn run(a: &Args) -> Result<String, Failure> {
-    a.only(&[IMPORT_OPTIONS[0], IMPORT_OPTIONS[1], "--intersections"])?;
+    a.only(&[
+        IMPORT_OPTIONS[0],
+        IMPORT_OPTIONS[1],
+        "--intersections",
+        "--posed",
+    ])?;
     let source = load(&Local, &a.input()?, &a.import()?)?;
+    if a.switch("--posed") {
+        return measure_posed(&source);
+    }
     measure(
         &source,
         &MeasureDesc {

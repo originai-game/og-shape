@@ -10,10 +10,13 @@
 //!   (`docs/research.md` §1.5). A skinned solid ([`shape_mesh::Skin`])
 //!   is written as a glTF skin: bone nodes under its part's node, inverse
 //!   bind matrices, JOINTS_0 and WEIGHTS_0 (`docs/research.md` §11).
-//! - [`obj`] and [`stl`]: meshes only, metres; OBJ Y up, STL Z up.
+//! - [`obj`] and [`stl`]: meshes only, metres; OBJ Y up, STL Z up; at
+//!   rest, or at the joints' pose with [`obj_at`] and [`stl_at`]
+//!   ([`Placement`]). [`posed`] gives each part's solid at the pose.
 //! - [`preview`]: a turntable of views from a deterministic rasterizer,
-//!   as RGBA [`Image`]s; [`png`] encodes one for a person to look at, and
-//!   [`sheet`] lays several side by side.
+//!   as RGBA [`Image`]s (shaded smooth only under a crease angle,
+//!   transparent materials blended back to front); [`png`] encodes one
+//!   for a person to look at, and [`sheet`] lays several side by side.
 //!
 //! Every output is a pure function of the scene: the same bytes on every
 //! host. Programs are in millimetres with Z up; the files say which units
@@ -58,7 +61,10 @@ mod surface;
 mod unwrap;
 
 pub use decimate::{Decimate, DecimateError, DecimateReport, collapse_short_edges, decimate, lods};
-pub use export::{ExportError, Joint, JointKind, Material, Mimic, Part, Scene, glb, obj, stl};
+pub use export::{
+    ExportError, Joint, JointKind, Material, Mimic, Part, Placement, Scene, glb, obj, obj_at,
+    posed, stl, stl_at,
+};
 pub use fbx::import_fbx;
 pub use image::ImageInfo;
 pub use import::{

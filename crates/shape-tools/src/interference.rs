@@ -38,6 +38,13 @@ pub struct Interfering {
     pub bounds_min: DVec3,
     /// Its high corner.
     pub bounds_max: DVec3,
+    /// The pose moves both parts by the very same motion, so they were
+    /// compared where they were built: an exact contact stays a touch.
+    /// When false they were compared posed, and faces flush only by
+    /// moving under different joints (a slide by a distance f64 cannot
+    /// hold exactly, a turn) can read as crossing by rounding; the
+    /// crossings' box then lies on the contact.
+    pub as_built: bool,
 }
 
 /// Rays tried from a corner, in order, until one misses every edge and
@@ -242,6 +249,7 @@ pub fn interference(scene: &Scene) -> Result<Vec<Interfering>, ExportError> {
                 inside,
                 bounds_min: lo,
                 bounds_max: hi,
+                as_built: group[a] == group[b],
             });
         }
     }
@@ -461,6 +469,10 @@ mod tests {
         }
         let open = interference(&scene).unwrap();
         assert!(open[0].a == "post" && open[0].crossings > 0, "{open:?}");
+        // The post and the door move apart: compared posed. The door and
+        // its pane move alike: compared as built.
+        assert!(!open[0].as_built);
+        assert!(open[1].b == "pane" && open[1].as_built, "{open:?}");
         // Turned about x by an angle whose rotation rounds, the pane still
         // only touches the door: the two move alike and are compared as
         // built.

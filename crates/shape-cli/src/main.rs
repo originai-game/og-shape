@@ -36,8 +36,10 @@ const USAGE: &str = "usage: shape <command> <input> [options]
   an input is a program (.json) or a mesh file (.glb .gltf .obj .fbx);
   OBJ takes --unit-mm MM (default metres) and --z-up
   build    <program.json>                       report the built model as JSON
-  export   <input> -o <out.glb|obj|stl>         write the posed model or the mesh
-  measure  <input> [--intersections]            measures as JSON
+  export   <input> -o <out.glb|obj|stl>         write the posed model or the mesh;
+                                                OBJ and STL at the pose if one is set
+  measure  <input> [--intersections] [--posed]  measures as JSON; --posed: a program
+                                                at its pose, its joints and interference
   preview  <input> -o <out.png> [--views N] [--width PX] [--height PX]
            [--columns N] [--elevation RAD] [--azimuth RAD] [--no-edges] [--no-ground]
   import   <mesh> [-o out.glb|obj|stl]          parts, images and what was skipped

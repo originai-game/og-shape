@@ -460,17 +460,25 @@ export class Shape {
 
   // ── output ──
 
-  /** Measures of every part and of the whole model. */
-  measure(): any {
+  /**
+   * Measures of every part and of the whole model, at rest. With
+   * `{ posed: true }`: at the pose, with `pose`, `posed`, how each joint
+   * holds (`joints`) and the interference at the pose.
+   */
+  measure(d: { posed?: boolean } = {}): any {
+    only("measure", d, ["posed"]);
+    if (d.posed) return this.call("measure", { posed: true });
     return JSON.parse(this.m.measure());
   }
   /** The posed model as GLB: metres, Y up, joints as `s3d_joint` extras. */
   glb(): Uint8Array {
     return this.m.glb();
   }
+  /** OBJ text: at the pose when a joint is posed (header ends `posed`), else at rest. */
   obj(): string {
     return this.m.obj();
   }
+  /** Binary STL: at the pose when a joint is posed, else at rest. */
   stl(): Uint8Array {
     return this.m.stl();
   }

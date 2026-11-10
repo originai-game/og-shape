@@ -3226,3 +3226,180 @@ area is not zero: the bands' intersection has one, 17 mm long.
   are compared as built.
 - Every new hash is checked natively (x86-64) and as wasm32 under
   wasmtime here; aarch64 and Windows run in CI only.
+
+## 20. Preview fidelity and joints through copies (stream V)
+
+Closes the gaps of §8.5 and §13.6 item 14: what an agent looks at and
+measures is the model as posed.
+
+### 20.1 Decisions
+
+- **Transparency (item 1).** Opaque parts are drawn first, into the
+  depth buffer, as before. Then every triangle of a part whose
+  `opacity` lies strictly between 0 and 1 is drawn in one sorted list:
+  the key is the sum of the three corners' depths (the projection's f64
+  `d · forward`, the same expression on every host), farthest first;
+  equal keys go to the lower part index, then the lower triangle index.
+  `f64::total_cmp` on finite values is the plain order, so the side of
+  every comparison is decided exactly on values every host computes
+  alike. A transparent pixel is `opacity × lit colour + (1 − opacity) ×
+  the pixel`, in sRGB bytes, tested against the opaque depth and never
+  writing it, so glass in front of glass blends both, and edges behind
+  glass still show. Sorting by triangle (painter's order) is wrong where
+  transparent triangles cross each other; no part of the washing machine
+  does. `opacity` 0 draws nothing and casts nothing. The shadow is as dark
+  as the most opaque caster at the pixel (the maximum, not a product, so
+  it does not depend on how many triangles overlap there): an opaque
+  part's shadow is the old colour exactly.
+- **Crease shading (item 2).** A rule by angle, not by the generator's
+  knowledge: generators already split real edges by surface id, but a
+  loft's or extrude's walls are one surface whatever their facets, and
+  carrying a "curved" flag through booleans and bevels would touch every
+  crate. Per triangle corner, the normal is the area-weighted sum of the
+  normals of the triangles around its vertex that share the triangle's
+  surface and whose unit normals lie within 35° of its own (dot product
+  ≥ cos 35°, from `trig`), normalized. 35° keeps a 12-sided turn (30°
+  between facets) and the generators' 24 to 64 segments smooth, and
+  shows a hexagon's (60°) and an octagon's (45°) facets. Where every
+  neighbour is within the angle the sum is the old one, in the same
+  order, so smooth surfaces shade bit for bit as before
+  (`model.joints.preview` did not move). The GLB's normals are not
+  changed: three.js and other renderers do their own shading.
+- **Golden hashes (item 3).** Moved: `tools.preview`, `tools.preview.png`,
+  `model.washing_machine.png`. No other line moved. New:
+  `tools.preview.facets` (a hexagonal loft, a 48-sided cylinder and a
+  pane at opacity 0.4, three views), `model.joints.obj`,
+  `model.joints.stl`, `model.joints.copies`,
+  `model.washing_machine.posed`.
+- **Joints through copies (item 4).** `copy` and `mirror` copy every joint
+  whose child is in the copied tree, in declaration order, so a chain
+  composes as the original's and a leader comes before its followers.
+  A copied joint takes a free suffix (`hinge.001`, as nodes do), hangs on
+  the parent's copy when the parent was copied and on the same parent
+  otherwise, and a follower follows its leader's copy when there is one.
+  A joint whose child is outside the tree is not copied, even if it hangs
+  on a copied part: copy the group that holds both. `copy` keeps the
+  value (the copy is posed as the original). For `mirror`, with `S` the
+  reflection: the pivot's origin is `S o`, its x and y are `S x`, `S y`,
+  and its z their cross product, `−S z`, so the frame stays right-handed.
+  A slide is a plain direction, `S T(a d) S = T(S a, d)`: its axis is `S a`
+  (a default axis, the pivot's z, is written out, since the new pivot's z
+  is negated). A turn's axis is a pseudovector, `S R(a, θ) S = R(−S a,
+  θ)`: its axis is `−S a`. With these, ranges, values and mimic
+  multipliers are kept unchanged and every motion is exactly the image:
+  a follower whose leader was not mirrored still follows it as the
+  image. The other convention, `S a` with the range and value negated,
+  is the same motion, but a mirrored door would open by negative values
+  and a follower outside the copy would need its multiplier negated;
+  this one keeps "the same value poses the image". Tested by posing the
+  original and the image at three values each and comparing every
+  posed vertex with the original's mirrored (`tests/pose.rs`).
+- **Reads off rest (item 5): refused.** sand3d reads the posed scene but
+  refuses to declare joints off rest. Here every frame the model takes or
+  gives is in the world at rest (§8.2, "one world"): `at`, `joint`,
+  `hole` and the rest take rest frames. A posed read would give a frame
+  that those then take for a rest frame, silently putting parts in the
+  wrong place; the read is refused instead (`ModelError::Posed`: the
+  read, the part, the joint and its value). It applies to every read that
+  gives a frame or a path from a node's geometry or placement: `face`,
+  `bbox`, `edge`, `snap`, `placement`, `local`, `anchor`; only nodes that
+  a non-zero joint value moves (the joint chain from the node up through
+  its parents, a follower by its leader's value) are refused, so the
+  cabinet reads as before while its door is open. `names` and `measure`
+  are not frames and are not refused: `measure` says it is at rest, and
+  the posed measure (item 9) is a separate call. `world_solid` (a Rust
+  accessor for tests and tools) answers the rest, as documented.
+- **OBJ and STL (item 6).** `Model::obj` and `Model::stl` write the pose
+  when any joint has a value other than 0, as sand3d does, and the rest
+  otherwise. The file's header says so (`…, Y up, posed`; STL's 80-byte
+  header likewise) and `shape export` reports `"geometry": "posed"` or
+  `"rest"`. A part no non-zero value moves is written with its rest
+  positions bit for bit (its motion is skipped, not composed: a pivot
+  composed with its inverse is not exactly the identity); a moved part
+  is moved by the same composition the preview uses. `shape_tools::obj`
+  and `stl` keep writing the rest (their golden hashes hold; the tools
+  scene has a posed wheel), and `obj_at`, `stl_at` take a `Placement`.
+  The GLB keeps rest meshes with the pose in its joint nodes, unchanged.
+- **Joint seating (item 7): a measurement.** Frames still do not remember
+  the part they were read on: `Frame` is the kernel's plain value in
+  every API and JSON form, and a part field would change all of them.
+  What that memory was for is measured instead. Each joint records, when
+  declared, the parent's own space seen from the pivot (`on⁻¹ ∘ parent`).
+  `Model::seating` reports per joint, at rest: `pivotToParent` and
+  `pivotToChild`, the distance from the pivot's origin to the nearest
+  point of the parent's parts (those under it but not under the child)
+  and of the child's (`place::snap`'s brute force); and `parentMoved`
+  and `parentTurned`, how far the parent's space has moved and turned off
+  the pivot since (the turn from `‖R − I‖_F = 2√2 sin(θ/2)`, accurate
+  near 0 where `acos` is not). Moving a child moves its pivots (§8.2), so
+  only a parent moved without its child, or a pivot read on another
+  part, shows. A copied joint keeps the original's record; a mirrored one
+  starts a new record at the mirror. No threshold: a hinge's pivot lies on
+  both surfaces, a drum's axle pivot in the air at its centre.
+- **`shell(open)` (item 8): the part's own axes**, documented in
+  `guides/program.md` and `guides/typescript.md`. The shell runs in the
+  part's own space like every edit, and `open: "+z"` keeps naming the
+  same face when the part is later turned with `at`, as a face name
+  does. Accepting a world word as well would add a second spelling for
+  one thing; a world direction is `face(part, "+X")` away. Tested by
+  turning a box's own +z onto the world's +x and opening "+z".
+- **Measures at a pose (item 9).** `Model::interference` already took a
+  pose (§15.3). `Model::measure_posed` measures every part at the model's
+  pose: a part no joint moves measures as at rest bit for bit; a moved
+  part's counts, area and closure are the rest's, its bounds the pose's,
+  and its volume may differ in the last bits. `program::posed_json` (the
+  `measure` reader with `"posed": true`, `shape measure --posed`, the
+  binding's `measure({ posed: true })`) gives `measures_json`'s fields at
+  the pose, `pose`, `posed`, `joints` (the seating) and `interference`
+  at the pose. Each pair now says `asBuilt`: true when both parts move by
+  the very same motion and were compared where built, false when compared
+  posed, where faces flush only under different joints can read as
+  crossing by rounding (§15.5). That rounding is not removed: the
+  crossings are reported, and `asBuilt: false` with a crossing box on the
+  contact plane says it may be rounding. `measures_json` and `report_json`
+  keep their output (`model.washing_machine.measure` and
+  `interference.washing_machine` hold).
+
+### 20.2 Measurements (x86-64, release)
+
+- The washing machine (4 014 triangles): the CLI's `preview` (replay and
+  four 320² views) 120–130 ms, as before within noise; `measure` 88–94
+  ms, `measure --posed` 129–138 ms (the posed interference about 25 ms,
+  the seating's nearest points the rest). PNG 19 612 bytes (18 650
+  before: the blended glass).
+- Its posed measure: door 1.606 rad, drawer 120 mm, dial 0.524 rad.
+  Crossing pairs at that pose: cabinet/drawer 67, cabinet/dial 442 (178
+  with the dial at rest: the turned dial's facets cross the seat's), both
+  `asBuilt: false`; ring/glass and ring/handle touch, `asBuilt: true`.
+  Seating: every `parentMoved` and `parentTurned` 0; the hinge's pivot
+  45 mm off the cabinet's surface and on the door's, the drawer's 50 and
+  15, the dial's 10 and 10, the drum's in its centre (220 and 201).
+- Previews regenerated (`docs/previews/`): 42 of the 50 images were
+  rendered again (the four example programs and the washing machine) and
+  18 changed, each checked against a render from `origin/main` in a
+  separate worktree: the change is this stream's for all but
+  `phase1/bevel_to_spur_transfer.png`, which `main` already rendered
+  differently from the committed file. `phase5/` was not regenerated (the
+  mesh-tools bench's external inputs are not here).
+
+### 20.3 Gaps and what is untested
+
+- Transparent triangles that cross each other blend in triangle order,
+  which is wrong across the crossing (no per-pixel sort). Transparent
+  parts do not tint the shadow, only lighten it.
+- The crease rule compares each neighbour around a vertex with the
+  corner's own triangle, not across the edge between neighbours, so on a
+  fan that turns in small steps the corners on either side of a 35°
+  total can shade differently. The angle is fixed; `Preview` has no
+  field for it.
+- A joint whose child is outside the copied tree is not copied; a jointed
+  child hanging on a copied part is left on the original.
+- `Model::seating` reports the parent's drift and the pivot's distances,
+  not the gap between the child and the parent (a mesh-to-mesh distance).
+- The posed-read refusal covers the model API and the program; the MCP
+  server reaches it through the CLI and the binding and was not run here.
+- Run here: the native gate's lint, test and golden steps; the wasm32
+  builds; the binding's tests under bun (wasm32-unknown-unknown, which
+  compare the washing machine's GLB and PNG). Not run: the golden run as
+  wasm32-wasip1 under wasmtime (not installable here), aarch64 and
+  Windows (CI only).

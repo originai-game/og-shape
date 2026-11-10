@@ -70,6 +70,19 @@ pub enum ModelError {
         /// Its range.
         range: (f64, f64),
     },
+    /// A frame was read off a part the pose moves: every frame the model
+    /// gives is at rest.
+    Posed {
+        /// The read: `face`, `bbox`, `edge`, `snap`, `placement`, `local`
+        /// or `anchor`.
+        read: String,
+        /// The part or group the pose moves.
+        part: String,
+        /// The joint whose value moves it.
+        joint: String,
+        /// That joint's value.
+        value: f64,
+    },
     /// A node cannot be used up or moved this way (the node and why).
     Refused(String, String),
     /// A profile could not be built.
@@ -171,6 +184,16 @@ impl fmt::Display for ModelError {
                 f,
                 "pose {joint:?}: {value} is outside its range ({}, {})",
                 range.0, range.1
+            ),
+            ModelError::Posed {
+                read,
+                part,
+                joint,
+                value,
+            } => write!(
+                f,
+                "{read} gives frames at rest, and {part:?} is posed: joint {joint:?} is at \
+                 {value}. Read it before posing, or pose {joint:?} back to 0 first"
             ),
             ModelError::Refused(n, why) => write!(f, "{n:?}: {why}"),
             ModelError::Profile(e) => write!(f, "profile: {e}"),

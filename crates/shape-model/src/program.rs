@@ -278,7 +278,11 @@ impl Session {
                 let (faces, edges) = m.names(a.id("id")?)?;
                 read(json!({ "faces": faces, "edges": edges }))
             }
-            "measure" => read(measures_value(m)?),
+            "measure" => match a.opt("posed") {
+                None | Some(Value::Bool(false)) => read(measures_value(m)?),
+                Some(Value::Bool(true)) => read(posed_value(m)?),
+                Some(_) => Err(a.bad("posed", "true or false")),
+            },
             // ── the model ──
             "units" => {
                 let u = match a.str("unit")? {
@@ -602,7 +606,7 @@ const OPS: &[(&str, &[&str])] = &[
     ("along", &["path", "pitch", "count"]),
     ("snap", &["ids", "points", "direction"]),
     ("names", &["id"]),
-    ("measure", &[]),
+    ("measure", &["posed"]),
     ("units", &["unit"]),
     ("box", &["name", "width", "depth", "height", "on"]),
     (
@@ -1251,14 +1255,86 @@ fn interference_value(m: &Model, pose: &[(String, f64)]) -> Result<Value, ModelE
     Ok(json!({ "pose": pose, "pairs": pairs }))
 }
 
+/// The model as posed (`docs/research.md` §20): [`measures_json`]'s
+/// fields measured at the model's pose (each joint at its value), and
+///
+/// - `pose`: every joint that can be posed, with its value;
+/// - `posed`: whether any value is not 0 (OBJ and STL are then written
+///   posed);
+/// - `joints`: per joint, at rest, `{"name", "child", "parent", "value",
+///   "pivotToParent", "pivotToChild", "parentMoved", "parentTurned"}`
+///   ([`Model::seating`]): how far the pivot lies from the parent's and
+///   the child's surfaces (null for no triangles), and how far the parent
+///   has moved and turned (radians) off the pivot since the joint was
+///   declared;
+/// - `interference`: the pairs at the pose, as [`report_json`] gives
+///   them, each with `asBuilt`: true when both parts move by the very
+///   same motion and were compared where built, false when compared
+///   posed (flush faces under different joints can then read as
+///   crossing by rounding).
+///
+/// Measurements only, with no thresholds.
+pub fn posed_json(m: &Model) -> Result<String, ModelError> {
+    Ok(posed_value(m)?.to_string())
+}
+
+fn posed_value(m: &Model) -> Result<Value, ModelError> {
+    let pose = m.pose_values();
+    let mut v = parts_value(m, &m.measure_posed()?);
+    let v3 = |d: DVec3| json!([d.x, d.y, d.z]);
+    let joints: Vec<Value> = m
+        .seating()?
+        .into_iter()
+        .map(|j| {
+            json!({
+                "name": j.joint,
+                "child": j.child,
+                "parent": j.parent,
+                "value": j.value,
+                "pivotToParent": j.pivot_to_parent,
+                "pivotToChild": j.pivot_to_child,
+                "parentMoved": j.parent_moved,
+                "parentTurned": j.parent_turned,
+            })
+        })
+        .collect();
+    let pairs: Vec<Value> = m
+        .interference(&pose)?
+        .into_iter()
+        .map(|x| {
+            json!({
+                "a": x.a,
+                "b": x.b,
+                "crossings": x.crossings,
+                "touching": x.touching,
+                "inside": if x.inside.is_empty() { Value::Null } else { Value::String(x.inside) },
+                "boundsMin": v3(x.bounds_min),
+                "boundsMax": v3(x.bounds_max),
+                "asBuilt": x.as_built,
+            })
+        })
+        .collect();
+    let values: Map<String, Value> = pose.iter().map(|(k, x)| (k.clone(), json!(x))).collect();
+    if let Some(o) = v.as_object_mut() {
+        o.insert("pose".into(), Value::Object(values));
+        o.insert("posed".into(), Value::Bool(m.posed()));
+        o.insert("joints".into(), Value::Array(joints));
+        o.insert("interference".into(), Value::Array(pairs));
+    }
+    Ok(v)
+}
+
 fn measures_value(m: &Model) -> Result<Value, ModelError> {
-    let parts = m.measure()?;
+    Ok(parts_value(m, &m.measure()?))
+}
+
+fn parts_value(m: &Model, parts: &[crate::PartMeasures]) -> Value {
     let v3 = |d: DVec3| json!([d.x, d.y, d.z]);
     let mut lo = DVec3::splat(f64::INFINITY);
     let mut hi = DVec3::splat(f64::NEG_INFINITY);
     let (mut tris, mut verts, mut area, mut volume) = (0usize, 0usize, 0.0, 0.0);
     let mut list = Vec::new();
-    for p in &parts {
+    for p in parts {
         let x = &p.measures;
         if x.vertices > 0 {
             lo = lo.min(x.bounds_min);
@@ -1289,7 +1365,7 @@ fn measures_value(m: &Model) -> Result<Value, ModelError> {
         Unit::Centimetre => "cm",
         Unit::Metre => "m",
     };
-    Ok(json!({
+    json!({
         "name": m.name(),
         "unit": unit,
         "parts": list,
@@ -1305,7 +1381,7 @@ fn measures_value(m: &Model) -> Result<Value, ModelError> {
         "uvCoverage": Value::Null,
         "uvOverlap": Value::Null,
         "textureBytes": 0,
-    }))
+    })
 }
 
 /// One operation's fields.

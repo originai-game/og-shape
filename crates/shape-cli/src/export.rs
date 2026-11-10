@@ -1,7 +1,11 @@
 //! `shape export <program.json | mesh> -o <out>`: the posed model as GLB
 //! (with joints and materials), or its meshes as OBJ or STL, by the
-//! output's extension. A mesh file is written with its parts placed
-//! (skins kept in GLB).
+//! output's extension; prints what it wrote. A program's GLB keeps its
+//! meshes at rest and the pose in its joint nodes; its OBJ and STL are
+//! written at the pose when any joint has a value other than 0, at rest
+//! otherwise, and the report's `geometry` says which (`"posed"` or
+//! `"rest"`). A mesh file is written with its parts placed (skins kept
+//! in GLB).
 //!
 //! [`encode_solid`] writes the one solid the mesh tools make: GLB as
 //! `shape_tools::glb_plain` (one node, one mesh, with UVs when given),
@@ -50,11 +54,24 @@ pub fn encode(source: &Source, out: &Path) -> Result<Vec<u8>, Failure> {
 }
 
 /// Writes a program or a mesh to `out`; reports the path, format and
-/// size.
+/// size, and for a program `geometry`: `"posed"` when an OBJ or STL was
+/// written at the model's pose, else `"rest"` (a GLB's meshes are always
+/// at rest, posed by its joint nodes).
 pub fn export(files: &dyn Files, source: &Source, out: &Path) -> Result<String, Failure> {
     let bytes = encode(source, out)?;
     files.write(out, &bytes)?;
-    Ok(written(out, bytes.len()))
+    Ok(match source {
+        Source::Program(model) => {
+            let posed = extension(out) != "glb" && model.posed();
+            object(&[
+                ("path", string(&out.display().to_string())),
+                ("format", string(&extension(out))),
+                ("bytes", bytes.len().to_string()),
+                ("geometry", string(if posed { "posed" } else { "rest" })),
+            ])
+        }
+        Source::Mesh(_) => written(out, bytes.len()),
+    })
 }
 
 /// `{"path", "format", "bytes"}` for a file written.
@@ -111,6 +128,5 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         return Err(bad_extension(&out));
     }
     let source = load(&Local, &a.input()?, &a.import()?)?;
-    export(&Local, &source, &out)?;
-    Ok(String::new())
+    export(&Local, &source, &out)
 }
