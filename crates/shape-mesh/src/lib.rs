@@ -514,6 +514,45 @@ mod tests {
     }
 
     #[test]
+    fn uvs_follow_their_corners_through_canonical_order() {
+        // Each corner's UV is a function of its position (and, on one
+        // face, of the face too: a seam), so after welding, sorting and
+        // rotating, every corner must still carry its own.
+        let uv_of =
+            |p: DVec3, seam: bool| DVec2::new(p.x + 2.0 * p.z + f64::from(u8::from(seam)), p.y);
+        let build = |reversed: bool| {
+            let mut s = tetra(DVec3::ZERO, reversed);
+            s.uvs = Some(
+                s.triangles
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| t.map(|v| uv_of(s.positions[v as usize], s.surfaces[i] == 1)))
+                    .collect(),
+            );
+            s.canonicalize().unwrap();
+            s
+        };
+        let (a, b) = (build(false), build(true));
+        assert_eq!(a, b);
+        for (i, t) in a.triangles.iter().enumerate() {
+            for k in 0..3 {
+                let seam = a.surfaces[i] == a.surfaces[a.faces(&["side"]).unwrap()[0] as usize];
+                assert_eq!(
+                    a.uvs.as_ref().unwrap()[i][k],
+                    uv_of(a.positions[t[k] as usize], seam)
+                );
+            }
+        }
+        // Without UVs, the hash is what it was; with them, it differs.
+        let mut bare = a.clone();
+        bare.uvs = None;
+        let (mut hb, mut hu) = (OutputHash::new(), OutputHash::new());
+        bare.hash_into(&mut hb).unwrap();
+        a.hash_into(&mut hu).unwrap();
+        assert_ne!(hb.finish_hex(), hu.finish_hex());
+    }
+
+    #[test]
     fn lookup_misses_list_the_names_that_exist() {
         let mut s = tetra(DVec3::ZERO, false);
         s.canonicalize().unwrap();
