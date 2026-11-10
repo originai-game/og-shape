@@ -16,7 +16,7 @@
 //!
 //! The named generators (sand3d's, `docs/design.md` §2) return a
 //! [`shape_mesh::Solid`]: [`solids`], [`paths`], [`loft`], [`body`],
-//! [`wire`] and [`parts`].
+//! [`wire`] and [`parts`]; [`path3`] flattens a path given as pieces.
 //!
 //! uvs follow og-render's convention: v runs down the image (glTF's), so
 //! where three.js writes `v` this crate writes `1 - v`.
@@ -30,6 +30,7 @@ pub mod loft;
 pub mod merge;
 pub mod parts;
 pub mod path2;
+pub mod path3;
 pub mod paths;
 pub mod polyhedron;
 pub mod shape;

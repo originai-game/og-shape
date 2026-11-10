@@ -5,7 +5,8 @@
 //! `shape_tools::import` (glTF's external buffers and images and OBJ's
 //! material libraries are read beside it, through the same [`Files`]);
 //! any other path is a program (`{"name", "ops"}`) replayed by
-//! `shape_model::program::run`.
+//! `shape_model::program::run_with`, with the fonts its `text` profiles
+//! name read through the same [`Files`], relative to the program.
 
 use std::path::{Path, PathBuf};
 
@@ -93,13 +94,14 @@ pub fn load(files: &dyn Files, input: &Input, d: &Import) -> Result<Source, Fail
         Input::None => Err(Failure::Usage(
             "no input: give a program or a mesh file".into(),
         )),
-        Input::Program(text) => program(text, "program").map(Source::Program),
+        Input::Program(text) => program(files, text, "program", Path::new("")).map(Source::Program),
         Input::Path(p) if is_mesh(p) => mesh_file(files, p, d).map(Source::Mesh),
         Input::Path(p) => {
             let bytes = files.read(p)?;
             let text = String::from_utf8(bytes)
                 .map_err(|_| Failure::Failed(format!("{}: not UTF-8 text", p.display())))?;
-            program(&text, &p.display().to_string()).map(Source::Program)
+            let dir = p.parent().map(Path::to_path_buf).unwrap_or_default();
+            program(files, &text, &p.display().to_string(), &dir).map(Source::Program)
         }
     }
 }
@@ -116,8 +118,19 @@ pub fn load_mesh(files: &dyn Files, input: &Input, d: &Import) -> Result<Mesh, F
     }
 }
 
-fn program(text: &str, what: &str) -> Result<Model, Failure> {
-    shape_model::program::run(text).map_err(|e| Failure::Failed(format!("{what}: {e}")))
+/// Replays a program, reading the fonts its `text` profiles name as paths
+/// relative to `dir` (the program file's directory; for a program given
+/// as text, the current directory or the server's workspace root).
+fn program(files: &dyn Files, text: &str, what: &str, dir: &Path) -> Result<Model, Failure> {
+    let fail = |e: shape_model::ModelError| Failure::Failed(format!("{what}: {e}"));
+    let mut fonts = shape_model::program::Fonts::new();
+    for name in shape_model::program::fonts_named(text).map_err(fail)? {
+        let bytes = files
+            .read(&dir.join(&name))
+            .map_err(|e| Failure::Failed(format!("{what}: font {name:?}: {e}")))?;
+        fonts.insert(name, bytes);
+    }
+    shape_model::program::run_with(text, &fonts).map_err(fail)
 }
 
 fn mesh_file(files: &dyn Files, path: &Path, d: &Import) -> Result<Mesh, Failure> {

@@ -15,7 +15,15 @@ struct Guide {
     text: &'static str,
 }
 
-const GUIDES: [Guide; 3] = [
+const GUIDES: [Guide; 4] = [
+    Guide {
+        uri: "og-shape://guides/shape.md",
+        name: "shape.md",
+        title: "Modelling an object: from a description to a program",
+        description: "How to plan an object as parts, sizes and motions, build it, check it \
+            with measures and previews, and what goes wrong. Read it before the API guides.",
+        text: include_str!("../../../guides/shape.md"),
+    },
     Guide {
         uri: "og-shape://guides/program.md",
         name: "program.md",

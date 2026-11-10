@@ -19,6 +19,19 @@ generated models.
 ]}
 ```
 
+A shelf on a leg built up to it, and a spring:
+
+```json
+{"name": "shelf", "ops": [
+  {"op": "box", "name": "shelf", "width": 30, "depth": 20, "height": 2,
+   "on": {"origin": [0, 0, 40], "x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}},
+  {"op": "extrude", "name": "leg", "until": {"part": 0, "face": "bottom"},
+   "profile": {"path": [[-3, -3], [3, -3], {"arc": {"through": [4, 0], "to": [3, 3]}}, [-3, 3]]}},
+  {"op": "wire", "name": "spring", "diameter": 1, "path": {"helix": {"radius": 4, "pitch": 3, "turns": 4}},
+   "on": {"origin": [20, 0, 0], "x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}}
+]}
+```
+
 ## Rules
 
 - **Units:** millimetres (`units` changes it, before the first part);
@@ -64,7 +77,30 @@ an arc that far, outward if positive), `{"gear": {"teeth", "module",
 "pressureAngle"?}}`, `{"union" | "subtract" | "intersect": [p, q, …]}`
 (the first operated on by the rest), `{"offset": {"profile",
 "distance"}}`, `{"translate": {"profile", "x", "y"}}`, `{"rotate":
-{"profile", "angle"}}`, `{"scale": {"profile", "x"?, "y"?}}` (0 keeps 1).
+{"profile", "angle"}}`, `{"scale": {"profile", "x"?, "y"?}}` (0 keeps 1),
+`{"superellipse": {"rx", "ry", "exponent", "segments"?}}` (2 an ellipse,
+larger squarer), `{"spline": {"points": [[x, y], …]}}` (a closed smooth
+curve through them), `{"path": [start, piece, …]}` (closed back to the
+start), `{"stroke": {"path", "width", "join"? ("round", "miter",
+"bevel"), "roundCaps"?, "closed"?}}` (the band round an open path),
+`{"hull": [p, q, …]}` (the convex hull), `{"mirror": {"profile",
+"axis"?}}` (`"y"`, the default: x becomes −x; `"x"`: y becomes −y),
+`{"text": {"text", "font", "size", "spacing"?}}` (baseline on y = 0 from
+x = 0; `size` the em).
+
+**Paths.** A list: a start point, then pieces, each from where the last
+ended: a point (a line to it), `{"arc": {"through", "to"}}` (a circle
+through three points), `{"tangentArc": {"to"}}` (leaves along the last
+piece), `{"spline": {"points"}}` (smooth through them). Curves get the
+same segment rule as circles. Points are `[x, y]` in a profile's `path`
+and `stroke`, `[x, y, z]` in `sweep` and `wire`, which also take
+`{"helix": {"radius", "pitch", "turns"}}` (about +z from `[radius, 0,
+0]`). Three arc points on one line, or a tangent arc first, are errors.
+
+**Fonts.** No font ships. A `text` profile names a font file; `shape`
+and the MCP tools read it relative to the program file (the workspace
+root for an inline program, and never outside it). The binding takes
+the bytes under that name (`guides/typescript.md`).
 
 ## Operations
 
@@ -81,12 +117,12 @@ an arc that far, outward if positive), `{"gear": {"teeth", "module",
 | `tube` | `name`, `outer`, `inner`, `height`, `segments`?, `on`? | radii |
 | `torus` | `name`, `radius`, `tube`, `angle`?, `axis`?, `segments`?, `tubeSegments`?, `on`? | `angle`: a part ring with `start`, `end` caps |
 | `wedge` | `name`, `width`, `height`, `depth`, `on`? | |
-| `extrude` | `name`, `profile`, `height`, `twist`?, `taper`?, `bothSides`?, `on`? | along +z |
+| `extrude` | `name`, `profile`, `height` or `until` (`{"part", "face"}`), `twist`?, `taper`?, `bothSides`?, `on`? | along +z; `until` runs up to the face's plane (a tilted face cuts the top, still `top`) |
 | `revolve` | `name`, `profile`, `angle`?, `axis`?, `segments`?, `on`? | profile x is the radius (x ≥ 0) |
-| `sweep` | `name`, `profile`, `path` (points), `up`?, `twist`?, `scaleEnd`?, `on`? | along a polyline |
+| `sweep` | `name`, `profile`, `path`, `up`?, `twist`?, `scaleEnd`?, `on`? | along a path (points, pieces or a helix) |
 | `loft` | `name`, `sections`: `[{"profile", "z"}]`, `samples`?, `steps`?, `curve`? (`"auto"`, `"straight"`, `"catmullRom"`, `"spline"`), `on`? | through sections; corners kept; refused if it folds through itself |
 | `thread` | `name`, `radius`, `pitch`, `length`, `depth`, `on`? | |
-| `wire` | `name`, `path` (points), `diameter`, `fillet`?, `fillets`? (one a point), `closed`?, `segments`?, `on`? | a round rod; corners bent round `fillet`, else mitred |
+| `wire` | `name`, `path`, `diameter`, `fillet`?, `fillets`? (one a point; points-only paths), `closed`?, `segments`?, `on`? | a round rod; corners between pieces bent round `fillet`, else mitred |
 | `body` | `name`, `plan`, `top`, `bottom`, `n`?, `on`? | along +y from views: a number, `[[y, v], …]`, or `{"points", "smooth"}` |
 | `knurl` | `name`, `diameter`, `height`, `pitch`?, `straight`?, `on`? | a grip about +z |
 | `gear` | `name`, `teeth`, `module`, `width`, `pressureAngle`?, `bore`?, `hub`?, `hubHeight`?, `on`? | a spur gear about +z; `bore`, `hub` diameters |
@@ -97,7 +133,9 @@ an arc that far, outward if positive), `{"gear": {"teeth", "module",
 | `attach` | `to`, `name`, `children` | |
 | `copy` | `id`, `name` | |
 | `mirror` | `id`, `plane` (a frame; mirrors across its xy), `name` | |
-| `cut`, `join`, `intersect` | `target`, `tool` | the tool is used up |
+| `cut`, `join`, `intersect` | `target`, `tool`, `check`? | the tool is used up; answers `voids`, `touchingEdges`, `touching`; `check` first refuses an operand that passes through itself |
+| `merge` | `target`, `tool` | the tool's solid added as it is, no boolean; the tool is used up |
+| `delete` | `id` | removes it and all under it, and joints hanging what goes |
 | `seat` | `host`, `part` | cuts `part`'s volume out of `host`; `part` stays |
 | `scale` | `id`, `x`?, `y`?, `z`? | along its own axes about its own origin; 0 keeps 1 |
 | `hole` | `id`, `diameter`, `at` (frames above the part, +z out of the material), `depth`? (0: through), `counterbore`? `[d, depth]`, `countersink`? `[d, full angle]` | drills along −z |
@@ -118,6 +156,8 @@ an arc that far, outward if positive), `{"gear": {"teeth", "module",
 reports per part and for the model: `triangles`, `vertices`,
 `boundsMin`/`boundsMax`, `area`, `volume`, `closed`, `boundaryEdges`,
 `nonManifoldEdges`, `degenerateTriangles`, `components`, and the joints.
+`build` also lists every boolean with the voids it left and the edges
+where its operands touch (`touchingEdges` > 0: not closed there).
 Want `closed: true` and no non-manifold edges on every part. An error
 names the operation's index, its verb and part (`op 3 fillet "lid": …`)
 and what was wrong.

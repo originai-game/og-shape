@@ -2,7 +2,7 @@
 //! from (`docs/design.md` §2).
 //!
 //! Entry: [`Profile`]. Make one with a constructor ([`rect`], [`circle`],
-//! [`ellipse`], [`slot`], [`polygon`], [`poly`], [`superellipse`], [`gear`], or a
+//! [`ellipse`], [`slot`], [`polygon`], [`poly`], [`superellipse`], [`spline`], [`gear`], or a
 //! [`Path`], or [`text`] from a font's bytes), combine with [`Profile::union`], [`Profile::subtract`],
 //! [`Profile::intersect`], [`Profile::offset`], [`stroke`],
 //! [`Profile::mirror`] or [`Profile::hull`], and fill with
@@ -22,8 +22,8 @@ mod text;
 
 pub use gear::{Gear, gear};
 pub use make::{
-    Circle, Ellipse, Poly, PolyPoint, Polygon, Rect, Slot, Superellipse, circle, ellipse, poly,
-    polygon, rect, slot, superellipse,
+    Circle, Ellipse, Poly, PolyPoint, Polygon, Rect, Slot, Spline, Superellipse, circle, ellipse,
+    poly, polygon, rect, slot, spline, superellipse,
 };
 pub use ops::{Join, StrokeDesc, stroke};
 pub use path::Path;
@@ -111,6 +111,8 @@ pub enum ProfileError {
     ArcCorner(usize),
     /// Two ways of giving one size were both set (the fields named).
     Conflict(&'static str),
+    /// The font's bytes are not a TrueType or OpenType font.
+    Font,
 }
 
 impl std::fmt::Display for ProfileError {
@@ -129,6 +131,7 @@ impl std::fmt::Display for ProfileError {
                 "point {i} rounds a corner next to an arc edge; a corner radius needs straight edges on both sides"
             ),
             ProfileError::Conflict(w) => write!(f, "give only one of {w}"),
+            ProfileError::Font => f.write_str("the font is not a TrueType or OpenType font"),
         }
     }
 }

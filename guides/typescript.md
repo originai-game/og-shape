@@ -34,7 +34,19 @@ op, its index, the part and your line.
   edge to the next point into an arc that far, outward if positive), `og.gear({ teeth, module })`, `og.union /
   subtract / intersect(a, b, …)` (subtract makes a hollow section),
   `og.translate({ profile, x?, y? })`, `og.rotate({ profile, angle })`,
-  `og.offset({ profile, distance })`, `og.scale({ profile, x?, y? })`.
+  `og.offset({ profile, distance })`, `og.scale({ profile, x?, y? })`,
+  `og.superellipse({ rx, ry, exponent })`, `og.spline({ points })`
+  (closed, smooth), `og.path([start, …pieces])`, `og.stroke({ path,
+  width, join?, roundCaps?, closed? })`, `og.hull(a, b, …)`,
+  `og.mirror({ profile, axis? })` (x → −x; `axis: "x"`: y → −y),
+  `og.text({ text, font, size, spacing? })`.
+- A path is a start point, then pieces: a point (a line to it), `{ arc:
+  { through, to } }`, `{ tangentArc: { to } }`, `{ spline: { points }
+  }`. `sweep` and `wire` take 3D paths, or `og.helix({ radius, pitch,
+  turns })` (about +z from `[radius, 0, 0]`).
+- Fonts: `og.model({ name, fonts: { "fonts/a.ttf": bytes } })`; `text`
+  names one. Name it by its path relative to the program, so `shape`
+  replays it; `og.replay(program, { fonts })`.
 
 ## `Frame`
 
@@ -59,12 +71,12 @@ part's x, y.
 |---|---|
 | `box({ width, depth, height })` | x, y, z sizes; centred in x and y, from z = 0 up |
 | `cylinder({ radius, height, radiusTop? })`, `cone({ radius, height })`, `tube({ outer, inner, height })` | radii; about +z from z = 0 |
-| `extrude({ profile, height, twist?, taper?, bothSides? })` | along +z; the top is scaled by 1 − `taper` (negative widens); `bothSides` centres it |
+| `extrude({ profile, height, twist?, taper?, bothSides? })` | along +z; the top is scaled by 1 − `taper` (negative widens); `bothSides` centres it; `until: { part, face }` instead of `height` runs up to that face's plane |
 | `loft({ sections: [{ profile, z }], samples?, steps?, curve? })` | `z` in its own space; straight between sections; `steps` > 1 curves (`curve: "spline"` through every section), and can overshoot: a surface that passes through itself is refused, naming the sections. Polygon corners stay samples and run corner to corner |
 | `sphere({ radius, axis? })` | centred |
 | `revolve({ profile, angle?, axis? })`, `dome({ radius, height?, axis? })`, `torus({ radius, tube, angle?, tubeSegments?, axis? })` | about **+y**, or `axis: "+Z"` (profile y up; a sphere, dome or torus rests on z = 0, a torus's centre at z = `tube`); profile x is the radius (≥ 0); a part `angle` turns from +x toward −z; a dome `height` makes a cap |
-| `sweep({ profile, path, up?, twist?, scaleEnd? })` | the profile (its y toward `up`) along a polyline; corners mitred |
-| `wire({ path, diameter, fillet?, fillets?, closed? })` | a round rod along a polyline; corners bent round `fillet` (≥ diameter / 2), else mitred |
+| `sweep({ profile, path, up?, twist?, scaleEnd? })` | the profile (its y toward `up`) along a path; corners mitred |
+| `wire({ path, diameter, fillet?, fillets?, closed? })` | a round rod along a path; corners between pieces bent round `fillet` (≥ diameter / 2), else mitred |
 | `body({ plan, top, bottom, n? })` | along +y: `plan` the width, `top` and `bottom` the z lines, `n` the squareness (2 round); each a number, `[[y, v], …]` or `{ points, smooth: true }` |
 | `gear({ teeth, module, width, bore?, hub?, hubHeight? })`, `knurl({ diameter, height, pitch?, straight? })` | about +z from z = 0; `bore`, `hub` diameters |
 | `wedge({ width, height, depth })`, `thread({ radius, pitch, length, depth })` | from the origin into +x, +y, +z; about +z |
@@ -89,7 +101,10 @@ anchors? })`, `attach(assembly, { name, children })`, `copy(part, name)`,
 `mirror(part, { plane, name })` (`plane` a frame; across its xy).
 
 Edits (a tool must be a part; it is used up; the target keeps its name):
-- `cut`, `join`, `intersect(target, tool)`; `seat(host, part)` cuts
+- `cut`, `join`, `intersect(target, tool, { check? })` return `{ voids,
+  touchingEdges, touching }`; `check` refuses an operand that passes
+  through itself. `merge(target, tool)` adds the tool as it is (no
+  boolean); `delete(part)`. `seat(host, part)` cuts
   `part`'s volume out of `host` and keeps `part`. `scale(part, { x?, y?,
   z? })` along its own axes, about its own origin.
 - `hole(part, { diameter, at, depth?, counterbore?, countersink? })`:

@@ -540,3 +540,34 @@
   one line per bevel, so two runs compare line by line.
 - Previews of the §7.6 cases in `docs/previews/phase3/` (`wide_bore`,
   `wide_hole_rim`, `wide_cylinder_slice`, `wide_twisted_top`).
+- Program and binding profiles `superellipse`, `spline` (closed, smooth;
+  new `shape_2d::spline`), `path` (a start point, then points,
+  three-point `arc`s, `tangentArc`s and `spline` pieces), `stroke`,
+  `hull`, 2D `mirror` and `text` (`docs/research.md` §16). `segments`
+  below what a `circle`, `ellipse` or `superellipse` can take is refused
+  instead of ignored.
+- Fonts: a `text` profile names a font file the caller supplies; no
+  font ships. `shape` and the MCP tools read it relative to the program
+  (MCP within the workspace); the binding takes bytes in
+  `og.model({ fonts })` and `og.replay(program, { fonts })`;
+  `program::run_with`, `fonts_named`, `Session::font`. A file that is not
+  a font is `ProfileError::Font` (was `Empty`).
+- `sweep` and `wire` paths take pieces (arcs, tangent arcs, splines,
+  flattened by the curve rule; `shape_gen::path3`) or a whole
+  `{"helix": …}` (`og.helix`). On a curved path `wire`'s `fillet` bends
+  the corners between pieces; `fillets` is refused there.
+- `extrude` `until: {part, face}`: up to a face's plane; a tilted face
+  cuts the top, still named `top`.
+- `merge` (no boolean) and `delete` (a node and everything under it,
+  with the joints hanging what goes) in the program, the binding and
+  `Model`.
+- `cut`, `join`, `intersect` answer `{voids, touchingEdges, touching}`
+  (the binding returns it), take `check` to refuse an operand that
+  passes through itself first, and are listed with their reports as
+  `booleans` in `shape build` and MCP `build`. `Model::cut`, `join` and
+  `intersect` return `BoolReport` (was `()`); `Model::combine`,
+  `Model::booleans`; `ModelError::Deleted`.
+- MCP serves `guides/shape.md` as `og-shape://guides/shape.md` (§13.6
+  item 15).
+- Golden cases `rest.program.glb`, `rest.program.measure`,
+  `rest.program.booleans`; no existing hash moved.

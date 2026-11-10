@@ -1,5 +1,8 @@
 //! `shape build <program.json>`: replays the program and reports what it
-//! built, as JSON: the parts with their triangle counts and the joints.
+//! built, as JSON: the parts with their triangle counts and the joints,
+//! and every boolean (`cut`, `join`, `intersect`) with what its result
+//! alone does not say: the voids it left and the edges where its operands
+//! touch (`shape_bool::BoolReport`).
 
 use shape_model::Model;
 use shape_tools::Import;
@@ -10,7 +13,8 @@ use crate::source::{Local, Source, load};
 use crate::{Failure, failed};
 
 /// The built model's name and parts: each part's name, parent, joint
-/// (or null) and triangle count.
+/// (or null) and triangle count; then `booleans`, in program order: `op`,
+/// `target`, `tool`, `voids`, `touchingEdges`, `touching`.
 pub fn report(model: &Model) -> Result<String, Failure> {
     let built = model.build().map_err(failed)?;
     let scene = built.scene();
@@ -29,9 +33,24 @@ pub fn report(model: &Model) -> Result<String, Failure> {
             ])
         })
         .collect();
+    let booleans: Vec<String> = model
+        .booleans()
+        .iter()
+        .map(|b| {
+            object(&[
+                ("op", string(&b.op)),
+                ("target", string(&b.target)),
+                ("tool", string(&b.tool)),
+                ("voids", b.report.voids.to_string()),
+                ("touchingEdges", b.report.touching_edges.to_string()),
+                ("touching", b.report.touching.to_string()),
+            ])
+        })
+        .collect();
     Ok(object(&[
         ("name", string(&scene.name)),
         ("parts", array(&parts)),
+        ("booleans", array(&booleans)),
     ]))
 }
 

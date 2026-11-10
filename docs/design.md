@@ -95,7 +95,7 @@ atlas packing. Each can be added later without changing the API.
   - Lookup returns every element carrying any of the names given. A miss
     is an error value that lists the names that exist.
 - **Part:** a named solid with a material and a placement.
-- **Skin (planned, `docs/plan.md` phase 5b):** a skeleton of named bones
+- **Skin (`docs/plan.md` phase 5b):** a skeleton of named bones
   and, per vertex, up to four bone weights.
   - Bones come from the program: a part or a named region becomes a bone,
     a joint becomes its pivot. Weights blend smoothly across the seams the

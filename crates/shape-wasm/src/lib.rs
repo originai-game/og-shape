@@ -41,6 +41,19 @@ impl Model {
         })
     }
 
+    /// Supplies a font's bytes under `name`, the name `text` profiles give
+    /// it. The program records the name only.
+    pub fn font(&mut self, name: &str, bytes: Vec<u8>) {
+        self.session.font(name, bytes);
+    }
+
+    /// Replays `program` into this model, with the fonts supplied so far,
+    /// replacing what it held.
+    pub fn replay_into(&mut self, program: &str) -> Result<(), JsError> {
+        self.session = Session::replay_with(program, self.session.fonts()).map_err(js)?;
+        Ok(())
+    }
+
     /// Applies one JSON operation (`shape_model::program`); answers JSON.
     pub fn apply(&mut self, op: &str) -> Result<String, JsError> {
         self.session.apply(op).map_err(js)

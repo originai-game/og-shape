@@ -28,7 +28,8 @@ pub mod program;
 
 pub use checked::loft;
 pub use error::ModelError;
-pub use model::{Built, Id, JointDesc, Model, PartMeasures, Unit};
+pub use model::{BoolRecord, Built, Combine, Id, JointDesc, Model, PartMeasures, Unit};
 pub use place::Path;
+pub use shape_bool::{BoolOp, BoolReport};
 pub use shape_core::Frame;
 pub use shape_tools::{Interfering, JointKind, Material, Mimic, Preview};

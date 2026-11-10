@@ -47,7 +47,7 @@ A change that moves a hash says why in its commit and changelog.
 ## Phase 1: profiles and generators
 
 - `shape-2d`: all profile constructors, 2D booleans, offset, stroke,
-  triangulation, text via skrifa.
+  triangulation, text via ttf-parser.
 - `shape-mesh` names, and canonical ordering.
 - `shape-gen`: every generator in `docs/design.md` §2, with sand3d's
   naming of caps and walls.
