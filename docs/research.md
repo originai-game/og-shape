@@ -4806,3 +4806,7 @@ the pose).
   count is not seen as such. The references are the sand3d exports of
   the datasets, not the source objects.
 - Tokens: Claude Code's figures, as §19.7; not comparable with `A`–`M`.
+- Gate run here: lint (fmt, clippy, cargo-deny), test, golden (native)
+  and wasm (the wasm32 builds, the golden run as wasm32-wasip1 under
+  wasmtime 50.0.1, the binding under bun and node), all green; no line
+  of `golden/hashes.txt` moved. aarch64 and Windows: CI only.
