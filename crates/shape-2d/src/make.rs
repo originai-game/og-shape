@@ -358,6 +358,51 @@ pub fn superellipse(d: &Superellipse) -> Result<Profile, ProfileError> {
     Ok(Profile::from_contour(Contour::smooth(p)))
 }
 
+/// A closed smooth curve through points.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Spline {
+    /// The points the curve passes through, in order, at least 3; the
+    /// curve closes from the last back to the first.
+    pub points: Vec<DVec2>,
+}
+
+/// A closed Catmull-Rom spline through `d.points` (as cubic Béziers, each
+/// span flattened by [`crate::curve::bezier_segments`]). Every point is
+/// smooth: no corners.
+pub fn spline(d: &Spline) -> Result<Profile, ProfileError> {
+    let p = &d.points;
+    let n = p.len();
+    if n < 3 {
+        return Err(ProfileError::TooFewPoints(n));
+    }
+    if p.iter().any(|q| !q.is_finite()) {
+        return Err(ProfileError::NotFinite("points"));
+    }
+    let mut out = Vec::new();
+    for i in 0..n {
+        let (p0, p1) = (p[(i + n - 1) % n], p[i]);
+        let (p2, p3) = (p[(i + 1) % n], p[(i + 2) % n]);
+        let c1 = p1 + (p2 - p0) / 6.0;
+        let c2 = p2 - (p3 - p1) / 6.0;
+        out.push(p1);
+        let mut span = crate::curve::cubic(
+            p1,
+            c1,
+            c2,
+            p2,
+            crate::curve::bezier_segments(&[p1, c1, c2, p2]),
+        );
+        span.pop();
+        out.extend(span);
+    }
+    out.dedup();
+    let c = Contour::smooth(out);
+    if c.points.len() < 3 || c.signed_area2() == 0.0 {
+        return Err(ProfileError::Empty);
+    }
+    Ok(Profile::from_contour(c))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

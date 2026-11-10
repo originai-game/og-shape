@@ -46,6 +46,7 @@ pub fn all() -> Vec<Case> {
     cases.extend(crate::touching::cases());
     cases.extend(crate::interference::cases());
     cases.extend(crate::surface::cases());
+    cases.extend(crate::rest::cases());
     cases.extend(crate::smallgaps::cases());
     cases
 }

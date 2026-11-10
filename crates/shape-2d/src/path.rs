@@ -159,6 +159,18 @@ impl Path {
         self
     }
 
+    /// The points so far, every curve flattened: an open polyline, as
+    /// [`crate::stroke`] takes.
+    pub fn points(&self) -> &[DVec2] {
+        &self.points
+    }
+
+    /// The direction the path arrives at its last point; `None` before
+    /// its first piece.
+    pub fn heading(&self) -> Option<DVec2> {
+        self.heading
+    }
+
     /// Closes the outline into a profile. A last point equal to the first
     /// is dropped.
     pub fn close(mut self) -> Result<Profile, ProfileError> {

@@ -182,3 +182,41 @@ fn mesh_tools_run_on_a_mesh_file() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn build_reads_fonts_beside_the_program_and_reports_booleans() {
+    let dir = std::env::temp_dir().join(format!("shape-cli-fonts-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("fonts")).unwrap();
+    let program = dir.join("p.json");
+    std::fs::write(
+        &program,
+        r#"{"name": "p", "ops": [
+          {"op": "box", "name": "a", "width": 4, "depth": 4, "height": 4},
+          {"op": "box", "name": "b", "width": 1, "depth": 1, "height": 1,
+           "on": {"origin": [0, 0, 1], "x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}},
+          {"op": "cut", "target": 0, "tool": 1}
+        ]}"#,
+    )
+    .unwrap();
+    let out = shape(&["build", program.to_str().unwrap()]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        text.contains(r#""booleans":[{"op":"cut","target":"a","tool":"b","voids":1,"#),
+        "{text}"
+    );
+    // The font is read relative to the program: missing, then not a font.
+    std::fs::write(
+        &program,
+        r#"{"name": "p", "ops": [{"op": "extrude", "name": "t", "height": 1,
+          "profile": {"text": {"text": "A", "font": "fonts/x.ttf", "size": 5}}}]}"#,
+    )
+    .unwrap();
+    let out = shape(&["build", program.to_str().unwrap()]);
+    let e = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(e.contains("font \"fonts/x.ttf\""), "{e}");
+    std::fs::write(dir.join("fonts/x.ttf"), b"not a font").unwrap();
+    let out = shape(&["build", program.to_str().unwrap()]);
+    let e = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(e.contains("not a TrueType"), "{e}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

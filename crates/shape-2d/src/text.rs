@@ -175,7 +175,7 @@ pub fn text(d: &Text) -> Result<Profile, ProfileError> {
     if d.size <= 0.0 {
         return Err(ProfileError::NotPositive("size"));
     }
-    let face = ttf_parser::Face::parse(&d.font, 0).map_err(|_| ProfileError::Empty)?;
+    let face = ttf_parser::Face::parse(&d.font, 0).map_err(|_| ProfileError::Font)?;
     let scale = d.size / f64::from(face.units_per_em());
     let mut b = Builder {
         scale,

@@ -7,12 +7,14 @@
 
 mod bevel;
 mod cases;
+mod font;
 mod gen2;
 mod geom;
 mod interference;
 mod mcp;
 mod meshtools;
 mod model;
+mod rest;
 mod selfunion;
 mod skin;
 mod smallgaps;

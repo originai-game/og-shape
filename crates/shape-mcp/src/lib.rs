@@ -47,7 +47,8 @@ pub struct Server {
 }
 
 const INSTRUCTIONS: &str = "og-shape: 3D modeling for LLMs. Write a model as a program \
-(read resource og-shape://guides/program.md for the JSON form, or \
+(read resource og-shape://guides/shape.md for how to model an object, then \
+og-shape://guides/program.md for the JSON form, or \
 og-shape://guides/typescript.md for TypeScript), then `build` or `run_typescript` it, \
 `preview` it and look, `measure` it, and `export` GLB, OBJ or STL. Meshes from elsewhere \
 (glb, gltf, obj, fbx) go through `import`, `repair`, `decimate`, `unwrap`, or the whole \

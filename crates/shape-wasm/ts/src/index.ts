@@ -7,7 +7,10 @@
  * Entry: {@link load}. It gives an {@link Og}: `og.model({ name })` starts
  * a {@link Shape} (one model), whose methods add, place, edit, group and
  * joint parts and read frames back. Profiles are plain objects built by
- * `og.rect`, `og.circle` and the others.
+ * `og.rect`, `og.circle` and the others. A font for `og.text` is the
+ * caller's: its bytes go to `og.model({ fonts })` under the name the
+ * profile gives (for `shape build` to replay it, the font's path relative
+ * to the program).
  *
  * A desc field the kernel does not take is an error that names it and
  * lists the ones it takes. Every error thrown names the operation, its
@@ -45,6 +48,25 @@ export type Profile = Record<string, unknown>;
 
 /** The axis a turned solid turns about: `"+Y"` (the default) or `"+Z"`. */
 export type TurnAxis = "+Y" | "+Z";
+
+/** A piece of a path after its start: a point (a line to it), a three-point arc, an arc leaving tangent, or a spline through points. */
+export type PathPiece<P> = P | { arc: { through: P; to: P } } | { tangentArc: { to: P } } | { spline: { points: P[] } };
+
+/** A 2D path: a start point, then pieces (`og.path`, `og.stroke`). */
+export type Path2 = [[number, number], ...PathPiece<[number, number]>[]];
+
+/** A 3D path for `sweep` and `wire`: a start point and pieces, or a helix about +z (`og.helix`). */
+export type Route = [Vec3, ...PathPiece<Vec3>[]] | { helix: { radius: number; pitch: number; turns: number } };
+
+/** What a boolean did that its result alone does not say. */
+export interface BoolReport {
+  /** Closed shells facing in: a cut whose tool lies wholly inside the target leaves one. */
+  voids: number;
+  /** Edges where the operands touch (four faces, two of each): the result is not closed there. */
+  touchingEdges: number;
+  /** Whether faces of one operand lie on or meet faces of the other. */
+  touching: boolean;
+}
 
 /** A view of a `body`: one value, `[y, value]` points, or points on a spline. */
 export type View = number | [number, number][] | { points: [number, number][]; smooth?: boolean };
@@ -263,9 +285,16 @@ export class Shape {
   wedge(d: Placed & { width: number; height: number; depth: number }): Part {
     return this.part("wedge", d);
   }
-  /** A profile extruded along +z. */
+  /** A profile extruded along +z: `height`, or `until` a face's plane (a tilted face cuts the top). */
   extrude(
-    d: Placed & { profile: Profile; height: number; twist?: number; taper?: number; bothSides?: boolean },
+    d: Placed & {
+      profile: Profile;
+      height?: number;
+      until?: { part: Part; face: string };
+      twist?: number;
+      taper?: number;
+      bothSides?: boolean;
+    },
   ): Part {
     return this.part("extrude", d);
   }
@@ -273,7 +302,8 @@ export class Shape {
   revolve(d: Placed & { profile: Profile; angle?: number; axis?: TurnAxis; segments?: number }): Part {
     return this.part("revolve", d);
   }
-  sweep(d: Placed & { profile: Profile; path: Vec3[]; up?: Vec3; twist?: number; scaleEnd?: number }): Part {
+  /** The profile along a path (points, arcs, splines, or a helix), with rotation-minimizing frames. */
+  sweep(d: Placed & { profile: Profile; path: Route; up?: Vec3; twist?: number; scaleEnd?: number }): Part {
     return this.part("sweep", d);
   }
   loft(
@@ -289,10 +319,10 @@ export class Shape {
   thread(d: Placed & { radius: number; pitch: number; length: number; depth: number }): Part {
     return this.part("thread", d);
   }
-  /** A round rod along a polyline; corners bent round `fillet` (or `fillets[i]`) on the centre line, else mitred. */
+  /** A round rod along a path; corners bent round `fillet` (or `fillets[i]`, points-only paths) on the centre line, else mitred. */
   wire(
     d: Placed & {
-      path: Vec3[];
+      path: Route;
       diameter: number;
       closed?: boolean;
       fillet?: number;
@@ -395,15 +425,23 @@ export class Shape {
 
   // ── edits ──
 
-  /** `target` minus `tool`; the tool is used up. */
-  cut(target: Part, tool: Part): void {
-    this.call("cut", { target, tool });
+  /** `target` minus `tool`; the tool is used up. `check` refuses an operand that passes through itself first. */
+  cut(target: Part, tool: Part, d: { check?: boolean } = {}): BoolReport {
+    return this.call("cut", { target, tool, ...d });
   }
-  join(target: Part, tool: Part): void {
-    this.call("join", { target, tool });
+  join(target: Part, tool: Part, d: { check?: boolean } = {}): BoolReport {
+    return this.call("join", { target, tool, ...d });
   }
-  intersect(target: Part, tool: Part): void {
-    this.call("intersect", { target, tool });
+  intersect(target: Part, tool: Part, d: { check?: boolean } = {}): BoolReport {
+    return this.call("intersect", { target, tool, ...d });
+  }
+  /** Adds `tool`'s solid to `target`'s as it is, no boolean; the tool is used up. */
+  merge(target: Part, tool: Part): void {
+    this.call("merge", { target, tool });
+  }
+  /** Removes a part or group and everything under it (and the joints hanging them). */
+  delete(part: Part): void {
+    this.call("delete", { id: part });
   }
   /** Cuts the volume `part` fills out of `host`; `part` stays. */
   seat(host: Part, part: Part): void {
@@ -512,10 +550,10 @@ function caller(m: WasmModel): Call {
 
 /** The loaded kernel. */
 export interface Og {
-  /** A new, empty model. */
-  model(d: { name: string; units?: "mm" | "cm" | "m" }): Shape;
-  /** A model replayed from a recorded program. */
-  replay(program: string): Shape;
+  /** A new, empty model; `fonts` are font files' bytes under the names `og.text` gives. */
+  model(d: { name: string; units?: "mm" | "cm" | "m"; fonts?: Record<string, Uint8Array> }): Shape;
+  /** A model replayed from a recorded program, with the fonts it names. */
+  replay(program: string, d?: { fonts?: Record<string, Uint8Array> }): Shape;
   /** A frame at `origin` looking along `normal` (face axes), or with Y toward `up`. */
   frame(d: { origin?: Vec3; normal?: Vec3; up?: Vec3 }): Frame;
   /** The world frame. */
@@ -541,6 +579,22 @@ export interface Og {
   offset(d: { profile: Profile; distance: number }): Profile;
   /** Factors along x and y about the origin; 0 or missing keeps 1. */
   scale(d: { profile: Profile; x?: number; y?: number }): Profile;
+  /** |x/rx|ⁿ + |y/ry|ⁿ = 1: 2 an ellipse, larger squarer. */
+  superellipse(d: { rx: number; ry: number; exponent: number; segments?: number }): Profile;
+  /** A closed smooth curve through the points. */
+  spline(d: { points: [number, number][] }): Profile;
+  /** An outline from a start point through pieces, closed back to the start. */
+  path(path: Path2): Profile;
+  /** The area within `width / 2` of an open path (or a closed one). */
+  stroke(d: { path: Path2; width: number; join?: "round" | "miter" | "bevel"; roundCaps?: boolean; closed?: boolean }): Profile;
+  /** The convex hull of the profiles. */
+  hull(...profiles: Profile[]): Profile;
+  /** Mirrored across the y axis (x → −x), or the x axis with `axis: "x"`. */
+  mirror(d: { profile: Profile; axis?: "x" | "y" }): Profile;
+  /** A line of text from a font supplied to the model (`fonts`), baseline on y = 0 from x = 0. */
+  text(d: { text: string; font: string; size: number; spacing?: number }): Profile;
+  /** A helix about +z from (radius, 0, 0), a path for `sweep` and `wire`. */
+  helix(d: { radius: number; pitch: number; turns: number }): Route;
 }
 
 /**
@@ -560,17 +614,21 @@ export async function load(wasm?: BufferSource | WebAssembly.Module): Promise<Og
   const call = caller(frames);
   const og: Og = {
     model(d) {
-      only("model", d, ["name", "units"]);
+      only("model", d, ["name", "units", "fonts"]);
       const m = new WasmModel(d.name);
+      for (const [name, bytes] of Object.entries(d.fonts ?? {})) m.font(name, bytes);
       const shape = new Shape(m, caller(m));
       if (d.units !== undefined) caller(m)("units", { unit: d.units });
       return shape;
     },
-    replay(program) {
-      let m: WasmModel;
+    replay(program, d = {}) {
+      only("replay", d, ["fonts"]);
+      const m = new WasmModel("replay");
+      for (const [name, bytes] of Object.entries(d.fonts ?? {})) m.font(name, bytes);
       try {
-        m = WasmModel.replay(program);
+        m.replay_into(program);
       } catch (e) {
+        m.free();
         located(e);
       }
       return new Shape(m, caller(m));
@@ -598,6 +656,14 @@ export async function load(wasm?: BufferSource | WebAssembly.Module): Promise<Og
     rotate: (d) => ({ rotate: d }),
     offset: (d) => ({ offset: d }),
     scale: (d) => ({ scale: d }),
+    superellipse: (d) => ({ superellipse: d }),
+    spline: (d) => ({ spline: d }),
+    path: (path) => ({ path }),
+    stroke: (d) => ({ stroke: d }),
+    hull: (...p) => ({ hull: p }),
+    mirror: (d) => ({ mirror: d }),
+    text: (d) => ({ text: d }),
+    helix: (d) => ({ helix: d }),
   };
   return og;
 }

@@ -40,9 +40,11 @@ const TOOLS: [Tool; 10] = [
     Tool {
         name: "build",
         description: "Build a model program (the JSON form of resource og-shape://guides/program.md) \
-            and report its parts, joints and measures (counts, bounds, area, volume, closed, \
-            non-manifold edges; no thresholds). Give `program` inline or a `.json` `path` in the \
-            workspace.",
+            and report its parts, joints, booleans (voids left, edges where operands touch) and \
+            measures (counts, bounds, area, volume, closed, non-manifold edges; no thresholds). \
+            Give `program` inline or a `.json` `path` in the workspace; fonts that `text` \
+            profiles name are read relative to the program (the workspace root for an inline \
+            one).",
         schema: build_schema,
         handler: build_tool,
     },

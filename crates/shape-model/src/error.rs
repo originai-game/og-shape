@@ -18,6 +18,8 @@ pub enum ModelError {
     UnknownId(u32),
     /// The node was used up by an earlier operation (a boolean's tool).
     UsedUp(String),
+    /// The node was removed by `delete`.
+    Deleted(String),
     /// A live node already has this name.
     NameTaken(String),
     /// A name must not be empty.
@@ -123,6 +125,7 @@ impl fmt::Display for ModelError {
         match self {
             ModelError::UnknownId(i) => write!(f, "no node has id {i}"),
             ModelError::UsedUp(n) => write!(f, "{n:?} was used up by an earlier operation"),
+            ModelError::Deleted(n) => write!(f, "{n:?} was deleted by an earlier operation"),
             ModelError::NameTaken(n) => write!(f, "a node is already named {n:?}"),
             ModelError::EmptyName => f.write_str("a name must not be empty"),
             ModelError::NotAPart(n) => write!(f, "{n:?} is a group, not a part with a solid"),

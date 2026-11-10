@@ -2762,17 +2762,29 @@ marked. None was fixed in this stream.
 6. **Unknown desc fields are ignored**, so `cylinder({ segments })`,
    `sphere({ segments })` silently do nothing (reproduced). The program
    parser could refuse fields it does not know, as the MCP tools do.
+   **Done** (stream M, §14.1): every operation, profile, section, view,
+   frame, `mimic` and path refuses a field it does not take, naming it
+   and the fields taken (checked again in §16 for the new ops).
 7. **Errors from a live session do not name the operation or call**;
    replayed programs say `op N`, the binding does not.
+   **Done** (stream M, §14.1): `ModelError::At` names the index, the
+   verb and the part in both, and the binding appends the author's call
+   site.
 8. **No segment control** on `cylinder`, `cone`, `sphere`, `dome`,
    `torus` and `revolve`: an 8 mm sphere is 812 triangles, a drum hoop
    torus 3 712.
+   **Done** (stream M, §14.1): `segments` a turn on those and on `wire`.
 9. **Missing from the program and the binding** though the generators
    exist: `wire` (bent rods with bend radii), `body`, `knurl`, the gear
    solid, the dome's height, the loft's `curve` choice, `scale`; and in
    the binding, `og.translate`, `og.rotate`, `og.offset` (the JSON forms
    work). Missing in the kernel: an arc segment in `poly`, a part torus,
    an across-flats size for `polygon`, a non-uniform profile scale.
+   **Done** (stream M, §14.1): every generator named is in the program
+   and the binding; the kernel gained `PolyPoint::bulge`, `TorusDesc`'s
+   `angle`, `Polygon::flats`, and the program `Profile::scale`. Checked
+   again in §16.1: all four are reachable from the program and the
+   binding.
 10. **No interference measure**: nothing reports parts passing through
     each other, at rest or posed; measures are at rest only. **Done
     (§15.3)**; the CLI, MCP and binding are stream M's to wire.
@@ -2802,6 +2814,8 @@ marked. None was fixed in this stream.
 15. **`shape-mcp` does not serve `guides/shape.md`** as a resource (it
     serves `program.md`, `typescript.md`, `meshtools.md`); an agent on
     MCP does not see the authoring guide.
+    **Done** (stream R, §16): served as `og-shape://guides/shape.md`, and
+    the server's instructions and `guides/mcp.md` point to it first.
 
 ### 13.7 What is untested
 
@@ -3226,3 +3240,153 @@ area is not zero: the bands' intersection has one, 17 mm long.
   are compared as built.
 - Every new hash is checked natively (x86-64) and as wasm32 under
   wasmtime here; aarch64 and Windows run in CI only.
+
+## 16. The rest of the authoring surface (stream R, 2026-11-10)
+
+Stream R makes everything `docs/design.md` §2 promises an author
+reachable from the program JSON, the binding, the CLI and MCP, and
+described in `guides/`, so that the IDL translated at the merge has
+nothing missing. Checked against `origin/main` at a4b6046.
+
+### 16.1 What was missing, and what was already there
+
+| item | at a4b6046 | now |
+|---|---|---|
+| `superellipse` profile | kernel only | program, binding |
+| `spline` profile | none (only `Path::spline_through`, open) | `shape_2d::spline` (closed Catmull-Rom), program, binding |
+| path with three-point and tangent arcs | kernel `Path` only | `{"path": [...]}` profile, binding `og.path` |
+| `stroke`, `hull`, 2D `mirror` | kernel only | program, binding |
+| `text` | kernel only (font bytes) | program and binding by font name; CLI and MCP read the file |
+| `extrude` `until` | none | program, binding |
+| helix as a path | kernel only (`paths::helix` points) | `{"helix": …}` as a `sweep` or `wire` path |
+| curved `sweep` and `wire` paths | points only | paths of pieces, `shape_gen::path3` |
+| `merge`, `delete` | `shape_edit::merge` only; no delete | `Model::merge`, `Model::delete`, program, binding |
+| `BoolReport` | kernel only | answered by `cut`/`join`/`intersect`, kept by the model, listed by `shape build` and MCP `build` |
+| `check_operands` | kernel only, opt-in | `check` on `cut`/`join`/`intersect` |
+| §13.6 item 9 kernel items | done by stream M | checked: `bulge`, part torus (`angle`), `flats`, `scale` all in the program and binding |
+| §13.6 item 15 | open | `guides/shape.md` served |
+
+### 16.2 Decisions
+
+- **One path form, two dimensions.** A path is a list: a start point,
+  then pieces from where the last ended — a point (a line to it),
+  `{"arc": {"through", "to"}}`, `{"tangentArc": {"to"}}`,
+  `{"spline": {"points"}}`. The same list is a profile's `path` and a
+  stroke's `path` (`[x, y]`), and a `sweep` or `wire` path
+  (`[x, y, z]`); a plain list of points, as before, is a path of lines,
+  so every existing program reads the same. Quadratic and cubic
+  Béziers stay kernel-only (`Path::quadratic_to`, `cubic_to`): sand3d's
+  vocabulary has arcs and splines, and three-point arcs and splines
+  cover what an author writes by hand.
+- **The one curve rule in 3D.** `shape_gen::path3` flattens a 3D arc by
+  `shape_2d::curve::segments` of its radius and sweep, and a spline's
+  spans as `bezier_segments` sizes a 2D one. Arc centres come from the
+  circumcentre formula and the end point is written exactly, so the
+  path reaches the point given.
+- **Refused, not bent.** A three-point arc on one line (decided by
+  `orient2d` in 2D, a zero cross product in 3D), a tangent arc with no
+  piece before it, a tangent arc whose end lies straight behind it, and
+  a piece that does not move are errors that name the piece
+  (`path[3].arc`). The 2D `Path` builder turns the first two into lines;
+  the program does not reach that silent case.
+- **A helix is a whole path**, `{"helix": {"radius", "pitch",
+  "turns"}}` about +z from `(radius, 0, 0)`, placed with `on`. A helix as
+  a piece in a list would need an axis relative to the current point,
+  which an author cannot read off the program; a whole path is what a
+  spring or a coil needs.
+- **Wire bends between pieces only.** Points inside a flattened curve
+  are already round; `fillet` bends only the corners between pieces
+  (`Flat::corner`), and `fillets` (one radius a point) is refused with
+  curves, because the points it would index are the flattened ones.
+- **`until` is up to a face's plane.** `until: {part, face}` reads the
+  face's frame (refused if not flat), moves it into the extrusion's
+  space, and finds where each profile point's line meets the plane. A
+  plane parallel to the profile (its normal exactly ±z there) gives a
+  plain extrusion of that height, so the solid is exactly what `height`
+  gives. A tilted plane extrudes past its highest meeting point and
+  `split`s along the plane, keeping the profile's side; the cut faces
+  and edges are tagged `top` as well as the split's own names, so
+  `face(…, "top")` and `fillet(edges: "top")` work. Refused: `height`,
+  `twist`, `taper` or `bothSides` with it (their meaning depends on one
+  height), a face parallel to the extrusion's direction, and a plane at
+  or below any profile point.
+- **Fonts by name, read by the caller.** A `text` profile names a font
+  (`"font": "fonts/a.ttf"`); the program records the name, never the
+  bytes. `Session::font` and `program::run_with` take the bytes;
+  `program::fonts_named` lists the names a program uses. `shape` and MCP
+  read each through the command's `Files`, relative to the program file
+  (the current directory, or the workspace root, for an inline
+  program), so MCP's confinement applies: a font outside the workspace
+  is refused as any path is. The binding takes the bytes in
+  `og.model({ fonts })` and `og.replay(program, { fonts })`. The same
+  program and the same font bytes give the same output; a different
+  file under the same name is a different input. A file that is not a
+  font is now `ProfileError::Font` (it was `Empty`).
+- **Segment counts the profile cannot take are refused.** `segments`
+  1 or 2 on `circle` and `ellipse`, and 1 to 3 on `superellipse`, used
+  to fall back to the chord rule silently in the kernel; the program
+  refuses them. The kernel constructors are unchanged.
+- **`merge` and `delete`.** `merge(target, tool)` appends the tool's
+  solid in the target's space with no boolean (`shape_edit::merge`);
+  names stay as given, the tool is used up. `delete(id)` removes the
+  node and everything under it; joints whose child goes, go with it.
+  Refused, changing nothing: a joint that would hang a node that stays
+  on a node that goes, and a joint that follows (`mimic`) one that goes.
+  A deleted node answers `ModelError::Deleted` and its name is free.
+- **Boolean reports.** `Model::combine` runs
+  `shape_bool::boolean_report` and returns the `BoolReport`;
+  `cut`/`join`/`intersect` now return it too (they returned `()`).
+  The program answers `{voids, touchingEdges, touching}`, the binding
+  returns that object, and the model keeps every report
+  (`Model::booleans`), which `shape build` and MCP `build` list as
+  `booleans`. Only these three ops are listed: the booleans inside
+  `hole`, `pocket`, `seat`, `shell` and `split` are not.
+- **`check` is opt-in, per boolean.** `check: true` runs
+  `shape_bool::check_operands` before any work. It stays off by default
+  for the reason of §5.4 item 3 (the kernel's own outputs cross
+  themselves by an ulp and still boolean closed). A program has no op
+  that imports a mesh, so imported meshes reach a boolean only after a
+  mesh tool; for those, `measure --intersections` (CLI) and
+  `intersections` (MCP `measure`), and `repair`'s fuse, were already
+  there. `check` serves operands an author builds that may fold (a
+  wire whose path crosses itself, a sweep that turns too tight).
+
+### 16.3 Golden
+
+`crates/shape-golden/src/rest.rs`: one program using every new profile,
+path form, `until` (parallel and tilted), `merge`, `delete`, and a
+checked cut that leaves a void; `rest.program.glb`,
+`rest.program.measure` and `rest.program.booleans` (the reports). Every
+part must be closed with no degenerate triangle, and the cut must leave
+exactly one void, or the case fails. `text` is built from a font made by
+`crates/shape-golden/src/font.rs`: three glyphs (`O` with a hole, `D`
+with quadratic curves, `I`) in the seven tables ttf-parser needs, written
+by hand as test data; no font ships with the kernel. No existing golden
+line moved.
+
+### 16.4 Measurements (x86-64, debug)
+
+- A wire spring of radius 4, pitch 2, 3 turns, diameter 1: 1 196
+  triangles, closed, one component; its ends lean with the helix, so it
+  reaches 6.498 (not 6.5) at the top.
+- `until` on a 4 × 4 post under a roof tilted by 0.2: the post's volume
+  is 160 to 1e-9 (the prism under z = 10 + 0.2·x), the top at 10.4.
+- A three-point half circle of radius 5 closed by its diameter: within
+  2 % of π·12.5 and under it (chords).
+- Guides: `guides/typescript.md` 8 453 bytes (was 7 417), `program.md`
+  grew by the new profiles, paths and ops. Token counts were not
+  re-measured (§14.3's method needs subagent runs).
+
+### 16.5 What is untested
+
+- `text` with a real font in the gate: only the hand-made font. A system
+  font (Crimson Pro) was rendered by hand through `shape preview` and
+  looked right; kerning and shaping stay absent (§8.5).
+- The `until` split on faces nearly parallel to the profile: a plane
+  tilted by less than about 1e-12 is not "parallel" and goes through
+  `split`, whose box then reaches far; not measured.
+- A tangent arc or spline whose flattened path doubles back on itself
+  in a `wire` (bends sharper than the wire's radius) is left to
+  `wire`'s own checks; no `wire` corner check runs inside a curve.
+- No agent run (§13.1) with the new surface.
+- aarch64 and Windows: CI only.

@@ -16,8 +16,9 @@ Rust crates are vendored, its API becomes the IDL module `og.shape`, and its
 tools become `og model` commands. The platform uses it only through a
 released engine.
 
-Status: phases 0 to 3 done; 4 and 5 in progress (`docs/plan.md`). Run the
-gate with `scripts/check.sh` (needs cargo-deny and wasmtime).
+Status: phases 0 to 6 done, and follow-up streams in progress; the table
+in `docs/plan.md` §Status is the record. Run the gate with
+`scripts/check.sh` (needs cargo-deny and wasmtime).
 
 ## Use it
 

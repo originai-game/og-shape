@@ -111,6 +111,41 @@ describe("profile helpers", () => {
   });
 });
 
+describe("the rest of the surface (stream R)", () => {
+  test("profiles from paths, until, helices, merge, delete and boolean reports", () => {
+    const s = og.model({ name: "r" });
+    const d = og.path([[0, -5], { arc: { through: [5, 0], to: [0, 5] } }, [-3, 5], { tangentArc: { to: [-3, -1] } }]);
+    expect(d).toEqual({ path: [[0, -5], { arc: { through: [5, 0], to: [0, 5] } }, [-3, 5], { tangentArc: { to: [-3, -1] } }] });
+    s.extrude({ name: "d", profile: d, height: 1 });
+    s.extrude({ name: "h", profile: og.hull(og.circle({ radius: 2 }), og.mirror({ profile: og.superellipse({ rx: 1, ry: 1, exponent: 4 }) })), height: 1 });
+    s.extrude({ name: "k", profile: og.stroke({ path: [[0, 0], [5, 0]], width: 1 }), height: 1 });
+    s.extrude({ name: "p", profile: og.spline({ points: [[0, 0], [3, 0], [2, 2]] }), height: 1 });
+    const shelf = s.box({ name: "shelf", width: 4, depth: 4, height: 1, on: og.world.move(10, 0, 5) });
+    const leg = s.extrude({ name: "leg", profile: og.rect({ width: 1, height: 1 }), until: { part: shelf, face: "bottom" }, on: og.world.move(10, 0, 0) });
+    const spring = s.wire({ name: "spring", diameter: 0.5, path: og.helix({ radius: 2, pitch: 1, turns: 2 }) });
+    s.merge(leg, spring);
+    const block = s.box({ name: "block", width: 6, depth: 6, height: 6, on: og.world.move(0, 20, 0) });
+    const hole = s.box({ name: "hole", width: 2, depth: 2, height: 2, on: og.world.move(0, 20, 2) });
+    expect(s.cut(block, hole, { check: true })).toEqual({ voids: 1, touchingEdges: 0, touching: false });
+    const scrap = s.box({ name: "scrap", width: 1, depth: 1, height: 1 });
+    s.delete(scrap);
+    const legM = s.measure().parts.find((p: any) => p.name === "leg");
+    expect(legM.boundsMax[2]).toBe(5);
+    expect(legM.components).toBe(2);
+    expect(s.measure().parts.map((p: any) => p.name)).not.toContain("scrap");
+    expect(og.replay(s.program()).glb()).toEqual(s.glb());
+  });
+  test("text takes the caller's font by name, and replay is given it again", () => {
+    const fonts = { "fonts/x.ttf": new TextEncoder().encode("not a font") };
+    const s = og.model({ name: "t", fonts });
+    expect(() => s.extrude({ name: "t", profile: og.text({ text: "A", font: "fonts/x.ttf", size: 5 }), height: 1 })).toThrow("not a TrueType");
+    expect(() => s.extrude({ name: "t", profile: og.text({ text: "A", font: "other.ttf", size: 5 }), height: 1 })).toThrow('"other.ttf" was not');
+    const program = JSON.stringify({ name: "t", ops: [{ op: "extrude", name: "t", height: 1, profile: { text: { text: "A", font: "fonts/x.ttf", size: 5 } } }] });
+    expect(() => og.replay(program)).toThrow("none");
+    expect(() => og.replay(program, { fonts })).toThrow("not a TrueType");
+  });
+});
+
 describe("the washing machine", () => {
   const s = washerOpen(og);
   test("records the committed program", () => {

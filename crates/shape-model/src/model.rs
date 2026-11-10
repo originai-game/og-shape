@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use shape_bevel::{Chamfer, Fillet, Soften};
-use shape_bool::{BoolOp, Boolean};
+use shape_bool::{BoolOp, BoolReport, Boolean};
 use shape_core::{DVec3, Frame};
 use shape_edit::{Dent, Hole, Keep, Pocket, Shell};
 use shape_mesh::{Measures, Solid};
@@ -83,6 +83,8 @@ struct Node {
     /// Named frames an assembly publishes, in the world.
     anchors: BTreeMap<String, Frame>,
     used_up: bool,
+    /// Removed by [`Model::delete`] (also `used_up`).
+    deleted: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -153,6 +155,32 @@ pub struct Model {
     unit: Unit,
     nodes: Vec<Node>,
     joints: Vec<JointRec>,
+    booleans: Vec<BoolRecord>,
+}
+
+/// How [`Model::combine`] runs a boolean: a zero-value desc (a join, not
+/// checked).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Combine {
+    /// Join, cut or intersect.
+    pub op: BoolOp,
+    /// Refuse, before any work, an operand that passes through itself
+    /// ([`shape_bool::check_operands`]): for operands from outside the
+    /// kernel. It costs a sweep over each operand's triangles.
+    pub check: bool,
+}
+
+/// One boolean of a model and what it did ([`Model::booleans`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BoolRecord {
+    /// `"cut"`, `"join"` or `"intersect"`.
+    pub op: String,
+    /// The target's name.
+    pub target: String,
+    /// The tool's name.
+    pub tool: String,
+    /// What the result alone does not say.
+    pub report: BoolReport,
 }
 
 fn finite_frame(f: &Frame, what: &str) -> Result<(), ModelError> {
@@ -220,6 +248,9 @@ impl Model {
             .nodes
             .get(id.0 as usize)
             .ok_or(ModelError::UnknownId(id.0))?;
+        if n.deleted {
+            return Err(ModelError::Deleted(n.name.clone()));
+        }
         if n.used_up {
             return Err(ModelError::UsedUp(n.name.clone()));
         }
@@ -292,6 +323,7 @@ impl Model {
             material: None,
             anchors: BTreeMap::new(),
             used_up: false,
+            deleted: false,
         }))
     }
 
@@ -344,6 +376,7 @@ impl Model {
             material: None,
             anchors: BTreeMap::new(),
             used_up: false,
+            deleted: false,
         });
         for &c in children {
             self.nodes[c.0 as usize].parent = Some(id);
@@ -567,6 +600,7 @@ impl Model {
                 material: src.material.clone(),
                 anchors: src.anchors.clone(),
                 used_up: false,
+                deleted: false,
             });
             map.insert(old, new);
         }
@@ -695,7 +729,11 @@ impl Model {
         Ok(placed(w, &self.node(target)?.placement.inverse()))
     }
 
-    fn boolean(&mut self, target: Id, tool: Id, op: BoolOp) -> Result<(), ModelError> {
+    /// `target` combined with `tool` by `d.op` ([`shape_bool::boolean_report`]);
+    /// the tool is used up. Answers what the result alone does not say
+    /// (voids left, edges where the operands touch), which the model also
+    /// keeps ([`Model::booleans`]).
+    pub fn combine(&mut self, target: Id, tool: Id, d: &Combine) -> Result<BoolReport, ModelError> {
         self.solid_of(target)?;
         self.solid_of(tool)?;
         self.usable(tool, target)?;
@@ -704,36 +742,131 @@ impl Model {
             self.nodes[target.0 as usize].name.clone(),
             self.nodes[tool.0 as usize].name.clone(),
         );
+        let mut report = BoolReport::default();
         self.edit(target, |s, _| {
-            Ok(shape_bool::boolean(
+            if d.check {
+                shape_bool::check_operands(s, &t)?;
+            }
+            let (out, r) = shape_bool::boolean_report(
                 s,
                 &t,
                 &Boolean {
-                    op,
+                    op: d.op,
                     target: &tn,
                     tool: &un,
                 },
-            )?)
+            )?;
+            report = r;
+            Ok(out)
         })?;
         self.nodes[tool.0 as usize].used_up = true;
-        Ok(())
+        let op = match d.op {
+            BoolOp::Cut => "cut",
+            BoolOp::Join => "join",
+            BoolOp::Intersect => "intersect",
+        };
+        self.booleans.push(BoolRecord {
+            op: op.into(),
+            target: tn,
+            tool: un,
+            report: report.clone(),
+        });
+        Ok(report)
+    }
+
+    /// Every boolean [`Model::combine`] (and so `cut`, `join`,
+    /// `intersect`) ran, in order, with its report.
+    pub fn booleans(&self) -> &[BoolRecord] {
+        &self.booleans
     }
 
     /// `target` minus `tool`; the tool is used up. Names as
     /// [`shape_bool::boolean`] gives them (`cut`, `<target>.cut`, the
     /// tool's name).
-    pub fn cut(&mut self, target: Id, tool: Id) -> Result<(), ModelError> {
-        self.boolean(target, tool, BoolOp::Cut)
+    pub fn cut(&mut self, target: Id, tool: Id) -> Result<BoolReport, ModelError> {
+        self.combine(
+            target,
+            tool,
+            &Combine {
+                op: BoolOp::Cut,
+                ..Default::default()
+            },
+        )
     }
 
     /// `target` joined with `tool`; the tool is used up.
-    pub fn join(&mut self, target: Id, tool: Id) -> Result<(), ModelError> {
-        self.boolean(target, tool, BoolOp::Join)
+    pub fn join(&mut self, target: Id, tool: Id) -> Result<BoolReport, ModelError> {
+        self.combine(target, tool, &Combine::default())
     }
 
     /// `target` intersected with `tool`; the tool is used up.
-    pub fn intersect(&mut self, target: Id, tool: Id) -> Result<(), ModelError> {
-        self.boolean(target, tool, BoolOp::Intersect)
+    pub fn intersect(&mut self, target: Id, tool: Id) -> Result<BoolReport, ModelError> {
+        self.combine(
+            target,
+            tool,
+            &Combine {
+                op: BoolOp::Intersect,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// `tool`'s solid added to `target`'s as it is: no boolean, so shells
+    /// that touch or cross stay as they are ([`shape_edit::merge`]); faces
+    /// and edges keep their names. The tool is used up.
+    pub fn merge(&mut self, target: Id, tool: Id) -> Result<(), ModelError> {
+        self.solid_of(target)?;
+        self.solid_of(tool)?;
+        self.usable(tool, target)?;
+        let t = self.tool_in(tool, target)?;
+        self.edit(target, |s, _| Ok(shape_edit::merge(&[s, &t])))?;
+        self.nodes[tool.0 as usize].used_up = true;
+        Ok(())
+    }
+
+    /// Removes `id` and everything under it. Joints whose child is
+    /// removed go with it. Refused, changing nothing: a joint that hangs a
+    /// node that stays on a node removed, or one that follows (`mimic`) a
+    /// joint removed.
+    pub fn delete(&mut self, id: Id) -> Result<(), ModelError> {
+        let name = self.node(id)?.name.clone();
+        let gone: BTreeSet<Id> = self.subtree(id).into_iter().collect();
+        let dropped: BTreeSet<String> = self
+            .joints
+            .iter()
+            .filter(|j| gone.contains(&j.child))
+            .map(|j| j.desc.name.clone())
+            .collect();
+        for j in self.joints.iter().filter(|j| !gone.contains(&j.child)) {
+            if gone.contains(&j.parent) {
+                return Err(ModelError::Refused(
+                    name,
+                    format!(
+                        "joint {:?} hangs {:?} on {:?}; delete {:?} too",
+                        j.desc.name,
+                        self.nodes[j.child.0 as usize].name,
+                        self.nodes[j.parent.0 as usize].name,
+                        self.nodes[j.child.0 as usize].name,
+                    ),
+                ));
+            }
+            if let Some(m) = j.desc.mimic.as_ref().filter(|m| dropped.contains(&m.joint)) {
+                return Err(ModelError::Refused(
+                    name,
+                    format!(
+                        "joint {:?} follows joint {:?}, which would go",
+                        j.desc.name, m.joint
+                    ),
+                ));
+            }
+        }
+        self.joints.retain(|j| !gone.contains(&j.child));
+        for i in gone {
+            let n = &mut self.nodes[i.0 as usize];
+            n.used_up = true;
+            n.deleted = true;
+        }
+        Ok(())
     }
 
     /// The volume `part` fills, taken out of `host`; `part` is untouched

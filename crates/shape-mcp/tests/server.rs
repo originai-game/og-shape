@@ -161,7 +161,8 @@ fn tools_resources_and_the_workspace() {
         .iter()
         .map(|x| x["uri"].as_str().unwrap())
         .collect();
-    assert_eq!(uris.len(), 3);
+    assert_eq!(uris.len(), 4);
+    assert!(uris.contains(&"og-shape://guides/shape.md"));
     let guide = r[2]["result"]["contents"][0]["text"].as_str().unwrap();
     assert!(guide.contains("\"op\""));
 
@@ -416,5 +417,30 @@ fn guide_examples_build() {
         assert_eq!(t["measures"]["parts"][0]["closed"], true);
         assert_eq!(t["measures"]["parts"][0]["components"], 1);
     }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn fonts_a_program_names_stay_in_the_workspace() {
+    let root = workspace("fonts");
+    let s = server(&root, TsConfig::default());
+    let text = |font: &str| {
+        json!({"name": "t", "ops": [{"op": "extrude", "name": "t", "height": 1,
+            "profile": {"text": {"text": "A", "font": font, "size": 5}}}]})
+    };
+    let r = session(
+        &s,
+        &[
+            call("build", json!({"program": text("../outside.ttf")})),
+            call("build", json!({"program": text("meshes/ball.obj")})),
+        ],
+    );
+    assert!(
+        error_text(&r[0]).contains("outside the workspace"),
+        "{}",
+        r[0]
+    );
+    // Inside the workspace it is read (and is not a font).
+    assert!(error_text(&r[1]).contains("not a TrueType"), "{}", r[1]);
     let _ = std::fs::remove_dir_all(&root);
 }
