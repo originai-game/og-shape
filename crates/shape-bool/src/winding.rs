@@ -9,9 +9,14 @@
 //! order: `K(c) · N + Σ_ij ∂_j K_i(c) M_ij`, where `N` is the cluster's
 //! vector area and `M_ij = Σ v_i (g − c)_j` over its triangles (vector area
 //! `v`, centroid `g`; exact, as the integrand is linear). The remainder is
-//! at most `½ sup |∂²K| ∫ |x − c|² dA ≤ 4 S / ρ⁴`, where `S = ∫ |x − c|² dA`
-//! and `ρ` is the point's clearance from the cluster's ball (`|∂²K|` is
-//! at most `6 / |x|⁴`, taken as 8). Near triangles are summed term by
+//! at most `½ sup |∂²K| ∫ |x − c|² dA ≤ 3 S / ρ⁴`, where `S = ∫ |x − c|² dA`
+//! and `ρ` is the point's clearance from the cluster's ball, which holds
+//! every segment from `c` into the cluster. The sup is proved: with
+//! `y = x − p`, `u = y/|y|`, a unit `h` and `c = u·h`,
+//! `∂²K[h, h] = (u (9c² − 3) − 6c (h − c u)) / |y|⁴`, whose length squared
+//! times `|y|⁸` is `45c⁴ − 18c² + 9 ≤ 36` for `c²` in [0, 1], so
+//! `|∂²K[h, h]| ≤ 6 |h|² / |y|⁴`, with equality along `u`
+//! (`docs/research.md` §23). Near triangles are summed term by
 //! term, with the direct sum's arithmetic. [`Tree::side`] answers which
 //! side of each threshold the direct sum lies: by the tree's value where
 //! that value clears every threshold by more than its bound and the
@@ -197,7 +202,8 @@ impl<'a> Tree<'a> {
             let rho = d - n.radius;
             if rho > n.radius && !inside(n) {
                 let r2 = rho * rho;
-                let e = 4.0 * n.spread / (r2 * r2);
+                // ½ · 6/ρ⁴ · S: the proved remainder (module doc).
+                let e = 3.0 * n.spread / (r2 * r2);
                 if e <= theta {
                     // K(c) · N + Σ_ij ∂_j K_i(c) m_ij, with ∂K = (I − 3ŷŷᵀ)/|y|³
                     // at y = c − p.

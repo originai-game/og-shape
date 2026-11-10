@@ -261,10 +261,13 @@ pub fn above(x: f64, y: f64) -> Frame {
     }
 }
 
-/// A tool along a frame's −z: from `over` above the entry to `depth` below.
+/// A tool along a frame's −z: from `over` above the entry to `depth` below,
+/// its polygon turned by `turn` radians about the axis.
+#[allow(clippy::too_many_arguments)]
 fn bore(
     entry: DVec3,
     axis: &Frame,
+    turn: f64,
     r_bottom: f64,
     r_top: f64,
     depth: f64,
@@ -288,6 +291,11 @@ fn bore(
         origin: entry - axis.z * depth,
         ..*axis
     };
+    let f = if turn == 0.0 {
+        f
+    } else {
+        f.turn(0.0, 0.0, turn)
+    };
     Ok(placed(c, &f))
 }
 
@@ -310,20 +318,35 @@ pub fn hole(s: &Solid, d: &Hole) -> Result<Solid, EditError> {
         // narrow end is the bore's own polygon.
         let widest = r.max(d.counterbore.0 / 2.0).max(d.countersink.0 / 2.0);
         let n = shape_2d::curve::segments(widest, shape_core::trig::TAU);
-        let mut tools = vec![bore(e, &axis, r, r, depth, over, n)?];
+        let mut tools = vec![bore(e, &axis, 0.0, r, r, depth, over, n)?];
         let (cb_d, cb_depth) = d.counterbore;
         if cb_d > 0.0 && cb_depth > 0.0 {
-            tools.push(bore(e, &axis, cb_d / 2.0, cb_d / 2.0, cb_depth, over, n)?);
+            tools.push(bore(
+                e,
+                &axis,
+                0.0,
+                cb_d / 2.0,
+                cb_d / 2.0,
+                cb_depth,
+                over,
+                n,
+            )?);
         }
         let (cs_d, cs_angle) = d.countersink;
         if cs_d > 2.0 * r && cs_angle > 0.0 {
             // The cone runs on below the bore's radius (to 0.9 r), so it
             // crosses the bore wall instead of touching it along a ring.
+            // It is turned half a segment about the axis: its generators
+            // then run between the bore's columns, so no rim point is made
+            // twice an ulp apart (column through cone, generator through
+            // wall), and the rim does not cross itself in either cut order
+            // (`docs/research.md` §18.5, §23).
             let slope = shape_core::trig::tan(cs_angle / 2.0);
             let h = (cs_d / 2.0 - 0.9 * r) / slope;
             tools.push(bore(
                 e,
                 &axis,
+                shape_core::trig::PI / n as f64,
                 0.9 * r,
                 cs_d / 2.0 + over * slope,
                 h,

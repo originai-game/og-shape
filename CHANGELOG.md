@@ -803,3 +803,30 @@
   results are refused now).
 - `repair`'s self-intersection count (`check_intersections`) welds equal
   positions first, as `measure` does. No golden line moved.
+- `hole`: a countersink's cone is turned half a segment about the hole's
+  axis, so its generators run between the bore's columns and its rim no
+  longer crosses itself by an ulp (53 of 96 countersinks in a sweep of
+  positions, diameters, angles and depths crossed themselves; none do
+  now). Golden: `edit.holes.pocket` moved for this; no other line moved
+  (`docs/research.md` §23).
+- Booleans: a region of one operand that meets the other's surface
+  nowhere is classified exactly (the signed crossings of a segment from
+  one of its corners, by `orient3d`) instead of by probes a millionth of
+  the operands' size off its face. Slabs stacked two ulps apart lost one
+  slab in a union, closed and with no error; they now join whole.
+- Booleans: a closed result left in several shells is built again with the
+  tool's vertices snapped onto the target's within 2⁻⁴⁰ of the operands'
+  size, and taken if it is closed and in fewer shells (solids stacked a
+  few ulps apart join as one shell). No golden line moved by these two.
+- `shape_bool::uncross_output` (with `Uncrossed`): repairs a boolean's
+  closed output that crosses itself by a rounding error, by merging a
+  constructed point into a neighbour within 2⁻⁴⁰ of the operands' size or
+  splitting a needle across its long edge, each kept only if exact
+  predicates find fewer crossing pairs there and every edge still used
+  once each way. An output that does not cross itself is returned byte
+  for byte. Not yet on in `boolean` (seven golden lines would move); the
+  bench's `--uncross` applies it. Golden cases `touching.gap.slabs` and
+  `touching.uncross` added.
+- The winding tree's remainder bound is proved (`|∂²K| ≤ 6/|y|⁴`, sharp)
+  and used as proved (3 S/ρ⁴ for 4 S/ρ⁴). Decisions are the direct sum's,
+  so no output changed.

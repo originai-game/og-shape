@@ -143,6 +143,9 @@ struct Csg {
     merges: std::cell::RefCell<Vec<(u32, u32)>>,
     /// Second pass: each cut triangle's outline, in order.
     chains: std::cell::RefCell<Vec<Vec<u32>>>,
+    /// Per mesh, the triangles that meet the other surface: cut by it,
+    /// touching it, or lying in one plane with one of its triangles.
+    met: [BTreeSet<u32>; 2],
 }
 
 fn c3(p: DVec3) -> Coord3D<f64> {
@@ -392,12 +395,16 @@ impl Csg {
             return;
         }
         if oa == [0; 3] {
+            self.met[ma as usize].insert(ia);
+            self.met[mb as usize].insert(ib);
             self.coplanar((ma, ia), (mb, ib));
             return;
         }
         let touch = |o: [i32; 3]| o.iter().all(|&s| s >= 0) || o.iter().all(|&s| s <= 0);
         if touch(oa) || touch(ob) {
             self.touch_pairs.push(((ma, ia), (mb, ib)));
+            self.met[ma as usize].insert(ia);
+            self.met[mb as usize].insert(ib);
         }
         let mut found: Vec<u32> = Vec::new();
         // Vertices of one triangle in the other's plane and inside it.
@@ -443,6 +450,10 @@ impl Csg {
                 .total_cmp(&self.p(b).dot(dir))
                 .then(a.cmp(&b))
         });
+        if !uniq.is_empty() {
+            self.met[ma as usize].insert(ia);
+            self.met[mb as usize].insert(ib);
+        }
         self.add_points(ma, ia, &uniq);
         self.add_points(mb, ib, &uniq);
         for w in uniq.windows(2) {
@@ -1585,6 +1596,7 @@ impl Csg {
             robust: false,
             merges: std::cell::RefCell::new(Vec::new()),
             chains: std::cell::RefCell::new(Vec::new()),
+            met: [BTreeSet::new(), BTreeSet::new()],
         }
     }
 
@@ -1666,6 +1678,62 @@ impl Csg {
         (centre + n * eps, centre - n * eps)
     }
 
+    /// Whether `p`, a point on no triangle of mesh `m`, lies inside it,
+    /// exactly: the signed crossings of a segment from `p` to a point
+    /// outside both meshes' box, each decided by `orient3d`. A segment
+    /// through an edge, a vertex or a plane of the mesh at its far end is
+    /// tried along another direction; None if every one is.
+    fn inside_exact(&self, m: u8, p: DVec3) -> Option<bool> {
+        let s = &self.solids[m as usize];
+        let reach = 2.0 * self.scale();
+        let o = |a: DVec3, b: DVec3, c: DVec3, d: DVec3| sgn(orient3d(c3(a), c3(b), c3(c), c3(d)));
+        // Directions, fixed, none along an axis plane (need not be unit).
+        const DIRS: [[f64; 3]; 6] = [
+            [0.5773502691896258, 0.5345224838248488, 0.6172133998483676],
+            [-0.6123724356957945, 0.4082482904638631, 0.6770032003863302],
+            [0.3713906763541037, -0.7427813527082074, 0.5570860145311556],
+            [
+                -0.4472135954999579,
+                -0.5163977794943222,
+                -0.7302967433402214,
+            ],
+            [0.7, -0.3015113445777636, -0.6396021490668313],
+            [-0.2672612419124244, 0.8017837257372732, -0.5345224838248488],
+        ];
+        'dir: for d in DIRS {
+            let q = p + DVec3::from(d) * reach;
+            let (lo, hi) = (p.min(q), p.max(q));
+            let mut w = 0i32;
+            for t in &s.tris {
+                let [a, b, c] = t.map(|v| self.points[v as usize]);
+                if a.max(b).max(c).cmplt(lo).any() || a.min(b).min(c).cmpgt(hi).any() {
+                    continue;
+                }
+                let (sp, sq) = (o(a, b, c, p), o(a, b, c, q));
+                if sq == 0 {
+                    continue 'dir;
+                }
+                // `p` in the plane, but on no triangle: the segment leaves
+                // the plane at once.
+                if sp == 0 || sp == sq {
+                    continue;
+                }
+                let e = [o(p, q, a, b), o(p, q, b, c), o(p, q, c, a)];
+                if e.contains(&0) {
+                    if e.iter().all(|&x| x >= 0) || e.iter().all(|&x| x <= 0) {
+                        continue 'dir;
+                    }
+                    continue;
+                }
+                if e[0] == e[1] && e[1] == e[2] {
+                    w += if sp > 0 { 1 } else { -1 };
+                }
+            }
+            return Some(w != 0);
+        }
+        None
+    }
+
     /// The diagonal of both meshes' box.
     fn scale(&self) -> f64 {
         let lo = self.solids[0].min.min(self.solids[1].min);
@@ -1718,6 +1786,14 @@ fn arrange(points: Vec<DVec3>, sa: Solid, sb: Solid, op: CsgOp, robust: bool) ->
             .count()
     };
     let winders = [0u8, 1].map(|m| Winder::new(&c.points, &c.solids[m as usize].tris, queries(m)));
+    // Regions none of whose triangles meets the other surface: wholly
+    // inside or outside the other solid, decided exactly at a corner.
+    let mut apart: BTreeMap<usize, bool> = BTreeMap::new();
+    for (pi, p) in pieces.iter().enumerate() {
+        let met = c.met[p.mesh as usize].contains(&p.tri);
+        let e = apart.entry(regions.root[pi]).or_insert(true);
+        *e = *e && !met;
+    }
     for (&r, &b) in &regions.best {
         if let Some(&same) = twins.get(&r) {
             // On the other surface: the other solid lies behind a face
@@ -1726,6 +1802,12 @@ fn arrange(points: Vec<DVec3>, sa: Solid, sb: Solid, op: CsgOp, robust: bool) ->
             continue;
         }
         let p = &pieces[b];
+        if apart[&r]
+            && let Some(inside) = c.inside_exact(1 - p.mesh, c.points[p.ids[0] as usize])
+        {
+            sides.insert(r, (inside, inside));
+            continue;
+        }
         let (front, back) = c.probes(p, scale);
         let other = &winders[1 - p.mesh as usize];
         let inside = |q: DVec3| other.side(q, None, &[0.5]) > 0.5;
@@ -2459,9 +2541,10 @@ pub fn csg_points_traced(
     let first = pass(false, b)?;
     // Operands that touch can make crossings a rounding error apart that
     // the first pass cannot keep apart; an open result there is built
-    // again by the second pass. Every closed result is the first pass's.
+    // again by the second pass. Every closed result is the first pass's,
+    // unless it is left in several shells and the snap below joins them.
     if rank(&first) == (0, 0) {
-        return Ok(first);
+        return Ok(rejoined(a, b, first, &pass));
     }
     let best = if open(&first) == 0 {
         first
@@ -2503,6 +2586,136 @@ pub fn csg_points_traced(
     } else {
         best
     })
+}
+
+/// `out`, a result of `a op b`, with the triangles that cross by a
+/// rounding error repaired ([`uncross`](crate::uncross)): unchanged, byte
+/// for byte, when none crosses; with the number of crossing pairs before
+/// and after.
+pub fn uncross_output(
+    a: &[DVec3],
+    b: &[DVec3],
+    out: CsgOutput,
+) -> (CsgOutput, crate::uncross::Uncrossed) {
+    let none = crate::uncross::Uncrossed::default();
+    if out.unmatched > 0 || out.tris.is_empty() {
+        return (out, none);
+    }
+    let w = weld_ids(&out.points);
+    let n = w.iter().map(|&x| x + 1).max().unwrap_or(0) as usize;
+    let mut wpoints = vec![DVec3::ZERO; n];
+    for (i, &x) in w.iter().enumerate() {
+        wpoints[x as usize] = out.points[i];
+    }
+    let key = |p: DVec3| p.to_array().map(|x| (x + 0.0).to_bits());
+    let mut input: BTreeMap<[u64; 3], u8> = BTreeMap::new();
+    for &p in a {
+        input.insert(key(p), 0);
+    }
+    for &p in b {
+        input.entry(key(p)).or_insert(1);
+    }
+    let rank: Vec<u8> = wpoints
+        .iter()
+        .map(|&p| input.get(&key(p)).copied().unwrap_or(2))
+        .collect();
+    let wtris: Vec<[u32; 3]> = out.tris.iter().map(|t| t.map(|v| w[v as usize])).collect();
+    let (mut lo, mut hi) = (DVec3::INFINITY, DVec3::NEG_INFINITY);
+    for &p in a.iter().chain(b) {
+        lo = lo.min(p);
+        hi = hi.max(p);
+    }
+    let tol = (hi - lo).length() * (1.0 / (1u64 << 40) as f64);
+    let (report, kept) = crate::uncross::uncross(&wpoints, &wtris, &rank, tol);
+    let Some(kept) = kept else {
+        return (out, report);
+    };
+    let mut remap: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut points = Vec::new();
+    let mut tris = Vec::with_capacity(kept.len());
+    let mut origins = Vec::with_capacity(kept.len());
+    for (i, t) in kept {
+        tris.push(t.map(|v| {
+            *remap.entry(v).or_insert_with(|| {
+                points.push(wpoints[v as usize]);
+                points.len() as u32 - 1
+            })
+        }));
+        origins.push(out.origins[i]);
+    }
+    let ids: Vec<u32> = (0..points.len() as u32).collect();
+    let counts = edge_counts(&ids, &tris, &origins);
+    (
+        CsgOutput {
+            points,
+            tris,
+            origins,
+            unmatched: counts.unmatched,
+            touching_edges: counts.touching,
+            non_manifold: counts.non_manifold,
+            ..out
+        },
+        report,
+    )
+}
+
+/// A closed result `first` of `a` with `b` left in several shells
+/// (faces a rounding error apart that should be one: a union of solids
+/// stacked with a gap of a few ulps, a cut leaving a membrane an ulp
+/// thick), built again with the tool snapped onto the target
+/// ([`snap_onto`]); that result is taken if it is closed, manifold and in
+/// fewer shells. Otherwise, and when nothing snaps, `first` as built.
+#[allow(clippy::type_complexity)]
+fn rejoined(
+    a: (&[DVec3], &[[u32; 3]]),
+    b: (&[DVec3], &[[u32; 3]]),
+    first: CsgOutput,
+    pass: &dyn Fn(bool, (&[DVec3], &[[u32; 3]])) -> Result<CsgOutput, OperandError>,
+) -> CsgOutput {
+    let shells = |o: &CsgOutput| shell_count(&o.points, &o.tris);
+    let n = shells(&first);
+    if n < 2 {
+        return first;
+    }
+    let Some(snapped) = snap_onto(a.0, b.0) else {
+        return first;
+    };
+    let clean = |o: &CsgOutput| o.unmatched == 0 && o.non_manifold == 0 && o.touching_edges == 0;
+    match pass(false, (&snapped, b.1)) {
+        Ok(o) if clean(&o) && !o.tris.is_empty() && shells(&o) < n => {
+            CsgOutput { snapped: true, ..o }
+        }
+        _ => first,
+    }
+}
+
+/// The number of shells (triangles joined by a shared position).
+fn shell_count(points: &[DVec3], tris: &[[u32; 3]]) -> usize {
+    let w = weld_ids(points);
+    let mut parent: Vec<u32> = (0..points.len() as u32).collect();
+    fn find(p: &mut [u32], mut i: u32) -> u32 {
+        while p[i as usize] != i {
+            p[i as usize] = p[p[i as usize] as usize];
+            i = p[i as usize];
+        }
+        i
+    }
+    for t in tris {
+        let t = t.map(|v| w[v as usize]);
+        for k in 1..3 {
+            let (x, y) = (find(&mut parent, t[0]), find(&mut parent, t[k]));
+            if x != y {
+                parent[x.max(y) as usize] = x.min(y);
+            }
+        }
+    }
+    let mut roots: Vec<u32> = tris
+        .iter()
+        .map(|t| find(&mut parent, w[t[0] as usize]))
+        .collect();
+    roots.sort_unstable();
+    roots.dedup();
+    roots.len()
 }
 
 /// The tool's positions `b` with each one that lies within 2⁻⁴⁰ of the

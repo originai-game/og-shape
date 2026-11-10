@@ -19,14 +19,16 @@ pub mod fracture;
 pub mod named;
 pub mod selfcheck;
 mod sliver;
+mod uncross;
 mod winding;
 
 pub use csg::{
     CsgOp, CsgOutput, OperandError, SelfUnion, csg, csg_points, csg_points_traced, csg_traced,
-    self_union_points,
+    self_union_points, uncross_output,
 };
 pub use named::{
     BoolError, BoolOp, BoolReport, Boolean, boolean, boolean_report, check_operands, components,
     crossing_pairs, fuse, self_union,
 };
 pub use sliver::drop_slivers;
+pub use uncross::Uncrossed;
