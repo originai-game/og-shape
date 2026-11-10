@@ -368,3 +368,36 @@ Connections:  {
         ["Tri: its material's textures on SpecularColor are not read"]
     );
 }
+
+#[test]
+fn fusing_makes_no_colour_border_where_the_colour_is_continuous() {
+    // Two overlapping boxes with one affine colour: the union's cut
+    // vertices are interpolated in each triangle around them and round
+    // differently; no border may come of it.
+    let block = |at: DVec3| {
+        let mut b = cuboid(&BoxDesc {
+            width: 30.0,
+            depth: 20.0,
+            height: 10.0,
+        })
+        .unwrap();
+        b.map_positions(|p| p + at, false);
+        b
+    };
+    let mut two = block(DVec3::ZERO);
+    two.append(&block(DVec3::new(11.0, 7.3, 3.1)));
+    paint(&mut two, |_, p| affine(p));
+    two.canonicalize().unwrap();
+    let (fused, r) = repair(
+        &two,
+        &Repair {
+            fuse: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(r.fused, Some(Ok(2)), "{r:?}");
+    let m = shape_tools::measure(&fused, &Default::default());
+    assert_eq!(m.color_borders, Some(0));
+    assert!(largest_error(&fused) < 1e-9);
+}

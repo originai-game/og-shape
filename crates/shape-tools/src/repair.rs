@@ -1073,9 +1073,11 @@ fn keep_input_colors(before: &Solid, mut after: Solid) -> Result<Solid, RepairEr
         let mut cs: Vec<[f64; 4]> = corners.iter().map(|&(t, k)| new[t][k]).collect();
         let spread = (0..4)
             .map(|ch| {
-                let (lo, hi) = cs.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), c| {
-                    (l.min(c[ch]), h.max(c[ch]))
-                });
+                let (lo, hi) = cs
+                    .iter()
+                    .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), c| {
+                        (l.min(c[ch]), h.max(c[ch]))
+                    });
                 hi - lo
             })
             .fold(0.0, f64::max);
@@ -1084,8 +1086,7 @@ fn keep_input_colors(before: &Solid, mut after: Solid) -> Result<Solid, RepairEr
         }
         cs.sort_by(cmp);
         let n = cs.len() as f64;
-        let mean: [f64; 4] =
-            core::array::from_fn(|ch| cs.iter().map(|c| c[ch]).sum::<f64>() / n);
+        let mean: [f64; 4] = core::array::from_fn(|ch| cs.iter().map(|c| c[ch]).sum::<f64>() / n);
         for &(t, k) in corners {
             new[t][k] = mean;
         }
