@@ -416,21 +416,18 @@ impl Build<'_> {
                         pts: vec![id],
                     });
                 }
-                1 => {
+                0 | 1 => {
                     // A lone edge whose faces meet again: the bevel
                     // tapers to a tip at the vertex, and the faces past
-                    // it keep their corners.
+                    // it keep their corners. (No other real edge at all
+                    // cannot happen: around a vertex the surface changes
+                    // at real edges, and a cycle cannot change exactly
+                    // once.)
                     spans.push(Span {
                         lo,
                         hi,
                         pts: vec![v],
                     });
-                }
-                0 => {
-                    return Err(BevelError::Unsupported(
-                        p,
-                        "a bevelled edge that is the only real edge at its vertex",
-                    ));
                 }
                 c => {
                     let (u1, uk) = (inner[0], inner[c - 1]);

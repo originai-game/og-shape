@@ -53,6 +53,10 @@ pub fn cases() -> Vec<Case> {
             name: "bevel.cones",
             run: cones,
         },
+        Case {
+            name: "bevel.inline",
+            run: inline,
+        },
     ]
 }
 
@@ -545,6 +549,70 @@ fn cones(h: &mut OutputHash) -> Result<(), HashError> {
             &Chamfer {
                 distance: 1.0,
                 edges: names(&["low"]),
+                ..Default::default()
+            },
+        ),
+    )
+}
+
+/// A corner of zero angle (refused: no offset fits it), and an edge in
+/// line with its unbevelled neighbour across a curved face
+/// (`docs/research.md` §7.5).
+fn inline(h: &mut OutputHash) -> Result<(), HashError> {
+    let needle = prism(
+        &[(0.0, 0.0), (10.0, 0.0), (10.0, 1e-9)],
+        &Extrude {
+            height: 5.0,
+            ..Default::default()
+        },
+    );
+    solid(h, fillet(&needle, &round(0.5, &["top"], 2)))?;
+    // A block 4 × 2 whose top has a straight edge along y = 1, split at
+    // (2, 1, 1): behind it one curved surface, in front two flat faces.
+    let pts = [
+        (0.0, 1.0, 1.0),
+        (2.0, 1.0, 1.0),
+        (4.0, 1.0, 1.0),
+        (0.0, 2.0, 1.2),
+        (2.0, 2.0, 1.5),
+        (4.0, 2.0, 1.2),
+        (0.0, 0.0, 1.0),
+        (2.0, 0.0, 1.0),
+        (4.0, 0.0, 1.0),
+        (0.0, 0.0, 0.0),
+        (4.0, 0.0, 0.0),
+        (4.0, 2.0, 0.0),
+        (0.0, 2.0, 0.0),
+    ];
+    let mut r = Solid::default();
+    for (x, y, z) in pts {
+        r.push_vertex(DVec3::new(x, y, z));
+    }
+    let faces: [(u32, &str, &[[u32; 3]]); 8] = [
+        (0, "back", &[[1, 2, 5], [1, 5, 4], [1, 4, 3], [1, 3, 0]]),
+        (1, "top", &[[1, 0, 6], [1, 6, 7]]),
+        (2, "top", &[[1, 7, 8], [1, 8, 2]]),
+        (3, "side", &[[9, 10, 8], [9, 8, 7], [9, 7, 6]]),
+        (4, "side", &[[10, 11, 5], [10, 5, 2], [10, 2, 8]]),
+        (5, "side", &[[11, 12, 3], [11, 3, 4], [11, 4, 5]]),
+        (6, "side", &[[12, 9, 6], [12, 6, 0], [12, 0, 3]]),
+        (7, "bottom", &[[9, 12, 11], [9, 11, 10]]),
+    ];
+    for (surface, name, tris) in faces {
+        for &t in tris {
+            r.push_triangle(t, surface, &[name]);
+        }
+    }
+    r.tag_edge(0, 1, &["along"]);
+    r.tag_edge(1, 7, &["split"]);
+    solid(h, fillet(&r, &round(0.3, &["along", "split"], 4)))?;
+    solid(
+        h,
+        chamfer(
+            &r,
+            &Chamfer {
+                distance: 0.3,
+                edges: names(&["along", "split"]),
                 ..Default::default()
             },
         ),

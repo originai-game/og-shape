@@ -992,3 +992,139 @@ fn two_cones_at_one_vertex_are_bevelled_as_two_corners() {
     // The lower box's corner is cut away, so the boxes no longer touch.
     assert_eq!(s.measure().components, 2);
 }
+
+#[test]
+fn a_corner_of_zero_angle_holds_no_offset() {
+    // A needle: the top corner at the origin is 1e-10 rad, so the two top
+    // edges' offset lines meet about 1e10 offsets away.
+    let needle = extrude(
+        &shape_2d::Profile::from_contour(shape_2d::Contour::corners(vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(10.0, 0.0),
+            DVec2::new(10.0, 1e-9),
+        ])),
+        &Extrude {
+            height: 5.0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    for e in [
+        fillet(
+            &needle,
+            &Fillet {
+                radius: 0.5,
+                edges: names(&["top"]),
+                segments: 2,
+                ..Default::default()
+            },
+        ),
+        chamfer(
+            &needle,
+            &Chamfer {
+                distance: 0.5,
+                edges: names(&["top"]),
+                ..Default::default()
+            },
+        ),
+    ] {
+        assert!(
+            matches!(e, Err(BevelError::TooLarge(p)) if p.x == 0.0 && p.y == 0.0),
+            "{e:?}"
+        );
+    }
+}
+
+/// A block 4 × 2 whose top has a straight real edge along y = 1 at
+/// height 1, split at `(2, 1, 1)`: behind it (y > 1) one curved surface
+/// rising to a ridge, in front two flat faces split by an edge from the
+/// vertex to `(2, 0, 1)`. The edge's left piece (`along`) and the split
+/// (`split`) are named; its right piece, in line with `along`, is not.
+fn ridge() -> Solid {
+    let pts = [
+        (0.0, 1.0, 1.0),
+        (2.0, 1.0, 1.0),
+        (4.0, 1.0, 1.0),
+        (0.0, 2.0, 1.2),
+        (2.0, 2.0, 1.5),
+        (4.0, 2.0, 1.2),
+        (0.0, 0.0, 1.0),
+        (2.0, 0.0, 1.0),
+        (4.0, 0.0, 1.0),
+        (0.0, 0.0, 0.0),
+        (4.0, 0.0, 0.0),
+        (4.0, 2.0, 0.0),
+        (0.0, 2.0, 0.0),
+    ];
+    let mut s = Solid::default();
+    for (x, y, z) in pts {
+        s.push_vertex(shape_core::DVec3::new(x, y, z));
+    }
+    let faces: [(u32, &str, &[[u32; 3]]); 8] = [
+        (0, "back", &[[1, 2, 5], [1, 5, 4], [1, 4, 3], [1, 3, 0]]),
+        (1, "top", &[[1, 0, 6], [1, 6, 7]]),
+        (2, "top", &[[1, 7, 8], [1, 8, 2]]),
+        (3, "side", &[[9, 10, 8], [9, 8, 7], [9, 7, 6]]),
+        (4, "side", &[[10, 11, 5], [10, 5, 2], [10, 2, 8]]),
+        (5, "side", &[[11, 12, 3], [11, 3, 4], [11, 4, 5]]),
+        (6, "side", &[[12, 9, 6], [12, 6, 0], [12, 0, 3]]),
+        (7, "bottom", &[[9, 12, 11], [9, 11, 10]]),
+    ];
+    for (surface, name, tris) in faces {
+        for &t in tris {
+            s.push_triangle(t, surface, &[name]);
+        }
+    }
+    s.tag_edge(0, 1, &["along"]);
+    s.tag_edge(1, 7, &["split"]);
+    s
+}
+
+#[test]
+fn an_edge_in_line_with_its_unbevelled_neighbour_across_a_curved_face() {
+    let r = ridge();
+    let m = r.measure();
+    assert!(m.closed && m.degenerate_triangles == 0, "{m:?}");
+    let v = shape_core::DVec3::new(2.0, 1.0, 1.0);
+    for d in [0.2, 0.3] {
+        let s = fillet(
+            &r,
+            &Fillet {
+                radius: d,
+                edges: names(&["along", "split"]),
+                segments: 4,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        check(&s, "fillet");
+        let c = chamfer(
+            &r,
+            &Chamfer {
+                distance: d,
+                edges: names(&["along", "split"]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        check(&c, "chamfer");
+        // The curved face's corner at the vertex moves along its spoke to
+        // the ridge, square to the edge, by half the offset; the flat
+        // face's point on the unbevelled piece is at the offset along it,
+        // and the gap takes their mean.
+        let a = v + shape_core::DVec3::new(0.0, 1.0, 0.5).normalize() * (d / 2.0);
+        let b = v + shape_core::DVec3::new(d, 0.0, 0.0);
+        let want = (a + b) / 2.0;
+        for out in [&s, &c] {
+            assert!(
+                out.positions.iter().any(|&p| (p - want).length() < 1e-12),
+                "{want}"
+            );
+            // The unbevelled piece's far end and its name survive.
+            assert!(
+                out.positions
+                    .contains(&shape_core::DVec3::new(4.0, 1.0, 1.0))
+            );
+        }
+    }
+}

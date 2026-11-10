@@ -270,7 +270,10 @@ impl Build<'_> {
             let (rx, ry) = (r.dot(l), r.dot(e2));
             if ry.abs() < COLLINEAR_SIN {
                 if rx > 0.0 {
-                    return Err(BevelError::Unsupported(p, "a face corner of zero angle"));
+                    // A corner of zero angle: the offset lines are
+                    // parallel on either side of one ray and meet nowhere,
+                    // the limit of a corner too sharp for its offsets.
+                    return Err(BevelError::TooLarge(p));
                 }
                 p + e2 * ((dl + dr) / 2.0)
             } else {
@@ -278,19 +281,23 @@ impl Build<'_> {
             }
         } else {
             let sin = |a: DVec3, b: DVec3| a.cross(b).length();
-            if dl == 0.0 || dr == 0.0 {
+            let in_line = sin(l, r) < COLLINEAR_SIN;
+            if in_line && l.dot(r) > 0.0 {
+                // Zero angle, as on a plane.
+                return Err(BevelError::TooLarge(p));
+            }
+            if (dl == 0.0 || dr == 0.0) && !in_line {
                 // Slide along the unbevelled edge.
                 let (along, d) = if dl == 0.0 { (l, dr) } else { (r, dl) };
-                let s = sin(l, r);
-                if s < COLLINEAR_SIN {
-                    return Err(BevelError::Unsupported(
-                        p,
-                        "an edge in line with its neighbour",
-                    ));
-                }
-                p + along * (d / s)
+                p + along * (d / sin(l, r))
             } else {
-                // Slide along the inner edge most across the bevelled ones.
+                // Slide along the inner edge most across the two edges,
+                // until the point's distances from them sum to the two
+                // offsets.
+                // Also where an unbevelled edge is in line with the
+                // bevelled one, whose offset line it never meets: the
+                // point then steps straight across by half the offset, as
+                // collinear edges on a plane do (`docs/research.md` §7.5).
                 let mut best: Option<(f64, DVec3)> = None;
                 for i in lo + 1..hi {
                     let e = dir(i);

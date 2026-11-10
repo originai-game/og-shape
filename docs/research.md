@@ -1097,6 +1097,29 @@ closed solid or were built by hand for their tests.
   joined at a corner, `fillet(2)` all, 4 segments, has exactly the volume
   of the two boxes filleted apart, all quads; with one box's edges only,
   the other keeps its corner.
+- **A face corner of zero angle: `TooLarge`.** Two edges leaving a
+  vertex in the same direction have offset lines parallel on either side
+  of one ray, which meet nowhere; a needle of angle α needs room
+  `d / sin(α/2)` along it, so zero is the limit of a corner too sharp for
+  any offset, and the error is the one a sharp needle already gave. The
+  same on a curved gap. A needle prism of 1e-10 rad refuses `fillet` and
+  `chamfer` with `TooLarge` at its tip.
+- **An edge in line with its unbevelled neighbour across a curved gap.**
+  Sliding along the unbevelled edge to the offset line never arrives (the
+  two are parallel). The point takes the rule of a curved gap between two
+  bevelled edges instead: it slides along the inner spoke most across
+  the line until its distance from it is half the offset, as collinear
+  edges on a plane step straight in by the mean of the two offsets
+  (ours: neither note covers it). Built by hand for the test, since no
+  generator or boolean of the scan made one: a block whose top has a
+  straight real edge split at a vertex, a curved surface behind it, two
+  flat faces split by a third edge in front; one piece and the split are
+  bevelled. The point lands where the rule says to 1e-12; fillet and
+  chamfer are closed and all quads.
+- **A bevelled edge that is the only real edge at its vertex:
+  unreachable.** Around a vertex the surface id changes exactly at its
+  real edges, and a cycle cannot change exactly once. The arm now joins
+  the tip's (a lone edge whose faces meet again).
 
 ## 8. Phase 4: parts, joints, the CLI and the wasm binding (stream E, 2026-11-09)
 

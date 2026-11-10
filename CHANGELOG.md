@@ -470,3 +470,9 @@
   `Unsupported`. A fan that does not close is `NotClosed`: it cannot
   happen on a closed solid (`docs/research.md` §7.5). Golden case
   `bevel.cones`; no existing hash moved.
+- `shape-bevel`: a face corner of zero angle is `TooLarge` (no offset
+  fits it) instead of `Unsupported`; an edge in line with its unbevelled
+  neighbour across a curved face is bevelled, stepping across by half the
+  offset as collinear edges on a plane do. A bevelled edge that is the
+  only real edge at its vertex cannot happen and is no longer a case.
+  Golden case `bevel.inline`; no existing hash moved.
