@@ -24,6 +24,8 @@ use crate::patch::{self, Corner};
 use crate::profile;
 use crate::{BevelError, Miter};
 
+#[path = "cones.rs"]
+mod cones;
 #[path = "general.rs"]
 mod general;
 #[path = "runs.rs"]
@@ -59,6 +61,7 @@ pub(crate) enum Offsets {
 }
 
 /// A resolved bevel request.
+#[derive(Clone)]
 pub(crate) struct Spec {
     pub edges: Vec<EdgeKey>,
     pub offsets: Offsets,
@@ -144,11 +147,11 @@ fn fan(s: &Solid, topo: &Topology, v: u32) -> Result<Fan, BevelError> {
         if cur == start {
             break;
         }
+        // Each directed edge has one triangle and its twin another (the
+        // solid is closed), so the walk is a cycle and comes back to
+        // `start`; this guards that invariant.
         if f.tris.len() > here.len() {
-            return Err(BevelError::Unsupported(
-                p,
-                "a vertex whose fan does not close",
-            ));
+            return Err(BevelError::NotClosed);
         }
     }
     if f.tris.len() != here.len() {
@@ -267,7 +270,10 @@ impl Build<'_> {
             let (rx, ry) = (r.dot(l), r.dot(e2));
             if ry.abs() < COLLINEAR_SIN {
                 if rx > 0.0 {
-                    return Err(BevelError::Unsupported(p, "a face corner of zero angle"));
+                    // A corner of zero angle: the offset lines are
+                    // parallel on either side of one ray and meet nowhere,
+                    // the limit of a corner too sharp for its offsets.
+                    return Err(BevelError::TooLarge(p));
                 }
                 p + e2 * ((dl + dr) / 2.0)
             } else {
@@ -275,19 +281,23 @@ impl Build<'_> {
             }
         } else {
             let sin = |a: DVec3, b: DVec3| a.cross(b).length();
-            if dl == 0.0 || dr == 0.0 {
+            let in_line = sin(l, r) < COLLINEAR_SIN;
+            if in_line && l.dot(r) > 0.0 {
+                // Zero angle, as on a plane.
+                return Err(BevelError::TooLarge(p));
+            }
+            if (dl == 0.0 || dr == 0.0) && !in_line {
                 // Slide along the unbevelled edge.
                 let (along, d) = if dl == 0.0 { (l, dr) } else { (r, dl) };
-                let s = sin(l, r);
-                if s < COLLINEAR_SIN {
-                    return Err(BevelError::Unsupported(
-                        p,
-                        "an edge in line with its neighbour",
-                    ));
-                }
-                p + along * (d / s)
+                p + along * (d / sin(l, r))
             } else {
-                // Slide along the inner edge most across the bevelled ones.
+                // Slide along the inner edge most across the two edges,
+                // until the point's distances from them sum to the two
+                // offsets.
+                // Also where an unbevelled edge is in line with the
+                // bevelled one, whose offset line it never meets: the
+                // point then steps straight across by half the offset, as
+                // collinear edges on a plane do (`docs/research.md` §7.5).
                 let mut best: Option<(f64, DVec3)> = None;
                 for i in lo + 1..hi {
                     let e = dir(i);
@@ -499,7 +509,43 @@ fn projector(n: DVec3) -> impl Fn(DVec3) -> DVec2 {
 
 /// Ear-clips a polygon (vertex ids) facing `n`; every triangle must turn
 /// counter-clockwise by the exact predicate, or the bevel does not fit.
+///
+/// The first ear found is cut each time. Where that leaves a triangle of
+/// zero area in floating point (three points of a straight chamfer
+/// profile, counter-clockwise only by the exact predicate), the polygon
+/// is clipped again cutting the best-shaped ear each time
+/// (`docs/research.md` §7.5); results without such a triangle are the
+/// first pass's.
 fn clip(poly: &[u32], pos: &[DVec3], n: DVec3) -> Option<Vec<[u32; 3]>> {
+    let first = clip_with(poly, pos, n, false)?;
+    let flat = |t: &[u32; 3]| flat(t, pos);
+    if !first.iter().any(flat) {
+        return Some(first);
+    }
+    clip_with(poly, pos, n, true).filter(|ts| !ts.iter().any(flat))
+}
+
+/// Zero area as [`Solid::measure`] will find it: the canonical solid
+/// starts each triangle at its first vertex in position order, and the
+/// rounding of the area depends on the corner it starts from. Two equal
+/// positions (welded into one) count as zero area too.
+fn flat(t: &[u32; 3], pos: &[DVec3]) -> bool {
+    use shape_core::order::cmp_dvec3;
+    let p = t.map(|v| pos[v as usize] + DVec3::ZERO);
+    let mut r = 0;
+    for k in 1..3 {
+        if cmp_dvec3(p[k], p[r]).is_lt() {
+            r = k;
+        }
+    }
+    let (a, b, c) = (p[r], p[(r + 1) % 3], p[(r + 2) % 3]);
+    cmp_dvec3(a, b).is_eq()
+        || cmp_dvec3(b, c).is_eq()
+        || cmp_dvec3(c, a).is_eq()
+        || (b - a).cross(c - a).length() == 0.0
+}
+
+fn clip_with(poly: &[u32], pos: &[DVec3], n: DVec3, best: bool) -> Option<Vec<[u32; 3]>> {
     use core::cmp::Ordering::Greater;
     let proj = projector(n);
     let mut ring: Vec<u32> = poly.to_vec();
@@ -508,10 +554,11 @@ fn clip(poly: &[u32], pos: &[DVec3], n: DVec3) -> Option<Vec<[u32; 3]>> {
         ring.pop();
     }
     let p2 = |i: u32| proj(pos[i as usize]);
+    let flat = |t: &[u32; 3]| flat(t, pos);
     let mut out = Vec::new();
     while ring.len() > 3 {
         let len = ring.len();
-        let ear = (0..len).find(|&i| {
+        let is_ear = |i: usize| {
             let (a, b, c) = (ring[(i + len - 1) % len], ring[i], ring[(i + 1) % len]);
             let (pa, pb, pc) = (p2(a), p2(b), p2(c));
             if predicates::orient2d(pa, pb, pc) != Greater {
@@ -526,7 +573,38 @@ fn clip(poly: &[u32], pos: &[DVec3], n: DVec3) -> Option<Vec<[u32; 3]>> {
                     && predicates::orient2d(pb, pc, pq) != core::cmp::Ordering::Less
                     && predicates::orient2d(pc, pa, pq) != core::cmp::Ordering::Less)
             })
-        })?;
+        };
+        let ear = if best {
+            // Never a flat ear while another fits; first an ear beside a
+            // flat vertex, which then gets a new neighbour (otherwise the
+            // flat vertex and its neighbours end as the last triangle);
+            // then the most nearly equilateral (twice its area over the
+            // sum of its squared sides); then the first by index.
+            let at = |i: usize| [ring[(i + len - 1) % len], ring[i], ring[(i + 1) % len]];
+            let shape = |i: usize| {
+                let [a, b, c] = at(i).map(|v| pos[v as usize]);
+                let sides =
+                    (b - a).length_squared() + (c - b).length_squared() + (a - c).length_squared();
+                (b - a).cross(c - a).length() / sides
+            };
+            let mut found: Option<((bool, bool, f64), usize)> = None;
+            for i in (0..len).filter(|&i| is_ear(i)) {
+                let beside = flat(&at((i + len - 1) % len)) || flat(&at((i + 1) % len));
+                let q = (!flat(&at(i)), beside, shape(i));
+                let better = found.is_none_or(|(f, _)| {
+                    (q.0, q.1)
+                        .cmp(&(f.0, f.1))
+                        .then(q.2.total_cmp(&f.2))
+                        .is_gt()
+                });
+                if better {
+                    found = Some((q, i));
+                }
+            }
+            found.map(|(_, i)| i)
+        } else {
+            (0..len).find(|&i| is_ear(i))
+        }?;
         let (a, b, c) = (
             ring[(ear + len - 1) % len],
             ring[ear],
@@ -702,22 +780,34 @@ fn is_cap(name: &str) -> bool {
 }
 
 pub(crate) fn bevel(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
+    // A vertex where two cones of faces touch is split into one per cone.
+    if let Some((solid, edges)) = cones::split(s, &spec.edges) {
+        return bevel_runs(
+            &solid,
+            &Spec {
+                edges,
+                ..spec.clone()
+            },
+        );
+    }
+    bevel_runs(s, spec)
+}
+
+fn bevel_runs(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
     match bevel_once(s, spec) {
         Err(BevelError::TooLarge(at)) => {
             // Straight runs may be cut into pieces shorter than the bevel.
             let Some((solid, edges)) = runs::dissolve(s, &spec.edges) else {
                 return Err(BevelError::TooLarge(at));
             };
-            let again = Spec {
-                edges,
-                offsets: spec.offsets,
-                segments: spec.segments,
-                exponent: spec.exponent,
-                kind: spec.kind,
-                miters: spec.miters,
-                loop_slide: spec.loop_slide,
-            };
-            bevel_once(&solid, &again).map_err(|_| BevelError::TooLarge(at))
+            bevel_once(
+                &solid,
+                &Spec {
+                    edges,
+                    ..spec.clone()
+                },
+            )
+            .map_err(|_| BevelError::TooLarge(at))
         }
         r => r,
     }

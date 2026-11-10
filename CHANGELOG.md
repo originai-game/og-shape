@@ -497,3 +497,29 @@
   distance from the axis to the nearest edge (the bore's radius there).
 - Golden cases `smallgaps.knob.bands`, `smallgaps.knob.program`,
   `smallgaps.hole.diagonal` and `smallgaps.pocket.through_hole`.
+- `shape-bevel`: a vertex where two cones of faces touch (two boxes
+  joined at a corner) is bevelled as two corners instead of
+  `Unsupported`. A fan that does not close is `NotClosed`: it cannot
+  happen on a closed solid (`docs/research.md` §7.5). Golden case
+  `bevel.cones`; no existing hash moved.
+- `shape-bevel`: a face corner of zero angle is `TooLarge` (no offset
+  fits it) instead of `Unsupported`; an edge in line with its unbevelled
+  neighbour across a curved face is bevelled, stepping across by half the
+  offset as collinear edges on a plane do. A bevelled edge that is the
+  only real edge at its vertex cannot happen and is no longer a case.
+  Golden case `bevel.inline`; no existing hash moved.
+- Fixed (`shape-bevel`): chamfers of several segments on regular prisms
+  and pyramids, and chamfers at the corners of a bored block, were
+  refused as `TooLarge` although they fit: a face was clipped into a
+  triangle of zero area. Such a face is now clipped again avoiding it;
+  results that were accepted are unchanged. Golden case
+  `bevel.chamfers`; no existing hash moved.
+- `shape-bevel` tests: pipes through curved faces, corner patches of 7
+  to 12 sides, loop slide around a cone, and arc and patch miters with
+  chamfers of 2 to 5 segments, on straight and curved outlines
+  (`docs/research.md` §7.5). Golden case `bevel.untested`; no existing
+  hash moved.
+- Previews of the §7.5 cases in `docs/previews/phase3/` (two cones, the
+  in-line ridge, a bored block's chamfer, a seven-sided apex, a pipe
+  through curved faces, loop slide around a cone, a patch miter on a
+  curved outline).

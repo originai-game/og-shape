@@ -1062,6 +1062,133 @@ no degenerate triangle. Quads are `quad_pairs` over the new faces.
   fillet meets the concave seam fillets show a small light streak in the
   preview; the octant there is fitted to a saddle, not a cube corner.
 
+### 7.5 The cases §7.4 left (stream P, 2026-11-10)
+
+**Sources.** The same two published design notes as §7.1 and §7.4 and
+nothing else from Blender: Trickey's page
+(http://archive.blender.org/wiki/2024/wiki/User:Howardt/Bevel.html) and
+the Bevel V2 issue #98674, read through
+`projects.blender.org/api/v1/repos/blender/blender/issues/98674`.
+Blender's source and the Mesh Bevel node PR (#158151) were not opened.
+Neither note covers the cases below (they are mesh-topology corners the
+notes do not reach); every choice here is ours and says so.
+
+**How the cases were found.** A scratch scan bevelled about 19 000
+selections (all edges, each name, each single edge, random subsets;
+fillet and chamfer at 0.5 and 1.5) on generator solids (boxes,
+cylinders, cones, tubes, wedges, domes, pyramids and prisms of 3–8
+sides, twisted, tapered, D-slots, rounded rectangles, full and part
+revolves with seams and apexes) and booleans (joins touching at a
+corner or an edge, bores, notches, posts, cross bars and cross bores).
+Of the `Unsupported` cases §7.4 lists, only two cones at one vertex
+occurred (256 times); the others are shown below to be unreachable on a
+closed solid or were built by hand for their tests.
+
+- **A vertex whose fan does not close: unreachable.** On a closed solid
+  each directed edge has one triangle and its twin one more, so the walk
+  around a vertex is a permutation of its triangles and returns to its
+  start. The guard stays, as `NotClosed`.
+- **Two cones at one vertex** (two surfaces that only touch at a point,
+  as a join of boxes meeting at a corner leaves): each such vertex at the
+  end of a bevelled edge is split before bevelling, one copy per fan at
+  the same position, each with its cone's triangles, edges and edge
+  names (`cones.rs`). Each cone is then an ordinary corner. Copies left
+  unbevelled weld back when the result is canonicalized. Two boxes
+  joined at a corner, `fillet(2)` all, 4 segments, has exactly the volume
+  of the two boxes filleted apart, all quads; with one box's edges only,
+  the other keeps its corner.
+- **A face corner of zero angle: `TooLarge`.** Two edges leaving a
+  vertex in the same direction have offset lines parallel on either side
+  of one ray, which meet nowhere; a needle of angle α needs room
+  `d / sin(α/2)` along it, so zero is the limit of a corner too sharp for
+  any offset, and the error is the one a sharp needle already gave. The
+  same on a curved gap. A needle prism of 1e-10 rad refuses `fillet` and
+  `chamfer` with `TooLarge` at its tip.
+- **An edge in line with its unbevelled neighbour across a curved gap.**
+  Sliding along the unbevelled edge to the offset line never arrives (the
+  two are parallel). The point takes the rule of a curved gap between two
+  bevelled edges instead: it slides along the inner spoke most across
+  the line until its distance from it is half the offset, as collinear
+  edges on a plane step straight in by the mean of the two offsets
+  (ours: neither note covers it). Built by hand for the test, since no
+  generator or boolean of the scan made one: a block whose top has a
+  straight real edge split at a vertex, a curved surface behind it, two
+  flat faces split by a third edge in front; one piece and the split are
+  bevelled. The point lands where the rule says to 1e-12; fillet and
+  chamfer are closed and all quads.
+- **A bevelled edge that is the only real edge at its vertex:
+  unreachable.** Around a vertex the surface id changes exactly at its
+  real edges, and a cycle cannot change exactly once. The arm now joins
+  the tip's (a lone edge whose faces meet again).
+- **Flat triangles from straight profiles** (found by the scan, not in
+  §7.4's list). A chamfer of two or more segments puts collinear points
+  on an end face. The ear clip of `finish` could leave three of them as
+  one triangle: counter-clockwise by the exact predicate, but of zero
+  area in floating point, so the whole result was `TooLarge` (one bottom
+  edge of an octagonal prism, `chamfer(0.5, segments 2)`; the side edges
+  of 7-, 9- and 11-gon prisms and pyramids). The same happened beside a
+  boolean's bore, whose rim had two points 2e-15 apart, for chamfers of
+  one or two segments at the block's corners. Now, only where the first
+  clip leaves such a triangle (zero area as `Solid::measure` computes
+  it: from the corner first in position order, which is where
+  `canonicalize` starts it), the polygon is clipped again choosing ears
+  in this order: no flat ear while another fits, an ear beside a flat
+  vertex first (so that vertex gets a new neighbour), then the most
+  nearly equilateral. Results without a flat triangle are the first
+  pass's, so no hash moved. In the scan, `TooLarge` fell from 2 173 to
+  2 102 and the selections where a chamfer of 2 or 4 segments failed but
+  the fillet and the one-segment chamfer fitted from 30 to 1.
+
+**The untested items of §7.4, now tested** (`cargo test -p shape-bevel`;
+golden case `bevel.untested`). Nothing in the code had to change for
+them beyond the flat-triangle fix above.
+
+| case | result | quads | worst fold |
+|---|---|---|---|
+| pipe through curved faces: part revolve r 5–10, outer wall split at z 4; seam and both post pieces, `fillet(1)`, 4 seg | volume 594.8315, post alone 594.8304 | 126/128 | 26.4° |
+| same, 8 seg | 594.9501 / 594.9498 | 302/304 | 17.2° |
+| pyramid of 7 sides, `fillet(1.5, side)`, 4 seg | 7 sectors, all quads, inside the pyramid | 112/112 | 11.9° |
+| pyramid of 12 sides, 6 seg | 12 sectors | 360/360 | 8.5° |
+| part revolve with a cone wall (r 10 → 7), `fillet(0.3)` on the top, averaged | cap depths 0.2905 / 0.3000 at the edge's two ends | 190/192 | 22.5° |
+| same, loop slide | 0.29526 / 0.29526 (equal to 1e-11) | 190/192 | 22.5° |
+| L-prism `chamfer(2, top)`, 2–5 seg, every inner/outer pair of arc and patch, spread 0, 1e-6, 0.5 | all closed | worst 64/81 (3 seg, inner arc: odd counts fill corners with fans) | 32.2° |
+| outline with arcs and a reflex corner, the same | all closed but one class below | worst 330/411 | 32.2° |
+
+- The pipe's through-faces are the start cap (flat) and the two wall
+  bands (curved). The seam's faces are tangent, so its bevel is all but
+  flat and the joint keeps the post's round: the volume differs from the
+  post's alone by 2e-6 of it, the faceting of the bands. A pipe whose
+  faces on both sides are curved needs a straight real edge between two
+  curved surfaces, which no generator makes.
+- Patches of 7 to 12 sides are the ADJ pattern; each has exactly
+  `k (n/2)²` quads.
+- An inner arc miter at the outline's corner where its arc meets the
+  closing line (nearly 180°, the arc's last chord 0.65 long) is
+  `TooLarge` at the default spread (the offset, 2) and at 0.5: the split
+  points slide past the next point of the arc. A spread of 1e-6 fits. It
+  stays an error value; a clamp would be a silent change.
+
+**Previews** (`cargo run --release -p shape-bevel --example phase3 --
+docs/previews/phase3`, the §7.4 images unchanged): `two_cones`,
+`inline_ridge`, `bored_chamfer`, `apex_seven`, `pipe_curved`,
+`cone_loop_slide` and `curvy_patch_chamfer`. All closed; quads 1 152/1 152,
+24/24, 8/8, 210/210, 302/304, 284/288 and 176/180.
+
+**Still errors, and untested.**
+- A bevel wider than a segment of a curved face (the part revolve's bore
+  at r 1.5) is still `TooLarge`. Not attempted: the golden case
+  `bevel.slivers` hashes exactly that error, and the task forbids moving
+  an existing hash, so closing it needs that hash re-blessed first. The
+  route is the V2 notes' inset-and-intersect re-meshing of the face.
+- The scan still finds selections where a fillet fits and a chamfer of
+  the same offset does not, or the reverse (about 80 of 19 000, on part
+  revolves with seams, posts joined to boxes, bores and twisted prisms),
+  all `TooLarge`; not analysed.
+- Unchanged from §7.4: miters only on planar gaps without unbevelled
+  edges; no Partial Vertex Bevel, Cutoff, custom vertex meshes,
+  per-corner spread or tip slide. A pipe with curved faces on both sides
+  is untested (no generator makes one).
+
 ## 8. Phase 4: parts, joints, the CLI and the wasm binding (stream E, 2026-11-09)
 
 ### 8.1 Sources

@@ -49,6 +49,22 @@ pub fn cases() -> Vec<Case> {
             name: "bevel.slivers",
             run: slivers,
         },
+        Case {
+            name: "bevel.cones",
+            run: cones,
+        },
+        Case {
+            name: "bevel.inline",
+            run: inline,
+        },
+        Case {
+            name: "bevel.chamfers",
+            run: chamfers,
+        },
+        Case {
+            name: "bevel.untested",
+            run: untested,
+        },
     ]
 }
 
@@ -518,4 +534,253 @@ fn slivers(h: &mut OutputHash) -> Result<(), HashError> {
         solid(h, fillet(&s, &round(1.5, &[], 4)))?;
     }
     Ok(())
+}
+
+/// Two cones of faces at one vertex: two boxes joined at a corner
+/// (`docs/research.md` §7.5).
+fn cones(h: &mut OutputHash) -> Result<(), HashError> {
+    let a = cuboid(&BoxDesc {
+        width: 20.0,
+        depth: 20.0,
+        height: 10.0,
+    })
+    .unwrap_or_default();
+    let mut b = a.clone();
+    b.map_positions(|p| p + DVec3::new(20.0, 20.0, 10.0), false);
+    let j = shape_bool::boolean(&a, &b, &shape_bool::Boolean::default()).unwrap_or_default();
+    solid(h, fillet(&j, &round(2.0, &[], 4)))?;
+    let low = tag(&j, "low", |p| p.x <= 10.0 && p.y <= 10.0 && p.z <= 10.0);
+    solid(
+        h,
+        chamfer(
+            &low,
+            &Chamfer {
+                distance: 1.0,
+                edges: names(&["low"]),
+                ..Default::default()
+            },
+        ),
+    )
+}
+
+/// A corner of zero angle (refused: no offset fits it), and an edge in
+/// line with its unbevelled neighbour across a curved face
+/// (`docs/research.md` §7.5).
+fn inline(h: &mut OutputHash) -> Result<(), HashError> {
+    let needle = prism(
+        &[(0.0, 0.0), (10.0, 0.0), (10.0, 1e-9)],
+        &Extrude {
+            height: 5.0,
+            ..Default::default()
+        },
+    );
+    solid(h, fillet(&needle, &round(0.5, &["top"], 2)))?;
+    // A block 4 × 2 whose top has a straight edge along y = 1, split at
+    // (2, 1, 1): behind it one curved surface, in front two flat faces.
+    let pts = [
+        (0.0, 1.0, 1.0),
+        (2.0, 1.0, 1.0),
+        (4.0, 1.0, 1.0),
+        (0.0, 2.0, 1.2),
+        (2.0, 2.0, 1.5),
+        (4.0, 2.0, 1.2),
+        (0.0, 0.0, 1.0),
+        (2.0, 0.0, 1.0),
+        (4.0, 0.0, 1.0),
+        (0.0, 0.0, 0.0),
+        (4.0, 0.0, 0.0),
+        (4.0, 2.0, 0.0),
+        (0.0, 2.0, 0.0),
+    ];
+    let mut r = Solid::default();
+    for (x, y, z) in pts {
+        r.push_vertex(DVec3::new(x, y, z));
+    }
+    let faces: [(u32, &str, &[[u32; 3]]); 8] = [
+        (0, "back", &[[1, 2, 5], [1, 5, 4], [1, 4, 3], [1, 3, 0]]),
+        (1, "top", &[[1, 0, 6], [1, 6, 7]]),
+        (2, "top", &[[1, 7, 8], [1, 8, 2]]),
+        (3, "side", &[[9, 10, 8], [9, 8, 7], [9, 7, 6]]),
+        (4, "side", &[[10, 11, 5], [10, 5, 2], [10, 2, 8]]),
+        (5, "side", &[[11, 12, 3], [11, 3, 4], [11, 4, 5]]),
+        (6, "side", &[[12, 9, 6], [12, 6, 0], [12, 0, 3]]),
+        (7, "bottom", &[[9, 12, 11], [9, 11, 10]]),
+    ];
+    for (surface, name, tris) in faces {
+        for &t in tris {
+            r.push_triangle(t, surface, &[name]);
+        }
+    }
+    r.tag_edge(0, 1, &["along"]);
+    r.tag_edge(1, 7, &["split"]);
+    solid(h, fillet(&r, &round(0.3, &["along", "split"], 4)))?;
+    solid(
+        h,
+        chamfer(
+            &r,
+            &Chamfer {
+                distance: 0.3,
+                edges: names(&["along", "split"]),
+                ..Default::default()
+            },
+        ),
+    )
+}
+
+/// Chamfers of several segments whose straight profiles once left a
+/// flat triangle on an end face (`docs/research.md` §7.5).
+fn chamfers(h: &mut OutputHash) -> Result<(), HashError> {
+    let ngon = |k: usize| -> Vec<(f64, f64)> {
+        (0..k)
+            .map(|i| {
+                let a = trig::TAU * i as f64 / k as f64;
+                (10.0 * trig::cos(a), 10.0 * trig::sin(a))
+            })
+            .collect()
+    };
+    let side = |seg: u32| Chamfer {
+        distance: 1.5,
+        edges: names(&["side"]),
+        segments: seg,
+        ..Default::default()
+    };
+    for (k, taper, seg) in [(11, 0.0, 2), (9, 0.0, 3), (7, 1.0, 2)] {
+        let p = prism(
+            &ngon(k),
+            &Extrude {
+                height: 20.0,
+                taper,
+                ..Default::default()
+            },
+        );
+        solid(h, chamfer(&p, &side(seg)))?;
+    }
+    let b = cuboid(&BoxDesc {
+        width: 20.0,
+        depth: 20.0,
+        height: 10.0,
+    })
+    .unwrap_or_default();
+    let mut c = cylinder(&CylinderDesc {
+        radius: 4.0,
+        height: 30.0,
+        ..Default::default()
+    })
+    .unwrap_or_default();
+    c.map_positions(|p| p + DVec3::new(0.0, 0.0, -10.0), false);
+    let bored = shape_bool::boolean(
+        &b,
+        &c,
+        &shape_bool::Boolean {
+            op: shape_bool::BoolOp::Cut,
+            ..Default::default()
+        },
+    )
+    .unwrap_or_default();
+    solid(
+        h,
+        chamfer(
+            &bored,
+            &Chamfer {
+                distance: 0.5,
+                ..side(1)
+            },
+        ),
+    )
+}
+
+/// The items §7.4 left untested: a pipe through curved faces, patches of
+/// seven and twelve sides, loop slide around a cone, and miters with
+/// chamfers of several segments on an outline with arcs
+/// (`docs/research.md` §7.5).
+fn untested(h: &mut OutputHash) -> Result<(), HashError> {
+    let part = |c: &[(f64, f64)]| {
+        revolve(
+            &shape_2d::Profile::from_contour(shape_2d::Contour::corners(
+                c.iter().map(|&(x, y)| DVec2::new(x, y)).collect(),
+            )),
+            &Revolve {
+                angle: 2.0,
+                axis: Axis::Z,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_default()
+    };
+    let radius = |p: DVec3| (p.x * p.x + p.y * p.y).sqrt();
+    let ring = part(&[
+        (5.0, 0.0),
+        (10.0, 0.0),
+        (10.0, 4.0),
+        (10.0, 8.0),
+        (5.0, 8.0),
+    ]);
+    let ring = tag(&ring, "seam", |p| {
+        (radius(p) - 10.0).abs() < 1e-9 && p.z == 4.0
+    });
+    let ring = tag(&ring, "post", |p| {
+        p.y.abs() < 1e-12 && (radius(p) - 10.0).abs() < 1e-9
+    });
+    solid(h, fillet(&ring, &round(1.0, &["seam", "post"], 4)))?;
+    for k in [7usize, 12] {
+        let ngon: Vec<(f64, f64)> = (0..k)
+            .map(|i| {
+                let a = trig::TAU * i as f64 / k as f64;
+                (10.0 * trig::cos(a), 10.0 * trig::sin(a))
+            })
+            .collect();
+        let pyr = prism(
+            &ngon,
+            &Extrude {
+                height: 20.0,
+                taper: 1.0,
+                ..Default::default()
+            },
+        );
+        solid(h, fillet(&pyr, &round(1.5, &["side"], 4)))?;
+    }
+    let cone = part(&[(5.0, 0.0), (10.0, 0.0), (7.0, 8.0), (5.0, 8.0)]);
+    let cone = tag(&cone, "lid", |p| p.z == 8.0);
+    solid(
+        h,
+        fillet(
+            &cone,
+            &Fillet {
+                loop_slide: true,
+                ..round(0.3, &["lid"], 4)
+            },
+        ),
+    )?;
+    let curvy = shape_2d::Path::new(0.0, 0.0)
+        .line_to(30.0, 0.0)
+        .tangent_arc_to(30.0, 10.0)
+        .line_to(10.0, 10.0)
+        .line_to(10.0, 30.0)
+        .arc_to(5.0, 35.0, 0.0, 30.0)
+        .close()
+        .ok()
+        .and_then(|p| {
+            extrude(
+                &p,
+                &Extrude {
+                    height: 10.0,
+                    ..Default::default()
+                },
+            )
+            .ok()
+        })
+        .unwrap_or_default();
+    solid(
+        h,
+        chamfer(
+            &curvy,
+            &Chamfer {
+                distance: 2.0,
+                edges: names(&["top"]),
+                segments: 3,
+                outer_miter: Miter::Patch,
+                ..Default::default()
+            },
+        ),
+    )
 }
