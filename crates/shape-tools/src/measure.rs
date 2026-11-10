@@ -273,7 +273,8 @@ pub fn measure(s: &Solid, d: &Measure) -> MeshMeasures {
             .then(b.triangles.cmp(&a.triangles))
     });
     if d.intersections {
-        m.self_intersections = Some(self_intersections(&s.positions, &s.triangles).len());
+        let (positions, triangles) = weld_exact(s);
+        m.self_intersections = Some(self_intersections(&positions, &triangles).len());
     }
     if let Some(uv) = &s.uvs {
         m.uv = Some(uv_measures(
@@ -549,11 +550,62 @@ impl MeshMeasures {
     }
 }
 
+/// The solid's triangles over vertices welded where their positions are
+/// equal. An imported mesh splits a vertex wherever its UVs or normals
+/// differ, and triangles that share a position but not an id are not
+/// neighbours to the self-intersection count: every seam would count.
+fn weld_exact(s: &Solid) -> (Vec<DVec3>, Vec<[u32; 3]>) {
+    // +0.0 makes -0.0 and 0.0 one key.
+    let key = |p: DVec3| [p.x + 0.0, p.y + 0.0, p.z + 0.0];
+    let same = |a: DVec3, b: DVec3| a.x == b.x && a.y == b.y && a.z == b.z;
+    let mut order: Vec<u32> = (0..s.positions.len() as u32).collect();
+    order.sort_by(|&a, &b| {
+        let (ka, kb) = (key(s.positions[a as usize]), key(s.positions[b as usize]));
+        ka[0]
+            .total_cmp(&kb[0])
+            .then(ka[1].total_cmp(&kb[1]))
+            .then(ka[2].total_cmp(&kb[2]))
+            .then(a.cmp(&b))
+    });
+    let mut to = vec![0u32; s.positions.len()];
+    let mut positions: Vec<DVec3> = Vec::new();
+    for &v in &order {
+        let p = s.positions[v as usize];
+        if positions.last().is_none_or(|&q| !same(p, q)) {
+            positions.push(p);
+        }
+        to[v as usize] = positions.len() as u32 - 1;
+    }
+    let triangles = s
+        .triangles
+        .iter()
+        .map(|t| t.map(|v| to[v as usize]))
+        .collect();
+    (positions, triangles)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{Unwrap, unwrap};
     use shape_gen::solids::sphere;
+
+    #[test]
+    fn split_vertices_are_not_self_intersections() {
+        // A sphere with every triangle on its own three vertices, as a
+        // mesh comes in from a file with seams.
+        let whole = sphere(10.0).unwrap();
+        let mut split = Solid::default();
+        for t in &whole.triangles {
+            let ids = t.map(|v| split.push_vertex(whole.positions[v as usize]));
+            split.push_triangle(ids, 0, &[]);
+        }
+        let d = Measure {
+            intersections: true,
+            ..Default::default()
+        };
+        assert_eq!(measure(&split, &d).self_intersections, Some(0));
+    }
 
     #[test]
     fn measures_a_sphere_and_its_uvs() {

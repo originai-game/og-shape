@@ -720,3 +720,13 @@
   cancellation. `cargo run -p shape-mcp --example fixtures` writes the FBX.
 - `crates/shape-wasm/ts/tools/scale.ts`: times and peak memory of the mesh
   chain on a mesh of a million triangles (research §19.6).
+- `measure`'s self-intersection count welds vertices at equal positions
+  first. A mesh read from a file has a vertex split wherever its UVs or
+  normals differ, and the triangles either side of such a seam were
+  counted as crossing: a processed GLB of 1 000 triangles reported 789
+  pairs for a part whose welded whole has none (`docs/research.md`
+  §19.6). Golden line `meshtools.measure.json` moved for this, with the
+  owner's leave: its raw mesh has split vertices too.
+- Golden line `rest.program.booleans` moved when streams R and S met: it
+  hashes the debug text of each boolean's report, which gained
+  `faces_without_uvs`. The geometry (`rest.program.glb`) is unchanged.
