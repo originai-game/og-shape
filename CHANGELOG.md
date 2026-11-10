@@ -681,3 +681,42 @@
 - Golden cases added: `uvs.generators`, `uvs.chain`, `uvs.boolean`,
   `uvs.glb`. `bench/meshtools` gains `uv-check`; three.js renders of the
   full and halved Duck and DamagedHelmet in `docs/previews/uv/`.
+- `shape-mcp`: long calls report progress and can be cancelled. A
+  request with `_meta.progressToken` gets `notifications/progress` before
+  each step of `process` (import, repair, decimate, unwrap, measure,
+  export) and of `run_typescript`; `notifications/cancelled` stops a call
+  before its next step (the kernel is never interrupted mid-step), stops
+  bun while a TypeScript program runs, and drops a request still queued.
+  A cancelled request is not answered. A `ping` is answered while a call
+  runs. The server reads its input on a thread of its own; every kernel
+  call stays on one thread. `shape_cli::process::process_steps` and
+  `STEPS` give the chain's steps to a front end.
+- `shape-mcp`: `guides/shape.md` (how to model an object) is served as
+  `og-shape://guides/shape.md`, listed first, and the server's
+  instructions say to read it first (research §13.6 item 15).
+- `shape-mcp`: workspace I/O checks the file it opened, not only the path
+  before it: a read confirms the opened file is the one at its real path
+  under the root (device and inode on Unix), and a write creates a new
+  file beside the target, confirms it, and renames it over the target.
+  A directory or link swapped in between the check and the I/O is now
+  refused, and a link at a write's target is replaced, not written
+  through. A Windows test of `\\?\` paths runs in CI.
+- The TypeScript binding (`crates/shape-wasm/ts/src/index.ts`) has no
+  TypeScript-only syntax left (parameter properties became fields), so
+  node 22.18 or later imports it as it is. Checked: node, an esbuild
+  bundle, and headless Chromium each give the washing machine's golden
+  GLB and PNG (`tools/check_consumers.ts`; the gate's binding step runs
+  the node check when node 22.18+ is installed, and CI installs node
+  22.23.4 for it).
+- `crates/shape-wasm/ts/tools/check_render.ts`: three.js's GLTFLoader and
+  WebGLRenderer in headless Chromium on the washing machine and the
+  skinned figure; joints, re-posing and skinning are measured against the
+  kernel, and screenshots go to `docs/previews/validate/`.
+  `cargo run -p shape-skin --example figure_poses` writes the figure and
+  the kernel's posed vertices for it.
+- `crates/shape-mcp/ts/client/client.ts`: the official MCP TypeScript SDK
+  client drives every tool and resource of the release server, including
+  an FBX, a `.gltf` with an external buffer and image, progress and
+  cancellation. `cargo run -p shape-mcp --example fixtures` writes the FBX.
+- `crates/shape-wasm/ts/tools/scale.ts`: times and peak memory of the mesh
+  chain on a mesh of a million triangles (research §19.6).

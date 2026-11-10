@@ -13,6 +13,7 @@
     "check-three": "bun tools/check_three.ts"
   },
   "devDependencies": {
+    "esbuild": "0.28.2",
     "three": "0.186.1"
   }
 }

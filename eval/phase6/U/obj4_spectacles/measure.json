@@ -1,0 +1,186 @@
+{
+ "triangles": 2116,
+ "boundsMin": [
+  -70,
+  -0.48,
+  0
+ ],
+ "boundsMax": [
+  70,
+  12,
+  26.77
+ ],
+ "size": [
+  140,
+  12.48,
+  26.77
+ ],
+ "joints": [
+  "temple_left_hinge",
+  "temple_right_hinge"
+ ],
+ "parts": [
+  {
+   "name": "lens_left",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 628,
+   "boundsMin": [
+    -65.85,
+    0,
+    0
+   ],
+   "boundsMax": [
+    -10.15,
+    4.14,
+    23
+   ]
+  },
+  {
+   "name": "lens_right",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 628,
+   "boundsMin": [
+    10.15,
+    0,
+    0
+   ],
+   "boundsMax": [
+    65.85,
+    4.14,
+    23
+   ]
+  },
+  {
+   "name": "frame",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 508,
+   "boundsMin": [
+    -70,
+    -0.48,
+    21.67
+   ],
+   "boundsMax": [
+    70,
+    11.8,
+    26.77
+   ]
+  },
+  {
+   "name": "pad_arm_left",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 60,
+   "boundsMin": [
+    -10.4,
+    1.61,
+    9.91
+   ],
+   "boundsMax": [
+    -7.81,
+    4.8,
+    23.59
+   ]
+  },
+  {
+   "name": "pad_left",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    -8.23,
+    2.44,
+    5
+   ],
+   "boundsMax": [
+    -6.19,
+    6.99,
+    14
+   ]
+  },
+  {
+   "name": "pad_arm_right",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 60,
+   "boundsMin": [
+    7.81,
+    1.61,
+    9.91
+   ],
+   "boundsMax": [
+    10.4,
+    4.8,
+    23.59
+   ]
+  },
+  {
+   "name": "pad_right",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 92,
+   "boundsMin": [
+    6.19,
+    2.44,
+    5
+   ],
+   "boundsMax": [
+    8.23,
+    6.99,
+    14
+   ]
+  },
+  {
+   "name": "temple_left_bar",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 24,
+   "boundsMin": [
+    -68,
+    6,
+    3.52
+   ],
+   "boundsMax": [
+    58.5,
+    8,
+    26.72
+   ]
+  },
+  {
+   "name": "temple_right_bar",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 24,
+   "boundsMin": [
+    -58.5,
+    10,
+    3.52
+   ],
+   "boundsMax": [
+    68,
+    12,
+    26.72
+   ]
+  }
+ ]
+}

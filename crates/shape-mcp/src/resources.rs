@@ -19,9 +19,10 @@ const GUIDES: [Guide; 4] = [
     Guide {
         uri: "og-shape://guides/shape.md",
         name: "shape.md",
-        title: "Modelling an object: from a description to a program",
-        description: "How to plan an object as parts, sizes and motions, build it, check it \
-            with measures and previews, and what goes wrong. Read it before the API guides.",
+        title: "Modelling an object: plan, build, look, measure",
+        description: "How to turn an object into a program: plan the parts and their sizes, \
+            build them, place them by faces and frames, joint them, preview and measure. Read \
+            it first, with typescript.md or program.md for the API.",
         text: include_str!("../../../guides/shape.md"),
     },
     Guide {

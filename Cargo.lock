@@ -438,6 +438,7 @@ dependencies = [
 name = "shape-mcp"
 version = "0.0.0"
 dependencies = [
+ "miniz_oxide",
  "serde_json",
  "shape-cli",
  "shape-model",

@@ -58,4 +58,8 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
+      - if: contains(matrix.steps, 'wasm')
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.4
       - run: scripts/check.sh ${{ matrix.steps }}

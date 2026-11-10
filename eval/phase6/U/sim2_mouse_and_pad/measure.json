@@ -1,0 +1,95 @@
+{
+ "triangles": 7886,
+ "boundsMin": [
+  -127,
+  -95.5,
+  0
+ ],
+ "boundsMax": [
+  127,
+  95.5,
+  41.13
+ ],
+ "size": [
+  254,
+  191,
+  41.13
+ ],
+ "joints": [
+  "wheel_spin"
+ ],
+ "parts": [
+  {
+   "name": "pad",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 172,
+   "boundsMin": [
+    -127,
+    -95.5,
+    0
+   ],
+   "boundsMax": [
+    127,
+    95.5,
+    3
+   ]
+  },
+  {
+   "name": "mouse_shell",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 7194,
+   "boundsMin": [
+    -33.53,
+    -58,
+    3
+   ],
+   "boundsMax": [
+    33.53,
+    58,
+    41.13
+   ]
+  },
+  {
+   "name": "button",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 396,
+   "boundsMin": [
+    -3.97,
+    6.01,
+    31
+   ],
+   "boundsMax": [
+    4,
+    17.99,
+    39
+   ]
+  },
+  {
+   "name": "scroll_wheel",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 124,
+   "boundsMin": [
+    -3.5,
+    23,
+    18
+   ],
+   "boundsMax": [
+    3.5,
+    41,
+    36
+   ]
+  }
+ ]
+}

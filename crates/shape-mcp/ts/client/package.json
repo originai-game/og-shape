@@ -1,0 +1,14 @@
+{
+  "name": "og-shape-mcp-client-check",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Drives shape-mcp with the official MCP TypeScript SDK client over stdio (research §19.3).",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "check": "node client.ts"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2"
+  }
+}

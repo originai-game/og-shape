@@ -20,8 +20,17 @@ TypeScript programs. Results and failure modes: `docs/research.md` §13.
   - `B`: description and picture, with the second guide (the fixes from
     `A`'s failure modes).
   - `C`: five of the hardest objects again, with the final guide.
+  - `M`: five objects whose agents hit the gaps stream M closed
+    (research §14.4).
+  - `U`: `M`'s five objects through the MCP server (`shape-mcp`), by
+    headless Claude Code agents whose only tools were the server's and
+    Read, with the guides read as MCP resources (research §19.7). Each
+    also has the agent's answer (`report.md`) and its turns and tokens
+    (`usage.json`).
 - `run.ts`: the runner the agents used:
   `bun eval/phase6/run.ts <program.ts> <out dir> [--pose joint=value …]`.
+- `mcp_run.ts`: run `U`'s driver: `node eval/phase6/mcp_run.ts <scratch
+  dir> [model] [object …] [--summary]`.
 
 The previews and measures were regenerated from each `program.ts` after
 the runs; they are the same bytes as the agents saw. `program.json`

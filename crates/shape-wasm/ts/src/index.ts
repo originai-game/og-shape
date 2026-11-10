@@ -73,10 +73,12 @@ export type View = number | [number, number][] | { points: [number, number][]; s
 
 /** A part or a group of a model. */
 export class Part {
-  constructor(
-    readonly id: number,
-    readonly name: string,
-  ) {}
+  readonly id: number;
+  readonly name: string;
+  constructor(id: number, name: string) {
+    this.id = id;
+    this.name = name;
+  }
   toJSON(): number {
     return this.id;
   }
@@ -130,12 +132,11 @@ export class Frame implements FrameData {
   readonly x: Vec3;
   readonly y: Vec3;
   readonly z: Vec3;
+  private readonly call: Call;
 
   /** @internal */
-  constructor(
-    d: FrameData,
-    private readonly call: Call,
-  ) {
+  constructor(d: FrameData, call: Call) {
+    this.call = call;
     this.origin = d.origin;
     this.x = d.x;
     this.y = d.y;
@@ -225,11 +226,14 @@ export interface PreviewDesc {
 
 /** One model. Every method is one kernel operation. */
 export class Shape {
+  private readonly m: WasmModel;
+  private readonly call: Call;
+
   /** @internal */
-  constructor(
-    private readonly m: WasmModel,
-    private readonly call: Call,
-  ) {}
+  constructor(m: WasmModel, call: Call) {
+    this.m = m;
+    this.call = call;
+  }
 
   private part(op: string, fields: Record<string, unknown>): Part {
     const r = this.call(op, fields);
