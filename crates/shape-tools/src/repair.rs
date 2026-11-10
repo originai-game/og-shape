@@ -1007,7 +1007,9 @@ pub fn repair(s: &Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairErro
         s
     };
     if d.check_intersections {
-        r.self_intersections = Some(self_intersections(&s.positions, &s.triangles).len());
+        // On vertices welded where positions are equal, as `measure` counts.
+        let (positions, triangles) = crate::measure::weld_exact(&s);
+        r.self_intersections = Some(self_intersections(&positions, &triangles).len());
     }
     Ok((s, r))
 }

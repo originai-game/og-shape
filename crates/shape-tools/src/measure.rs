@@ -554,7 +554,7 @@ impl MeshMeasures {
 /// equal. An imported mesh splits a vertex wherever its UVs or normals
 /// differ, and triangles that share a position but not an id are not
 /// neighbours to the self-intersection count: every seam would count.
-fn weld_exact(s: &Solid) -> (Vec<DVec3>, Vec<[u32; 3]>) {
+pub(crate) fn weld_exact(s: &Solid) -> (Vec<DVec3>, Vec<[u32; 3]>) {
     // +0.0 makes -0.0 and 0.0 one key.
     let key = |p: DVec3| [p.x + 0.0, p.y + 0.0, p.z + 0.0];
     let same = |a: DVec3, b: DVec3| a.x == b.x && a.y == b.y && a.z == b.z;

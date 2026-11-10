@@ -4275,7 +4275,7 @@ What does not scale, or misleads at this size:
   too), so it was not applied: the orchestrator decides.
   **Applied at the merge** (`weld_exact` in `measure.rs`): the part of
   the reproduction now reports 0, as the whole does; repair's own report
-  (`repair.rs`) still counts on the ids it is given.
+  (`repair.rs`) counts the same way.
 - **Repair's memory**: about 800 bytes a triangle at peak (799 MiB for
   1 M); a 10 M scan would need about 8 GiB. Decimation, at about 30 µs a
   collapse (450 000 of them), dominates `process`.

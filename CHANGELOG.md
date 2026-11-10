@@ -801,3 +801,5 @@
   `twisted_top_corner` and `bore_bottom_chamfer` added in
   `docs/previews/phase3/`; `twisted` and `inline_ridge` removed (their
   results are refused now).
+- `repair`'s self-intersection count (`check_intersections`) welds equal
+  positions first, as `measure` does. No golden line moved.
