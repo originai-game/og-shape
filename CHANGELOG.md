@@ -487,3 +487,7 @@
   chamfers of 2 to 5 segments, on straight and curved outlines
   (`docs/research.md` §7.5). Golden case `bevel.untested`; no existing
   hash moved.
+- Previews of the §7.5 cases in `docs/previews/phase3/` (two cones, the
+  in-line ridge, a bored block's chamfer, a seven-sided apex, a pipe
+  through curved faces, loop slide around a cone, a patch miter on a
+  curved outline).

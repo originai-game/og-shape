@@ -1168,6 +1168,12 @@ them beyond the flat-triangle fix above.
   points slide past the next point of the arc. A spread of 1e-6 fits. It
   stays an error value; a clamp would be a silent change.
 
+**Previews** (`cargo run --release -p shape-bevel --example phase3 --
+docs/previews/phase3`, the §7.4 images unchanged): `two_cones`,
+`inline_ridge`, `bored_chamfer`, `apex_seven`, `pipe_curved`,
+`cone_loop_slide` and `curvy_patch_chamfer`. All closed; quads 1 152/1 152,
+24/24, 8/8, 210/210, 302/304, 284/288 and 176/180.
+
 **Still errors, and untested.**
 - A bevel wider than a segment of a curved face (the part revolve's bore
   at r 1.5) is still `TooLarge`. Not attempted: the golden case

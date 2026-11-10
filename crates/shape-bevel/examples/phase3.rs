@@ -1,4 +1,5 @@
-//! Writes the previews of the bevel cases `docs/research.md` §7.4 adds:
+//! Writes the previews of the bevel cases `docs/research.md` §7.4 and
+//! §7.5 add:
 //! one PNG per case, four views, of a close-up (the result intersected
 //! with a cube around the vertex that matters) or of the whole solid.
 //!
@@ -275,7 +276,199 @@ fn cases() -> Result<Vec<Case>, Error> {
             azimuth: -0.6,
         });
     }
+    stream_p(&mut out)?;
     Ok(out)
+}
+
+/// The cases of `docs/research.md` §7.5.
+fn stream_p(out: &mut Vec<Case>) -> Result<(), Error> {
+    let a = cuboid(&BoxDesc {
+        width: 20.0,
+        depth: 20.0,
+        height: 10.0,
+    })?;
+    let mut b = a.clone();
+    b.map_positions(|p| p + DVec3::new(20.0, 20.0, 10.0), false);
+    let touch = boolean(&a, &b, &Boolean::default())?;
+    out.push(Case {
+        name: "two_cones",
+        solid: fillet(&touch, &round(2.0, &[], 6))?,
+        focus: Some((DVec3::new(10.0, 10.0, 8.0), 6.0)),
+        azimuth: 0.6,
+    });
+    out.push(Case {
+        name: "inline_ridge",
+        solid: fillet(&ridge(), &round(0.3, &["along", "split"], 6))?,
+        focus: None,
+        azimuth: -0.4,
+    });
+    let mut bore = cylinder(&CylinderDesc {
+        radius: 4.0,
+        height: 30.0,
+        ..Default::default()
+    })?;
+    bore.map_positions(|p| p + DVec3::new(0.0, 0.0, -10.0), false);
+    let bored = boolean(
+        &a,
+        &bore,
+        &Boolean {
+            op: BoolOp::Cut,
+            ..Default::default()
+        },
+    )?;
+    out.push(Case {
+        name: "bored_chamfer",
+        solid: chamfer(
+            &bored,
+            &Chamfer {
+                distance: 0.5,
+                edges: vec!["side".into()],
+                ..Default::default()
+            },
+        )?,
+        focus: None,
+        azimuth: -0.6,
+    });
+    let seven: Vec<(f64, f64)> = (0..7)
+        .map(|i| {
+            let t = shape_core::trig::TAU * i as f64 / 7.0;
+            (
+                10.0 * shape_core::trig::cos(t),
+                10.0 * shape_core::trig::sin(t),
+            )
+        })
+        .collect();
+    let pyr = prism(
+        &seven,
+        &Extrude {
+            height: 20.0,
+            taper: 1.0,
+            ..Default::default()
+        },
+    )?;
+    out.push(Case {
+        name: "apex_seven",
+        solid: fillet(&pyr, &round(1.5, &["side"], 6))?,
+        focus: Some((DVec3::new(0.0, 0.0, 15.0), 6.0)),
+        azimuth: 0.3,
+    });
+    let part = |c: &[(f64, f64)]| -> Result<Solid, Error> {
+        Ok(revolve(
+            &shape_2d::Profile::from_contour(shape_2d::Contour::corners(
+                c.iter().map(|&(x, y)| DVec2::new(x, y)).collect(),
+            )),
+            &Revolve {
+                angle: 2.0,
+                axis: Axis::Z,
+                ..Default::default()
+            },
+        )?)
+    };
+    let radius = |p: DVec3| (p.x * p.x + p.y * p.y).sqrt();
+    let ring = part(&[
+        (5.0, 0.0),
+        (10.0, 0.0),
+        (10.0, 4.0),
+        (10.0, 8.0),
+        (5.0, 8.0),
+    ])?;
+    let ring = tag(&ring, "seam", |p| {
+        (radius(p) - 10.0).abs() < 1e-9 && p.z == 4.0
+    });
+    let ring = tag(&ring, "post", |p| {
+        p.y.abs() < 1e-12 && (radius(p) - 10.0).abs() < 1e-9
+    });
+    out.push(Case {
+        name: "pipe_curved",
+        solid: fillet(&ring, &round(1.0, &["seam", "post"], 8))?,
+        focus: Some((DVec3::new(10.0, 0.0, 2.5), 3.0)),
+        azimuth: -1.2,
+    });
+    let cone = part(&[(5.0, 0.0), (10.0, 0.0), (7.0, 8.0), (5.0, 8.0)])?;
+    let cone = tag(&cone, "lid", |p| p.z == 8.0);
+    out.push(Case {
+        name: "cone_loop_slide",
+        solid: fillet(
+            &cone,
+            &Fillet {
+                loop_slide: true,
+                ..round(0.3, &["lid"], 6)
+            },
+        )?,
+        focus: Some((DVec3::new(8.5, 0.0, 6.5), 2.5)),
+        azimuth: -1.2,
+    });
+    let curvy = extrude(
+        &shape_2d::Path::new(0.0, 0.0)
+            .line_to(30.0, 0.0)
+            .tangent_arc_to(30.0, 10.0)
+            .line_to(10.0, 10.0)
+            .line_to(10.0, 30.0)
+            .arc_to(5.0, 35.0, 0.0, 30.0)
+            .close()?,
+        &Extrude {
+            height: 10.0,
+            ..Default::default()
+        },
+    )?;
+    out.push(Case {
+        name: "curvy_patch_chamfer",
+        solid: chamfer(
+            &curvy,
+            &Chamfer {
+                distance: 2.0,
+                edges: vec!["top".into()],
+                segments: 3,
+                outer_miter: Miter::Patch,
+                ..Default::default()
+            },
+        )?,
+        focus: Some((DVec3::new(10.0, 10.0, 7.0), 5.0)),
+        azimuth: 2.4,
+    });
+    Ok(())
+}
+
+/// A block 4 × 2 whose top has a straight real edge along y = 1, split
+/// at (2, 1, 1): a curved surface behind it, two flat faces in front.
+fn ridge() -> Solid {
+    let pts = [
+        (0.0, 1.0, 1.0),
+        (2.0, 1.0, 1.0),
+        (4.0, 1.0, 1.0),
+        (0.0, 2.0, 1.2),
+        (2.0, 2.0, 1.5),
+        (4.0, 2.0, 1.2),
+        (0.0, 0.0, 1.0),
+        (2.0, 0.0, 1.0),
+        (4.0, 0.0, 1.0),
+        (0.0, 0.0, 0.0),
+        (4.0, 0.0, 0.0),
+        (4.0, 2.0, 0.0),
+        (0.0, 2.0, 0.0),
+    ];
+    let mut s = Solid::default();
+    for (x, y, z) in pts {
+        s.push_vertex(DVec3::new(x, y, z));
+    }
+    let faces: [(u32, &str, &[[u32; 3]]); 8] = [
+        (0, "back", &[[1, 2, 5], [1, 5, 4], [1, 4, 3], [1, 3, 0]]),
+        (1, "top", &[[1, 0, 6], [1, 6, 7]]),
+        (2, "top", &[[1, 7, 8], [1, 8, 2]]),
+        (3, "side", &[[9, 10, 8], [9, 8, 7], [9, 7, 6]]),
+        (4, "side", &[[10, 11, 5], [10, 5, 2], [10, 2, 8]]),
+        (5, "side", &[[11, 12, 3], [11, 3, 4], [11, 4, 5]]),
+        (6, "side", &[[12, 9, 6], [12, 6, 0], [12, 0, 3]]),
+        (7, "bottom", &[[9, 12, 11], [9, 11, 10]]),
+    ];
+    for (surface, name, tris) in faces {
+        for &t in tris {
+            s.push_triangle(t, surface, &[name]);
+        }
+    }
+    s.tag_edge(0, 1, &["along"]);
+    s.tag_edge(1, 7, &["split"]);
+    s
 }
 
 fn main() -> Result<(), Error> {
