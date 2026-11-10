@@ -27,6 +27,7 @@ dependencies = [
  "glam",
  "gltf",
  "libm",
+ "shape-2d",
  "shape-bool",
  "shape-core",
  "shape-gen",

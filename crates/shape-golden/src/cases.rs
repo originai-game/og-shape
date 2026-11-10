@@ -45,6 +45,7 @@ pub fn all() -> Vec<Case> {
     cases.extend(crate::selfunion::cases());
     cases.extend(crate::touching::cases());
     cases.extend(crate::interference::cases());
+    cases.extend(crate::surface::cases());
     cases
 }
 

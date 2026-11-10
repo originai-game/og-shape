@@ -157,14 +157,26 @@ pub struct Polygon {
     pub sides: u32,
     /// Distance from the centre to each corner.
     pub radius: f64,
+    /// Distance across flats (twice the centre-to-side distance), a nut's
+    /// or a hex bar's size; 0 gives the size by `radius` instead. Give
+    /// one of the two.
+    pub flats: f64,
 }
 
 /// A regular polygon centred on the origin, a corner on +x.
 pub fn polygon(d: &Polygon) -> Result<Profile, ProfileError> {
-    let r = positive(d.radius, "radius")?;
     if d.sides < 3 {
         return Err(ProfileError::TooFewPoints(d.sides as usize));
     }
+    let r = if d.flats == 0.0 {
+        positive(d.radius, "radius")?
+    } else {
+        if d.radius != 0.0 {
+            return Err(ProfileError::Conflict("radius and flats"));
+        }
+        // The apothem is flats / 2 = r cos(π / n).
+        positive(d.flats, "flats")? / 2.0 / trig::cos(trig::PI / d.sides as f64)
+    };
     let mut p = arc(DVec2::ZERO, r, 0.0, trig::TAU, d.sides);
     p.pop();
     Ok(Profile::from_contour(Contour::corners(p)))
@@ -179,6 +191,11 @@ pub struct PolyPoint {
     pub y: f64,
     /// Corner radius; 0 for a sharp corner.
     pub radius: f64,
+    /// The edge from this point to the next is a circular arc whose
+    /// middle stands `bulge` away from the straight edge (the sagitta):
+    /// positive bows out of the outline, negative into it; 0 is straight.
+    /// A bulge of half the edge's length is a half circle.
+    pub bulge: f64,
 }
 
 /// A polygon through given points, each corner sharp or rounded.
@@ -196,17 +213,23 @@ pub fn poly(d: &Poly) -> Result<Profile, ProfileError> {
         return Err(ProfileError::TooFewPoints(n));
     }
     for p in &d.points {
-        if !(p.x.is_finite() && p.y.is_finite() && p.radius.is_finite()) {
+        if !(p.x.is_finite() && p.y.is_finite() && p.radius.is_finite() && p.bulge.is_finite()) {
             return Err(ProfileError::NotFinite("points"));
         }
     }
     // Wind counter-clockwise first, so every convex corner turns left.
+    // `bulge[i]` belongs to the edge from point i to point i + 1; on the
+    // reversed list that edge runs from n − 2 − i to n − 1 − i.
     let mut pts = d.points.clone();
+    let mut bulge: Vec<f64> = pts.iter().map(|p| p.bulge).collect();
     let area2: f64 = (0..n)
         .map(|i| pts[i].x * pts[(i + 1) % n].y - pts[i].y * pts[(i + 1) % n].x)
         .sum();
     if area2 < 0.0 {
         pts.reverse();
+        bulge = (0..n)
+            .map(|k| d.points[(2 * n - 2 - k) % n].bulge)
+            .collect();
     }
     let at = |i: usize| DVec2::new(pts[i % n].x, pts[i % n].y);
     // The distance from each corner to its tangent points.
@@ -215,6 +238,9 @@ pub fn poly(d: &Poly) -> Result<Profile, ProfileError> {
         let r = pts[i].radius;
         if r <= 0.0 {
             continue;
+        }
+        if bulge[i] != 0.0 || bulge[(i + n - 1) % n] != 0.0 {
+            return Err(ProfileError::ArcCorner(i));
         }
         let (prev, p, next) = (at(i + n - 1), at(i), at(i + 1));
         let (u, v) = (
@@ -240,6 +266,9 @@ pub fn poly(d: &Poly) -> Result<Profile, ProfileError> {
         if trim[i] == 0.0 {
             c.points.push(p);
             c.sharp.push(true);
+            if bulge[i] != 0.0 {
+                arc_edge(&mut c, p, next, bulge[i])?;
+            }
             continue;
         }
         let (u, v) = ((prev - p).normalize(), (next - p).normalize());
@@ -267,6 +296,34 @@ pub fn poly(d: &Poly) -> Result<Profile, ProfileError> {
         }
     }
     Ok(Profile::from_contour(c))
+}
+
+/// The points strictly inside an arc edge from `a` to `b` on a
+/// counter-clockwise outline, its middle `s` to the right of the chord
+/// (out of the outline) or, negative, to the left.
+fn arc_edge(c: &mut Contour, a: DVec2, b: DVec2, s: f64) -> Result<(), ProfileError> {
+    let chord = b - a;
+    let len = chord.length();
+    if len <= 0.0 {
+        return Err(ProfileError::NotPositive("the chord of an arc edge"));
+    }
+    // Radius from the chord and the sagitta; the centre lies r − s from
+    // the chord's middle, into the outline (left of the travel).
+    let half = len / 2.0;
+    let r = (half * half + s * s) / (2.0 * s.abs());
+    let left = DVec2::new(-chord.y, chord.x) / len;
+    let center = (a + b) / 2.0 + left * (r - s.abs()) * s.signum();
+    // Seen from the centre the arc turns counter-clockwise when it bows
+    // out of a counter-clockwise outline: 4 atan(2s / chord), signed.
+    let sweep = 4.0 * trig::atan2(s, half);
+    let a0 = trig::atan2(a.y - center.y, a.x - center.x);
+    let mut pts = arc(center, r, a0, sweep, segments(r, sweep));
+    pts.pop();
+    for q in pts.into_iter().skip(1) {
+        c.points.push(q);
+        c.sharp.push(false);
+    }
+    Ok(())
 }
 
 /// A superellipse: |x/rx|ⁿ + |y/ry|ⁿ = 1.
@@ -327,7 +384,12 @@ mod tests {
 
     #[test]
     fn poly_rounds_only_the_corners_asked() {
-        let p = |x, y, radius| PolyPoint { x, y, radius };
+        let p = |x, y, radius| PolyPoint {
+            x,
+            y,
+            radius,
+            ..Default::default()
+        };
         let l = poly(&Poly {
             points: vec![
                 p(0.0, 0.0, 0.0),
@@ -350,6 +412,80 @@ mod tests {
             ],
         });
         assert!(matches!(too_big, Err(ProfileError::RadiusTooLarge(_))));
+    }
+
+    #[test]
+    fn a_bulge_makes_an_arc_edge_whichever_way_the_points_run() {
+        let p = |x, y, bulge| PolyPoint {
+            x,
+            y,
+            bulge,
+            ..Default::default()
+        };
+        // A 10 × 10 square whose bottom edge bows out 5: a half circle.
+        let ccw = vec![
+            p(0.0, 0.0, 5.0),
+            p(10.0, 0.0, 0.0),
+            p(10.0, 10.0, 0.0),
+            p(0.0, 10.0, 0.0),
+        ];
+        let a = poly(&Poly {
+            points: ccw.clone(),
+        })
+        .unwrap();
+        let want = 100.0 + trig::PI * 25.0 / 2.0;
+        // 12 chords on the half circle lose about 1.1 % of its area.
+        assert!((a.area() - want).abs() / want < 5e-3, "{}", a.area());
+        // The same outline listed clockwise: the bulge stays on its edge.
+        let mut cw: Vec<PolyPoint> = ccw.iter().rev().copied().collect();
+        for q in &mut cw {
+            q.bulge = 0.0;
+        }
+        cw[2].bulge = 5.0; // the edge (10, 0) → (0, 0)
+        let b = poly(&Poly { points: cw }).unwrap();
+        assert!((a.area() - b.area()).abs() < 1e-9);
+        // Bowing in takes the half circle out; the ends are corners.
+        let inward = poly(&Poly {
+            points: vec![
+                p(0.0, 0.0, -5.0),
+                p(10.0, 0.0, 0.0),
+                p(10.0, 10.0, 0.0),
+                p(0.0, 10.0, 0.0),
+            ],
+        })
+        .unwrap();
+        let want = 100.0 - trig::PI * 25.0 / 2.0;
+        assert!((inward.area() - want).abs() / want < 1e-2);
+        let c = &inward.regions[0].outer;
+        assert_eq!(c.sharp.iter().filter(|s| **s).count(), 4);
+        // A rounded corner next to an arc is refused.
+        let mut round = ccw;
+        round[1].radius = 1.0;
+        assert_eq!(
+            poly(&Poly { points: round }),
+            Err(ProfileError::ArcCorner(1))
+        );
+    }
+
+    #[test]
+    fn polygon_flats_set_the_size_across_the_flats() {
+        let hex = polygon(&Polygon {
+            sides: 6,
+            flats: 10.0,
+            ..Default::default()
+        })
+        .unwrap();
+        let ys = hex.regions[0].outer.points.iter().map(|p| p.y);
+        let (lo, hi) = ys.fold((0.0f64, 0.0f64), |(a, b), y| (a.min(y), b.max(y)));
+        assert!((hi - lo - 10.0).abs() < 1e-12, "{}", hi - lo);
+        assert_eq!(
+            polygon(&Polygon {
+                sides: 6,
+                radius: 5.0,
+                flats: 10.0
+            }),
+            Err(ProfileError::Conflict("radius and flats"))
+        );
     }
 
     #[test]

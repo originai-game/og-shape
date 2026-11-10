@@ -129,6 +129,7 @@ fn curved(h: &mut OutputHash) -> Result<(), HashError> {
         radius: 15.0,
         radius_top: 0.0,
         height: 20.0,
+        ..Default::default()
     })
     .unwrap_or_default();
     solid(
@@ -329,6 +330,7 @@ fn gaps(h: &mut OutputHash) -> Result<(), HashError> {
         radius: 15.0,
         radius_top: 0.0,
         height: 20.0,
+        ..Default::default()
     })
     .unwrap_or_default();
     let arc = tag(&c, "arc", |p| p.z == 20.0 && p.x > 0.0 && p.y > 0.0);
@@ -492,6 +494,7 @@ fn slivers(h: &mut OutputHash) -> Result<(), HashError> {
             &Revolve {
                 angle,
                 axis: Axis::Z,
+                ..Default::default()
             },
         )
         .unwrap_or_default()

@@ -233,6 +233,11 @@ impl Model {
         Ok(&self.node(id)?.name)
     }
 
+    /// The name of node `id`, used up or not; `None` for no such node.
+    pub(crate) fn label(&self, id: Id) -> Option<&str> {
+        self.nodes.get(id.0 as usize).map(|n| n.name.as_str())
+    }
+
     /// The live node named `name`.
     pub fn find(&self, name: &str) -> Option<Id> {
         self.nodes
@@ -738,6 +743,24 @@ impl Model {
         let t = self.tool_in(part, host)?;
         let name = self.node(part)?.name.clone();
         self.edit(host, |s, _| Ok(shape_edit::seat(s, &t, &name)?))
+    }
+
+    /// Scales part `id`'s solid along its own axes, about its own origin,
+    /// by `factors` (each positive; a mirror is [`Model::mirror`]). Its
+    /// placement, names and joints stay; a group is refused.
+    pub fn scale(&mut self, id: Id, factors: DVec3) -> Result<(), ModelError> {
+        if !(factors.is_finite() && factors.min_element() > 0.0) {
+            return Err(ModelError::BadValue(
+                "a scale factor (each must be positive)".into(),
+            ));
+        }
+        self.edit(id, |s, _| {
+            let mut s = s.clone();
+            s.map_positions(|p| p * factors, false);
+            s.canonicalize()
+                .map_err(|_| ModelError::BadValue("the scaled positions".into()))?;
+            Ok(s)
+        })
     }
 
     /// Holes ([`shape_edit::hole`]); `d.at` frames are in the world.

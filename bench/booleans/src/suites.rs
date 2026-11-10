@@ -677,6 +677,7 @@ pub fn touching() -> Vec<Case> {
                     shape_2d::polygon(&shape_2d::Polygon {
                         sides: 6,
                         radius: r,
+                        ..Default::default()
                     })
                     .expect("polygon")
                 };
@@ -692,6 +693,7 @@ pub fn touching() -> Vec<Case> {
                     shape_2d::polygon(&shape_2d::Polygon {
                         sides: 6,
                         radius: r,
+                        ..Default::default()
                     })
                     .expect("polygon")
                 };

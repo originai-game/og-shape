@@ -1,0 +1,93 @@
+{
+ "triangles": 14268,
+ "boundsMin": [
+  -203.96,
+  -203.96,
+  0
+ ],
+ "boundsMax": [
+  203.96,
+  203.96,
+  599.99
+ ],
+ "size": [
+  407.91,
+  407.91,
+  599.99
+ ],
+ "joints": [],
+ "parts": [
+  {
+   "name": "shell",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 1152,
+   "boundsMin": [
+    -196,
+    -196,
+    0
+   ],
+   "boundsMax": [
+    196,
+    196,
+    560
+   ]
+  },
+  {
+   "name": "head",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 1276,
+   "boundsMin": [
+    -196,
+    -196,
+    560
+   ],
+   "boundsMax": [
+    196,
+    196,
+    596
+   ]
+  },
+  {
+   "name": "hoop",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 3712,
+   "boundsMin": [
+    -203.96,
+    -203.96,
+    584.01
+   ],
+   "boundsMax": [
+    203.96,
+    203.96,
+    599.99
+   ]
+  },
+  {
+   "name": "lacing",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 8128,
+   "boundsMin": [
+    -202,
+    -202,
+    296
+   ],
+   "boundsMax": [
+    202,
+    202,
+    556
+   ]
+  }
+ ]
+}

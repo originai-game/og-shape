@@ -1,0 +1,7 @@
+2026-11-09T18:00:35.319Z error op 9 join "frame": the result is open (9 unmatched edges): an operand most likely passes through itself; repair or fuse its parts first (at /home/user/og-shape/eval/phase6/M/obj4_spectacles/program.ts:20:5)
+2026-11-09T18:00:42.804Z error op 9 join "frame": the result is open (9 unmatched edges): an operand most likely passes through itself; repair or fuse its parts first (at /home/user/og-shape/eval/phase6/M/obj4_spectacles/program.ts:20:5)
+2026-11-09T18:00:50.971Z error op 8 join "frame": the result is open (9 unmatched edges): an operand most likely passes through itself; repair or fuse its parts first (at /home/user/og-shape/eval/phase6/M/obj4_spectacles/program.ts:20:5)
+2026-11-09T18:01:00.011Z error op 11 wire "bridge": wire has no field "segments"; it takes: name, path, diameter, closed, fillet, fillets, on (at /home/user/og-shape/eval/phase6/M/obj4_spectacles/program.ts:22:19)
+2026-11-09T18:01:02.938Z error op 26 extrude "temple_r_bar": profile: the radius at point 2 is larger than its corner allows (at /home/user/og-shape/eval/phase6/M/obj4_spectacles/program.ts:95:19)
+2026-11-09T18:01:08.470Z ok parts 9 open 0 joints 2 triangles 3324
+2026-11-09T18:01:14.506Z ok parts 9 open 0 joints 2 triangles 3324

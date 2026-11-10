@@ -150,6 +150,7 @@ fn axis_z(h: &mut OutputHash) -> Result<(), HashError> {
             &Revolve {
                 angle: 2.0,
                 axis: Axis::Z,
+                ..Default::default()
             },
         ),
     )?;
@@ -158,6 +159,7 @@ fn axis_z(h: &mut OutputHash) -> Result<(), HashError> {
         sphere_desc(&SphereDesc {
             radius: 12.5,
             axis: Axis::Z,
+            ..Default::default()
         }),
     )?;
     solid(
@@ -166,6 +168,7 @@ fn axis_z(h: &mut OutputHash) -> Result<(), HashError> {
             radius: 20.0,
             tube_radius: 4.0,
             axis: Axis::Z,
+            ..Default::default()
         }),
     )?;
     solid(
@@ -174,6 +177,7 @@ fn axis_z(h: &mut OutputHash) -> Result<(), HashError> {
             radius: 7.0,
             height: 3.0,
             axis: Axis::Z,
+            ..Default::default()
         }),
     )
 }

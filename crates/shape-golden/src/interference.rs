@@ -47,7 +47,12 @@ fn solid<E: std::fmt::Display>(
 }
 
 fn hexagon(radius: f64) -> Profile {
-    polygon(&Polygon { sides: 6, radius }).unwrap_or_default()
+    polygon(&Polygon {
+        sides: 6,
+        radius,
+        ..Default::default()
+    })
+    .unwrap_or_default()
 }
 
 fn disc(radius: f64, segments: u32) -> Profile {

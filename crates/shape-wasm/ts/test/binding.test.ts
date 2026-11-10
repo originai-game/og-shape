@@ -72,6 +72,45 @@ describe("errors are thrown with the kernel's message", () => {
   });
 });
 
+describe("errors say where", () => {
+  test("the op, its index, the part and the author's line", () => {
+    const s = og.model({ name: "e" });
+    s.box({ name: "plate", width: 10, depth: 10, height: 2 });
+    let message = "";
+    try {
+      s.cylinder({ name: "rod", radius: 1, height: 2, segmentz: 8 } as never);
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toStartWith('op 1 cylinder "rod": cylinder has no field "segmentz"; it takes: ');
+    expect(message).toMatch(/\(at \/.*binding\.test\.ts:\d+:\d+\)$/);
+  });
+  test("descs the binding reads itself refuse unknown fields too", () => {
+    expect(() => og.frame({ origin: [0, 0, 0], norm: [0, 0, 1] } as never)).toThrow('frame has no field "norm"');
+    const s = og.model({ name: "p" });
+    s.box({ name: "b", width: 1, depth: 1, height: 1 });
+    expect(() => s.preview({ widht: 64 } as never)).toThrow('preview has no field "widht"');
+  });
+});
+
+describe("profile helpers", () => {
+  test("translate, rotate, offset and scale are the JSON forms", () => {
+    const r = og.rect({ width: 4, height: 2 });
+    expect(og.translate({ profile: r, x: 1 })).toEqual({ translate: { profile: r, x: 1 } });
+    const s = og.model({ name: "p" });
+    const p = s.extrude({
+      name: "p",
+      height: 1,
+      profile: og.offset({ profile: og.rotate({ profile: og.scale({ profile: r, x: 2 }), angle: og.deg(90) }), distance: 0.5 }),
+    });
+    const m = s.measure().parts[0];
+    // 8 × 2, turned a quarter, grown 0.5: 3 wide in x, 9 in y.
+    expect(m.boundsMax[0] - m.boundsMin[0]).toBeCloseTo(3, 9);
+    expect(m.boundsMax[1] - m.boundsMin[1]).toBeCloseTo(9, 9);
+    expect(p.name).toBe("p");
+  });
+});
+
 describe("the washing machine", () => {
   const s = washerOpen(og);
   test("records the committed program", () => {

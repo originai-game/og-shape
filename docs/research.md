@@ -2545,6 +2545,173 @@ marked. None was fixed in this stream.
 - Token counts are totals from the Agent tool, with no input and output
   split; the fixed context (62 668) is the same for every agent.
 
+## 14. The authoring surface (stream M, 2026-11-09)
+
+Stream M closes items 6 to 9 of §13.6: every generator that exists is
+reachable from the program JSON and the binding (and so the CLI and
+MCP), round generators take a segment count, unknown fields are refused,
+and every error says where it happened.
+
+### 14.1 Decisions
+
+- **Added fields, zero values keep today.** `shape-2d`: `Polygon::flats`
+  (across flats; with `radius` too it is `ProfileError::Conflict`),
+  `PolyPoint::bulge` (the edge to the next point is an arc whose middle
+  stands that far off the chord, positive out of the outline whichever
+  way the points run; a corner radius next to an arc is
+  `ProfileError::ArcCorner`). The non-uniform scale already existed
+  (`Profile::scale`); it was only missing from the program.
+  `shape-gen`: `segments` on `CylinderDesc`, `SphereDesc`, `DomeDesc`,
+  `Revolve` and `Wire`; `angle`, `segments`, `tube_segments` on
+  `TorusDesc`; `ConeDesc` and `TubeDesc` for the bare `cone` and `tube`.
+  Every zero path is the old code path, so no golden hash moved (checked
+  natively and as wasm32-wasip1). The only edit outside these crates'
+  own files that the new fields forced is `..Default::default()` in
+  struct literals, one of them in a `shape-bool` test.
+- **`segments` is a count a full turn.** A part turn (a revolve, a part
+  torus, a wire's bend) gets its share, rounded up, at least 1; a sphere
+  gets half as many pole to pole, a dome a quarter. 3 to 1 024, else
+  `GenError::Invalid`. It is the same unit everywhere, so an author sets
+  one number per part.
+- **No chord-tolerance override.** Considered and left out. The cost the
+  agents hit (an 8 mm sphere at 812 triangles, a hoop torus at 3 712) is
+  the chord rule's floor of 24 a turn, which a looser tolerance does not
+  lift; a tolerance would also be a second knob that interacts with the
+  24 and 64 clamps, and `docs/design.md` §4 fixes tolerances in
+  millimetres whatever the unit. A count is direct and visible in the
+  program.
+- **Program ops.** `wire`, `body` (views: a number, `[[y, v], …]`, or
+  `{points, smooth}`), `knurl`, `gear` (the gear solid; the profile keeps
+  the name `gear` as a profile), the dome's `height`, the loft's
+  `curve`, turned solids' `axis` (`"+Y"`, `"+Z"`, in the spelling joint
+  axes use), the part torus, and `scale`: a part's solid along its own
+  axes about its own origin, positive factors only (a mirror is
+  `mirror`), placement, names and joints kept, a group refused. The
+  binding adds the same, plus `og.translate`, `og.rotate`, `og.offset`
+  and `og.scale` as profile helpers (desc objects, the JSON forms).
+- **Unknown fields are refused** at every level: an operation, a
+  profile, a `poly` point, a loft section, a body view, a frame, a
+  `mimic`, an `along` path. The error is `ModelError::UnknownField`:
+  where, the field, and the fields taken. `null` stays the same as
+  absent. Descs the binding reads itself (`og.model`, `og.frame`,
+  `preview`) are checked in TypeScript the same way. No program in
+  `eval/`, `golden/` or `guides/` used a stray field (the 65 eval
+  TypeScript programs of runs A, T, B and C and every recorded JSON
+  program were rebuilt to check).
+- **Errors are located.** `Session::apply_value` wraps any failure in
+  `ModelError::At { index, op, reader, part, error }`: the index in a
+  replayed program, or the index the op would be recorded at in a live
+  session; the part is the node the op worked on (`id`, `target`, `host`,
+  `child`, `to`, `ids`), else the `name` it made. Shown as `op 3 fillet
+  "lid": …`, and for a reader `face "lid" (a reader, before op 3): …`.
+  Field errors became `ModelError::BadField` and no longer repeat the
+  op.
+- **The binding's call site** comes from the stack, read in the `catch`
+  around the wasm call, while the author's call is still on it: the
+  first frame outside `index.ts`, appended as `(at file:line:col)`.
+  Nothing is captured on success, so it costs nothing until a call
+  fails. It works in bun (JavaScriptCore) and in V8's format; a bundled
+  or minified binding would point into the bundle.
+- **Found and fixed:** a generator whose `on` frame was refused had
+  already added the part, so the model changed on a failed operation
+  and the recorded program no longer replayed to it. `on` is now read
+  and checked before the part is added.
+
+### 14.2 Golden
+
+`crates/shape-golden/src/surface.rs`: one program that uses every new
+op and field, replayed; `surface.program.glb` and
+`surface.program.measure`. Every part must be closed with no degenerate
+triangle, or the case fails. Native x86-64 and wasm32-wasip1 agree; no
+earlier line moved.
+
+**For stream N:** a loft whose top section is a rotated rect
+(`{"rotate": {"profile": {"rect": {"width": 3, "height": 2}}, "angle":
+0.3}}` at z 8, over circles r 3 and a circle scaled 0.5 in x) is open
+with 10 non-manifold edges and 1 degenerate triangle, with `curve`
+`straight`, `catmullRom` or `spline`. The same rect unrotated, or a
+circle, is closed. It looks like the cap against the resampled ring
+(§13.6 item 3 may be the same fault); the golden program uses the
+unrotated rect.
+
+### 14.3 The guide's size
+
+Measured as in §13.2: a subagent `cat`s the two guides concatenated, less
+one that `cat`s an empty file. The empty-file baseline is now 61 547
+tokens (it was 62 668 in §13).
+
+| version | bytes | tokens | note |
+|---|---|---|---|
+| v3 (§13) | 15 126 | 6 229 | |
+| v4, run `M` | 15 828 | 6 542 | the new surface, with cuts elsewhere |
+| v4, committed | 16 020 | 6 638 | plus run `M`'s fixes: which generators take `segments`, `axis` in the table, where a `+Z` torus sits |
+
+So 6.6 % over v3. `program.md` grew too (it is not part of the measured
+pair).
+
+### 14.4 Re-runs (run `M`)
+
+Five objects whose earlier agents hit these gaps: bent tubes built from
+sweeps, `Math.sin` and quarter tori (`auto1`), torus hoops and their
+triangle cost (`obj2`), bent frames (`obj4`), and the most failed builds
+and errors that did not say where (`auto2`, `sim2`). Method as §13.1:
+one subagent each, the same model, the guides as committed before the
+fixes in the last row of §14.3, the brief and render, at most 8 builds,
+told to read nothing else.
+
+| object | A: it. (err.), problems, tokens | B | C | M | M: triangles, size dev. |
+|---|---|---|---|---|---|
+| auto1_curved_tubes | 4 (1), 6, 78 897 | 2 (0), 3, 80 103 | 2 (0), 4 | 3 (1), 6, 84 298 | 28 632, 0.0 % |
+| auto2_lever_knob | 6 (2), 5, 80 565 | 7 (1), 5, 84 747 | 3 (0), 4 | 2 (0), 6, 77 401 | 498, 0.0 % |
+| sim2_mouse_and_pad | 5 (2), 6, 79 023 | 3 (0), 5, 82 222 | 6 (2), 5 | 5 (0), 8, 92 784 | 8 238, 0.1 % |
+| obj2_djembe | 4 (1), 6, 78 514 | 2 (0), 3, 78 153 | — | 5 (0), 6, 83 572 | 14 268, 0.0 % |
+| obj4_spectacles | 3 (0), 7, 81 681 | 3 (0), 5, 83 387 | — | 7 (5), 6, 90 490 | 3 324, 0.0 % |
+| mean / total | 4.4 (6), 6.0, 79 736 | 3.4 (1), 4.2, 81 722 | | 4.4 (6), 6.4, 85 709 | |
+
+Every `M` object built, every part closed, joints as the reference
+(5 of 5), every size within 0.1 % (A's spectacles were 9.5 % off).
+
+What changed:
+- **The new surface was used where the gaps were.** Bent tubes and frames
+  are `wire`s (auto1, obj2, obj4; no `sweep` and no `Math.sin` in any `M`
+  program, where B's auto1 and obj1 used `Math.sin`); the mouse is a
+  `body`; the drum hoop a `torus` with `axis: "+Z"`; the knob's
+  non-regular hexagon an `og.scale`d polygon; `segments` on round parts.
+- **Errors said where.** Of the 6 failed builds, every one was fixed in
+  the next build or the one after, and the agents said the line and op
+  pointed at the failing call. auto1's one error and one of obj4's were
+  `segments` on `wire`, which the guide's "round generators take
+  `segments`" implied; `wire` now takes it. obj4's other four were a
+  join of solids sharing a plane (§13.6 item 1, unchanged: "the result is
+  open … passes through itself" still misleads) and a `poly` corner
+  radius too large.
+- **Not better by the counts.** Iterations and failed builds match run
+  `A`, above `B`; guide problems are up (6.4 a run). Most of the reported
+  problems are about the new generators' details (`body`'s y origin, end
+  caps and overshoot; a `+Z` torus's height; which generators take
+  `segments`; `axis` missing from the table), plus older ones (polygon
+  orientation, continuous joints and `range`, dark previews). Tokens are
+  up 6 000 a run on `A` and 4 000 on `B`, although v4 is 538 tokens
+  longer than `A`'s guide and 982 shorter than `B`'s, and the fixed
+  context is 1 121 smaller: the rest is more builds and image reads
+  (sim2, obj4). With one agent per object,
+  differences of a build or two are noise (§13.7).
+- **Triangles went up, not down**, on the bent tubes (28 632 against B's
+  10 368): the wires carry full 24-to-64 rings and bends, and the agent
+  could not lower them (`wire` had no `segments` then). The djembe has
+  more parts (16 wire strips). Segment control was used on the mouse and
+  spectacles.
+
+### 14.5 What is untested
+
+- The binding's call site was checked under bun only, not node or a
+  browser, and not through a bundler.
+- Run `M` used the guides before the last fixes of §14.3; those fixes
+  (and `segments` on `wire`) were not re-run with agents.
+- aarch64 and Windows: CI only, as before.
+- The MCP server gets the new ops through `build` and `run_typescript`
+  unchanged; it was exercised by its existing tests, not with the new
+  ops.
 ## 15. Loft quality and an interference measure (stream N, 2026-11-09)
 
 Items 3, 4, 10 and 12 of §13.6. Code: `shape-gen/src/loft.rs`, the cap

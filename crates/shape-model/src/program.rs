@@ -10,24 +10,37 @@
 //! written into the operations that used them, so a replay needs no
 //! readers and gives the same bytes.
 //!
+//! Every operation, and every object inside one (a profile, a section, a
+//! view, a frame), takes only the fields listed; any other field is an
+//! error naming it and the fields it takes. A failing operation answers
+//! [`ModelError::At`]: its index in the program, its verb, and the part it
+//! made or worked on.
+//!
 //! Operations, with their fields (lengths in the model's unit, angles in
 //! radians, frames as `{"origin": [x, y, z], "x": […], "y": […], "z": […]}`,
-//! parts by the `id` a constructor answered):
+//! parts by the `id` a constructor answered, turned solids' `axis` `"+Y"`
+//! (the default) or `"+Z"`, `segments` a turn with 0 for the chord rule):
 //!
 //! | op | fields | answers |
 //! |---|---|---|
 //! | `units` | `unit`: `"mm"`, `"cm"`, `"m"` | |
 //! | `box` | `name`, `width`, `depth`, `height`, `on`? | `id` |
-//! | `cylinder` | `name`, `radius`, `radiusTop`?, `height`, `on`? | `id` |
-//! | `cone`, `sphere`, `dome` | `name`, `radius`, `height` (cone), `on`? | `id` |
-//! | `tube` | `name`, `outer`, `inner`, `height`, `on`? | `id` |
-//! | `torus` | `name`, `radius`, `tube`, `on`? | `id` |
+//! | `cylinder` | `name`, `radius`, `radiusTop`?, `height`, `segments`?, `on`? | `id` |
+//! | `cone` | `name`, `radius`, `height`, `segments`?, `on`? | `id` |
+//! | `sphere` | `name`, `radius`, `axis`?, `segments`?, `on`? | `id` |
+//! | `dome` | `name`, `radius`, `height`?, `axis`?, `segments`?, `on`? | `id` |
+//! | `tube` | `name`, `outer`, `inner`, `height`, `segments`?, `on`? | `id` |
+//! | `torus` | `name`, `radius`, `tube`, `angle`?, `axis`?, `segments`?, `tubeSegments`?, `on`? | `id` |
 //! | `wedge` | `name`, `width`, `height`, `depth`, `on`? | `id` |
 //! | `extrude` | `name`, `profile`, `height`, `twist`?, `taper`?, `bothSides`?, `on`? | `id` |
-//! | `revolve` | `name`, `profile` (x the radius, about +y), `angle`?, `on`? | `id` |
-//! | `sweep` | `name`, `profile`, `path` (points), `up`?, `twist`?, `scaleEnd`? | `id` |
-//! | `loft` | `name`, `sections`: `[{profile, z}]`, `samples`?, `steps`?, `on`? | `id` |
+//! | `revolve` | `name`, `profile` (x the radius), `angle`?, `axis`?, `segments`?, `on`? | `id` |
+//! | `sweep` | `name`, `profile`, `path` (points), `up`?, `twist`?, `scaleEnd`?, `on`? | `id` |
+//! | `loft` | `name`, `sections`: `[{profile, z}]`, `samples`?, `steps`?, `curve`? (`"auto"`, `"straight"`, `"catmullRom"`, `"spline"`), `on`? | `id` |
 //! | `thread` | `name`, `radius`, `pitch`, `length`, `depth`, `on`? | `id` |
+//! | `wire` | `name`, `path` (points), `diameter`, `closed`?, `fillet`?, `fillets`?, `segments`?, `on`? | `id` |
+//! | `body` | `name`, `plan`, `top`, `bottom`, `n`? (views: a number, `[[y, v]…]`, or `{points, smooth}`), `on`? | `id` |
+//! | `knurl` | `name`, `diameter`, `height`, `pitch`?, `straight`?, `on`? | `id` |
+//! | `gear` | `name`, `teeth`, `module`, `width`, `pressureAngle`?, `bore`?, `hub`?, `hubHeight`?, `on`? | `id` |
 //! | `at`, `transform` | `id`, `frame` | |
 //! | `group` | `name`, `children` | `id` |
 //! | `assembly` | `name`, `children`, `anchors`? (`{name: frame}`) | `id` |
@@ -36,6 +49,7 @@
 //! | `mirror` | `id`, `plane` (a frame), `name` | `id` |
 //! | `cut`, `join`, `intersect` | `target`, `tool` | |
 //! | `seat` | `host`, `part` | |
+//! | `scale` | `id`, `x`?, `y`?, `z`? (factors along its own axes; 0 keeps 1) | |
 //! | `hole` | `id`, `diameter`, `at` (frames), `depth`?, `counterbore`? `[d, depth]`, `countersink`? `[d, angle]` | |
 //! | `pocket` | `id`, `profile`, `depth`?, `at`? (frames) | |
 //! | `split` | `id`, `frame`, `keep`? (`"above"`, `"below"`) | |
@@ -58,18 +72,26 @@
 //! `radius`, `start`?, `angle`?, `on`?), `along` (`path`, `pitch`?,
 //! `count`?), `snap` (`ids`, `points`, `direction`?), `names` (`id`),
 //! `measure`. Profiles are objects with one key: `rect`, `circle`,
-//! `ellipse`, `slot`, `polygon`, `poly` (`points`: `[x, y]` or
-//! `{x, y, radius}`), `gear`, `union` / `subtract` / `intersect` (a list,
-//! the first operated on by the rest), `offset` (`profile`, `distance`),
-//! `translate` (`profile`, `x`, `y`), `rotate` (`profile`, `angle`).
+//! `ellipse`, `slot`, `polygon` (`sides`, `radius` or `flats`), `poly`
+//! (`points`: `[x, y]` or `{x, y, radius, bulge}`), `gear`, `union` /
+//! `subtract` / `intersect` (a list, the first operated on by the rest),
+//! `offset` (`profile`, `distance`), `translate` (`profile`, `x`, `y`),
+//! `rotate` (`profile`, `angle`), `scale` (`profile`, `x`, `y`; 0 keeps 1).
 
 use serde_json::{Map, Value, json};
 use shape_2d::Profile;
 use shape_bevel::{Chamfer, Fillet, Soften};
 use shape_core::{DVec2, DVec3, Frame};
 use shape_edit::{Dent, Hole, Keep, Pocket, Shell};
+use shape_gen::body::{Body, View};
+use shape_gen::loft::LoftCurve;
+use shape_gen::parts::{GearDesc, Knurl};
 use shape_gen::paths::{Loft, Sweep, Thread};
-use shape_gen::solids::{BoxDesc, CylinderDesc, Extrude, Revolve};
+use shape_gen::solids::{
+    Axis, BoxDesc, ConeDesc, CylinderDesc, DomeDesc, Extrude, Revolve, SphereDesc, TorusDesc,
+    TubeDesc,
+};
+use shape_gen::wire::Wire;
 use shape_tools::{JointKind, Material, Mimic};
 
 use crate::error::ModelError;
@@ -108,8 +130,7 @@ impl Session {
             .ok_or_else(|| ModelError::Program("no \"ops\" list".into()))?;
         let mut s = Session::new(name);
         for (i, op) in ops.iter().enumerate() {
-            s.apply_value(op)
-                .map_err(|e| ModelError::Program(format!("op {i}: {e}")))?;
+            s.apply_at(op, i)?;
         }
         Ok(s)
     }
@@ -131,21 +152,60 @@ impl Session {
         Ok(self.apply_value(&v)?.to_string())
     }
 
-    /// Applies one operation; answers a JSON object.
+    /// Applies one operation; answers a JSON object. An error names the
+    /// operation, the index it would be recorded at, and its part
+    /// ([`ModelError::At`]).
     pub fn apply_value(&mut self, op: &Value) -> Result<Value, ModelError> {
-        let o = op
-            .as_object()
-            .ok_or_else(|| ModelError::Program("an operation is an object".into()))?;
-        let name = o
-            .get("op")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ModelError::Program("an operation has an \"op\" string".into()))?;
-        let a = Args { o, op: name };
-        let (answer, recorded) = self.dispatch(&a)?;
-        if recorded {
-            self.ops.push(op.clone());
+        let index = self.ops.len();
+        self.apply_at(op, index)
+    }
+
+    fn apply_at(&mut self, op: &Value, index: usize) -> Result<Value, ModelError> {
+        let verb = op.get("op").and_then(Value::as_str).unwrap_or("");
+        let at = |error: ModelError, part: Option<String>| ModelError::At {
+            index,
+            op: verb.into(),
+            reader: is_reader(verb),
+            part,
+            error: Box::new(error),
+        };
+        let o = op.as_object().ok_or_else(|| {
+            at(
+                ModelError::Program("an operation is an object".into()),
+                None,
+            )
+        })?;
+        if verb.is_empty() {
+            return Err(at(
+                ModelError::Program("an operation has an \"op\" string".into()),
+                None,
+            ));
         }
-        Ok(answer)
+        let a = Args { o, op: verb };
+        let result = check_fields(o, verb).and_then(|()| self.dispatch(&a));
+        match result {
+            Ok((answer, recorded)) => {
+                if recorded {
+                    self.ops.push(op.clone());
+                }
+                Ok(answer)
+            }
+            Err(e) => Err(at(e, self.part_of(o))),
+        }
+    }
+
+    /// The part an operation made or worked on, by name.
+    fn part_of(&self, o: &Map<String, Value>) -> Option<String> {
+        for k in ["id", "target", "host", "child", "to", "ids"] {
+            let first = match o.get(k) {
+                Some(Value::Array(l)) => l.first(),
+                v => v,
+            };
+            if let Some(name) = first.and_then(id_of).and_then(|i| self.model.label(i)) {
+                return Some(name.into());
+            }
+        }
+        o.get("name").and_then(Value::as_str).map(String::from)
     }
 
     fn dispatch(&mut self, a: &Args) -> Result<(Value, bool), ModelError> {
@@ -231,11 +291,24 @@ impl Session {
                 Ok((none(), true))
             }
             "box" | "cylinder" | "cone" | "sphere" | "dome" | "tube" | "torus" | "wedge"
-            | "extrude" | "revolve" | "sweep" | "loft" | "thread" => {
+            | "extrude" | "revolve" | "sweep" | "loft" | "thread" | "wire" | "body" | "knurl"
+            | "gear" => {
+                // Everything is read and checked before the part is added,
+                // so a failing operation leaves the model as it was.
+                let on = match a.opt("on") {
+                    Some(_) => {
+                        let f = a.frame("on")?;
+                        if !f.is_rigid(1e-9) {
+                            return Err(a.bad("on", "a frame: finite, orthonormal, right-handed"));
+                        }
+                        Some(f)
+                    }
+                    None => None,
+                };
                 let solid = generate(a)?;
                 let i = m.add(a.str("name")?, solid)?;
-                if a.opt("on").is_some() {
-                    m.at(i, &a.frame("on")?)?;
+                if let Some(f) = on {
+                    m.at(i, &f)?;
                 }
                 Ok((id(i), true))
             }
@@ -288,6 +361,14 @@ impl Session {
                 m.seat(a.id("host")?, a.id("part")?)?;
                 Ok((none(), true))
             }
+            "scale" => {
+                let f = |k: &str| -> Result<f64, ModelError> {
+                    let v = a.num_or(k, 0.0)?;
+                    Ok(if v == 0.0 { 1.0 } else { v })
+                };
+                m.scale(a.id("id")?, DVec3::new(f("x")?, f("y")?, f("z")?))?;
+                Ok((none(), true))
+            }
             "hole" => {
                 let pair = |k: &str| -> Result<(f64, f64), ModelError> {
                     match a.opt(k) {
@@ -313,7 +394,7 @@ impl Session {
             }
             "pocket" => {
                 let d = Pocket {
-                    profile: profile(a, a.get("profile")?)?,
+                    profile: profile(a.get("profile")?).map_err(|e| a.inside("profile", e))?,
                     depth: a.num_or("depth", 0.0)?,
                     at: match a.opt("at") {
                         Some(_) => a.frames("at")?,
@@ -438,6 +519,7 @@ impl Session {
                         let o = v
                             .as_object()
                             .ok_or_else(|| a.bad("mimic", "{joint, multiplier}"))?;
+                        only(o, "mimic", &["joint", "multiplier"])?;
                         Some(Mimic {
                             joint: o
                                 .get("joint")
@@ -469,8 +551,223 @@ impl Session {
                 m.pose(a.str("joint")?, a.num("value")?)?;
                 Ok((none(), true))
             }
-            other => Err(ModelError::Program(format!("no operation {other:?}"))),
+            other => Err(ModelError::Program(format!(
+                "no operation {other:?}; operations: {}",
+                OPS.iter().map(|(o, _)| *o).collect::<Vec<_>>().join(", ")
+            ))),
         }
+    }
+}
+
+/// Readers: answered, not recorded.
+const READERS: &[&str] = &[
+    "frame",
+    "offset",
+    "translate",
+    "turn",
+    "compose",
+    "bbox",
+    "face",
+    "edge",
+    "local",
+    "anchor",
+    "placement",
+    "grid",
+    "ring",
+    "along",
+    "snap",
+    "names",
+    "measure",
+];
+
+fn is_reader(op: &str) -> bool {
+    READERS.contains(&op)
+}
+
+/// Every operation and the fields it takes.
+const OPS: &[(&str, &[&str])] = &[
+    ("frame", &["origin", "normal", "up"]),
+    ("offset", &["frame", "distance"]),
+    ("translate", &["frame", "x", "y", "z"]),
+    ("turn", &["frame", "rx", "ry", "rz"]),
+    ("compose", &["frame", "local"]),
+    ("bbox", &["ids", "sides"]),
+    ("face", &["id", "name"]),
+    ("edge", &["id", "name"]),
+    ("local", &["id", "frame"]),
+    ("anchor", &["id", "name"]),
+    ("placement", &["id"]),
+    ("grid", &["nx", "ny", "px", "py", "stagger", "on"]),
+    ("ring", &["n", "radius", "start", "angle", "on"]),
+    ("along", &["path", "pitch", "count"]),
+    ("snap", &["ids", "points", "direction"]),
+    ("names", &["id"]),
+    ("measure", &[]),
+    ("units", &["unit"]),
+    ("box", &["name", "width", "depth", "height", "on"]),
+    (
+        "cylinder",
+        &["name", "radius", "radiusTop", "height", "segments", "on"],
+    ),
+    ("cone", &["name", "radius", "height", "segments", "on"]),
+    ("sphere", &["name", "radius", "axis", "segments", "on"]),
+    (
+        "dome",
+        &["name", "radius", "height", "axis", "segments", "on"],
+    ),
+    (
+        "tube",
+        &["name", "outer", "inner", "height", "segments", "on"],
+    ),
+    (
+        "torus",
+        &[
+            "name",
+            "radius",
+            "tube",
+            "angle",
+            "axis",
+            "segments",
+            "tubeSegments",
+            "on",
+        ],
+    ),
+    ("wedge", &["name", "width", "height", "depth", "on"]),
+    (
+        "extrude",
+        &[
+            "name",
+            "profile",
+            "height",
+            "twist",
+            "taper",
+            "bothSides",
+            "on",
+        ],
+    ),
+    (
+        "revolve",
+        &["name", "profile", "angle", "axis", "segments", "on"],
+    ),
+    (
+        "sweep",
+        &["name", "profile", "path", "up", "twist", "scaleEnd", "on"],
+    ),
+    (
+        "loft",
+        &["name", "sections", "samples", "steps", "curve", "on"],
+    ),
+    (
+        "thread",
+        &["name", "radius", "pitch", "length", "depth", "on"],
+    ),
+    (
+        "wire",
+        &[
+            "name", "path", "diameter", "closed", "fillet", "fillets", "segments", "on",
+        ],
+    ),
+    ("body", &["name", "plan", "top", "bottom", "n", "on"]),
+    (
+        "knurl",
+        &["name", "diameter", "height", "pitch", "straight", "on"],
+    ),
+    (
+        "gear",
+        &[
+            "name",
+            "teeth",
+            "module",
+            "pressureAngle",
+            "width",
+            "bore",
+            "hub",
+            "hubHeight",
+            "on",
+        ],
+    ),
+    ("at", &["id", "frame"]),
+    ("transform", &["id", "frame"]),
+    ("group", &["name", "children"]),
+    ("assembly", &["name", "children", "anchors"]),
+    ("attach", &["to", "name", "children"]),
+    ("copy", &["id", "name"]),
+    ("mirror", &["id", "plane", "name"]),
+    ("cut", &["target", "tool"]),
+    ("join", &["target", "tool"]),
+    ("intersect", &["target", "tool"]),
+    ("seat", &["host", "part"]),
+    ("scale", &["id", "x", "y", "z"]),
+    (
+        "hole",
+        &[
+            "id",
+            "diameter",
+            "at",
+            "depth",
+            "counterbore",
+            "countersink",
+        ],
+    ),
+    ("pocket", &["id", "profile", "depth", "at"]),
+    ("split", &["id", "frame", "keep"]),
+    ("shell", &["id", "thickness", "open"]),
+    ("dent", &["id", "at", "radius", "depth"]),
+    ("fillet", &["id", "radius", "edges", "segments", "profile"]),
+    (
+        "chamfer",
+        &["id", "distance", "distance2", "angle", "edges", "segments"],
+    ),
+    ("soften", &["id", "radius", "angle", "edges", "segments"]),
+    (
+        "material",
+        &[
+            "ids",
+            "name",
+            "color",
+            "metalness",
+            "roughness",
+            "emissive",
+            "opacity",
+        ],
+    ),
+    (
+        "joint",
+        &[
+            "child", "parent", "name", "kind", "on", "axis", "range", "mimic",
+        ],
+    ),
+    ("pose", &["joint", "value"]),
+];
+
+/// Every field of `o` must be in `accepted`.
+fn only(o: &Map<String, Value>, within: &str, accepted: &[&str]) -> Result<(), ModelError> {
+    match o.keys().find(|k| !accepted.contains(&k.as_str())) {
+        None => Ok(()),
+        Some(k) => Err(ModelError::UnknownField {
+            within: within.into(),
+            field: k.clone(),
+            accepted: accepted.iter().map(|s| String::from(*s)).collect(),
+        }),
+    }
+}
+
+/// An operation's own fields (besides `op`) must be the ones it takes.
+fn check_fields(o: &Map<String, Value>, op: &str) -> Result<(), ModelError> {
+    let Some((_, fields)) = OPS.iter().find(|(name, _)| *name == op) else {
+        // `dispatch` names the unknown operation.
+        return Ok(());
+    };
+    match o
+        .keys()
+        .find(|k| *k != "op" && !fields.contains(&k.as_str()))
+    {
+        None => Ok(()),
+        Some(k) => Err(ModelError::UnknownField {
+            within: op.into(),
+            field: k.clone(),
+            accepted: fields.iter().map(|s| String::from(*s)).collect(),
+        }),
     }
 }
 
@@ -490,6 +787,7 @@ fn hex(s: &str) -> Option<[f64; 3]> {
 
 fn generate(a: &Args) -> Result<shape_mesh::Solid, ModelError> {
     use shape_gen::solids as g;
+    let segments = || a.u32_or("segments", 0);
     Ok(match a.op {
         "box" => g::cuboid(&BoxDesc {
             width: a.num("width")?,
@@ -500,15 +798,41 @@ fn generate(a: &Args) -> Result<shape_mesh::Solid, ModelError> {
             radius: a.num("radius")?,
             radius_top: a.num_or("radiusTop", 0.0)?,
             height: a.num("height")?,
+            segments: segments()?,
         })?,
-        "cone" => g::cone(a.num("radius")?, a.num("height")?)?,
-        "sphere" => g::sphere(a.num("radius")?)?,
-        "dome" => g::dome(a.num("radius")?)?,
-        "tube" => g::tube(a.num("outer")?, a.num("inner")?, a.num("height")?)?,
-        "torus" => g::torus(a.num("radius")?, a.num("tube")?)?,
+        "cone" => g::cone_desc(&ConeDesc {
+            radius: a.num("radius")?,
+            height: a.num("height")?,
+            segments: segments()?,
+        })?,
+        "sphere" => g::sphere_desc(&SphereDesc {
+            radius: a.num("radius")?,
+            axis: a.axis()?,
+            segments: segments()?,
+        })?,
+        "dome" => g::dome_desc(&DomeDesc {
+            radius: a.num("radius")?,
+            height: a.num_or("height", 0.0)?,
+            axis: a.axis()?,
+            segments: segments()?,
+        })?,
+        "tube" => g::tube_desc(&TubeDesc {
+            outer: a.num("outer")?,
+            inner: a.num("inner")?,
+            height: a.num("height")?,
+            segments: segments()?,
+        })?,
+        "torus" => g::torus_desc(&TorusDesc {
+            radius: a.num("radius")?,
+            tube_radius: a.num("tube")?,
+            axis: a.axis()?,
+            angle: a.num_or("angle", 0.0)?,
+            segments: segments()?,
+            tube_segments: a.u32_or("tubeSegments", 0)?,
+        })?,
         "wedge" => g::wedge(a.num("width")?, a.num("height")?, a.num("depth")?)?,
         "extrude" => g::extrude(
-            &profile(a, a.get("profile")?)?,
+            &profile(a.get("profile")?).map_err(|e| a.inside("profile", e))?,
             &Extrude {
                 height: a.num("height")?,
                 twist: a.num_or("twist", 0.0)?,
@@ -517,14 +841,15 @@ fn generate(a: &Args) -> Result<shape_mesh::Solid, ModelError> {
             },
         )?,
         "revolve" => g::revolve(
-            &profile(a, a.get("profile")?)?,
+            &profile(a.get("profile")?).map_err(|e| a.inside("profile", e))?,
             &Revolve {
                 angle: a.num_or("angle", 0.0)?,
-                ..Default::default()
+                axis: a.axis()?,
+                segments: segments()?,
             },
         )?,
         "sweep" => shape_gen::paths::sweep(
-            &profile(a, a.get("profile")?)?,
+            &profile(a.get("profile")?).map_err(|e| a.inside("profile", e))?,
             &Sweep {
                 path: a.points("path")?,
                 up: match a.opt("up") {
@@ -541,21 +866,42 @@ fn generate(a: &Args) -> Result<shape_mesh::Solid, ModelError> {
                 .as_array()
                 .ok_or_else(|| a.bad("sections", "a list of {profile, z}"))?;
             let mut sections = Vec::new();
-            for s in list {
-                let p = s
+            for (i, sec) in list.iter().enumerate() {
+                let within = format!("sections[{i}]");
+                let o = sec
+                    .as_object()
+                    .ok_or_else(|| a.bad(&within, "{profile, z}"))?;
+                only(o, &within, &["profile", "z"])?;
+                let p = o
                     .get("profile")
-                    .ok_or_else(|| a.bad("sections", "a list of {profile, z}"))?;
-                let z = s
+                    .ok_or_else(|| a.bad(&format!("{within}.profile"), "missing"))?;
+                let z = o
                     .get("z")
                     .and_then(Value::as_f64)
-                    .ok_or_else(|| a.bad("sections", "a list of {profile, z}"))?;
-                sections.push((profile(a, p)?, z));
+                    .ok_or_else(|| a.bad(&format!("{within}.z"), "a number"))?;
+                sections.push((
+                    profile(p).map_err(|e| a.inside(&format!("{within}.profile"), e))?,
+                    z,
+                ));
             }
+            let curve = match a.opt("curve").map(|v| v.as_str()) {
+                None => LoftCurve::Auto,
+                Some(Some("auto")) => LoftCurve::Auto,
+                Some(Some("straight")) => LoftCurve::Straight,
+                Some(Some("catmullRom")) => LoftCurve::CatmullRom,
+                Some(Some("spline")) => LoftCurve::Spline,
+                Some(_) => {
+                    return Err(a.bad(
+                        "curve",
+                        "\"auto\", \"straight\", \"catmullRom\" or \"spline\"",
+                    ));
+                }
+            };
             crate::checked::loft(&Loft {
                 sections,
                 samples: a.u32_or("samples", 0)?,
                 steps: a.u32_or("steps", 0)?,
-                ..Default::default()
+                curve,
             })?
         }
         "thread" => shape_gen::paths::thread(&Thread {
@@ -564,30 +910,120 @@ fn generate(a: &Args) -> Result<shape_mesh::Solid, ModelError> {
             length: a.num("length")?,
             depth: a.num("depth")?,
         })?,
+        "wire" => shape_gen::wire::wire(&Wire {
+            path: a.points("path")?,
+            diameter: a.num("diameter")?,
+            closed: a.bool_or("closed", false)?,
+            fillet: a.num_or("fillet", 0.0)?,
+            fillets: match a.opt("fillets") {
+                Some(_) => a.nums("fillets")?,
+                None => Vec::new(),
+            },
+            segments: segments()?,
+        })?,
+        "body" => shape_gen::body::body(&Body {
+            plan: a.view("plan")?,
+            top: a.view("top")?,
+            bottom: a.view("bottom")?,
+            n: match a.opt("n") {
+                Some(_) => a.view("n")?,
+                None => View::default(),
+            },
+        })?,
+        "knurl" => shape_gen::parts::knurl(&Knurl {
+            diameter: a.num("diameter")?,
+            height: a.num("height")?,
+            pitch: a.num_or("pitch", 0.0)?,
+            straight: a.bool_or("straight", false)?,
+        })?,
+        "gear" => shape_gen::parts::gear_solid(&GearDesc {
+            teeth: a.u32_or("teeth", 0)?,
+            module: a.num("module")?,
+            pressure_angle: a.num_or("pressureAngle", 0.0)?,
+            width: a.num("width")?,
+            bore: a.num_or("bore", 0.0)?,
+            hub: a.num_or("hub", 0.0)?,
+            hub_height: a.num_or("hubHeight", 0.0)?,
+        })?,
         _ => return Err(ModelError::Program(format!("no generator {:?}", a.op))),
     })
 }
 
-fn profile(a: &Args, v: &Value) -> Result<Profile, ModelError> {
-    let bad = |w: &str| a.bad("profile", w);
-    let o = v
-        .as_object()
-        .filter(|o| o.len() == 1)
-        .ok_or_else(|| bad("an object with one key: rect, circle, …"))?;
-    let (k, v) = o.iter().next().ok_or_else(|| bad("empty"))?;
+/// The fields each profile takes.
+const PROFILES: &[(&str, &[&str])] = &[
+    ("rect", &["width", "height", "radius"]),
+    ("circle", &["radius", "segments"]),
+    ("ellipse", &["rx", "ry", "segments"]),
+    ("slot", &["length", "width"]),
+    ("polygon", &["sides", "radius", "flats"]),
+    ("poly", &["points"]),
+    ("gear", &["teeth", "module", "pressureAngle"]),
+    ("union", &[]),
+    ("subtract", &[]),
+    ("intersect", &[]),
+    ("offset", &["profile", "distance"]),
+    ("translate", &["profile", "x", "y"]),
+    ("rotate", &["profile", "angle"]),
+    ("scale", &["profile", "x", "y"]),
+];
+
+/// A profile from its JSON. Errors name the field inside the profile
+/// (`rect.width`); the caller says where the profile is.
+fn profile(v: &Value) -> Result<Profile, ModelError> {
+    let kinds = || {
+        PROFILES
+            .iter()
+            .map(|(k, _)| *k)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let o = v.as_object().filter(|o| o.len() == 1).ok_or_else(|| {
+        ModelError::BadField(
+            String::new(),
+            format!("an object with one key: {}", kinds()),
+        )
+    })?;
+    let (k, v) = o
+        .iter()
+        .next()
+        .ok_or_else(|| ModelError::BadField(String::new(), "empty".into()))?;
+    let bad = |key: &str, want: &str| ModelError::BadField(format!("{k}.{key}"), want.into());
+    let Some((_, fields)) = PROFILES.iter().find(|(name, _)| name == k) else {
+        return Err(ModelError::BadField(
+            String::new(),
+            format!("no profile {k:?}; profiles: {}", kinds()),
+        ));
+    };
+    if !fields.is_empty() {
+        let fo = v
+            .as_object()
+            .ok_or_else(|| ModelError::BadField(k.clone(), "an object".into()))?;
+        only(fo, k, fields)?;
+    }
     let f = |key: &str| -> Result<f64, ModelError> {
         match v.get(key) {
-            None => Ok(0.0),
-            Some(x) => x
-                .as_f64()
-                .ok_or_else(|| bad(&format!("{k}.{key} is a number"))),
+            None | Some(Value::Null) => Ok(0.0),
+            Some(x) => x.as_f64().ok_or_else(|| bad(key, "a number")),
         }
     };
-    let u = |key: &str| -> Result<u32, ModelError> { Ok(f(key)? as u32) };
+    let u = |key: &str| -> Result<u32, ModelError> {
+        match v.get(key) {
+            None | Some(Value::Null) => Ok(0),
+            Some(x) => x
+                .as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .ok_or_else(|| bad(key, "a whole number")),
+        }
+    };
+    let one = |f: f64| if f == 0.0 { 1.0 } else { f };
+    let inner = |key: &str| -> Result<Profile, ModelError> {
+        let p = v.get(key).ok_or_else(|| bad(key, "missing"))?;
+        profile(p).map_err(|e| nest(&format!("{k}.{key}"), e))
+    };
     let list = || {
         v.as_array()
             .filter(|l| !l.is_empty())
-            .ok_or_else(|| bad(&format!("{k} takes a list of profiles")))
+            .ok_or_else(|| ModelError::BadField(k.clone(), "a list of profiles".into()))
     };
     Ok(match k.as_str() {
         "rect" => shape_2d::rect(&shape_2d::Rect {
@@ -611,6 +1047,7 @@ fn profile(a: &Args, v: &Value) -> Result<Profile, ModelError> {
         "polygon" => shape_2d::polygon(&shape_2d::Polygon {
             sides: u("sides")?,
             radius: f("radius")?,
+            flats: f("flats")?,
         })?,
         "gear" => shape_2d::gear(&shape_2d::Gear {
             teeth: u("teeth")?,
@@ -621,34 +1058,57 @@ fn profile(a: &Args, v: &Value) -> Result<Profile, ModelError> {
             let pts = v
                 .get("points")
                 .and_then(Value::as_array)
-                .ok_or_else(|| bad("poly.points"))?;
+                .ok_or_else(|| bad("points", "a list of [x, y] or {x, y, radius, bulge}"))?;
             let mut points = Vec::new();
-            for p in pts {
-                let (x, y, r) = match p {
-                    Value::Array(xy) if xy.len() == 2 => {
-                        (xy[0].as_f64(), xy[1].as_f64(), Some(0.0))
+            for (i, p) in pts.iter().enumerate() {
+                let want = "[x, y] or {x, y, radius?, bulge?}";
+                let num = |o: &Map<String, Value>, key: &str| -> Result<f64, ModelError> {
+                    match o.get(key) {
+                        None | Some(Value::Null) => Ok(0.0),
+                        Some(x) => x
+                            .as_f64()
+                            .ok_or_else(|| bad(&format!("points[{i}].{key}"), "a number")),
                     }
-                    Value::Object(o) => (
-                        o.get("x").and_then(Value::as_f64),
-                        o.get("y").and_then(Value::as_f64),
-                        Some(o.get("radius").and_then(Value::as_f64).unwrap_or(0.0)),
-                    ),
-                    _ => (None, None, None),
                 };
-                match (x, y, r) {
-                    (Some(x), Some(y), Some(radius)) => {
-                        points.push(shape_2d::PolyPoint { x, y, radius })
+                let point = match p {
+                    Value::Array(xy) => match xy[..] {
+                        [ref x, ref y] => shape_2d::PolyPoint {
+                            x: x.as_f64()
+                                .ok_or_else(|| bad(&format!("points[{i}]"), want))?,
+                            y: y.as_f64()
+                                .ok_or_else(|| bad(&format!("points[{i}]"), want))?,
+                            ..Default::default()
+                        },
+                        _ => return Err(bad(&format!("points[{i}]"), want)),
+                    },
+                    Value::Object(o) => {
+                        only(
+                            o,
+                            &format!("poly.points[{i}]"),
+                            &["x", "y", "radius", "bulge"],
+                        )?;
+                        if !(o.contains_key("x") && o.contains_key("y")) {
+                            return Err(bad(&format!("points[{i}]"), want));
+                        }
+                        shape_2d::PolyPoint {
+                            x: num(o, "x")?,
+                            y: num(o, "y")?,
+                            radius: num(o, "radius")?,
+                            bulge: num(o, "bulge")?,
+                        }
                     }
-                    _ => return Err(bad("poly.points: [x, y] or {x, y, radius}")),
-                }
+                    _ => return Err(bad(&format!("points[{i}]"), want)),
+                };
+                points.push(point);
             }
             shape_2d::poly(&shape_2d::Poly { points })?
         }
         "union" | "subtract" | "intersect" => {
             let l = list()?;
-            let mut acc = profile(a, &l[0])?;
-            for q in &l[1..] {
-                let q = profile(a, q)?;
+            let item = |i: usize| profile(&l[i]).map_err(|e| nest(&format!("{k}[{i}]"), e));
+            let mut acc = item(0)?;
+            for i in 1..l.len() {
+                let q = item(i)?;
                 acc = match k.as_str() {
                     "union" => acc.union(&q),
                     "subtract" => acc.subtract(&q),
@@ -657,15 +1117,40 @@ fn profile(a: &Args, v: &Value) -> Result<Profile, ModelError> {
             }
             acc
         }
-        "offset" => profile(a, v.get("profile").ok_or_else(|| bad("offset.profile"))?)?
-            .offset(f("distance")?, shape_2d::Join::Round)?,
-        "translate" => profile(a, v.get("profile").ok_or_else(|| bad("translate.profile"))?)?
-            .translate(DVec2::new(f("x")?, f("y")?)),
-        "rotate" => {
-            profile(a, v.get("profile").ok_or_else(|| bad("rotate.profile"))?)?.rotate(f("angle")?)
+        "offset" => inner("profile")?.offset(f("distance")?, shape_2d::Join::Round)?,
+        "translate" => inner("profile")?.translate(DVec2::new(f("x")?, f("y")?)),
+        "rotate" => inner("profile")?.rotate(f("angle")?),
+        "scale" => {
+            let (x, y) = (one(f("x")?), one(f("y")?));
+            if !(x.is_finite() && y.is_finite() && x > 0.0 && y > 0.0) {
+                return Err(bad(
+                    "x, y",
+                    "positive factors (0 keeps 1); mirror with a negative is not taken",
+                ));
+            }
+            inner("profile")?.scale(x, y)
         }
-        other => return Err(bad(&format!("no profile {other:?}"))),
+        _ => unreachable!("every profile kind is matched"),
     })
+}
+
+/// `e` from inside the field `at`: field names get `at.` in front.
+fn nest(at: &str, e: ModelError) -> ModelError {
+    match e {
+        ModelError::BadField(f, w) if f.is_empty() => ModelError::BadField(at.into(), w),
+        ModelError::BadField(f, w) => ModelError::BadField(format!("{at}.{f}"), w),
+        ModelError::UnknownField {
+            within,
+            field,
+            accepted,
+        } => ModelError::UnknownField {
+            within: format!("{at}: {within}"),
+            field,
+            accepted,
+        },
+        ModelError::Profile(p) => ModelError::BadField(at.into(), p.to_string()),
+        e => e,
+    }
 }
 
 /// A frame as JSON.
@@ -694,6 +1179,15 @@ fn vec3_of(v: &Value) -> Option<DVec3> {
 }
 
 fn frame_of(v: &Value) -> Result<Frame, String> {
+    let o = v.as_object().ok_or("a frame is {origin, x, y, z}")?;
+    if let Some(k) = o
+        .keys()
+        .find(|k| !["origin", "x", "y", "z"].contains(&k.as_str()))
+    {
+        return Err(format!(
+            "a frame has no field {k:?}; it takes: origin, x, y, z"
+        ));
+    }
     let g = |k: &str| {
         v.get(k)
             .and_then(vec3_of)
@@ -822,7 +1316,60 @@ struct Args<'a> {
 
 impl Args<'_> {
     fn bad(&self, field: &str, want: &str) -> ModelError {
-        ModelError::Program(format!("{}: {field}: {want}", self.op))
+        ModelError::BadField(field.into(), want.into())
+    }
+
+    /// An error from inside the field `k` (a profile): named under it.
+    fn inside(&self, k: &str, e: ModelError) -> ModelError {
+        nest(k, e)
+    }
+
+    /// A turned solid's axis: `"+Y"` (the default) or `"+Z"`.
+    fn axis(&self) -> Result<Axis, ModelError> {
+        match self.opt("axis").map(Value::as_str) {
+            None | Some(Some("+Y")) => Ok(Axis::Y),
+            Some(Some("+Z")) => Ok(Axis::Z),
+            Some(_) => Err(self.bad("axis", "\"+Y\" or \"+Z\"")),
+        }
+    }
+
+    /// A [`View`] of a body: a number, a list of `[y, value]` points
+    /// (straight between them), or `{points, smooth}`.
+    fn view(&self, k: &str) -> Result<View, ModelError> {
+        let want = "a number, [[y, value], …] or {points, smooth}";
+        let pairs = |l: &Vec<Value>| -> Result<View, ModelError> {
+            l.iter()
+                .map(|p| match p.as_array().map(|xy| &xy[..]) {
+                    Some([y, v]) => Some(DVec2::new(y.as_f64()?, v.as_f64()?)),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .map(|points| View {
+                    points,
+                    ..Default::default()
+                })
+                .ok_or_else(|| self.bad(k, want))
+        };
+        match self.get(k)? {
+            Value::Number(n) => Ok(View::constant(n.as_f64().unwrap_or(f64::NAN))),
+            Value::Array(l) => pairs(l),
+            Value::Object(o) => {
+                only(o, k, &["points", "smooth"])?;
+                let mut v = pairs(
+                    o.get("points")
+                        .and_then(Value::as_array)
+                        .ok_or_else(|| self.bad(&format!("{k}.points"), "[[y, value], …]"))?,
+                )?;
+                v.smooth = match o.get("smooth") {
+                    None | Some(Value::Null) => false,
+                    Some(b) => b
+                        .as_bool()
+                        .ok_or_else(|| self.bad(&format!("{k}.smooth"), "true or false"))?,
+                };
+                Ok(v)
+            }
+            _ => Err(self.bad(k, want)),
+        }
     }
 
     fn opt(&self, k: &str) -> Option<&Value> {
@@ -938,6 +1485,9 @@ impl Args<'_> {
 
     fn path(&self, k: &str) -> Result<Path, ModelError> {
         let v = self.get(k)?;
+        if let Some(o) = v.as_object() {
+            only(o, k, &["points", "closed"])?;
+        }
         let points = v
             .get("points")
             .and_then(Value::as_array)

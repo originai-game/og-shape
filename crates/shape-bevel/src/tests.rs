@@ -133,6 +133,7 @@ fn curved_neighbours_cylinder_rims_and_hole_rims() {
         radius: 15.0,
         radius_top: 0.0,
         height: 20.0,
+        ..Default::default()
     })
     .unwrap();
     let s = fillet(
@@ -538,6 +539,7 @@ fn a_lone_edge_whose_faces_meet_again_tapers_to_a_tip() {
         radius: 15.0,
         radius_top: 0.0,
         height: 20.0,
+        ..Default::default()
     })
     .unwrap();
     let rim = c.edges(&["top"]).unwrap();
@@ -753,6 +755,7 @@ fn faces_cut_into_slivers_are_rebuilt_from_their_outline() {
         &shape_gen::solids::Revolve {
             angle: 2.0,
             axis: shape_gen::solids::Axis::Z,
+            ..Default::default()
         },
     )
     .unwrap();

@@ -141,7 +141,14 @@ fn lofts() -> (Solid, Solid) {
 /// Hexagonal (or other) lofts stacked on a shared face: on main, a join
 /// with edges used four times and no error.
 fn polygon_lofts(sides: u32) -> (Solid, Solid) {
-    let p = |r: f64| shape_2d::polygon(&shape_2d::Polygon { sides, radius: r }).expect("polygon");
+    let p = |r: f64| {
+        shape_2d::polygon(&shape_2d::Polygon {
+            sides,
+            radius: r,
+            ..Default::default()
+        })
+        .expect("polygon")
+    };
     let a = loft(&Loft {
         sections: vec![(p(10.0), 0.0), (p(8.0), 20.0)],
         ..Default::default()

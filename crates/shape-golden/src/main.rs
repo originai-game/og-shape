@@ -16,6 +16,7 @@ mod model;
 mod selfunion;
 mod skin;
 mod solids;
+mod surface;
 mod tools;
 mod touching;
 

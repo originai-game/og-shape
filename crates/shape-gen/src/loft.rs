@@ -686,7 +686,12 @@ mod tests {
     }
 
     fn hexagon(radius: f64) -> Profile {
-        polygon(&Polygon { sides: 6, radius }).unwrap()
+        polygon(&Polygon {
+            sides: 6,
+            radius,
+            ..Default::default()
+        })
+        .unwrap()
     }
 
     #[test]

@@ -15,12 +15,11 @@
 //! Straight runs meeting at a mitre are separate surfaces, so the mitre
 //! is a real edge, `seam`; bends are smooth.
 
-use shape_2d::curve::segments;
 use shape_2d::{Contour, Profile};
 use shape_core::{DVec2, DVec3, trig};
 use shape_mesh::Solid;
 
-use crate::solids::{GenError, finish, positive};
+use crate::solids::{GenError, count, finish, positive, segments_field};
 
 /// A round wire along a path.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -37,6 +36,9 @@ pub struct Wire {
     /// A bend radius per path point, 0 mitring that corner; overrides
     /// `fillet` when not empty.
     pub fillets: Vec<f64>,
+    /// Segments round the wire, and a bend's share of as many a turn; 0
+    /// for the chord rule.
+    pub segments: u32,
 }
 
 /// Points nearer than this are one (millimetres).
@@ -163,7 +165,7 @@ fn bent(d: &Wire, least: f64) -> Result<(Vec<DVec3>, Vec<bool>), GenError> {
         let start = p[i] - u * setback;
         let centre = start + (v - u * u.dot(v)).normalize() * r;
         let axis = u.cross(v).normalize();
-        let k = segments(r, t);
+        let k = count(d.segments, r, t);
         for j in 0..=k {
             out.push(centre + rotate(start - centre, axis, t * (j as f64 / k as f64)));
             sharp.push(false);
@@ -196,6 +198,7 @@ fn carry(r: DVec3, u: DVec3, v: DVec3) -> DVec3 {
 /// A round wire of `diameter` along `path`; see the module.
 pub fn wire(d: &Wire) -> Result<Solid, GenError> {
     let radius = positive(d.diameter, "diameter")? / 2.0;
+    segments_field(d.segments, "segments")?;
     let (p, sharp) = bent(d, radius)?;
     let m = p.len();
     let sides = if d.closed { m } else { m - 1 };
@@ -228,7 +231,7 @@ pub fn wire(d: &Wire) -> Result<Solid, GenError> {
         0.0
     };
     // The profile: a polygon in the run's (normal, binormal) plane.
-    let n = segments(radius, trig::TAU);
+    let n = count(d.segments, radius, trig::TAU);
     let circle: Vec<DVec2> = (0..n)
         .map(|k| {
             let (s, c) = trig::sin_cos(trig::TAU * (k as f64 / n as f64));
@@ -331,6 +334,7 @@ pub fn wire(d: &Wire) -> Result<Solid, GenError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shape_2d::curve::segments;
 
     fn closed(s: &Solid) -> f64 {
         let m = s.measure();

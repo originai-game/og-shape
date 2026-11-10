@@ -12,6 +12,7 @@ publish = false
 [dependencies]
 shape-core = { path = "../../crates/shape-core" }
 shape-gen = { path = "../../crates/shape-gen" }
+shape-2d = { path = "../../crates/shape-2d" }
 shape-mesh = { path = "../../crates/shape-mesh" }
 shape-bool = { path = "../../crates/shape-bool" }
 shape-tools = { path = "../../crates/shape-tools" }

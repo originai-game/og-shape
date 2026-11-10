@@ -216,7 +216,14 @@ fn polygon_lofts_stacked_on_a_shared_face_join_manifold() {
     // On main these joined with four to six edges used four times, which
     // the result's directed check let through: `closed: false`, no error.
     for sides in [6, 8] {
-        let p = |r: f64| shape_2d::polygon(&shape_2d::Polygon { sides, radius: r }).unwrap();
+        let p = |r: f64| {
+            shape_2d::polygon(&shape_2d::Polygon {
+                sides,
+                radius: r,
+                ..Default::default()
+            })
+            .unwrap()
+        };
         let a = loft(&Loft {
             sections: vec![(p(10.0), 0.0), (p(8.0), 20.0)],
             ..Default::default()

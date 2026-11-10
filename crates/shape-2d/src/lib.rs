@@ -106,6 +106,11 @@ pub enum ProfileError {
     RadiusTooLarge(usize),
     /// The result has no area.
     Empty,
+    /// A rounded corner touches an arc edge (the point index): a corner
+    /// radius needs straight edges on both sides.
+    ArcCorner(usize),
+    /// Two ways of giving one size were both set (the fields named).
+    Conflict(&'static str),
 }
 
 impl std::fmt::Display for ProfileError {
@@ -119,6 +124,11 @@ impl std::fmt::Display for ProfileError {
                 "the radius at point {i} is larger than its corner allows"
             ),
             ProfileError::Empty => f.write_str("the profile has no area"),
+            ProfileError::ArcCorner(i) => write!(
+                f,
+                "point {i} rounds a corner next to an arc edge; a corner radius needs straight edges on both sides"
+            ),
+            ProfileError::Conflict(w) => write!(f, "give only one of {w}"),
         }
     }
 }

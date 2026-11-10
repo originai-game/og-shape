@@ -9,6 +9,12 @@
  * joint parts and read frames back. Profiles are plain objects built by
  * `og.rect`, `og.circle` and the others.
  *
+ * A desc field the kernel does not take is an error that names it and
+ * lists the ones it takes. Every error thrown names the operation, its
+ * index in the program, the part, and the call site in the author's code
+ * (found from the stack only when a call fails, so it costs nothing on
+ * success).
+ *
  * Units: the model's (millimetres by default); angles in radians
  * (`og.deg(90)`). Every frame is in the world at rest. Frames are turned
  * in the kernel (wasm), never with JavaScript's `Math.sin`, so a program
@@ -37,6 +43,12 @@ export interface Path {
 /** A profile: an object with one key (`{ rect: {...} }`), as `og.rect` gives. */
 export type Profile = Record<string, unknown>;
 
+/** The axis a turned solid turns about: `"+Y"` (the default) or `"+Z"`. */
+export type TurnAxis = "+Y" | "+Z";
+
+/** A view of a `body`: one value, `[y, value]` points, or points on a spline. */
+export type View = number | [number, number][] | { points: [number, number][]; smooth?: boolean };
+
 /** A part or a group of a model. */
 export class Part {
   constructor(
@@ -56,6 +68,39 @@ function list(p: Parts): Part[] {
 
 /** A wasm call: the JSON answer, or the kernel's error thrown. */
 type Call = (op: string, fields: Record<string, unknown>) => any;
+
+/** This file, to skip its frames when looking for the author's call site. */
+const SELF = decodeURIComponent(new URL(import.meta.url).pathname);
+
+/**
+ * The first stack frame outside this binding: the author's call. Read
+ * only when a call has failed, while that call is still on the stack.
+ */
+function callSite(): string | undefined {
+  const stack = new Error().stack ?? "";
+  for (const line of stack.split("\n").slice(1)) {
+    if (line.includes(SELF) || line.includes(import.meta.url)) continue;
+    const m = line.match(/((?:file:\/\/)?\/[^\s()]*:\d+:\d+)/);
+    if (m) return m[1].replace(/^file:\/\//, "");
+  }
+  return undefined;
+}
+
+/** Throws `e` with the author's call site appended to its message. */
+function located(e: unknown): never {
+  const message = e instanceof Error ? e.message : String(e);
+  const at = callSite();
+  throw new Error(at === undefined ? message : `${message} (at ${at})`, { cause: e });
+}
+
+/** Refuses a desc field the binding does not take (for descs that never reach the kernel whole). */
+function only(what: string, d: object, accepted: string[]): void {
+  for (const k of Object.keys(d)) {
+    if (!accepted.includes(k)) {
+      located(new Error(`${what} has no field ${JSON.stringify(k)}; it takes: ${accepted.join(", ")}`));
+    }
+  }
+}
 
 /** A place to build on: an origin and right-handed axes, in the world. */
 export class Frame implements FrameData {
@@ -183,24 +228,36 @@ export class Shape {
   box(d: Placed & { width: number; depth: number; height: number }): Part {
     return this.part("box", d);
   }
-  /** A cylinder on z = 0 about z (`radiusTop` for a frustum). */
-  cylinder(d: Placed & { radius: number; height: number; radiusTop?: number }): Part {
+  /** A cylinder on z = 0 about z (`radiusTop` for a frustum); `segments` round, 0 for the chord rule. */
+  cylinder(d: Placed & { radius: number; height: number; radiusTop?: number; segments?: number }): Part {
     return this.part("cylinder", d);
   }
-  cone(d: Placed & { radius: number; height: number }): Part {
+  cone(d: Placed & { radius: number; height: number; segments?: number }): Part {
     return this.part("cone", d);
   }
   /** A tube on z = 0: `outer` and `inner` radii. */
-  tube(d: Placed & { outer: number; inner: number; height: number }): Part {
+  tube(d: Placed & { outer: number; inner: number; height: number; segments?: number }): Part {
     return this.part("tube", d);
   }
-  sphere(d: Placed & { radius: number }): Part {
+  /** Centred (about +y), or resting on z = 0 with `axis: "+Z"`; `segments` round, half as many pole to pole. */
+  sphere(d: Placed & { radius: number; axis?: TurnAxis; segments?: number }): Part {
     return this.part("sphere", d);
   }
-  dome(d: Placed & { radius: number }): Part {
+  /** A spherical cap `height` high (a half sphere by default) on a flat `bottom`. */
+  dome(d: Placed & { radius: number; height?: number; axis?: TurnAxis; segments?: number }): Part {
     return this.part("dome", d);
   }
-  torus(d: Placed & { radius: number; tube: number }): Part {
+  /** `angle` for a part ring (with `start` and `end` caps); `segments` round the axis, `tubeSegments` round the tube. */
+  torus(
+    d: Placed & {
+      radius: number;
+      tube: number;
+      angle?: number;
+      axis?: TurnAxis;
+      segments?: number;
+      tubeSegments?: number;
+    },
+  ): Part {
     return this.part("torus", d);
   }
   wedge(d: Placed & { width: number; height: number; depth: number }): Part {
@@ -212,18 +269,60 @@ export class Shape {
   ): Part {
     return this.part("extrude", d);
   }
-  /** A profile (x the radius) turned about +y. */
-  revolve(d: Placed & { profile: Profile; angle?: number }): Part {
+  /** A profile (x the radius) turned about +y (or +z, its y the height). */
+  revolve(d: Placed & { profile: Profile; angle?: number; axis?: TurnAxis; segments?: number }): Part {
     return this.part("revolve", d);
   }
   sweep(d: Placed & { profile: Profile; path: Vec3[]; up?: Vec3; twist?: number; scaleEnd?: number }): Part {
     return this.part("sweep", d);
   }
-  loft(d: Placed & { sections: { profile: Profile; z: number }[]; samples?: number; steps?: number }): Part {
+  loft(
+    d: Placed & {
+      sections: { profile: Profile; z: number }[];
+      samples?: number;
+      steps?: number;
+      curve?: "auto" | "straight" | "catmullRom" | "spline";
+    },
+  ): Part {
     return this.part("loft", d);
   }
   thread(d: Placed & { radius: number; pitch: number; length: number; depth: number }): Part {
     return this.part("thread", d);
+  }
+  /** A round rod along a polyline; corners bent round `fillet` (or `fillets[i]`) on the centre line, else mitred. */
+  wire(
+    d: Placed & {
+      path: Vec3[];
+      diameter: number;
+      closed?: boolean;
+      fillet?: number;
+      fillets?: number[];
+      segments?: number;
+    },
+  ): Part {
+    return this.part("wire", d);
+  }
+  /** A solid along +y from its views: `plan` the width, `top` and `bottom` the z lines, `n` the squareness. */
+  body(d: Placed & { plan: View; top: View; bottom: View; n?: View }): Part {
+    return this.part("body", d);
+  }
+  /** A knurled grip about +z from z = 0: diamonds, or `straight` ridges. */
+  knurl(d: Placed & { diameter: number; height: number; pitch?: number; straight?: boolean }): Part {
+    return this.part("knurl", d);
+  }
+  /** A spur gear from z = 0 up `width`, with a round `bore` and a `hub` on top (diameters). */
+  gear(
+    d: Placed & {
+      teeth: number;
+      module: number;
+      width: number;
+      pressureAngle?: number;
+      bore?: number;
+      hub?: number;
+      hubHeight?: number;
+    },
+  ): Part {
+    return this.part("gear", d);
   }
 
   // ── placement ──
@@ -310,6 +409,10 @@ export class Shape {
   seat(host: Part, part: Part): void {
     this.call("seat", { host, part });
   }
+  /** Scales a part along its own axes about its own origin (0 or missing keeps 1). */
+  scale(part: Part, d: { x?: number; y?: number; z?: number }): void {
+    this.call("scale", { id: part, ...d });
+  }
   hole(
     part: Part,
     d: { diameter: number; at: FrameData | FrameData[]; depth?: number; counterbore?: [number, number]; countersink?: [number, number] },
@@ -373,6 +476,7 @@ export class Shape {
   }
   /** A turntable of the posed model as one PNG, from the CPU rasterizer. */
   preview(d: PreviewDesc = {}): Uint8Array {
+    only("preview", d, ["width", "height", "views", "columns", "elevation", "azimuth", "noEdges", "noGround"]);
     return this.m.preview(
       d.width ?? 0,
       d.height ?? 0,
@@ -395,7 +499,15 @@ export class Shape {
 }
 
 function caller(m: WasmModel): Call {
-  return (op, fields) => JSON.parse(m.apply(JSON.stringify({ op, ...fields })));
+  return (op, fields) => {
+    let answer: string;
+    try {
+      answer = m.apply(JSON.stringify({ op, ...fields }));
+    } catch (e) {
+      located(e);
+    }
+    return JSON.parse(answer);
+  };
 }
 
 /** The loaded kernel. */
@@ -414,12 +526,21 @@ export interface Og {
   circle(d: { radius: number; segments?: number }): Profile;
   ellipse(d: { rx: number; ry: number; segments?: number }): Profile;
   slot(d: { length: number; width: number }): Profile;
-  polygon(d: { sides: number; radius: number }): Profile;
-  poly(d: { points: ([number, number] | { x: number; y: number; radius?: number })[] }): Profile;
+  /** `radius` to the corners, or `flats` across the flats (a nut's size). */
+  polygon(d: { sides: number; radius?: number; flats?: number }): Profile;
+  /** `radius` rounds a corner; `bulge` bows the edge to the next point into an arc (its height; out of the outline when positive). */
+  poly(d: { points: ([number, number] | { x: number; y: number; radius?: number; bulge?: number })[] }): Profile;
   gear(d: { teeth: number; module: number; pressureAngle?: number }): Profile;
   union(...profiles: Profile[]): Profile;
   subtract(...profiles: Profile[]): Profile;
   intersect(...profiles: Profile[]): Profile;
+  translate(d: { profile: Profile; x?: number; y?: number }): Profile;
+  /** About the profile's origin, counter-clockwise (radians). */
+  rotate(d: { profile: Profile; angle: number }): Profile;
+  /** Grown outward (negative: shrunk), corners rounded. */
+  offset(d: { profile: Profile; distance: number }): Profile;
+  /** Factors along x and y about the origin; 0 or missing keeps 1. */
+  scale(d: { profile: Profile; x?: number; y?: number }): Profile;
 }
 
 /**
@@ -439,16 +560,23 @@ export async function load(wasm?: BufferSource | WebAssembly.Module): Promise<Og
   const call = caller(frames);
   const og: Og = {
     model(d) {
+      only("model", d, ["name", "units"]);
       const m = new WasmModel(d.name);
       const shape = new Shape(m, caller(m));
       if (d.units !== undefined) caller(m)("units", { unit: d.units });
       return shape;
     },
     replay(program) {
-      const m = WasmModel.replay(program);
+      let m: WasmModel;
+      try {
+        m = WasmModel.replay(program);
+      } catch (e) {
+        located(e);
+      }
       return new Shape(m, caller(m));
     },
     frame(d) {
+      only("frame", d, ["origin", "normal", "up"]);
       return new Frame(
         call("frame", { origin: d.origin ?? [0, 0, 0], normal: d.normal ?? [0, 0, 1], up: d.up }),
         call,
@@ -466,6 +594,10 @@ export async function load(wasm?: BufferSource | WebAssembly.Module): Promise<Og
     union: (...p) => ({ union: p }),
     subtract: (...p) => ({ subtract: p }),
     intersect: (...p) => ({ intersect: p }),
+    translate: (d) => ({ translate: d }),
+    rotate: (d) => ({ rotate: d }),
+    offset: (d) => ({ offset: d }),
+    scale: (d) => ({ scale: d }),
   };
   return og;
 }
