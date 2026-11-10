@@ -379,6 +379,7 @@ name = "shape-cli"
 version = "0.0.0"
 dependencies = [
  "serde_json",
+ "shape-core",
  "shape-mesh",
  "shape-model",
  "shape-tools",

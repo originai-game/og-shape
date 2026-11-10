@@ -38,13 +38,16 @@ Meshes from elsewhere go through the same kernel:
 
 | | |
 |---|---|
+| ![generated police car](docs/previews/generated/meshy-car_police-colour.png) | ![generated cabinet](docs/previews/generated/spar3d-120-colour.png) |
+| A Meshy police car (37 000 triangles, a 2048² JPEG map) in `shape preview`: top before it drew maps, bottom with its base-colour map sampled per pixel (`docs/research.md` §30). | A SPAR3D cabinet, the same way: the wood inside the grey shell shows only with the map. Its normal map is not drawn. |
 | ![generated bear](docs/previews/generated/hunyuan-300.png) | ![generated barn](docs/previews/generated/meshy-barn.png) |
 | A Hunyuan3D-2 bear (150 000 triangles) as generated, at 10 000 and at 2 000, its texture kept; top `shape preview`, bottom three.js (`docs/research.md` §28). | A Meshy barn (37 000 triangles), the same way. Rendered before its metallic-roughness map was carried (§29). |
 
 `docs/previews/` holds more: the bevel cases (`phase3/`), a skinned
 figure and Mixamo's Soldier posed (`phase5b/`), the models loaded and
 moved in three.js (`validate/`), UVs under a checker (`uv/`), twelve
-generated meshes before and after the chain (`generated/`).
+generated meshes before and after the chain and thirteen before and
+after the preview drew their colour (`generated/`).
 
 ## What has been checked
 
@@ -81,8 +84,10 @@ silent returns a result with no error:
 - 1 300 of the scan's bevels are refused: too large for the faces (426),
   a lone piece of a crease that does not fit (226), a twisted face (340),
   an edge with more than two faces (308).
-- The unwrap is planar per chart, with no atlas packing; the preview
-  draws no textures.
+- The unwrap is planar per chart, with no atlas packing. The preview
+  draws base-colour maps (PNG, baseline JPEG) and vertex colours, but no
+  normal, metallic-roughness or emissive maps, and no metalness or
+  roughness factors.
 - Keeping a file's UVs, decimation stops at about three triangles a UV
   island: 14 of 54 generated meshes miss 2 000 triangles (the report's
   `blocked` says why); merging rigidly matching islands lowers that
@@ -95,8 +100,9 @@ silent returns a result with no error:
 - An imported mesh's normals are recomputed, smooth within a surface: a
   normal map baked against the file's normals shades a median 1–1.6°
   differently after repair alone. The texture budget writes PNG only (no
-  KTX2 or Basis) and does not decode progressive JPEG; a plain GLB has
-  one material, so parts whose materials differ lose theirs (reported).
+  KTX2 or Basis); neither it nor the preview decodes progressive JPEG; a
+  plain GLB has one material, so parts whose materials differ lose
+  theirs (reported).
 - `place` turns, sizes and moves a mesh to its base, but does not
   choose its up or front: the author says them, per generator
   (`guides/meshtools.md`). A program's export has no pivot option; the

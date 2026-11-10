@@ -45,6 +45,10 @@ pub fn cases() -> Vec<Case> {
             name: "uvs.program",
             run: program,
         },
+        Case {
+            name: "uvs.program.preview",
+            run: program_preview,
+        },
     ]
 }
 
@@ -410,7 +414,7 @@ fn edits(h: &mut OutputHash) -> Result<(), HashError> {
 }
 
 const UV_PLATE: &str = include_str!("../../../golden/programs/uv_plate.json");
-const CHECKER: &[u8] = include_bytes!("../../../golden/programs/checker.png");
+pub const CHECKER: &[u8] = include_bytes!("../../../golden/programs/checker.png");
 
 /// The acceptance program (`golden/programs/uv_plate.json`, recorded by
 /// `crates/shape-wasm/ts/examples/uv_plate.ts`): its GLB and measures.
@@ -421,5 +425,30 @@ fn program(h: &mut OutputHash) -> Result<(), HashError> {
     let m = run_files(UV_PLATE, &Fonts::new(), &textures).map_err(fail)?;
     h.bytes(&m.glb().map_err(fail)?);
     h.str(&shape_model::program::measures_json(&m).map_err(fail)?);
+    Ok(())
+}
+
+/// The acceptance program as `shape preview` shows it: its checker map
+/// sampled on the plate and handle (`docs/research.md` §30), and its UV
+/// view over the checker.
+fn program_preview(h: &mut OutputHash) -> Result<(), HashError> {
+    use shape_model::program::{Fonts, run_files};
+    let mut textures = Fonts::new();
+    textures.insert("checker.png".into(), CHECKER.to_vec());
+    let m = run_files(UV_PLATE, &Fonts::new(), &textures).map_err(fail)?;
+    let built = m.build().map_err(fail)?;
+    let scene = built.scene();
+    let d = shape_tools::Preview {
+        width: 128,
+        views: 2,
+        ..Default::default()
+    };
+    let v = shape_tools::views(&scene, &d).map_err(fail)?;
+    h.bytes(&shape_tools::png(&shape_tools::sheet(&v.images, 2)));
+    for l in shape_tools::uv_view(&scene, &shape_tools::UvView { size: 128 }).map_err(fail)? {
+        h.u64(u64::from(l.tiles));
+        h.f64s(&l.uv_min)?;
+        h.bytes(&shape_tools::png(&l.image));
+    }
     Ok(())
 }

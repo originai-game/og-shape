@@ -16,6 +16,7 @@ mod mcp;
 mod meshrepair;
 mod meshtools;
 mod model;
+mod painted;
 mod place;
 mod rest;
 mod selfunion;

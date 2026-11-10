@@ -1106,6 +1106,31 @@
   - `bench/generated/look.ts` measures what of a file's look reaches the
     output; `bench/generated/src/bin/normals.rs` what the chain does to a
     normal map's shading.
+- The preview draws colour (`docs/research.md` §30): a part's base-colour
+  map (PNG or JPEG; a program's `map`, an imported file's) sampled per
+  pixel from a box-filtered mip chain, and `Solid::colors` (linear RGBA
+  per triangle corner, a new field) interpolated, both times the
+  material's `color` in linear light. A part with neither looks as
+  before, to the byte. A map that cannot be drawn is listed in
+  `Views::undrawn` and the CLI's and MCP's `undrawn`. Metalness,
+  roughness and emissive still do not change the picture.
+- `Preview::fov` (perspective, up to π/3; orthographic stays the
+  default) and `Preview::unlit` (colour only); `shape_tools::views`
+  gives each view's camera (`ViewCamera`). CLI `shape preview --fov RAD
+  --unlit --each`, MCP `preview` `fov`, `unlit`, `each`; the binding's
+  `preview({ fov, unlit })`. `shape preview` now prints a JSON report:
+  the files written, what each shows (cameras in the scene's frame and
+  the GLB's), and the maps not drawn.
+- The UV view: `shape_tools::uv_view`, `shape preview --uv [--uv-size
+  PX]`, MCP `preview` `uv`, `uv_size`: one image per material, chart
+  outlines over its map or a checker, covering whole UV tiles
+  (`uv_min`, `tiles` in the report).
+- `shape preview` of a mesh file draws each part's imported map.
+- The preview decodes its maps with the texture budget's decoder
+  (`shape_tools::decode`: PNG, baseline and extended sequential JPEG);
+  a progressive JPEG is listed in `undrawn`.
+- Golden: new `tools.preview.textured`, `tools.preview.colors`,
+  `tools.preview.uv`, `uvs.program.preview`.
 - `place` (stream AJ, `docs/research.md` §31): `shape place <mesh>`, the
   MCP tool `place` and `shape_tools::place` (`Place`, zero value changes
   nothing) turn a mesh so a stated axis is up and another faces front

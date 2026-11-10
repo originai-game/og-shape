@@ -15,8 +15,11 @@
 //!   ([`Placement`]). [`posed`] gives each part's solid at the pose.
 //! - [`preview`]: a turntable of views from a deterministic rasterizer,
 //!   as RGBA [`Image`]s (shaded smooth only under a crease angle,
-//!   transparent materials blended back to front); [`png`] encodes one
-//!   for a person to look at, and [`sheet`] lays several side by side.
+//!   transparent materials blended back to front, base-colour maps and
+//!   vertex colours drawn, orthographic or perspective); [`views`] adds
+//!   each view's [`ViewCamera`]; [`png`] encodes one for a person to look
+//!   at, and [`sheet`] lays several side by side. [`uv_view`]: each
+//!   material's UV layout over its map or a checker.
 //!
 //! Every output is a pure function of the scene: the same bytes on every
 //! host. Programs are in millimetres with Z up; the files say which units
@@ -51,6 +54,7 @@
 //!   touch, or hold each other wholly inside ([`Interfering`]).
 
 mod decimate;
+mod decode;
 mod export;
 mod fbx;
 mod image;
@@ -66,10 +70,12 @@ mod png;
 mod polygon;
 mod preview;
 mod repair;
+mod sampler;
 mod skin;
 mod surface;
 mod texture;
 mod unwrap;
+mod uvview;
 
 pub use decimate::{
     Blocked, Decimate, DecimateError, DecimateReport, Rigid, collapse_short_edges, decimate, lods,
@@ -92,7 +98,7 @@ pub use place::{
     Axis, AxisMeasures, Pivot, Place, PlaceError, PlaceReport, Size, axis_measures, place,
 };
 pub use png::png;
-pub use preview::{Image, Preview, preview, sheet};
+pub use preview::{Image, Preview, ViewCamera, Views, preview, sheet, views};
 pub use repair::{
     Floaters, Holes, LARGE_HOLE_EDGES, NonManifold, Repair, RepairError, RepairReport, Weld,
     apply_transform, close_holes, join, orient, remove_degenerate, remove_floaters, repair,
@@ -100,3 +106,4 @@ pub use repair::{
 };
 pub use texture::{Downsize, TextureError, decode, downsize};
 pub use unwrap::{Unwrap, UnwrapError, Uvs, unwrap};
+pub use uvview::{UvImage, UvView, uv_view};

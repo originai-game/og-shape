@@ -165,7 +165,9 @@ with `asBuilt: false` a flush contact can count crossings by rounding),
 `glb()`, `obj()` and `stl()`
 (at the pose if one is set),
 `preview({ width?, views?, columns?, elevation?, azimuth?, noEdges?,
-noGround? })` (PNG; views from −Y, then +X, +Y, −X, 25° up;
-`elevation` over 0 and up to π/2, no view from below),
+noGround?, fov?, unlit? })` (PNG; views from −Y, then +X, +Y, −X, 25° up;
+`elevation` over 0 and up to π/2, no view from below; `fov` in radians,
+up to π/3, for perspective; `unlit` for colour only; a material's `map`
+is drawn),
 `program()`. `console.log` output comes back in `run_typescript`'s
 `logs`.

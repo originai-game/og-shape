@@ -6884,6 +6884,205 @@ Two things measured and changed on the way:
   `process` row, and `crates/shape-mcp/tests/long_calls.rs` (the step
   count is `STEPS.len()`).
 
+## 30. The preview draws textures and vertex colours (stream AI)
+
+Base 64af70c. Closes the second row of §28.7: every one of the 54
+generated meshes rendered grey in `shape preview` (40 textured, 14 with
+vertex colours only), and a program's `map` (§21) showed no texture
+either. The preview is how an agent without a GPU checks a look.
+
+### 30.1 Decisions
+
+- **Decoding.** Nothing decoded an image before: `measure` reads sizes
+  from headers only (`image.rs`), so "the decoding it shares with
+  measure" did not exist. A new module, `shape-tools/src/decode.rs`,
+  decodes for the preview only; `image.rs` (stream AH's) is untouched.
+  - PNG: written here on `miniz_oxide` (already a dependency): every
+    colour type and depth, Adam7, palettes with `tRNS`; 16-bit samples
+    round to 8 bits. Colour-space chunks are ignored: glTF says a
+    base-colour image is sRGB.
+  - JPEG: `jpeg-decoder` 0.3.2 (MIT OR Apache-2.0, no dependencies),
+    built with `default-features = false` (no rayon) and
+    `platform_independent`, which removes its SSSE3, NEON and wasm-SIMD
+    paths and forbids its `unsafe`. What remains is the stb_image integer
+    IDCT, integer upsampling and integer YCbCr conversion; the few f32
+    operations left are on small integers (`row / 2.0`, its fraction × 3,
+    −0.25) and are exact. Every one of the 40 textured files is PNG
+    (Hunyuan3D, TRELLIS, CRM) or baseline 4:2:0 JPEG (Meshy, SPAR3D); the
+    golden case `tools.preview.textured` decodes a baseline 4:2:0 JPEG
+    (`golden/programs/label.jpg`, 1.6 KB, made for it), so the gate proves
+    the bytes on x86-64, aarch64 and wasm32.
+  - WebP and KTX2 are refused with the reason; so is an image over 2^26
+    pixels (8192²). The part is then drawn in its plain colour and the
+    reason goes to `Views::undrawn` (the CLI's and MCP's `undrawn`).
+- **Colour.** The old rule is kept bit for bit for a part with neither a
+  drawable map nor vertex colours: its sRGB `color` × the Lambert light.
+  A part with a map or `Solid::colors` is coloured per pixel: texel ×
+  `color` × vertex colour, all in linear light, then back to sRGB, then
+  the same light. The light is applied in sRGB for both, so a white map
+  and white vertex colours give exactly the untextured pixel (a unit
+  test compares the bytes): textured and plain parts of one scene shade
+  alike. Shading in linear light for every part would move every
+  existing preview line; it is not done.
+- **Sampling** (`sampler.rs`).
+  - sRGB → linear by a 256-entry table (the sRGB curve from `trig::pow`,
+    × 65535, rounded); linear → sRGB byte by an exact search of that
+    table (mip levels) or `trig::pow` (the pixel).
+  - Mip chain: level k + 1 is level k halved, sizes rounded down and at
+    least 1, each texel the mean of a 2 × 2 block in linear light
+    (alpha as is), rounded half up, stored as sRGB bytes; an odd last
+    row or column is dropped. To 1 × 1. 4096² takes 85 MiB with its
+    chain (the bytes `measure` already reports).
+  - Level: ρ is the footprint in level-0 texels, the longer of the UV
+    steps one pixel right and one pixel down (each scaled by the image's
+    width and height), computed per pixel from the barycentrics one
+    pixel over. The level is the nearest to log₂ ρ: the largest k with
+    4^k ≤ 2ρ² (no logarithm). Bilinear within that level, weights
+    `floor(256 × fraction)`, integer sums; repeat wrap; v = 0 at the
+    image's bottom row. No trilinear blend: the level steps are visible
+    as a slight change of sharpness on a receding floor, not as noise.
+    A 256² one-texel checker on 40 pixels comes out as its linear mean,
+    sRGB 188, at every pixel (unit test).
+  - `mapSize` is already in the UVs a program's scene carries (export
+    divides them, §21). Wrap is repeat: `Material` has no wrap field,
+    export writes one repeat sampler, and the importer does not carry
+    samplers (Meshy's robot asks for mirrored repeat; it shows repeat).
+- **Alpha.** As export writes it: a part with `opacity` 1 is opaque
+  (glTF `OPAQUE`) whatever its map's alpha; a part below 1 blends with
+  alpha = `opacity` × map alpha × vertex-colour alpha, in the existing
+  back-to-front order (§20). Imported files' `alphaMode` is not carried
+  (stream AH's), so imported maps draw opaque.
+- **Vertex colours.** Drawn from `Solid::colors` (linear RGBA per
+  triangle corner), interpolated perspective-correctly and multiplied
+  in. Stream AH adds that field at the same time; it was not in the
+  base, so this branch adds it with the same name, type and meaning and
+  nothing else: no reader, nothing carries it, and `canonicalize`
+  leaves it as it is (AH's). The importer still skips colours here.
+- **Material factors (item 3): not drawn.** `metalness`, `roughness` and
+  `emissive` leave the picture as it was. The tools scene's wheel
+  (`tools.preview`, `tools.preview.png`) has `metalness` 1, `roughness`
+  0.25 and `emissive` [0.1, 0, 0]: any term for them moves those two
+  lines, which this stream must keep. A bounded specular term from the
+  one light would also not tell a metal from a plastic in a 256-pixel
+  turntable without an environment; emissive is the one with a plain
+  meaning (add its colour). Left for the orchestrator (§30.5).
+- **Perspective** (`Preview::fov`). The hand-off needs a field of view;
+  the orthographic view stays the default and keeps its bytes. With a
+  vertical field of view in (0, π/3], the eye stands where the bounding
+  sphere's silhouette fills 92 % of the smaller side, as the
+  orthographic scale does: tan of the half-angle t = 0.92 tan(fov/2) ×
+  min(w, h)/h, distance = r √(1 + t²) / t ≥ 2.13 r. The ground square's
+  corners are 1.63 r from the centre, so nothing is behind the eye and no
+  clipping is needed, except the shadow: a triangle pressed onto the
+  ground along the light can land past the ground square, so in
+  perspective it is clipped to it first (Sutherland–Hodgman, f64 `+ − ×
+  /`). Depth, light, UVs and colours are interpolated with the
+  barycentrics weighted by 1/depth; a unit test puts a map's v = ½
+  boundary on the row the quad's 3D midpoint projects to (an affine
+  interpolation puts it 2 rows off; the test fails then). Edges
+  interpolate 1/depth.
+- **Unlit** (`Preview::unlit`): light 1 for every pixel. With
+  `no_edges` and `no_ground` it is a flat colour pass.
+- **Cameras** (`views` → `Views { images, cameras, undrawn }`;
+  `preview` is `views(..).images`). Per view: `position`, `target` (the
+  box's centre), `up`, `fov` (or `None`), `ortho_height` (the scene
+  units the image's height spans; 0 in perspective), `width`, `height`.
+  An orthographic view's position is 3 radii out on its axis (any point
+  on that line sees the same). The CLI and MCP give it in the scene's
+  frame (kernel units, +Z up) and in the GLB's (`gltf`: metres, +Y up,
+  kernel (x, z, −y) / 1000), the frame a texturing step renders the GLB
+  in.
+- **The UV view** (`uv_view`, `uvview.rs`). One image per material
+  (parts with equal `Material`s together; parts without UVs left out),
+  square, `size` pixels (default 512). It covers the whole UV tiles the
+  UVs touch: from `uv_min` = (⌊min u⌋, ⌊min v⌋), `tiles` units each way.
+  Pixel (x, y), rows top down, is u = uv_min.u + tiles (x + ½)/size,
+  v = uv_min.v + tiles (size − y − ½)/size. Under the charts: the map
+  sampled as the preview samples it, or a checker of 8 × 8 squares a
+  tile; texels no triangle covers dimmed to 40 %. Lines: chart outlines
+  only (an edge no other triangle of the part shares with the same two
+  UVs: seams and open edges), dark, one pixel. Edges inside charts were
+  drawn too at first, lightened; on Meshy's car (37 000 triangles at
+  400²) they whitened the whole map, so they are gone. A tiling map's
+  charts span many tiles (`uv_plate`'s: 21, from −2), all at one scale.
+- **The hand-off.** `shape preview --each` writes one PNG a view
+  (`out.0.png`, `out.1.png`, …) and reports each one's camera;
+  `--unlit --no-edges --no-ground` makes the colour-only pass; `--uv`
+  the layout. MCP `preview` takes `fov`, `unlit`, `each`, `uv`,
+  `uv_size` and returns one image content per PNG; its report keeps the
+  first image's `width`, `height`, `bytes`, `output` at the top, as
+  before, and lists all under `images` with what each `shows`. The
+  binding's `preview` takes `fov` and `unlit`. No image model is called.
+- **The mesh preview carries the map.** `shape preview` of a mesh file
+  gave its parts default materials; each part now keeps its imported
+  `map` (and nothing else: factors are AH's).
+
+### 30.2 Measurements (x86-64, release, one thread)
+
+`shape preview FILE --views 3 --width 200`, all 54 files of §28, wall
+time per file (decode, mip chain and three views):
+
+| files | before (median, max s) | after (median, max s) |
+|---|---|---|
+| all 54 | 0.13, 2.27 | 0.29, 2.21 |
+| the 40 textured | 0.12, 0.47 | 0.27, 0.71 |
+
+The added time is mostly decoding and the mip chain: 0.03–0.18 s for a
+1024² map (Hunyuan3D, TRELLIS, CRM, SPAR3D), 0.5–0.6 s for Meshy's
+4096² JPEGs (the burger, the palm tree). No file failed and no map went undrawn. Memory: a 4096² map
+with its chain is 85 MiB on top of the mesh.
+
+### 30.3 Seen
+
+`docs/previews/generated/<name>-colour.png`, 13 files, 600 × 400: top
+row the old preview, bottom row this one, three views 200². The bear,
+the barn, the police car (its "POLICE" lettering), the palm tree, the
+cat, the robot, TRELLIS's bear, Hunyuan3D's house, SPAR3D's cabinet
+(wood inside a grey shell), CRM's mugs (OBJ with MTL and PNG). The
+vertex-coloured three (TripoSR's horse, InstantMesh's horse,
+Unique3D's chair) are drawn by `Solid::colors`, filled by a scratch
+reader that is not committed (OBJ `v x y z r g b` taken as sRGB, as
+three.js's OBJLoader does; glTF `COLOR_0` linear), standing in for
+AH's: every corner matched a coloured vertex by exact position. The
+horses show their dapple and dark mane; Unique3D's chair is grey in its
+colours too. `meshy-car_police-handoff.png`: `--each --views 4 --fov 0.7
+--unlit --no-edges --no-ground`, the four views a texturing step gets.
+`docs/previews/uv/plate_preview.png`: `golden/programs/uv_plate.json`
+before and after, with its checker, and its UV view.
+
+### 30.4 Golden
+
+No line moved: the untextured orthographic path computes what it did,
+in the same order (`model.washing_machine.png`, `tools.preview`,
+`tools.preview.png`, `tools.preview.facets`, `model.joints.preview`
+unchanged). No existing case has a drawable map or vertex colours in
+its preview. New:
+- `tools.preview.textured`: a can with the JPEG label tinted by its
+  colour and a slab with the PNG checker at opacity 0.6, three
+  perspective views and the cameras, then one orthographic unlit view;
+- `tools.preview.colors`: a ball with vertex colours and alpha, four
+  views;
+- `tools.preview.uv`: the UV views of that scene (map, map, checker);
+- `uvs.program.preview`: `uv_plate.json`'s preview with its checker and
+  its UV view.
+
+### 30.5 For the orchestrator
+
+- **Emissive and a specular term** would move `tools.preview` and
+  `tools.preview.png` (the wheel's `emissive` [0.1, 0, 0], `metalness`
+  1); not done. Decide whether those lines may move for emissive alone.
+- **`Solid::colors`** is added here with AH's name and type. At the
+  merge AH's field wins; this branch adds no reader and no carrying
+  (`canonicalize`, which the CLI's mesh preview runs, does not permute
+  it here). If AH's `canonicalize` does not carry colours, the CLI's
+  mesh preview will drop or misalign them: check after both land.
+- **The decoder** is new code in `shape-tools` (`decode.rs`) and a new
+  dependency (`jpeg-decoder`). If AH also decodes images (to resize or
+  bake), one decoder should remain.
+- Not done: other maps (normal, metallic-roughness, occlusion), wrap
+  modes other than repeat, `KHR_texture_transform`, trilinear or
+  anisotropic filtering, texture alpha on opaque parts (glTF `MASK`).
+
 ## 31. Pivot, size and up axis (stream AJ, 2026-11-10)
 
 Base 64af70c. §28.7's first gap: all 54 generated meshes have the

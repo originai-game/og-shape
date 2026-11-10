@@ -298,3 +298,117 @@ fn build_reads_fonts_beside_the_program_and_reports_booleans() {
     assert!(e.contains("not a TrueType"), "{e}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn preview_writes_each_view_with_its_camera_and_the_uv_layout() {
+    let dir = std::env::temp_dir().join(format!("shape-cli-views-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let out = dir.join("v.png");
+    let o = out.to_str().unwrap();
+    let r = report(&[
+        "preview", PROGRAM, "-o", o, "--each", "--views", "2", "--width", "32", "--fov", "0.6",
+    ]);
+    let images = r["images"].as_array().unwrap();
+    assert_eq!(images.len(), 2);
+    for (k, im) in images.iter().enumerate() {
+        let path = im["output"]["path"].as_str().unwrap();
+        assert!(path.ends_with(&format!("v.{k}.png")), "{path}");
+        assert!(std::fs::read(path).unwrap().starts_with(b"\x89PNG"));
+        let cam = &im["shows"]["camera"];
+        assert_eq!(cam["fov"], 0.6);
+        assert_eq!(cam["position"].as_array().unwrap().len(), 3);
+        // The glTF frame: metres, Y up.
+        assert_eq!(
+            cam["gltf"]["target"][1].as_f64().unwrap(),
+            cam["target"][2].as_f64().unwrap() / 1000.0
+        );
+    }
+    // The UV view: the program asked for UVs, one image a material.
+    let r = report(&[
+        "preview",
+        PROGRAM,
+        "--uvs",
+        "-o",
+        o,
+        "--uv",
+        "--uv-size",
+        "64",
+    ]);
+    let images = r["images"].as_array().unwrap();
+    assert!(!images.is_empty());
+    assert_eq!(images[0]["shows"]["size"], 64);
+    assert_eq!(images[0]["shows"]["under"], "checker");
+    // Without UVs there is nothing to lay out.
+    let failed = shape(&["preview", PROGRAM, "-o", o, "--uv"]);
+    assert!(!failed.status.success());
+}
+
+/// A file's vertex colours are drawn where the file puts them: the
+/// preview welds and reorders a mesh file's triangles (`canonicalize`),
+/// and each corner's colour must move with its triangle. A tall box, red
+/// on top and blue below, its faces written starting from different
+/// corners so the reordering rotates them.
+#[test]
+fn preview_draws_a_files_vertex_colours_in_place() {
+    let dir = std::env::temp_dir().join(format!("shape-cli-colours-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut obj = String::new();
+    for k in 0..8 {
+        // OBJ is read Y up.
+        let (x, y, z) = (
+            if k & 1 == 0 { -10 } else { 10 },
+            if k & 4 == 0 { -30 } else { 30 },
+            if k & 2 == 0 { -10 } else { 10 },
+        );
+        // sRGB 1 or 0: red on top, blue at the bottom.
+        let rgb = if y > 0 { "1 0 0" } else { "0 0 1" };
+        obj += &format!("v {x} {y} {z} {rgb}\n");
+    }
+    for f in [
+        [3, 1, 2],
+        [4, 2, 1],
+        [5, 6, 8],
+        [8, 7, 5],
+        [6, 5, 1],
+        [1, 2, 6],
+        [8, 6, 2],
+        [4, 8, 2],
+        [7, 8, 4],
+        [4, 3, 7],
+        [5, 7, 3],
+        [3, 1, 5],
+    ] {
+        obj += &format!("f {} {} {}\n", f[0], f[1], f[2]);
+    }
+    let file = dir.join("box.obj");
+    std::fs::write(&file, obj).unwrap();
+    let png = dir.join("box.png");
+    let out = shape(&[
+        "preview",
+        file.to_str().unwrap(),
+        "-o",
+        png.to_str().unwrap(),
+        "--views",
+        "1",
+        "--width",
+        "48",
+        "--unlit",
+        "--no-edges",
+        "--no-ground",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let im = shape_tools::decode(&std::fs::read(&png).unwrap()).unwrap();
+    let at = |x: u32, y: u32| {
+        let i = ((y * im.width + x) * 4) as usize;
+        [im.rgba[i], im.rgba[i + 1], im.rgba[i + 2]]
+    };
+    // Down the middle: red above, blue below.
+    let (top, bottom) = (at(24, 8), at(24, 40));
+    assert!(top[0] > 200 && top[2] < 100, "top {top:?}");
+    assert!(bottom[2] > 200 && bottom[0] < 100, "bottom {bottom:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
