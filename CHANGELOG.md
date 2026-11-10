@@ -959,3 +959,16 @@
   rounding error (now repaired by `boolean`), and two prisms stacked on a
   tilted ring triangulated two ways or with midpoints. No golden line
   moved.
+- `boolean` refuses a result that still passes through itself after the
+  repair of rounding errors: the new `BoolError::CrossingResult { pairs }`
+  (`docs/research.md` §25.4). A cut of two prisms whose faces lie a few
+  ulps apart without being one plane came back closed, of the right
+  volume, with 259 crossing pairs and no error. Golden line
+  `selfunion.check` moved, with the owner's leave: its inputs cross
+  themselves by design, and one of its booleans now ends in this error.
+- `helix` has the chord rule's segments for every turn. It had one
+  turn's count in all, so a thread of 7.1 turns spanned 107° a segment
+  (`docs/research.md` §24.5). Golden lines moved, with the owner's
+  leave, each a solid swept along a helix: `gen2.sweep.ends`,
+  `rest.program.glb`, `rest.program.measure`, `solid.sweep.helix`,
+  `solid.thread`, `uvs.generators2`.

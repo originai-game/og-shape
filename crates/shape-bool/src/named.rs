@@ -117,6 +117,15 @@ pub enum BoolError {
         /// Crossing pairs of triangles.
         pairs: usize,
     },
+    /// The result is closed but passes through itself: `pairs` pairs of
+    /// its triangles with a constructed corner still cross after the
+    /// repair of rounding errors ([`uncross_output`]), as where faces of
+    /// the operands lie a few ulps apart without being one plane
+    /// (`docs/research.md` §25.4). It is never returned.
+    CrossingResult {
+        /// Crossing pairs of triangles left.
+        pairs: usize,
+    },
 }
 
 impl std::fmt::Display for BoolError {
@@ -149,6 +158,10 @@ impl std::fmt::Display for BoolError {
             BoolError::SelfIntersecting { operand, pairs } => write!(
                 f,
                 "the {operand} passes through itself ({pairs} crossing triangle pairs); untangle it with self_union first"
+            ),
+            BoolError::CrossingResult { pairs } => write!(
+                f,
+                "the result passes through itself ({pairs} crossing triangle pairs): faces of the operands lie within rounding of each other without being one plane; move or turn one operand so they cross or part clearly"
             ),
             BoolError::Skinned(w) => write!(
                 f,
@@ -471,10 +484,11 @@ fn boolean_once(
         OperandError::NotFinite(0) => BoolError::NotFinite("target"),
         OperandError::NotFinite(_) => BoolError::NotFinite("tool"),
     })?;
-    let out = if UNCROSS {
-        uncross_output(&target.positions, &tool.positions, out).0
+    let (out, left) = if UNCROSS {
+        let (out, u) = uncross_output(&target.positions, &tool.positions, out);
+        (out, u.after)
     } else {
-        out
+        (out, 0)
     };
     let touching = !out.coplanar.is_empty() || !out.touching.is_empty();
     if out.tris.is_empty() {
@@ -533,6 +547,11 @@ fn boolean_once(
         |_, ms| ms.contains(&0) && ms.contains(&1),
     )?;
     let voids = void_shells(&s);
+    // Closed, but its own triangles still cross where the repair could
+    // not part them: never returned (`docs/design.md` §6).
+    if left > 0 {
+        return Err(BoolError::CrossingResult { pairs: left });
+    }
     Ok((
         s,
         BoolReport {

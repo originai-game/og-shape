@@ -297,7 +297,9 @@ pub fn helix(d: &Helix) -> Result<Vec<DVec3>, GenError> {
         return Err(GenError::NotPositive("radius, turns"));
     }
     let angle = trig::TAU * d.turns;
-    let n = segments(d.radius, angle);
+    // The chord rule's count for one turn, for every turn: `segments`
+    // counts at most one turn.
+    let n = ((segments(d.radius, trig::TAU) as f64 * d.turns).ceil() as u32).max(1);
     Ok((0..=n)
         .map(|i| {
             let f = i as f64 / n as f64;

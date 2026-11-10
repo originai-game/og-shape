@@ -5701,6 +5701,8 @@ tangent.
   is coarse (§16.4's spring reaching 6.498 for 6.5 is the same). Fixing
   it moves every line with a helix (`solid.thread`, `uvs.generators2`,
   `rest.program.*`, `gen2.sweep.ends`); not this stream's to decide.
+  **Fixed at the merge** (the owner's decision): one turn's count times
+  the turns; those lines and `solid.sweep.helix` moved.
 - **A tangent arc after a curve leaves along the last chord**, not the
   curve's tangent (`flatten`'s `heading`): a `tangentArc` after an `arc`
   or `spline` kinks by half a segment. Interior, so not changed here.
@@ -5859,6 +5861,10 @@ refusing a result whose repair leaves crossing pairs at constructed
 corners. The second costs nothing (the repair counts them) and would move
 one golden line, `selfunion.check` (whose inputs cross; 26 pairs left),
 with the error changing. Both are left for review.
+**At the merge the second was taken** (the owner's decision):
+`BoolError::CrossingResult`, checked after the open and non-manifold
+refusals; the tilted cut above is refused, and `selfunion.check` moved.
+The "one surface" step is still to do.
 
 ### 25.5 `check_operands` on by default, with the repair on
 
