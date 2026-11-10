@@ -65,6 +65,10 @@ pub fn cases() -> Vec<Case> {
             name: "bevel.untested",
             run: untested,
         },
+        Case {
+            name: "bevel.wide",
+            run: wide,
+        },
     ]
 }
 
@@ -518,7 +522,8 @@ fn slivers(h: &mut OutputHash) -> Result<(), HashError> {
     for angle in [0.0, 2.0] {
         solid(h, fillet(&ring(angle), &round(0.3, &[], 4)))?;
     }
-    // Wider than a segment of the bore: refused.
+    // Wider than a segment of the bore: re-meshed since stream Q
+    // (`docs/research.md` §7.6); before, this hashed the `TooLarge` error.
     solid(h, fillet(&ring(2.0), &round(1.5, &[], 4)))?;
     let square = [(-10.0, -10.0), (10.0, -10.0), (10.0, 10.0), (-10.0, 10.0)];
     for (twist, taper) in [(1.0, 0.0), (0.0, 0.5)] {
@@ -783,4 +788,62 @@ fn untested(h: &mut OutputHash) -> Result<(), HashError> {
             },
         ),
     )
+}
+
+/// Bevels wider than the segments of their faces (`docs/research.md`
+/// §7.6): a hole's rims by the hole tool, a slice of a cylinder, and a
+/// twisted prism's top edges.
+fn wide(h: &mut OutputHash) -> Result<(), HashError> {
+    let plate = cuboid(&BoxDesc {
+        width: 30.0,
+        depth: 30.0,
+        height: 10.0,
+    })
+    .unwrap_or_default();
+    let holed = hole(
+        &plate,
+        &Hole {
+            diameter: 6.0,
+            at: vec![above(0.0, 0.0)],
+            ..Default::default()
+        },
+    )
+    .unwrap_or_default();
+    solid(h, fillet(&holed, &round(1.5, &["hole"], 4)))?;
+    solid(h, fillet(&holed, &round(1.5, &["top"], 4)))?;
+    let pie = revolve(
+        &shape_2d::Profile::from_contour(shape_2d::Contour::corners(vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(5.0, 0.0),
+            DVec2::new(5.0, 8.0),
+            DVec2::new(0.0, 8.0),
+        ])),
+        &Revolve {
+            angle: 2.0,
+            axis: Axis::Z,
+            segments: 24,
+        },
+    )
+    .unwrap_or_default();
+    solid(
+        h,
+        chamfer(
+            &pie,
+            &Chamfer {
+                distance: 1.5,
+                segments: 3,
+                ..Default::default()
+            },
+        ),
+    )?;
+    let square = [(-10.0, -10.0), (10.0, -10.0), (10.0, 10.0), (-10.0, 10.0)];
+    let twisted = prism(
+        &square,
+        &Extrude {
+            height: 20.0,
+            twist: 1.0,
+            ..Default::default()
+        },
+    );
+    solid(h, fillet(&twisted, &round(5.0, &["top"], 4)))
 }

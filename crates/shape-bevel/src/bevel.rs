@@ -30,6 +30,8 @@ mod cones;
 mod general;
 #[path = "runs.rs"]
 mod runs;
+#[path = "wide.rs"]
+mod wide;
 
 /// What the new faces are called.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -205,9 +207,80 @@ struct Build<'a> {
     exponent: f64,
     kind: Kind,
     miters: Miters,
+    /// The cut bands of a wide bevel (`wide.rs`); `None` for every other.
+    wide: Option<&'a wide::Wide>,
 }
 
 impl Build<'_> {
+    /// Where a wide bevel's band was cut: the vertex the gap point is, when
+    /// the point slides from `v` along spoke `i` and that spoke ends on the
+    /// cut of the bevelled edge `key` (`docs/research.md` §7.6).
+    fn snap(&self, f: &Fan, i: usize, key: EdgeKey) -> Option<u32> {
+        let w = self.wide?;
+        let end = f.spokes[i % f.spokes.len()];
+        w.cuts.get(&key).filter(|c| c.contains(&end)).map(|_| end)
+    }
+
+    /// A wide bevel's profiles between the end chains of `key` (`cu` at
+    /// its low end, `cw` at its high end, both from face `a` to face `b`):
+    /// one at each cut point between, its other end on the straight side
+    /// between the end chains' points there. Also the points to put on
+    /// that side's face triangle, after the corner they follow.
+    #[allow(clippy::type_complexity)]
+    fn stations(
+        &mut self,
+        key: EdgeKey,
+        st: &(bool, Vec<u32>),
+        cu: &[u32],
+        cw: &[u32],
+    ) -> Result<(Vec<Vec<u32>>, ((usize, u32), Vec<u32>)), BevelError> {
+        let (lo, hi) = key;
+        let (pl, ph) = (self.s.positions[lo as usize], self.s.positions[hi as usize]);
+        let &(side_a, ref mids) = st;
+        let (u_other, w_other) = if side_a {
+            (cu[cu.len() - 1], cw[cw.len() - 1])
+        } else {
+            (cu[0], cw[0])
+        };
+        let (bu, bw) = (self.pos[u_other as usize], self.pos[w_other as usize]);
+        let mut profiles = Vec::new();
+        let mut others = Vec::new();
+        let mut last = 0.0;
+        for &c in mids {
+            let t = (self.pos[c as usize] - pl).dot(ph - pl) / (ph - pl).length_squared();
+            if !(t > last && t < 1.0) {
+                return Err(BevelError::TooLarge(pl));
+            }
+            last = t;
+            let other = self.push(bu + (bw - bu) * t);
+            let corner = pl + (ph - pl) * t;
+            profiles.push(if side_a {
+                self.chain(c, other, corner)
+            } else {
+                self.chain(other, c, corner)
+            });
+            others.push(other);
+        }
+        // The other side's face triangle holds the edge the other way
+        // round; its corner before the points is `hi` for face `b`.
+        let at = if side_a {
+            others.reverse();
+            (self.topo.dir[&(hi, lo)], hi)
+        } else {
+            (self.topo.dir[&(lo, hi)], lo)
+        };
+        Ok((profiles, (at, others)))
+    }
+
+    /// The point slid along unbevelled spoke `i`: the cut vertex there, or
+    /// a new one at `p`.
+    fn slid(&mut self, f: &Fan, i: usize, key: EdgeKey, p: DVec3) -> u32 {
+        match self.snap(f, i, key) {
+            Some(id) => id,
+            None => self.push(p),
+        }
+    }
+
     fn push(&mut self, p: DVec3) -> u32 {
         self.pos.push(p);
         self.pos.len() as u32 - 1
@@ -363,7 +436,10 @@ impl Build<'_> {
                     let u = inner[0];
                     let p1 = self.wedge_point(v, &f, lo, u, dl, 0.0)?;
                     let p2 = self.wedge_point(v, &f, u, hi, 0.0, dr)?;
-                    let id = self.push((p1 + p2) / 2.0);
+                    let id = match (self.snap(&f, u, el), self.snap(&f, u, er)) {
+                        (Some(a), _) | (None, Some(a)) => a,
+                        (None, None) => self.push((p1 + p2) / 2.0),
+                    };
                     gap_point.push(id);
                     for &t in &f.tris[lo..hi] {
                         self.repl.insert((t, v), vec![id]);
@@ -374,7 +450,8 @@ impl Build<'_> {
                     let (u1, u2) = (inner[0], inner[1]);
                     let a = self.wedge_point(v, &f, lo, u1, dl, 0.0)?;
                     let b = self.wedge_point(v, &f, u2, hi, 0.0, dr)?;
-                    let (ia, ib) = (self.push(a), self.push(b));
+                    let ia = self.slid(&f, u1, el, a);
+                    let ib = self.slid(&f, u2, er, b);
                     for &t in &f.tris[lo..u1] {
                         self.repl.insert((t, v), vec![ia]);
                     }
@@ -794,30 +871,45 @@ pub(crate) fn bevel(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
 }
 
 fn bevel_runs(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
-    match bevel_once(s, spec) {
+    match bevel_once(s, spec, None) {
         Err(BevelError::TooLarge(at)) => {
             // Straight runs may be cut into pieces shorter than the bevel.
-            let Some((solid, edges)) = runs::dissolve(s, &spec.edges) else {
-                return Err(BevelError::TooLarge(at));
-            };
-            bevel_once(
-                &solid,
-                &Spec {
-                    edges,
+            let dissolved = runs::dissolve(s, &spec.edges);
+            if let Some((solid, edges)) = &dissolved {
+                let spec = Spec {
+                    edges: edges.clone(),
                     ..spec.clone()
-                },
-            )
-            .map_err(|_| BevelError::TooLarge(at))
+                };
+                if let Ok(out) = bevel_once(solid, &spec, None) {
+                    return Ok(out);
+                }
+            }
+            // A bevel wider than the faces' own segments.
+            let first = wide::bevel(s, spec);
+            if first.is_ok() {
+                return first;
+            }
+            if let Some((solid, edges)) = &dissolved {
+                let spec = Spec {
+                    edges: edges.clone(),
+                    ..spec.clone()
+                };
+                if let Ok(out) = wide::bevel(solid, &spec) {
+                    return Ok(out);
+                }
+            }
+            Err(BevelError::TooLarge(at))
         }
         r => r,
     }
 }
 
-fn bevel_once(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
-    if !s.measure().closed {
-        return Err(BevelError::NotClosed);
-    }
-    let topo = topology(s);
+/// Per selected edge, its offsets; and the segment count.
+fn edge_offsets(
+    s: &Solid,
+    topo: &Topology,
+    spec: &Spec,
+) -> Result<(BTreeMap<EdgeKey, EdgeInfo>, u32), BevelError> {
     let mut edges = BTreeMap::new();
     let mut max_turn = 0.0f64;
     let mut max_off = 0.0f64;
@@ -867,6 +959,15 @@ fn bevel_once(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
             }
         }
     };
+    Ok((edges, n))
+}
+
+fn bevel_once(s: &Solid, spec: &Spec, wide: Option<&wide::Wide>) -> Result<Solid, BevelError> {
+    if !s.measure().closed {
+        return Err(BevelError::NotClosed);
+    }
+    let topo = topology(s);
+    let (edges, n) = edge_offsets(s, &topo, spec)?;
     let mut b = Build {
         s,
         topo,
@@ -884,6 +985,7 @@ fn bevel_once(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
         exponent: spec.exponent,
         kind: spec.kind,
         miters: spec.miters,
+        wide,
     };
     let verts: BTreeSet<u32> = b.edges.keys().flat_map(|&(x, y)| [x, y]).collect();
     if spec.loop_slide {
@@ -894,6 +996,7 @@ fn bevel_once(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
     }
     // Strips.
     let mut strip_of: BTreeMap<EdgeKey, usize> = BTreeMap::new();
+    let mut inserts: BTreeMap<(usize, u32), Vec<u32>> = BTreeMap::new();
     let keys: Vec<EdgeKey> = b.edges.keys().copied().collect();
     for key in keys {
         let (u, w) = key;
@@ -906,13 +1009,23 @@ fn bevel_once(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
                 "uneven profiles",
             ));
         }
+        let mut profiles = vec![cu.clone()];
+        if let Some(st) = wide.and_then(|w| w.stations.get(&key)) {
+            let (mid, insert) = b.stations(key, st, &cu, &cw)?;
+            profiles.extend(mid);
+            inserts.insert(insert.0, insert.1);
+        }
+        profiles.push(cw);
         let unit = b.unit();
         strip_of.insert(key, unit);
-        for k in 0..cu.len() - 1 {
-            // A tip's profile is one point: skip the folded triangles.
-            for t in [[cw[k], cu[k], cu[k + 1]], [cw[k], cu[k + 1], cw[k + 1]]] {
-                if t[0] != t[1] && t[1] != t[2] && t[2] != t[0] {
-                    b.new_tris.push((t, unit));
+        for pair in profiles.windows(2) {
+            let (cu, cw) = (&pair[0], &pair[1]);
+            for k in 0..cu.len() - 1 {
+                // A tip's profile is one point: skip the folded triangles.
+                for t in [[cw[k], cu[k], cu[k + 1]], [cw[k], cu[k + 1], cw[k + 1]]] {
+                    if t[0] != t[1] && t[1] != t[2] && t[2] != t[0] {
+                        b.new_tris.push((t, unit));
+                    }
                 }
             }
         }
@@ -927,13 +1040,26 @@ fn bevel_once(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
             }
         }
     }
-    finish(b)
+    finish(b, &inserts)
 }
 
-fn finish(b: Build<'_>) -> Result<Solid, BevelError> {
+fn finish(b: Build<'_>, inserts: &BTreeMap<(usize, u32), Vec<u32>>) -> Result<Solid, BevelError> {
     let s = b.s;
     let kind = b.kind.name();
     let seq = |t: usize, x: u32| -> Vec<u32> { b.repl.get(&(t, x)).cloned().unwrap_or(vec![x]) };
+    // A rebuilt triangle's outline: each corner's replacement, then the
+    // points a wide bevel's strip put on the side after it.
+    let poly = |t: usize| -> Vec<u32> {
+        s.triangles[t]
+            .iter()
+            .flat_map(|&x| {
+                let mut v = seq(t, x);
+                v.extend(inserts.get(&(t, x)).into_iter().flatten());
+                v
+            })
+            .collect()
+    };
+    let removed = |t: usize| b.wide.is_some_and(|w| w.removed.contains(&t));
     // Old faces, rebuilt triangle by triangle; where a triangle does not
     // fit (a sliver whose corners all moved), its whole planar face is
     // rebuilt from its outline instead.
@@ -941,10 +1067,19 @@ fn finish(b: Build<'_>) -> Result<Solid, BevelError> {
     let mut pieces: Vec<Option<Vec<[u32; 3]>>> = vec![None; n_old];
     let mut failed = Vec::new();
     for (i, t) in s.triangles.iter().enumerate() {
+        if removed(i) {
+            pieces[i] = Some(Vec::new());
+            continue;
+        }
         if !t.iter().any(|&x| b.repl.contains_key(&(i, x))) {
             continue;
         }
-        let poly: Vec<u32> = t.iter().flat_map(|&x| seq(i, x)).collect();
+        let poly = poly(i);
+        if b.wide.is_some() && wide::collapsed(&poly) {
+            // A band triangle whose corners all landed on the cut.
+            pieces[i] = Some(Vec::new());
+            continue;
+        }
         match clip(&poly, &b.pos, tri_normal(s, i)) {
             Some(p) => pieces[i] = Some(p),
             None => failed.push(i),
@@ -961,11 +1096,9 @@ fn finish(b: Build<'_>) -> Result<Solid, BevelError> {
             .iter()
             .find(|&&x| b.repl.contains_key(&(i, x)))
             .map_or(DVec3::ZERO, |&x| s.positions[x as usize]);
-        let region = planar_region(s, &b.topo, i);
-        let polys: Vec<Vec<u32>> = region
-            .iter()
-            .map(|&r| s.triangles[r].iter().flat_map(|&x| seq(r, x)).collect())
-            .collect();
+        let mut region = planar_region(s, &b.topo, i);
+        region.retain(|&r| !removed(r));
+        let polys: Vec<Vec<u32>> = region.iter().map(|&r| poly(r)).collect();
         let nrm = tri_normal(s, i);
         let tris = outline(&polys)
             .and_then(|loops| bridge(loops, &b.pos, nrm))

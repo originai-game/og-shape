@@ -1,5 +1,5 @@
-//! Writes the previews of the bevel cases `docs/research.md` §7.4 and
-//! §7.5 add:
+//! Writes the previews of the bevel cases `docs/research.md` §7.4, §7.5
+//! and §7.6 add:
 //! one PNG per case, four views, of a close-up (the result intersected
 //! with a cube around the vertex that matters) or of the whole solid.
 //!
@@ -277,6 +277,7 @@ fn cases() -> Result<Vec<Case>, Error> {
         });
     }
     stream_p(&mut out)?;
+    stream_q(&mut out)?;
     Ok(out)
 }
 
@@ -425,6 +426,91 @@ fn stream_p(out: &mut Vec<Case>) -> Result<(), Error> {
         )?,
         focus: Some((DVec3::new(10.0, 10.0, 7.0), 5.0)),
         azimuth: 2.4,
+    });
+    Ok(())
+}
+
+/// The cases of `docs/research.md` §7.6: bevels wider than the segments
+/// of their faces.
+fn stream_q(out: &mut Vec<Case>) -> Result<(), Error> {
+    let ring = revolve(
+        &shape_2d::Profile::from_contour(shape_2d::Contour::corners(vec![
+            DVec2::new(5.0, 0.0),
+            DVec2::new(10.0, 0.0),
+            DVec2::new(10.0, 8.0),
+            DVec2::new(5.0, 8.0),
+        ])),
+        &Revolve {
+            angle: 2.0,
+            axis: Axis::Z,
+            ..Default::default()
+        },
+    )?;
+    out.push(Case {
+        name: "wide_bore",
+        solid: fillet(&ring, &round(1.5, &[], 4))?,
+        focus: Some((DVec3::new(5.5, 0.0, 6.0), 3.0)),
+        azimuth: 2.6,
+    });
+    let plate = cuboid(&BoxDesc {
+        width: 30.0,
+        depth: 30.0,
+        height: 10.0,
+    })?;
+    let holed = shape_edit::hole(
+        &plate,
+        &shape_edit::Hole {
+            diameter: 6.0,
+            at: vec![shape_edit::above(0.0, 0.0)],
+            ..Default::default()
+        },
+    )?;
+    out.push(Case {
+        name: "wide_hole_rim",
+        solid: fillet(&holed, &round(2.5, &["hole"], 4))?,
+        focus: Some((DVec3::new(0.0, 0.0, 6.0), 6.0)),
+        azimuth: 0.4,
+    });
+    let pie = revolve(
+        &shape_2d::Profile::from_contour(shape_2d::Contour::corners(vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(5.0, 0.0),
+            DVec2::new(5.0, 8.0),
+            DVec2::new(0.0, 8.0),
+        ])),
+        &Revolve {
+            angle: 2.0,
+            axis: Axis::Z,
+            segments: 24,
+        },
+    )?;
+    out.push(Case {
+        name: "wide_cylinder_slice",
+        solid: chamfer(
+            &pie,
+            &Chamfer {
+                distance: 1.5,
+                segments: 3,
+                ..Default::default()
+            },
+        )?,
+        focus: None,
+        azimuth: 2.2,
+    });
+    let square = [(-10.0, -10.0), (10.0, -10.0), (10.0, 10.0), (-10.0, 10.0)];
+    let twisted = prism(
+        &square,
+        &Extrude {
+            height: 20.0,
+            twist: 1.0,
+            ..Default::default()
+        },
+    )?;
+    out.push(Case {
+        name: "wide_twisted_top",
+        solid: fillet(&twisted, &round(5.0, &["top"], 4))?,
+        focus: None,
+        azimuth: 0.6,
     });
     Ok(())
 }
