@@ -523,3 +523,20 @@
   in-line ridge, a bored block's chamfer, a seven-sided apex, a pipe
   through curved faces, loop slide around a cone, a patch miter on a
   curved outline).
+- `shape-bevel`: bevels wider than the segments of their faces fit
+  instead of `TooLarge` (`docs/research.md` §7.6): the part revolve's
+  bore at r 1.5, a hole's rims from `shape-edit` (whose rims come in
+  pieces down to 1e-15 long: now the same volume as a plain plate's
+  hole), a slice of a cylinder chamfered across its cut faces, and a
+  twisted prism's top edges at r 5 (its faces cut exactly where the
+  offset line crosses their rows). Tried only where the old layout gave
+  `TooLarge`, so every result it gave is unchanged. In the bevel scan,
+  `TooLarge` fell from 1 233 to 446 of 17 516 bevels; nothing that fitted
+  fails, and no new result has crossing triangles.
+- Golden hash `bevel.slivers` moved: its part revolve filleted 1.5 used to
+  hash the `TooLarge` error and now hashes the bevel. No other hash
+  moved. Golden case `bevel.wide` added.
+- `crates/shape-bevel/examples/scan.rs`: the bevel scan of §7.5 and §7.6,
+  one line per bevel, so two runs compare line by line.
+- Previews of the §7.6 cases in `docs/previews/phase3/` (`wide_bore`,
+  `wide_hole_rim`, `wide_cylinder_slice`, `wide_twisted_top`).

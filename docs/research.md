@@ -1189,6 +1189,139 @@ docs/previews/phase3`, the §7.4 images unchanged): `two_cones`,
   per-corner spread or tip slide. A pipe with curved faces on both sides
   is untested (no generator makes one).
 
+### 7.6 Bevels wider than a face's segments (stream Q, 2026-11-10)
+
+**Sources.** The Bevel V2 issue #98674, read again through
+`projects.blender.org/api/v1/repos/blender/blender/issues/98674`: "the
+offset lines may cross over other edge lines of the adjacent faces and eat
+into adjacent-to-adjacent faces"; "inset into the adjacent geometry
+regarded as one big face", then "intersect the outside edges of the bevel
+with all the existing edges"; clamping as the alternative it hoped to
+avoid. Trickey's page as in §7.1. Blender's source and the Mesh Bevel node
+PR (#158151) were not opened. The notes give the idea only; the passes
+below and their limits are ours.
+
+**What was built** (`crates/shape-bevel/src/wide.rs`). A fallback, tried
+only where the classic layout and the straight-run retry return
+`TooLarge`, so every result they gave is byte for byte the same. Three
+passes; the classic layout runs after the first two, and on the third's
+cut bands:
+
+0. **Weld.** Edges shorter than 1e-9 of the largest offset are collapsed.
+   The hole tool's boolean leaves rim points 1e-15 apart with two
+   zero-area triangles on them, and the final check refused every bevel
+   of that solid, however far from the hole.
+1. **Swallowed runs** (the inset's edge event). For a bevelled edge
+   `f = u → x` and another bevelled edge `e` at `u`, on each face of `f`:
+   `e`'s offset line crosses `f` at `(d_e + d_f cos θ) / sin θ` from `u`,
+   and `x`'s own point lands where `f`'s offset line meets the next run
+   edge `g`'s (`(d_f cos φ − d_g) / sin φ` from `x`, φ the run's turn in
+   `f`'s plane). If the first is past the second, `f`'s strip has no
+   length there. Where `x` is a smooth run vertex (two real edges, both
+   bevelled, the same two faces), it slides along `g`, on the old edge,
+   to a tenth of the offset past the reach; or, if that would leave less
+   than a tenth before `g`'s end, it merges into `u`. This is approximate:
+   the faces move by `x`'s distance from the chord that replaces its two
+   edges and from the planes of the triangles it leaves. That distance is
+   measured, and over a tenth of the offset the pass is refused.
+2. **Cut bands** (the inset and intersect). For a side of a bevelled edge
+   whose band (its face between the edge and the offset line) holds
+   another vertex of that face, the offset line is the plane through the
+   offset points at both ends, square to the face's first triangle.
+   `orient3d` decides each vertex's side. Every edge of the face from
+   inside to outside is split where it crosses, so the geometry is
+   unchanged. A swallowed vertex on an unbevelled real edge collapses
+   forward along it into the cut there; one inside the face collapses into
+   the edge's nearer end. A swallowed corner, a bevelled edge across a
+   band, or cuts on both sides of one edge are refused. The band's
+   triangles are not rebuilt. The gap points at the edge's ends are the
+   cut points on the unbevelled edges there (snapped, no new point), and
+   the strip gets a profile at each cut point between, with its other
+   side split to match. Two bands meeting across one unbevelled edge
+   share the first band's cut on it (the classic layout gives that gap one
+   point), so the second face takes the corner there.
+
+**Measurements** (`cargo test -p shape-bevel`, golden case `bevel.wide`;
+fillets 4 segments). All results are closed, uncrossed
+(`shape_bool::selfcheck`) and canonical, and the new faces carry only
+`fillet` or `chamfer`, with edges re-tagged with the cap names as in
+§1.3.
+
+| case | before | now | quads | worst fold |
+|---|---|---|---|---|
+| part revolve r 5–10 × 8, 2 rad, `fillet(1.5)` all (`bevel.slivers`) | `TooLarge` | removed 51.17; smooth analytic 49.44 | 598/608 | 25.4° |
+| same, `fillet(1.0)` | `TooLarge` | removed 23.45; analytic 22.52 | 596/608 | 30.5° |
+| same, `chamfer(1.5)` | `TooLarge` | removed 104.36 | 104/112 | 29.2° |
+| plate 30 × 30 × 10, `hole(6)`, `fillet(1.5, hole)` | `TooLarge` (any radius) | equal to a plain plate with the same 24-gon hole to 1e-9 (removed 22.20) | 384/384 at 2.5 | 0° |
+| same, `fillet(1.5, top)` (outer edges and one rim) | `TooLarge` | fits | | |
+| cylinder r 3, 12 seg, `chamfer(2, top, 3 seg)` | fitted | unchanged; the frustum's volume to 1e-9 | all | 0° |
+| cylinder slice r 5 × 8, 2 rad, `chamfer(1.5, 3 seg)` all | `TooLarge` | removed 57.33 | 170/192 | 0° |
+| same, `fillet(1.5)` | `TooLarge` | removed 30.31 | 324/328 | 22.8° |
+| square 20 twisted 1 rad, `fillet(5, top)` | `TooLarge` | removed 470.0; 18.7 r² for r 4.5–5.5 | 58/64 | 67.5° |
+
+- The analytic ring value is the smooth body rounded by a rolling ball:
+  every edge is square, so it is the eroded body grown back (Steiner's
+  formula). Where the classic layout fits (r 0.5), the 4-segment profile
+  removes 1.095 times it. At 1.0 and 1.5 the result removes 1.041 and
+  1.035 times it: pass 1 adds back 0.26 and 0.98 mm³ before bevelling,
+  mostly inside the bands. The slice's pass 1 removes 0.29 (d 1) and
+  1.99 mm³ (d 1.5), at the wall's chords next to the cut faces.
+- On the hole, the pieces merged lie on the rims' own lines, so the
+  result is the plain plate's.
+- The plain cylinder's rim was never too wide: nothing crosses a rim's
+  band on a cylinder (a scan of radii, segment counts, depths and
+  profile segments refused the same cases before and after, all of them
+  offsets that do not fit). The slice is the wide case: its cut faces'
+  vertical edges swallow the rims' first vertices.
+- On the twisted prism, every vertex of a side face in the result lies
+  on the original side triangles to 1e-9 (a test). The quads left
+  unpaired and the 67.5° fold are where a strip meets a twisted row's
+  diagonal.
+
+**The scan** (`cargo run --release -p shape-bevel --example scan -- out.txt`).
+The scratch scan of §7.5 was not kept; this is a rebuild along its
+description: 45 solids (boxes, cylinders, a cone, a tube, a wedge, a dome,
+prisms and pyramids of 3–8 sides, twisted, tapered, a D-slot, a rounded
+rectangle, a slot, full and part revolves with seams and apexes, joins at
+a corner and an edge, bores, a notch, a post, a cross bar, a cross bore,
+and three `shape-edit` holes), selected by all edges, each name, each
+real edge (at most 200 a solid) and 50 seeded random subsets, then
+filleted (4 segments) and chamfered at 0.5 and 1.5: 17 516 bevels. An
+outcome is `ok` only if the result is closed, has no zero-area triangle
+and no crossing triangles.
+
+| outcome | before (`d7d9207`) | now |
+|---|---|---|
+| ok | 15 517 | 16 304 |
+| `TooLarge` | 1 233 | 446 |
+| crossing triangles | 458 | 458 (the same lines) |
+| `NotClosed` (the join along an edge is not manifold) | 308 | 308 |
+
+787 bevels went from `TooLarge` to `ok`. Nothing went from fitting to
+failing, and no line changed in any other way. The 672 on the `shape-edit`
+hole are all gone. What is left: random subsets on the part revolves
+(134, a bevelled rim piece across a band), the notch, cross bar and join
+(160), the apex revolve (46), the counterbore and cross bore (38), and
+offsets that do not fit (the thin box
+and the tube's 3 mm top at 1.5, 68).
+
+**Still errors, and untested.**
+- Pass 1 is approximate by up to a tenth of the offset at a swallowed run
+  vertex. The exact answer starts the next edge's strip at a station on
+  that edge, so the corner patch attaches mid-edge; that is not built.
+- Pass 2 refuses a band crossed by a bevelled edge, a swallowed corner,
+  and cuts on both sides of one edge. Where two bands meet across an
+  unbevelled edge at different depths, the second face's corner
+  triangles take the first band's cut (exact vertices, faces off their
+  old planes near that corner).
+- Found, not changed (the classic layout, as before): on the twisted
+  prism, `fillet(top)` at r 1.5–3 removes 0.4–11 r², against 18.7 r²
+  above, with a fin at one corner; a single helical side piece filleted
+  alone removes zero or adds 0.83 mm³ (its tips). The 458 crossing
+  results in the scan crossed before this stream too.
+- Untested: wide bands on doubly curved faces (domes, tori), and loop
+  slide or miters together with a wide band.
+
 ## 8. Phase 4: parts, joints, the CLI and the wasm binding (stream E, 2026-11-09)
 
 ### 8.1 Sources
