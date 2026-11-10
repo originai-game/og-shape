@@ -6,7 +6,8 @@
 #   scripts/check.sh bless      rewrite golden/hashes.txt from this host
 #
 # Steps: lint, test, golden, wasm (which ends with binding: the
-# TypeScript binding's tests, when wasm-bindgen and bun are installed).
+# TypeScript binding's tests, when wasm-bindgen and bun are installed,
+# and the binding under node, when node 22.18 or later is).
 # CI runs lint once, test and golden on every target, and wasm on x86-64
 # Linux.
 set -euo pipefail
@@ -70,6 +71,13 @@ binding() {
   fi
   crates/shape-wasm/build.sh
   (cd crates/shape-wasm/ts && bun test test/)
+  # The same golden bytes from node, which imports the binding's
+  # TypeScript as it is (type stripping, node 22.18 or later).
+  if command -v node >/dev/null && node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 18) ? 0 : 1)'; then
+    node crates/shape-wasm/ts/tools/check_consumers.ts node
+  else
+    echo "binding: node NOT RUN: needs node 22.18 or later" >&2
+  fi
 }
 
 bless() {

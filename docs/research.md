@@ -3226,3 +3226,324 @@ area is not zero: the bands' intersection has one, 17 mm long.
   are compared as built.
 - Every new hash is checked natively (x86-64) and as wasm32 under
   wasmtime here; aarch64 and Windows run in CI only.
+
+## 19. Validation with real consumers (stream U, 2026-11-10)
+
+Stream U ran what §8.5, §12.4, §13.7 and §14.5 left untested against
+the consumers the kernel will meet: node, a bundler and a browser for
+the binding; three.js with a renderer for the GLBs; a real MCP client for
+the server; a mesh of a million triangles; and the phase 6 objects
+through the server. Code: `crates/shape-wasm/ts/tools/` (consumers,
+render, scale), `crates/shape-mcp/` (progress, cancellation, paths, the
+SDK client in `ts/client/`), `eval/phase6/mcp_run.ts` and `U/`.
+
+### 19.1 The binding outside bun
+
+`node tools/check_consumers.ts` hashes the washing machine's GLB and
+preview PNG (`washer_open()`, as `binding.test.ts`) with WebCrypto in
+each consumer and compares them with `golden/hashes.txt`:
+
+| consumer | GLB | PNG | build + GLB + PNG |
+|---|---|---|---|
+| node 22.23.4, `src/index.ts` imported as it is | golden | golden | 300–490 ms |
+| bun 1.4.4, the same | golden | golden | 450 ms |
+| esbuild 0.28.2 bundle (ESM, platform node), run by node and by bun | golden | golden | 250–500 ms |
+| esbuild bundle (platform browser) in headless Chromium 153 (Playwright), wasm fetched | golden | golden | 350–490 ms |
+
+What broke, and what changed:
+- **node refused the binding**: its type stripping does not take
+  TypeScript-only syntax, and `Part`, `Frame` and `Shape` used
+  parameter properties (`constructor(readonly id: number)`). They are
+  plain fields now; nothing else in the binding needed a transform. The
+  gate's binding step runs the node check when node ≥ 22.18 is
+  installed, and CI installs node 22.23.4 on the wasm job.
+- **A bundle runs the example's script block.** `examples/washing_
+  machine.ts` ends with `if (import.meta.main) { … }`; in a bundle every
+  module shares the bundle's `import.meta`, so importing the example ran
+  its file writing. The checks bundle with `import.meta.main` defined
+  false. An author who bundles a module with such a block meets the same.
+- **In a browser bundle, errors lose their call site.** The binding
+  finds the author's line as the first stack frame outside its own file;
+  bundled, the binding and the author's code are one file, so no frame
+  qualifies and the message ends without `(at …)` (seen in Chromium:
+  `op 0 cylinder "rod": cylinder has no field "segmentz"; …`). The op,
+  index and part are still named. Not fixed: it needs source maps, or a
+  marker the bundler keeps.
+- `load()` with no argument reads the wasm with `node:fs`; a page passes
+  the bytes (`load(await (await fetch(url)).arrayBuffer())`), which
+  works. The browser bundle stubs `node:` imports.
+- Vite was not tried; esbuild is the bundler Vite uses for dependencies,
+  but Vite's own module graph and wasm handling were not exercised.
+
+### 19.2 three.js with pixels
+
+`node tools/check_render.ts` loads the GLBs with three.js 0.186.1's
+GLTFLoader in headless Chromium 153, renders with WebGLRenderer (WebGL 2
+on SwiftShader, a CPU implementation), and measures; the screenshots are
+in `docs/previews/validate/` (washer at rest, open as exported, moved in
+three.js to the door's 143° and the drawer's 200 mm limit; the figure at
+rest, `bend` and `wave`). Images are not compared.
+
+- **Scene graph** (washer): `washing_machine` → `cabinet` (mesh) →
+  joint nodes `drum_spin`, `door_hinge`, `drawer_slide`, `dial_turn`,
+  each with its `s3d_joint` extras, holding `drum`; `door` (`ring`,
+  `glass`, `handle`); `drawer`; `dial`.
+- **Joint motion**: the open file re-posed to rest in three.js matches
+  the rest file to 1.2e-16 m, and the rest file posed open matches the
+  open file to 1.9e-16 m; at 143° the door reaches x = 0.670 m; the
+  drawer slides 0.200000 m.
+- **Skin** (`cargo run -p shape-skin --example figure_poses` writes the
+  figure's GLB and the kernel's `pose` of every vertex): 14 581 GLB
+  vertices (13 077 in the kernel, split by normals), 26 150 triangles,
+  10 bones. The bones are posed by the kernel's turns (rest rotation,
+  then each turn about the bone's rest axes, Z up → Y up). For rest,
+  `bend` and `wave`: every GLB vertex has a kernel vertex at the same
+  rest position; three.js's skinning (`SkinnedMesh.getVertexPosition`,
+  the shader's linear blend done on the CPU) is within 1.5e-5 mm of the
+  kernel's, f32 rounding; vertices that share a rest position stay
+  together (0 mm apart), so the skin does not tear at the normal splits.
+  The largest edge stretch is ×1.009 at rest (rounding of short edges),
+  ×2.04 in `bend` and ×4.24 in `wave`: a measurement for the author, no
+  verdict here.
+- The GPU's skinned positions were not read back; the screenshots show
+  them, and they look as the kernel's previews do.
+
+### 19.3 The MCP server with real clients
+
+- **The official TypeScript SDK** (`@modelcontextprotocol/sdk` 1.32.2,
+  `Client` over `StdioClientTransport`) drives the release binary
+  (`crates/shape-mcp/ts/client/client.ts`, all 34 checks pass):
+  initialize, ping, the ten tools' schemas, the four guides read back
+  byte for byte, `build` of a JSON program with stream M's ops (`wire`
+  with fillets and segments, `gear` with a bore, `knurl`, a `+Z` torus
+  with segments, a hexagon across flats, a poly with a bulge under
+  `scale`, `body`, the `scale` op), `preview` (PNG image content, 320 ×
+  160, and `out`), `measure`, `export` to GLB, OBJ and STL,
+  `run_typescript` with the new ops in the binding (`wire`, `torus`,
+  `og.scale`, `og.polygon` flats), `import` of a binary FBX (centimetres,
+  two materials, embedded PNG) and of a `.gltf` whose buffer and image
+  are files beside it, `repair`, `decimate` with LODs, `unwrap`,
+  `process` of the FBX, progress and cancellation (§19.4), and refusals
+  (an unknown argument, a path outside the root) as tool errors. Call
+  times on the small inputs: 0–66 ms each.
+- **The MCP Inspector's CLI** (`@modelcontextprotocol/inspector` 0.17.2,
+  `--cli`): `tools/list` (10), `resources/list` (4), `resources/read`,
+  `tools/call measure` and `process` with `--tool-arg budget=1000` (the
+  inspector types the argument by the schema) all answer.
+- **Claude Code** 2.1.322: `claude mcp add --scope local og-shape --
+  shape-mcp --root …` then `claude mcp list` reports "✓ Connected" (the
+  `--scope project` form waits for approval in an interactive session,
+  as `guides/mcp.md` implies). Headless agents used it for run `U`
+  (§19.7).
+- **`guides/shape.md` is served** as `og-shape://guides/shape.md`, listed
+  first, and the server's instructions say to read it first (§13.6
+  item 15). `guides/mcp.md` lists it.
+- **No `structuredContent` or `outputSchema`.** The SDK client validates
+  `structuredContent` against a tool's `outputSchema` when the tool
+  declares one, and a result without it, or not matching it, becomes a
+  client-side error (`client/index.js`, `callTool`). The reports are
+  written by the kernel and differ by input (a program's measures are
+  camelCase, a mesh's snake_case, with nulls for skipped steps); a schema
+  for each would be a second description of every report, able to
+  drift, and its failure mode turns a correct result into an error. An
+  agent reads the text content either way, and the specification asks
+  for the same JSON as text beside `structuredContent`. So the reports
+  stay JSON text; a typed client can parse them.
+- **Interference is not reachable from the server**, the CLI or the
+  binding: §15.3's `program::report_json` is used only by the golden
+  case. §13.6 item 10 said the front ends were stream M's to wire; they
+  are not wired on main.
+
+### 19.4 Long calls: progress and cancellation
+
+The kernel stays single-threaded. The server reads its input on one
+thread of its own (lines into a channel; `std::thread::spawn` is allowed
+there by name, the only thread) and serves on the main thread:
+
+- Before each step of `process` (import, repair, decimate, unwrap,
+  measure, export: `shape_cli::process::{STEPS, process_steps}`, a step
+  hook added to `shape-cli`) and of `run_typescript` (run under bun;
+  replay and measure), the server takes every line read so far:
+  `notifications/cancelled` for this call stops it there, a `ping` is
+  answered at once, anything else waits for the call to end. With
+  `_meta.progressToken` it then sends `notifications/progress`
+  (`progress` k of `total`, `message` the step).
+- While bun runs, the server checks every 10 ms, and a cancellation kills
+  bun.
+- A request cancelled while it waits in the queue never runs. A
+  cancelled request is not answered (the specification's SHOULD).
+- A single kernel call is never interrupted: `repair` alone, or the
+  decimate step of `process`, runs to its end (§19.6: 7 s and 14 s at a
+  million triangles).
+
+Tests (`crates/shape-mcp/tests/long_calls.rs`) gate the client's input
+so that each is deterministic: lines after the gate are released when
+the server sends its first progress notification, and the server's
+output waits until the reader has passed them on. They check the six
+progress notifications, a ping answered during a call, a queued request
+dropped, a `process` stopped before its second step with nothing
+written, and bun stopped (the program loops forever; the call ends in
+well under the 60 s timeout). Through the SDK client, an `AbortSignal`
+on `run_typescript` returns control and the next ping answers 205 ms
+after the call started (cancelled 200 ms in).
+
+### 19.5 Path confinement
+
+A path was checked, then opened by name, so a directory or link swapped
+in between was followed. Now (`crates/shape-mcp/src/workspace.rs`):
+- a read opens the file, then resolves its path again and requires the
+  real path under the root and, on Unix, the opened file and the file at
+  the real path to be one (device and inode); the size cap is read from
+  the opened file and enforced while reading;
+- a write creates a new file beside the target (`create_new`, which
+  never follows a link), confirms it the same way, writes, and renames it
+  over the target: a link put at the target is replaced, not written
+  through, and a swapped directory leaves no file outside (the new file
+  is removed when the check fails).
+
+The race is played in order by a test (`a_swap_after_the_check_is_
+refused`, Unix): resolve, swap `sub/` for a link out, then read and write
+are refused and the outside directory is unchanged; it fails on the old
+code. Windows: std gives no stable file identity, so the opened file's
+path is resolved again but not compared by identity. `windows_paths`
+(`#[cfg(windows)]`, so CI's x86-64 Windows target runs it) checks that
+the root is `\\?\…`, that relative, plain absolute, verbatim and
+slash-separated paths inside resolve under it, that `..`, another
+directory and another drive are refused, a write and read back, and a
+file link out when the runner may create links. Here it was type-checked
+and linted for `x86_64-pc-windows-msvc` but not linked or run (no MSVC
+linker).
+
+Left: `run_typescript` with a `path` checks the file, then hands the
+path to bun, which opens it again.
+
+### 19.6 Scale: a million triangles
+
+The mesh: the XYZ RGB dragon as distributed in
+`alecjacobson/common-3d-test-models` (`data/xyzrgb_dragon.obj`,
+249 882 triangles, a decimated copy of the Stanford scan; Stanford's own
+server failed TLS through this container's proxy). No public copy of a
+million triangles was reachable, so `tools/scale.ts --densify` split each
+triangle into four at its edge midpoints and moved each new vertex a
+sixteenth of the way towards its opposite corners' midpoint (so the four
+are not coplanar): 999 528 triangles, a 43 MiB OBJ, open (the source has
+1 non-manifold edge and 1 duplicate triangle, so 5 and 4 after the
+split). Read in millimetres (`--unit-mm 1`, about 202 × 134 × 91 mm).
+Each step is a run of the release `shape` CLI (x86-64, 4 cores, one
+used), peak memory the child's `VmHWM` sampled every 5 ms:
+
+| step | input | time | peak memory |
+|---|---|---|---|
+| import (OBJ → GLB) | 1.0 M | 1.29 s | 246 MiB |
+| repair (zero values) | 1.0 M | 6.82 s | 799 MiB |
+| decimate `--target 100000` | 1.0 M → 100 k | 13.71 s | 600 MiB |
+| unwrap | 100 k | 0.95 s | 61 MiB |
+| measure | 100 k | 0.44 s | 50 MiB |
+| export (STL) | 100 k | 0.04 s | 32 MiB |
+| `process --budget 100000` (all of it, from the OBJ) | 1.0 M | 19.58 s | 799 MiB |
+| measure (from the OBJ) | 1.0 M | 4.43 s | 404 MiB |
+| unwrap | 1.0 M | 11.5 s | — (5 583 charts) |
+| measure `--intersections` | 1.0 M | 4.6 s | — (91 pairs) |
+| repair `--fuse` / `--intersections` | 1.0 M | 7.9 s / 7.3 s | — |
+
+The decimated mesh: 100 000 triangles, error 0.095 mm, 31
+self-intersecting pairs; the chain's output GLB has 2 113 charts.
+
+What does not scale, or misleads at this size:
+- **Self-intersections are over-counted on a mesh with seams.** On the
+  unwrapped 100 k GLB the part reports 119 923 pairs where the mesh (its
+  `whole`, welded) has 31: the count takes vertex ids as given, so the
+  triangles either side of a UV seam, which share positions but not ids,
+  "touch". Reproduction (any processed GLB):
+  `shape process golden/meshes/ball_defects.obj --budget 1000 -o b.glb`,
+  then `shape measure b.glb --intersections`: the part (closed) reports
+  789 pairs, the whole 0. A fix of a few lines welds exact positions
+  before counting (`shape-tools/src/measure.rs`), but it moves the
+  golden line `meshtools.measure.json` (its raw mesh has split vertices
+  too), so it was not applied: the orchestrator decides.
+- **Repair's memory**: about 800 bytes a triangle at peak (799 MiB for
+  1 M); a 10 M scan would need about 8 GiB. Decimation, at about 30 µs a
+  collapse (450 000 of them), dominates `process`.
+- **Unwrap of the full mesh** takes 11.5 s for 5 583 charts; the chain
+  unwraps after decimating, as `guides/meshtools.md` says.
+- **The server's limits**: the default `--max-bytes` (64 MiB) admits
+  this OBJ (43 MiB); about 1.5 M triangles of OBJ text exceed it. A
+  `process` call of 20 s outlives no SDK default (60 s), but at about
+  3 M triangles it would, unless the client resets its timeout on
+  progress (`resetTimeoutOnProgress`), which §19.4 now makes possible.
+- Everything is one thread; nothing here is parallel, by the rules.
+
+### 19.7 Phase 6 objects through the MCP server (run `U`)
+
+Run `M`'s five objects again (`eval/phase6/mcp_run.ts`): one headless
+Claude Code agent each (`claude -p`, model `claude-opus-5-5`, the same as
+the stream), whose only tools were the og-shape server's and Read, with
+the workspace a fresh directory holding `brief.md` and `reference.png`.
+The agents read `guides/shape.md` and `guides/typescript.md` as MCP
+resources (the guides as now on main, with stream M's last fixes), ran
+programs with `run_typescript`, looked with `preview`, at most 8 builds.
+Results in `eval/phase6/U/<object>/` (`program.ts`, `program.json`,
+`preview.png` and `measure.json` from `run.ts` as in the other runs,
+`runs.log`, the agent's `report.md`, `usage.json`).
+
+| object | M: it. (err.), triangles, size dev. | U: it. (err.) | U: turns | U: output tokens | U: final context | U: triangles | U: size dev. | U: joints |
+|---|---|---|---|---|---|---|---|---|
+| auto1_curved_tubes | 3 (1), 28 632, 0.0 % | 1 (0) | 8 | 7 044 | 49 836 | 8 250 | 0.0 % | 1/1 |
+| auto2_lever_knob | 2 (0), 498, 0.0 % | 3 (1) | 11 | 6 571 | 54 378 | 822 | 0.0 % | 2/2 |
+| sim2_mouse_and_pad | 5 (0), 8 238, 0.1 % | 4 (0) | 13 | 7 731 | 57 899 | 7 886 | 0.3 % | 1/1 |
+| obj2_djembe | 5 (0), 14 268, 0.0 % | 1 (0) | 8 | 3 015 | 48 637 | 6 008 | 0.0 % | 0/0 |
+| obj4_spectacles | 7 (5), 3 324, 0.0 % | 1 (0) | 12 | 11 114 | 60 461 | 2 116 | 0.0 % | 2/2 |
+| mean / total | 4.4 (6) | 2.0 (1) | 10.4 | 7 095 | 54 242 | | | |
+
+Every `U` object built, every part closed, joints as the reference,
+sizes within 0.3 %. Each agent previewed 1 to 4 times and called
+`measure` never (`run_typescript` already returns the measures).
+
+- **Fewer builds** (2.0 against 4.4) and one failed build in five
+  objects (the knob: a join of stacked tapered bands sharing side planes,
+  "the result is open (4 unmatched edges)", §13.6 item 1's message, fixed
+  in the next build by narrowing each band so the sides cross). Three
+  agents built once and only previewed after.
+- **Fewer triangles** where segment control now reaches: the bent tubes
+  8 250 (M 28 632), the djembe 6 008 (M 14 268).
+- **Problems reported**: 4.0 an agent (M 6.4). Repeated themes: how
+  `body` reads its `plan`, `top` and their y values, and that a smooth
+  `body` overshoots like a curved loft; where a torus's `on` origin sits
+  with `axis: "+Z"`; how much straight length a `wire` fillet uses and
+  how to hollow a wire; that joint ids of used-up parts stay; how to look
+  at a pose without writing it into the program (`run_typescript`
+  always writes `program_out`, and the preview tool takes no pose); two
+  joints on one child insert a hidden part (`knob:knob_slide`); a
+  loft of straight sections renders smooth; stacked overlapping pieces
+  must not share side planes (the 0.5 mm overlap rule is not enough).
+  The full lists are in each `report.md`.
+- **Tokens are not comparable with `M`.** `M`'s are the Agent tool's
+  totals for a subagent (fixed context 62 668); `U`'s come from Claude
+  Code's result: output tokens (thinking included) and the last turn's
+  context (input, cache read and written), which holds the CLI's own
+  system prompt, the server's tool schemas (loaded through Claude Code's
+  tool search), the two guides and the work. Input summed over turns,
+  mostly cache reads, was 206 306 to 426 316 an agent.
+- One agent per object, as before: differences of a build or two are
+  noise (§13.7).
+
+### 19.8 What is untested
+
+- Windows: `windows_paths` runs only in CI; bun importing an absolute
+  Windows path is still untried (the wasm and binding steps run on Linux only).
+- macOS and aarch64: CI only, as before. node in the gate runs only on
+  x86-64 Linux.
+- Firefox and WebKit: only Chromium is installed here. Vite and other
+  bundlers: only esbuild.
+- The GPU's skinned vertices were not read back (three.js's CPU path of
+  the same formula was measured).
+- Claude Desktop and other MCP clients; Claude Code was run headless
+  (`-p`), not interactively. The MCP server over HTTP: it speaks stdio
+  only.
+- A scan of a million triangles or more as captured: the mesh of §19.6
+  is a 250 k scan split four ways.
+- Cancelling a single long kernel call (a `repair` of a million
+  triangles) is not possible by design; it ends, then the cancellation
+  is seen.
+- Run `U`'s agents could read any file with Read; told not to, which
+  was not enforced (one read its own `program.json`).

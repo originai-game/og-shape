@@ -9,7 +9,8 @@
  *   (Playwright) loads the page, fetches the wasm and hashes in the page.
  *
  * Run: `node tools/check_consumers.ts [node] [bundle] [browser]` (all
- * three by default) after `../build.sh` and `bun install`. `browser`
+ * three by default) after `../build.sh`; `bundle` and `browser` need
+ * `bun install` (esbuild), `node` needs nothing else (the gate runs it). `browser`
  * needs Playwright with its Chromium (`require("playwright")`). Exits 1
  * on any failure; a consumer that cannot run here is reported as NOT RUN
  * and fails too, so a green run means every consumer named was checked.
@@ -21,7 +22,6 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { load } from "../src/index.ts";
 import { type WasherHashes, washerHashes } from "./consumers/golden.ts";
-import { build, serve } from "./consumers/serve.ts";
 
 const ts = fileURLToPath(new URL("../", import.meta.url));
 const root = new URL("../../../../", import.meta.url);
@@ -56,6 +56,7 @@ async function inProcess() {
 }
 
 async function bundle() {
+  const { build } = await import("./consumers/serve.ts");
   // Next to pkg/'s parent, so that the binding's `../pkg/` finds the wasm.
   await build({ entry: "tools/consumers/node_entry.ts", out: "out/node_entry.mjs", platform: "node" });
   const out = execFileSync(process.execPath, [`${ts}out/node_entry.mjs`], { encoding: "utf8" });
@@ -63,6 +64,7 @@ async function bundle() {
 }
 
 async function browser() {
+  const { build, serve } = await import("./consumers/serve.ts");
   let chromium: any;
   try {
     chromium = createRequire(import.meta.url)("playwright").chromium;

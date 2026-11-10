@@ -1,0 +1,129 @@
+{
+ "triangles": 6008,
+ "boundsMin": [
+  -203.95,
+  -203.95,
+  0
+ ],
+ "boundsMax": [
+  203.95,
+  203.95,
+  600
+ ],
+ "size": [
+  407.9,
+  407.9,
+  600
+ ],
+ "joints": [],
+ "parts": [
+  {
+   "name": "shell",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 896,
+   "boundsMin": [
+    -193,
+    -193,
+    0
+   ],
+   "boundsMax": [
+    193,
+    193,
+    558
+   ]
+  },
+  {
+   "name": "neck_binding",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 576,
+   "boundsMin": [
+    -136,
+    -136,
+    318
+   ],
+   "boundsMax": [
+    136,
+    136,
+    356
+   ]
+  },
+  {
+   "name": "strip_0",
+   "closed": true,
+   "components": 18,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 1080,
+   "boundsMin": [
+    -198,
+    -194.99,
+    350.54
+   ],
+   "boundsMax": [
+    198,
+    194.99,
+    572.12
+   ]
+  },
+  {
+   "name": "top_band",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 1536,
+   "boundsMin": [
+    -199,
+    -199,
+    551
+   ],
+   "boundsMax": [
+    199,
+    199,
+    561
+   ]
+  },
+  {
+   "name": "head",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 384,
+   "boundsMin": [
+    -195,
+    -195,
+    556
+   ],
+   "boundsMax": [
+    195,
+    195,
+    600
+   ]
+  },
+  {
+   "name": "hoop",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 1536,
+   "boundsMin": [
+    -203.95,
+    -203.95,
+    572
+   ],
+   "boundsMax": [
+    203.95,
+    203.95,
+    587.9
+   ]
+  }
+ ]
+}

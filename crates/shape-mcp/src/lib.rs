@@ -5,7 +5,9 @@
 //! answers each request on its own line, as MCP's stdio transport says.
 //! It speaks `initialize`, `ping`, `tools/list`, `tools/call`,
 //! `resources/list`, `resources/read` and `resources/templates/list`;
-//! notifications are taken and not answered.
+//! notifications are taken and not answered. Long calls send
+//! `notifications/progress` between steps and honour
+//! `notifications/cancelled` ([`serve`] says how).
 //!
 //! - [`tools`]: build, preview, measure, export, import, repair,
 //!   decimate, unwrap, process and run_typescript, each calling the

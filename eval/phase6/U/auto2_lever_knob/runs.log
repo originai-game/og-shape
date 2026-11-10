@@ -1,0 +1,3 @@
+run_typescript ok parts 2 open 0 joints 2 triangles 450
+run_typescript error error: the program failed (exit status: 1): error: op 6 join "knob": the result is open (4 unmatched edges); neither operand passes through itself and they do n
+run_typescript ok parts 2 open 0 joints 2 triangles 822

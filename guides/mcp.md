@@ -80,6 +80,13 @@ Resources, to read before writing a program:
 `og-shape://guides/typescript.md` (the TypeScript API) and
 `og-shape://guides/meshtools.md` (the mesh tools and their measures).
 
+Long calls: `process` and `run_typescript` send `notifications/progress`
+before each step when the request carries `_meta.progressToken` (SDK
+clients do this when given a progress callback), and stop on
+`notifications/cancelled` before their next step (`run_typescript` stops
+bun at once); a cancelled call is not answered. `ping` is answered while
+a call runs. Other tools are one kernel call each and run to the end.
+
 ## The loop
 
 1. Read the guide for the form you write.
