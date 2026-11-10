@@ -23,7 +23,13 @@
 //! - Unbevelled edges keep their names; bevelled edges are gone.
 //!
 //! An offset larger than the faces allow is an error value
-//! ([`BevelError::TooLarge`]); nothing is clipped silently.
+//! ([`BevelError::TooLarge`]); nothing is clipped silently. Every result
+//! is checked (`docs/research.md` §7.7): no two of its triangles cross, no
+//! old face is tilted off its plane, no bevelled edge is left without
+//! width. The input must be closed, with two faces on every edge
+//! ([`BevelError::NotManifold`]), and must not cross itself
+//! ([`BevelError::SelfCrossing`]; a boolean's points 1e-15 apart are
+//! welded first).
 
 mod bevel;
 mod patch;
@@ -58,6 +64,12 @@ pub enum BevelError {
     Skinned,
     /// A field holds a value it does not take (the field and why).
     Invalid(&'static str),
+    /// An edge joins more than two faces (its ends given), as where two
+    /// solids touch along an edge after a join: the solid is not closed.
+    NotManifold(DVec3, DVec3),
+    /// The solid passes through itself near this point (two of its
+    /// triangles cross): repair it before bevelling.
+    SelfCrossing(DVec3),
 }
 
 impl std::fmt::Display for BevelError {
@@ -80,6 +92,14 @@ impl std::fmt::Display for BevelError {
             }
             BevelError::Unsupported(p, what) => write!(f, "at {p}: {what} is not supported"),
             BevelError::Invalid(why) => f.write_str(why),
+            BevelError::NotManifold(a, b) => write!(
+                f,
+                "the edge {a}–{b} joins more than two faces (solids touching along an edge): bevel the parts before joining them, or let them overlap"
+            ),
+            BevelError::SelfCrossing(p) => write!(
+                f,
+                "the solid passes through itself near {p}: repair it before bevelling"
+            ),
             BevelError::Skinned => f.write_str(
                 "the solid is skinned; bevels do not carry skins yet: bevel first, then skin it",
             ),

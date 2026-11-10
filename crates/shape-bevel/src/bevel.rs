@@ -209,6 +209,9 @@ struct Build<'a> {
     miters: Miters,
     /// The cut bands of a wide bevel (`wide.rs`); `None` for every other.
     wide: Option<&'a wide::Wide>,
+    /// How far a replaced corner may leave its triangle's plane, as a
+    /// fraction of the largest offset.
+    tilt: f64,
 }
 
 impl Build<'_> {
@@ -857,6 +860,63 @@ fn is_cap(name: &str) -> bool {
 }
 
 pub(crate) fn bevel(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
+    if let Some((solid, edges)) = input(s, spec)? {
+        return bevel_input(
+            &solid,
+            &Spec {
+                edges,
+                ..spec.clone()
+            },
+        );
+    }
+    bevel_input(s, spec)
+}
+
+/// The input checked (`docs/research.md` §7.7): closed, every edge between
+/// two faces, and not crossing itself. A solid that crosses itself only
+/// where a boolean left points closer than 1e-9 of the offset (a sliver
+/// lying across its neighbour) is welded there first, as a wide bevel's
+/// pass 0 does; the welded solid comes back. Otherwise the result could
+/// not be told apart from a bevel that crossed itself, so it is refused.
+fn input(s: &Solid, spec: &Spec) -> Result<Option<(Solid, Vec<EdgeKey>)>, BevelError> {
+    if !s.measure().closed {
+        let mut count: BTreeMap<(u32, u32), usize> = BTreeMap::new();
+        for t in &s.triangles {
+            for k in 0..3 {
+                *count.entry((t[k], t[(k + 1) % 3])).or_default() += 1;
+            }
+        }
+        for (&(a, c), &n) in &count {
+            let back = count.get(&(c, a)).copied().unwrap_or(0);
+            if n > 1 || back > 1 {
+                return Err(BevelError::NotManifold(
+                    s.positions[a as usize],
+                    s.positions[c as usize],
+                ));
+            }
+        }
+        return Err(BevelError::NotClosed);
+    }
+    let crossings = shape_bool::selfcheck::self_crossings(&s.positions, &s.triangles);
+    let Some(&(i, _)) = crossings.first() else {
+        return Ok(None);
+    };
+    let at = s.positions[s.triangles[i as usize][0] as usize];
+    let topo = topology(s);
+    let (info, _) = edge_offsets(s, &topo, spec)?;
+    let largest = info.values().flat_map(|e| e.off).fold(0.0f64, f64::max);
+    let (w, edges) =
+        wide::weld(s, &spec.edges, 1e-9 * largest).ok_or(BevelError::SelfCrossing(at))?;
+    if let Some(&(i, _)) = shape_bool::selfcheck::self_crossings(&w.positions, &w.triangles).first()
+    {
+        return Err(BevelError::SelfCrossing(
+            w.positions[w.triangles[i as usize][0] as usize],
+        ));
+    }
+    Ok(Some((w, edges)))
+}
+
+fn bevel_input(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
     // A vertex where two cones of faces touch is split into one per cone.
     if let Some((solid, edges)) = cones::split(s, &spec.edges) {
         return bevel_runs(
@@ -870,9 +930,42 @@ pub(crate) fn bevel(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
     bevel_runs(s, spec)
 }
 
+/// Why one layout attempt failed: an error, or a result that would tilt
+/// old faces off their planes (`docs/research.md` §7.7), with the vertex
+/// and the bands (bevelled edge, its face `a`) whose faces it tilts.
+pub(crate) enum Fail {
+    Error(BevelError),
+    Tilted(DVec3, BTreeSet<(EdgeKey, bool)>),
+}
+
+impl From<BevelError> for Fail {
+    fn from(e: BevelError) -> Self {
+        Fail::Error(e)
+    }
+}
+
+/// How far a rebuilt triangle's corner may leave the triangle's plane, as
+/// a fraction of the largest offset: rounding only, for the faces as
+/// given (the classic layout keeps every corner it replaces in its
+/// triangle's plane, to 1.5e-11 in the scan) ...
+pub(crate) const TILT_EXACT: f64 = 1e-9;
+/// ... and a tenth where a wide bevel's pass 1 or 2 already moved a
+/// vertex, by up to that (`wide.rs`).
+pub(crate) const TILT_PASS1: f64 = 0.1;
+
+const LONE_PIECE: &str = "a bevelled edge that tapers to a tip at both ends (a piece of a longer crease whose neighbours are not bevelled), which would remove nothing: select the whole crease";
+
+const TILTED: &str = "a bevel along a face whose triangles at this vertex are not in one plane (a twisted or converging face), where the bevel would tilt them";
+
 fn bevel_runs(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
-    match bevel_once(s, spec, None) {
-        Err(BevelError::TooLarge(at)) => {
+    let (at, tilted) = match bevel_once(s, spec, None, TILT_EXACT) {
+        Ok(out) => return Ok(out),
+        Err(Fail::Error(BevelError::TooLarge(at))) => (at, false),
+        Err(Fail::Tilted(at, _)) => (at, true),
+        Err(Fail::Error(e)) => return Err(e),
+    };
+    {
+        {
             // Straight runs may be cut into pieces shorter than the bevel.
             let dissolved = runs::dissolve(s, &spec.edges);
             if let Some((solid, edges)) = &dissolved {
@@ -880,7 +973,7 @@ fn bevel_runs(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
                     edges: edges.clone(),
                     ..spec.clone()
                 };
-                if let Ok(out) = bevel_once(solid, &spec, None) {
+                if let Ok(out) = bevel_once(solid, &spec, None, TILT_EXACT) {
                     return Ok(out);
                 }
             }
@@ -898,9 +991,12 @@ fn bevel_runs(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
                     return Ok(out);
                 }
             }
-            Err(BevelError::TooLarge(at))
+            if tilted {
+                Err(BevelError::Unsupported(at, TILTED))
+            } else {
+                Err(BevelError::TooLarge(at))
+            }
         }
-        r => r,
     }
 }
 
@@ -962,9 +1058,15 @@ fn edge_offsets(
     Ok((edges, n))
 }
 
-fn bevel_once(s: &Solid, spec: &Spec, wide: Option<&wide::Wide>) -> Result<Solid, BevelError> {
+/// One layout attempt; `tilt` as for [`TILT_EXACT`].
+pub(crate) fn bevel_once(
+    s: &Solid,
+    spec: &Spec,
+    wide: Option<&wide::Wide>,
+    tilt: f64,
+) -> Result<Solid, Fail> {
     if !s.measure().closed {
-        return Err(BevelError::NotClosed);
+        return Err(BevelError::NotClosed.into());
     }
     let topo = topology(s);
     let (edges, n) = edge_offsets(s, &topo, spec)?;
@@ -986,6 +1088,7 @@ fn bevel_once(s: &Solid, spec: &Spec, wide: Option<&wide::Wide>) -> Result<Solid
         kind: spec.kind,
         miters: spec.miters,
         wide,
+        tilt,
     };
     let verts: BTreeSet<u32> = b.edges.keys().flat_map(|&(x, y)| [x, y]).collect();
     if spec.loop_slide {
@@ -1004,13 +1107,18 @@ fn bevel_once(s: &Solid, spec: &Spec, wide: Option<&wide::Wide>) -> Result<Solid
         let mut cw = b.chains[&(w, u)].clone();
         cw.reverse();
         if cu.len() != cw.len() {
-            return Err(BevelError::Unsupported(
-                s.positions[u as usize],
-                "uneven profiles",
-            ));
+            return Err(BevelError::Unsupported(s.positions[u as usize], "uneven profiles").into());
+        }
+        let stations = wide.and_then(|w| w.stations.get(&key));
+        let point = |c: &[u32]| c.iter().all(|&x| x == c[0]);
+        if stations.is_none() && point(&cu) && point(&cw) {
+            // Both ends taper to a tip (`general.rs`): the strip has no
+            // width anywhere and the edge would come back unbevelled
+            // (`docs/research.md` §7.7).
+            return Err(BevelError::Unsupported(s.positions[u as usize], LONE_PIECE).into());
         }
         let mut profiles = vec![cu.clone()];
-        if let Some(st) = wide.and_then(|w| w.stations.get(&key)) {
+        if let Some(st) = stations {
             let (mid, insert) = b.stations(key, st, &cu, &cw)?;
             profiles.extend(mid);
             inserts.insert(insert.0, insert.1);
@@ -1043,7 +1151,7 @@ fn bevel_once(s: &Solid, spec: &Spec, wide: Option<&wide::Wide>) -> Result<Solid
     finish(b, &inserts)
 }
 
-fn finish(b: Build<'_>, inserts: &BTreeMap<(usize, u32), Vec<u32>>) -> Result<Solid, BevelError> {
+fn finish(b: Build<'_>, inserts: &BTreeMap<(usize, u32), Vec<u32>>) -> Result<Solid, Fail> {
     let s = b.s;
     let kind = b.kind.name();
     let seq = |t: usize, x: u32| -> Vec<u32> { b.repl.get(&(t, x)).cloned().unwrap_or(vec![x]) };
@@ -1060,6 +1168,44 @@ fn finish(b: Build<'_>, inserts: &BTreeMap<(usize, u32), Vec<u32>>) -> Result<So
             .collect()
     };
     let removed = |t: usize| b.wide.is_some_and(|w| w.removed.contains(&t));
+    // The classic model keeps each old triangle and moves its corner at a
+    // bevelled vertex. Where the faces there are not one plane (a twisted
+    // quad's long triangle, a cone's fan at its apex), the new corner
+    // leaves the triangle's plane and tilts the whole triangle, far from
+    // the bevel: the result would be wrong without crossing itself
+    // (`docs/research.md` §7.7). Such bands are cut instead (`wide.rs`).
+    let largest = b.edges.values().flat_map(|e| e.off).fold(0.0f64, f64::max);
+    let mut tilted: BTreeSet<(EdgeKey, bool)> = BTreeSet::new();
+    let mut tilted_at = None;
+    for (&(t, v), pts) in &b.repl {
+        if removed(t) {
+            continue;
+        }
+        let n = tri_normal(s, t);
+        let p0 = s.positions[v as usize];
+        // A vertex of the solid taken as the corner (a wide bevel's cut
+        // point) is exact geometry; pass 2 lets a second band take the
+        // first band's cut at a shared corner (`wide.rs`).
+        let new = s.positions.len() as u32;
+        if pts
+            .iter()
+            .all(|&q| q < new || (b.pos[q as usize] - p0).dot(n).abs() <= b.tilt * largest)
+        {
+            continue;
+        }
+        tilted_at.get_or_insert(p0);
+        for &(lo, hi) in b.edges.keys().filter(|k| k.0 == v || k.1 == v) {
+            for side_a in [true, false] {
+                let dir = if side_a { (lo, hi) } else { (hi, lo) };
+                if b.topo.dir.get(&dir).map(|&x| s.surfaces[x]) == Some(s.surfaces[t]) {
+                    tilted.insert(((lo, hi), side_a));
+                }
+            }
+        }
+    }
+    if let Some(at) = tilted_at {
+        return Err(Fail::Tilted(at, tilted));
+    }
     // Old faces, rebuilt triangle by triangle; where a triangle does not
     // fit (a sliver whose corners all moved), its whole planar face is
     // rebuilt from its outline instead.
@@ -1235,7 +1381,29 @@ fn finish(b: Build<'_>, inserts: &BTreeMap<(usize, u32), Vec<u32>>) -> Result<So
     let m = out.measure();
     if !m.closed || m.degenerate_triangles > 0 {
         let at = out.positions.first().copied().unwrap_or(DVec3::ZERO);
-        return Err(BevelError::TooLarge(at));
+        return Err(BevelError::TooLarge(at).into());
+    }
+    // The backstop (`docs/research.md` §7.7): the input does not cross
+    // itself, so two triangles of the result that cross are the bevel's
+    // own, and it did not fit. The error names the bevelled vertex nearest
+    // to where they cross.
+    if let Some(&(i, j)) =
+        shape_bool::selfcheck::self_crossings(&out.positions, &out.triangles).first()
+    {
+        let c = [i, j]
+            .iter()
+            .flat_map(|&t| out.triangles[t as usize])
+            .fold(DVec3::ZERO, |a, v| a + out.positions[v as usize])
+            / 6.0;
+        let mut at = (f64::INFINITY, c);
+        for v in b.edges.keys().flat_map(|&(x, y)| [x, y]) {
+            let p = s.positions[v as usize];
+            let d = (p - c).length_squared();
+            if d < at.0 {
+                at = (d, p);
+            }
+        }
+        return Err(BevelError::TooLarge(at.1).into());
     }
     Ok(out)
 }

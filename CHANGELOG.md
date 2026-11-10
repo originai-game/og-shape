@@ -540,3 +540,44 @@
   one line per bevel, so two runs compare line by line.
 - Previews of the §7.6 cases in `docs/previews/phase3/` (`wide_bore`,
   `wide_hole_rim`, `wide_cylinder_slice`, `wide_twisted_top`).
+- `shape-bevel` never returns a result that crosses itself
+  (`docs/research.md` §7.7). An exact crossing check on every result
+  (always on; 40–60 % of a bevel's time) turns a crossing layout into
+  `TooLarge` at the nearest bevelled vertex, so the straight-run retry and
+  the wide bevel get their try. Of the 18 such bevels in the scan (a
+  boolean's cut edges in pieces beside a bore, a notch, a join and a cross
+  bar, and two part revolves), 10 now fit and 8 are refused because their
+  selection holds a lone rim piece (below).
+- `shape-bevel` checks its input: a solid that passes through itself is
+  welded where a boolean left points 1e-15 apart (the post joined to a
+  plate: its 440 results in the scan crossed; 72 now fit, the other 368
+  select a lone rim piece), and otherwise refused
+  with the new `BevelError::SelfCrossing(at)`. An edge with more than two
+  faces (two boxes joined along an edge) is the new
+  `BevelError::NotManifold(a, b)`, whose message says to bevel the parts
+  before joining them; it was `NotClosed`.
+- `shape-bevel` no longer tilts old faces off their planes. Where the
+  faces at a bevelled vertex are not one plane (a twisted prism's rows, a
+  cone's fan at its apex), moving a triangle's corner tilted the whole
+  triangle, far from the bevel: the twisted prism's `fillet(top)` at
+  r 0.5 added 11 mm³. Such bands are now cut exactly as wide bands are, so
+  the twisted top removes 15–19 r² at every radius with its sides on their
+  old triangles; what cannot be cut is
+  `BevelError::Unsupported(at, "a bevel along a face whose triangles at
+  this vertex are not in one plane …")` (the twisted prism's side edges,
+  the apex revolve's caps, §7.5's hand-built ridge).
+- `shape-bevel` refuses a bevelled edge that tapers to a tip at both ends
+  (one piece of a cylinder's rim, or of a twisted prism's side edge,
+  selected alone): it came back unbevelled. The error says to select the
+  whole crease. In the scan, 10 160 results that silently left such a
+  piece unbevelled are now this error.
+- Golden: `bevel.slivers` moved (its twisted prism's fillet of every edge
+  removed 14.7 mm³ where the tapered one removes 101; now the refusal),
+  `bevel.inline` moved (the ridge's result lifted its flat face by 0.11 of
+  the offset; now the refusal). No other hash moved. Golden case
+  `bevel.sound` added.
+- The bevel scan prints each result's output hash, so two runs show which
+  results changed their bytes. Previews `twisted_top`,
+  `twisted_top_corner` and `bore_bottom_chamfer` added in
+  `docs/previews/phase3/`; `twisted` and `inline_ridge` removed (their
+  results are refused now).

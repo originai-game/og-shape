@@ -26,7 +26,9 @@
 //!    refused. Repeated while one is found.
 //! 2. **Cut bands.** For each side of a bevelled edge whose band (the
 //!    face between the edge and its offset line) holds a vertex of that
-//!    face other than the edge's ends, the band is cut out of the face
+//!    face other than the edge's ends, or whose face the classic layout
+//!    would tilt off its planes (a twisted row, `docs/research.md` §7.7),
+//!    the band is cut out of the face
 //!    exactly: the offset line is the plane through the offset points at
 //!    both ends, square to the face's first triangle. Which side of it a
 //!    vertex lies on is decided by `orient3d`; every edge of the face
@@ -50,7 +52,10 @@ use core::cmp::Ordering;
 use shape_core::{DVec3, predicates};
 use shape_mesh::{EdgeKey, Solid, edge_key};
 
-use super::{EdgeInfo, Spec, Topology, bevel_once, edge_offsets, fan, topology, tri_normal};
+use super::{
+    EdgeInfo, Fail, Spec, TILT_EXACT, TILT_PASS1, Topology, bevel_once, edge_offsets, fan,
+    topology, tri_normal,
+};
 use crate::BevelError;
 
 /// What the classic layout needs to know of the cut bands.
@@ -64,6 +69,8 @@ pub(crate) struct Wide {
     /// holding `lo → hi`), and the cut points between its ends, `lo` to
     /// `hi`. Each gets a profile.
     pub stations: BTreeMap<EdgeKey, (bool, Vec<u32>)>,
+    /// Whether a swallowed vertex was collapsed (the faces at it moved).
+    pub collapsed: bool,
 }
 
 /// Whether an outline has fewer than three distinct corners: a band
@@ -89,23 +96,29 @@ pub(super) fn bevel(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
     let largest = info.values().flat_map(|e| e.off).fold(0.0f64, f64::max);
     let mut cur = s.clone();
     let mut spec = spec;
-    let mut changed = false;
     if let Some((w, edges)) = weld(&cur, &spec.edges, 1e-9 * largest) {
         cur = w;
         spec.edges = edges;
-        changed = true;
     }
+    let mut tilt = TILT_EXACT;
     if let Some((m, edges)) = merge(&cur, &spec) {
         cur = m;
         spec.edges = edges;
-        changed = true;
+        tilt = TILT_PASS1;
     }
-    if changed && let Ok(out) = bevel_once(&cur, &spec, None) {
-        return Ok(out);
-    }
+    // The classic layout on the passes' solid (the caller's attempt again
+    // when they changed nothing): a result, or the bands it would tilt,
+    // which are then cut as if they held a vertex.
+    let forced = match bevel_once(&cur, &spec, None, tilt) {
+        Ok(out) => return Ok(out),
+        Err(Fail::Tilted(_, bands)) => bands,
+        Err(Fail::Error(_)) => BTreeSet::new(),
+    };
     let sp = spec;
-    let (solid, wide) = cut(&cur, &sp).ok_or(BevelError::TooLarge(at))?;
-    bevel_once(&solid, &sp, Some(&wide)).map_err(|_| BevelError::TooLarge(at))
+    let (solid, wide) = cut(&cur, &sp, &forced).ok_or(BevelError::TooLarge(at))?;
+    // A collapse moves the faces at the vertex, as pass 1 does.
+    let tilt = if wide.collapsed { TILT_PASS1 } else { tilt };
+    bevel_once(&solid, &sp, Some(&wide), tilt).map_err(|_| BevelError::TooLarge(at))
 }
 
 /// The offset of `key` on its face `a` (or `b`) at its end `v`.
@@ -195,7 +208,7 @@ fn real_spokes(s: &Solid, topo: &Topology, v: u32) -> Option<(Vec<u32>, BTreeSet
 /// Pass 0: every edge shorter than `tol` collapsed (a boolean leaves
 /// points 1e-15 apart, and triangles of zero area on them that no bevel
 /// would pass). `None` when there is none.
-fn weld(s: &Solid, edges: &[EdgeKey], tol: f64) -> Option<(Solid, Vec<EdgeKey>)> {
+pub(super) fn weld(s: &Solid, edges: &[EdgeKey], tol: f64) -> Option<(Solid, Vec<EdgeKey>)> {
     let mut cur = s.clone();
     let mut es: BTreeSet<EdgeKey> = edges.iter().copied().collect();
     let mut any = false;
@@ -442,7 +455,7 @@ struct Band {
 /// Pass 2: every band holding a vertex of its face cut out of the face.
 /// `None` when a band cannot be cut (a swallowed corner, a bevelled edge
 /// across it, both sides of one edge).
-fn cut(s: &Solid, spec: &Spec) -> Option<(Solid, Wide)> {
+fn cut(s: &Solid, spec: &Spec, forced: &BTreeSet<(EdgeKey, bool)>) -> Option<(Solid, Wide)> {
     let topo0 = topology(s);
     let (info, _) = edge_offsets(s, &topo0, spec).ok()?;
     let bev: BTreeSet<EdgeKey> = spec.edges.iter().copied().collect();
@@ -530,7 +543,7 @@ fn cut(s: &Solid, spec: &Spec) -> Option<(Solid, Wide)> {
                     }
                 }
             }
-            if swallowed.is_empty() && pinned.is_empty() {
+            if swallowed.is_empty() && pinned.is_empty() && !forced.contains(&(key, side_a)) {
                 continue;
             }
             for &x in &swallowed {
@@ -634,6 +647,7 @@ fn cut(s: &Solid, spec: &Spec) -> Option<(Solid, Wide)> {
                 let (j, x, e) = pick?;
                 cur = collapse(&cur, x, e)?;
                 left.remove(j);
+                wide.collapsed = true;
             }
             wide.cuts.entry(key).or_default().extend(on_cut);
             bands.push(Band {
