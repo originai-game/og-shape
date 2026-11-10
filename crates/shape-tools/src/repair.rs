@@ -137,6 +137,14 @@ pub struct RepairReport {
     /// The outcome of fusing, if asked: `Some(Ok(pieces before))`, or why
     /// it was not done.
     pub fused: Option<Result<usize, String>>,
+    /// Shells the fuse step's untangling left besides each untangled
+    /// shell's largest: pockets the surface folded round.
+    pub pockets: usize,
+    /// Of those, dropped as floaters (by `floaters`), and their
+    /// triangles.
+    pub pockets_dropped: usize,
+    /// See `pockets_dropped`.
+    pub pocket_triangles_dropped: usize,
     /// Vertices removed by collapsing short edges.
     pub short_edges: usize,
     /// Self-intersecting triangle pairs at the end, if asked.
@@ -1431,6 +1439,142 @@ fn keep_input_uvs(before: &Solid, mut after: Solid) -> Result<Solid, RepairError
     Ok(after)
 }
 
+/// The fuse step: `shape_bool::fuse`, made to scale on a large shell that
+/// passes through itself. Each shell is untangled on its own
+/// (`shape_bool::self_union`); the shells an untangling leaves besides its
+/// largest are pockets the surface folded round ([`RepairReport::pockets`]),
+/// and those that are floaters by `floaters` are dropped. Then only the
+/// shells that meet another (exact, `selfcheck::tris_meet`) or may lie
+/// inside one (its box within the other's) are joined by booleans, group
+/// by group; the rest are kept as they are, since their union is
+/// themselves. Before, every pocket was joined to the whole by its own
+/// boolean: 133 s on a 619 000-triangle chair (`docs/research.md` §32).
+fn fuse_shells(s: &Solid, floaters: &Floaters, r: &mut RepairReport) -> Result<Solid, String> {
+    let comps = shape_bool::components(s);
+    let tangled: Vec<bool> = comps
+        .iter()
+        .map(|c| shape_bool::crossing_pairs(c) > 0)
+        .collect();
+    if !tangled.iter().any(|&t| t) {
+        // Nothing to untangle: the booleans' own fuse, as before.
+        return shape_bool::fuse(s).map_err(|e| e.to_string());
+    }
+    let mut all = Solid::default();
+    let mut whole: Option<Solid> = None;
+    for (c, t) in comps.iter().zip(&tangled) {
+        let shells = if *t {
+            match shape_bool::self_union(c) {
+                Ok(u) => {
+                    let parts = shape_bool::components(&u);
+                    if comps.len() == 1 && parts.len() == 1 {
+                        whole = Some(u);
+                    }
+                    parts
+                }
+                Err(_) => vec![c.clone()],
+            }
+        } else {
+            vec![c.clone()]
+        };
+        for x in &shells {
+            all.append(x);
+        }
+        r.pockets += shells.len().saturating_sub(1);
+    }
+    all.canonicalize().map_err(|e| e.to_string())?;
+    if let Some(u) = whole {
+        // One shell, untangled whole: the self-union is the result.
+        return Ok(u);
+    }
+    let (all, dropped, gone) = remove_floaters(&all, floaters).map_err(|e| e.to_string())?;
+    r.pockets_dropped = dropped;
+    r.pocket_triangles_dropped = gone;
+    // Which shells must be joined: they meet, or one's box holds the
+    // other's.
+    let shells = shape_bool::components(&all);
+    if shells.len() <= 1 {
+        return Ok(all);
+    }
+    let mut points: Vec<DVec3> = Vec::new();
+    let mut tris: Vec<[u32; 3]> = Vec::new();
+    let mut owner: Vec<u32> = Vec::new();
+    let mut boxes: Vec<(DVec3, DVec3)> = Vec::new();
+    for (k, x) in shells.iter().enumerate() {
+        let base = points.len() as u32;
+        points.extend(&x.positions);
+        let (mut lo, mut hi) = (DVec3::INFINITY, DVec3::NEG_INFINITY);
+        for p in &x.positions {
+            lo = lo.min(*p);
+            hi = hi.max(*p);
+        }
+        boxes.push((lo, hi));
+        for t in &x.triangles {
+            tris.push(t.map(|v| v + base));
+            owner.push(k as u32);
+        }
+    }
+    let mut parent: Vec<u32> = (0..shells.len() as u32).collect();
+    let join = |parent: &mut Vec<u32>, a: u32, b: u32| {
+        let (a, b) = (find(parent, a), find(parent, b));
+        if a != b {
+            parent[a.max(b) as usize] = a.min(b);
+        }
+    };
+    for (i, j) in shape_bool::selfcheck::box_pairs(&points, &tris) {
+        let (a, b) = (owner[i as usize], owner[j as usize]);
+        if a != b
+            && find(&mut parent, a) != find(&mut parent, b)
+            && shape_bool::selfcheck::tris_meet(
+                tris[i as usize].map(|v| points[v as usize]),
+                tris[j as usize].map(|v| points[v as usize]),
+            )
+        {
+            join(&mut parent, a, b);
+        }
+    }
+    for a in 0..shells.len() {
+        for b in 0..shells.len() {
+            let ((alo, ahi), (blo, bhi)) = (boxes[a], boxes[b]);
+            if a != b && blo.cmple(alo).all() && ahi.cmple(bhi).all() {
+                join(&mut parent, a as u32, b as u32);
+            }
+        }
+    }
+    let mut groups: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    for k in 0..shells.len() {
+        groups
+            .entry(find(&mut parent, k as u32))
+            .or_default()
+            .push(k);
+    }
+    let mut out = Solid::default();
+    for members in groups.values() {
+        if members.len() == 1 {
+            out.append(&shells[members[0]]);
+            continue;
+        }
+        // The largest shell against the others joined first among
+        // themselves: one boolean on the large one, not one per shell.
+        let big = *members
+            .iter()
+            .max_by_key(|&&k| (shells[k].triangles.len(), std::cmp::Reverse(k)))
+            .unwrap_or(&members[0]);
+        let mut rest = Solid::default();
+        for &k in members {
+            if k != big {
+                rest.append(&shells[k]);
+            }
+        }
+        rest.canonicalize().map_err(|e| e.to_string())?;
+        let rest = shape_bool::fuse(&rest).map_err(|e| e.to_string())?;
+        let joined = shape_bool::boolean(&shells[big], &rest, &shape_bool::Boolean::default())
+            .map_err(|e| e.to_string())?;
+        out.append(&joined);
+    }
+    out.canonicalize().map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
 /// Runs the repair steps in order (weld, degenerate and duplicate
 /// triangles, floaters, orientation, holes, fuse, short edges) and reports
 /// what each changed. The result is in canonical order.
@@ -1489,7 +1633,7 @@ pub fn repair(s: &Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairErro
             r.fused = Some(Ok(n));
             s
         } else {
-            match shape_bool::fuse(&s) {
+            match fuse_shells(&s, &d.floaters, &mut r) {
                 Ok(f) if f.measure().closed => {
                     r.fused = Some(Ok(n));
                     keep_input_uvs(&s, f)?
@@ -1695,5 +1839,137 @@ mod tests {
         )
         .unwrap();
         assert!(r.self_intersections.unwrap() > 0);
+    }
+
+    #[test]
+    fn fuse_drops_the_pockets_an_untangling_leaves() {
+        // A ball whose vertices are moved by up to 1.5 per axis
+        // (splitmix64): it folds through itself, and its self-union is a
+        // main shell and three small pockets the surface folded round.
+        let mut ball = shape_gen::solids::sphere(10.0).unwrap();
+        let mut state = 5u64;
+        let mut next = || {
+            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^= z >> 31;
+            (z >> 11) as f64 / (1u64 << 52) as f64 - 1.0
+        };
+        for p in &mut ball.positions {
+            *p += DVec3::new(next(), next(), next()) * 1.5;
+        }
+        let d = Repair {
+            fuse: true,
+            floaters: Floaters {
+                fraction: 0.05,
+                ..Default::default()
+            },
+            check_intersections: true,
+            ..Default::default()
+        };
+        let (out, r) = repair(&ball, &d).unwrap();
+        assert_eq!(r.fused, Some(Ok(1)));
+        assert_eq!((r.pockets, r.pockets_dropped), (3, 3), "{r:?}");
+        assert_eq!(r.self_intersections, Some(0));
+        assert_eq!(pieces(&out).1, 1);
+        assert!(out.measure().closed);
+    }
+
+    #[test]
+    fn two_cubes_on_one_edge_come_apart_closed() {
+        // Two cubes touching along one edge: four faces on it.
+        let mut s = cube(DVec3::ZERO, 10.0);
+        s.append(&cube(DVec3::new(10.0, 10.0, 0.0), 10.0));
+        s.canonicalize().unwrap();
+        assert_eq!(s.measure().non_manifold_edges, 1);
+        let (out, r) = repair(
+            &s,
+            &Repair {
+                non_manifold: true,
+                check_intersections: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let nm = r.non_manifold.unwrap();
+        assert_eq!(
+            (nm.edges, nm.split, nm.left, nm.unpaired),
+            (1, 1, 0, 0),
+            "{nm:?}"
+        );
+        assert_eq!(nm.vertices, 2);
+        let m = out.measure();
+        assert!(m.closed, "{m:?}");
+        assert_eq!(pieces(&out).1, 2);
+        assert_eq!(r.self_intersections, Some(0));
+        // Each copy moved into its own cube, 1 % of its shortest edge.
+        assert!((nm.moved - 0.1).abs() < 1e-12, "{nm:?}");
+    }
+
+    #[test]
+    fn a_fill_across_a_uv_seam_covers_no_texture() {
+        let ball = shape_gen::solids::textured(&shape_gen::solids::Generator::Sphere(
+            shape_gen::solids::SphereDesc {
+                radius: 7.3,
+                ..Default::default()
+            },
+        ))
+        .unwrap();
+        // A vertex on the seam (two UVs), away from the poles: its fan
+        // removed leaves a hole whose rim crosses the seam.
+        let uvs = ball.uvs.as_ref().unwrap();
+        let mut at: BTreeMap<u32, Vec<[u64; 2]>> = BTreeMap::new();
+        for (t, tri) in ball.triangles.iter().enumerate() {
+            for k in 0..3 {
+                let u = uvs[t][k];
+                at.entry(tri[k])
+                    .or_default()
+                    .push([u.x.to_bits(), u.y.to_bits()]);
+            }
+        }
+        let v = *at
+            .iter()
+            .find(|(v, u)| {
+                let mut u = (*u).clone();
+                u.sort_unstable();
+                u.dedup();
+                u.len() == 2 && ball.positions[**v as usize].z.abs() < 3.0
+            })
+            .unwrap()
+            .0;
+        let mut open = ball.clone();
+        let keep: Vec<usize> = (0..open.triangles.len())
+            .filter(|&t| !open.triangles[t].contains(&v))
+            .collect();
+        let remap: Vec<u32> = (0..open.positions.len() as u32).collect();
+        open = drop_unused(&rebuild(&open, &keep, &remap, open.positions.clone()));
+        let (out, h) = close_holes(&open, 64).unwrap();
+        assert_eq!((h.filled, h.uv_seam_fills), (1, 1), "{h:?}");
+        let fill = out.faces(&["fill"]).unwrap();
+        assert!(!fill.is_empty());
+        let uvs = out.uvs.as_ref().unwrap();
+        for t in fill {
+            let u = uvs[t as usize];
+            assert!(u[0] == u[1] && u[1] == u[2], "{u:?}");
+        }
+        assert!(out.measure().closed);
+    }
+
+    #[test]
+    fn a_hole_over_the_limit_is_filled_when_flat_and_clear() {
+        // A cube without one face: a square hole of four edges.
+        let mut s = cube(DVec3::ZERO, 10.0);
+        for _ in 0..2 {
+            s.triangles.pop();
+            s.surfaces.pop();
+            s.face_tags.pop();
+        }
+        let (out, h) = close_holes(&s, 3).unwrap();
+        assert_eq!((h.filled, h.large, h.left), (1, 1, 0), "{h:?}");
+        assert!(out.measure().closed);
+        // Within the limit it is an ordinary fill.
+        let (_, h) = close_holes(&s, 4).unwrap();
+        assert_eq!((h.filled, h.large), (1, 0));
     }
 }

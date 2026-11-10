@@ -52,6 +52,12 @@ pub fn repair(r: &RepairReport) -> String {
         ("uv_seam_fills", r.uv_seam_fills.to_string()),
         ("holes_left", r.holes_left.to_string()),
         ("fused", fused.to_string()),
+        ("pockets", r.pockets.to_string()),
+        ("pockets_dropped", r.pockets_dropped.to_string()),
+        (
+            "pocket_triangles_dropped",
+            r.pocket_triangles_dropped.to_string(),
+        ),
         ("short_edges", r.short_edges.to_string()),
         (
             "self_intersections",

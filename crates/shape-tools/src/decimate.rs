@@ -1672,7 +1672,10 @@ mod tests {
             for x in 0..6u32 {
                 let right = x >= 3;
                 let v = |x: u32, y: u32| y * 7 + x;
-                for t in [[(x, y), (x + 1, y), (x + 1, y + 1)], [(x, y), (x + 1, y + 1), (x, y + 1)]] {
+                for t in [
+                    [(x, y), (x + 1, y), (x + 1, y + 1)],
+                    [(x, y), (x + 1, y + 1), (x, y + 1)],
+                ] {
                     g.push_triangle_uv(
                         t.map(|(x, y)| v(x, y)),
                         0,
