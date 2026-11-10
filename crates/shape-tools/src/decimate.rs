@@ -37,12 +37,24 @@
 //! Names: every triangle left is an input triangle with corners moved, so
 //! it keeps its surface and face names. Edge names follow their vertices
 //! and survive on edges that still exist.
+//!
+//! UVs (`Solid::uvs`, per triangle corner) are carried. A UV seam (an
+//! edge whose two triangles give either end different UVs) is a feature
+//! line like a surface border, so a seam vertex only slides along its
+//! seam and the seam stays where it was. A collapse gives each corner of
+//! the removed vertex the UV the kept vertex has on the same side of any
+//! seam (matched through the edge's own triangles); a collapse to the
+//! midpoint gives both ends' corners the mean of their UVs. A collapse
+//! whose corners cannot be matched (more than one UV side on one end, no
+//! seam to say which) or that would turn a UV triangle over or flatten it
+//! (`orient2d`, exact) is refused, as a turned-over face is.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BinaryHeap};
 use std::fmt;
 
-use shape_core::DVec3;
+use shape_core::predicates::orient2d;
+use shape_core::{DVec2, DVec3};
 use shape_mesh::{EdgeKey, Skin, Solid, Weights, edge_key};
 
 use crate::repair::drop_unused;
@@ -269,7 +281,12 @@ struct Mesh {
     keep_borders: bool,
     /// The bend scale, mm.
     bend: f64,
+    /// Per triangle, its corners' UVs, on a solid with UVs.
+    uvs: Option<Vec<[DVec2; 3]>>,
 }
+
+/// A corner's new UV: triangle, corner, UV.
+type UvMove = (u32, usize, DVec2);
 
 impl Mesh {
     fn neighbours(&self, v: u32) -> Vec<u32> {
@@ -309,6 +326,9 @@ impl Mesh {
         if shared != opposite || opposite.is_empty() {
             return false;
         }
+        if self.uv_moves(from, to, p).is_none() {
+            return false;
+        }
         // Nothing turns over or loses its area.
         for v in [from, to] {
             for &t in &self.around[v as usize] {
@@ -324,6 +344,73 @@ impl Mesh {
             }
         }
         true
+    }
+
+    /// The corners' new UVs for the collapse `from → to` at `p`: empty on
+    /// a solid without UVs; `None` if they cannot be matched across a
+    /// seam, or a UV triangle would turn over or flatten.
+    fn uv_moves(&self, from: u32, to: u32, p: DVec3) -> Option<Vec<UvMove>> {
+        let Some(uvs) = &self.uvs else {
+            return Some(Vec::new());
+        };
+        let corner = |t: u32, v: u32| self.tris[t as usize].iter().position(|&x| x == v);
+        // The edge's own triangles pair each side's UVs at the two ends.
+        let mut pairs: Vec<(DVec2, DVec2)> = Vec::new();
+        for &t in &self.around[from as usize] {
+            if let (Some(kf), Some(kt)) = (corner(t, from), corner(t, to)) {
+                let u = uvs[t as usize];
+                pairs.push((u[kf], u[kt]));
+            }
+        }
+        let midpoint = p != self.pos[to as usize];
+        let mut moves: Vec<UvMove> = Vec::new();
+        // One end's UV mapped to the other's, if exactly one pairing has
+        // it.
+        let other = |u: DVec2, from_end: bool| -> Option<DVec2> {
+            let mut found: Option<DVec2> = None;
+            for &(a, b) in &pairs {
+                let (mine, theirs) = if from_end { (a, b) } else { (b, a) };
+                if mine == u {
+                    if found.is_some_and(|f| f != theirs) {
+                        return None;
+                    }
+                    found = Some(theirs);
+                }
+            }
+            found
+        };
+        for (v, w, from_end) in [(from, to, true), (to, from, false)] {
+            if !from_end && !midpoint {
+                break;
+            }
+            for &t in &self.around[v as usize] {
+                if corner(t, w).is_some() {
+                    continue;
+                }
+                let k = corner(t, v)?;
+                let u = uvs[t as usize][k];
+                let o = other(u, from_end)?;
+                let new = match (midpoint, from_end) {
+                    (false, _) => o,
+                    (true, true) => (u + o) * 0.5,
+                    (true, false) => (o + u) * 0.5,
+                };
+                moves.push((t, k, new));
+            }
+        }
+        for &(t, k, new) in &moves {
+            let before = uvs[t as usize];
+            let mut after = before;
+            after[k] = new;
+            let (b, a) = (
+                orient2d(before[0], before[1], before[2]),
+                orient2d(after[0], after[1], after[2]),
+            );
+            if b.is_ne() && a != b {
+                return None;
+            }
+        }
+        Some(moves)
     }
 
     /// The best allowed collapse of edge `a b`, if any.
@@ -390,6 +477,12 @@ impl Mesh {
 
     fn collapse(&mut self, e: &Entry) {
         let (from, to) = (e.from, e.to);
+        let moves = self.uv_moves(from, to, e.pos).unwrap_or_default();
+        if let Some(uvs) = &mut self.uvs {
+            for (t, k, new) in moves {
+                uvs[t as usize][k] = new;
+            }
+        }
         let around = std::mem::take(&mut self.around[from as usize]);
         for &t in &around {
             let tri = self.tris[t as usize];
@@ -537,6 +630,7 @@ fn collapse(
                 (hi - lo).length() * BEND_FRACTION
             }
         },
+        uvs: s.uvs.clone(),
     };
     let mut users: BTreeMap<EdgeKey, Vec<u32>> = BTreeMap::new();
     let mut total_area = 0.0;
@@ -570,7 +664,16 @@ fn collapse(
         let named = s.edge_tags.contains_key(&(a, b));
         let feature = ts.len() == 2 && {
             let (x, y) = (ts[0] as usize, ts[1] as usize);
-            s.surfaces[x] != s.surfaces[y] || s.face_tags[x] != s.face_tags[y]
+            s.surfaces[x] != s.surfaces[y] || s.face_tags[x] != s.face_tags[y] || {
+                // A UV seam: either end has different UVs on the two sides.
+                s.uvs.as_ref().is_some_and(|u| {
+                    let at = |t: usize, v: u32| {
+                        let k = s.triangles[t].iter().position(|&w| w == v).unwrap_or(0);
+                        u[t][k]
+                    };
+                    at(x, a) != at(y, a) || at(x, b) != at(y, b)
+                })
+            }
         };
         let open = ts.len() == 1;
         if ts.len() > 2 {
@@ -683,6 +786,7 @@ fn collapse(
     let mut out = Solid {
         positions: m.pos.clone(),
         names: s.names.clone(),
+        uvs: s.uvs.as_ref().map(|_| Vec::new()),
         skin: s.skin.as_ref().map(|k| Skin {
             bones: k.bones.clone(),
             weights: m.weights.clone().unwrap_or_default(),
@@ -694,6 +798,9 @@ fn collapse(
             out.triangles.push(*t);
             out.surfaces.push(s.surfaces[i]);
             out.face_tags.push(s.face_tags[i].clone());
+            if let (Some(to), Some(from)) = (&mut out.uvs, &m.uvs) {
+                to.push(from[i]);
+            }
         }
     }
     for (&(a, b), tags) in &s.edge_tags {

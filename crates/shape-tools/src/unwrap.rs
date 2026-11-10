@@ -18,9 +18,10 @@
 //!    resolution.
 //!
 //! The result depends only on the solid and the desc. Geometry, names
-//! and skin weights are unchanged; UVs are per triangle corner, so chart
-//! borders are seams, and a writer that splits a vertex at a seam gives
-//! each copy the vertex's weights.
+//! and skin weights are unchanged; the UVs, per triangle corner, go into
+//! the solid's [`Solid::uvs`] (replacing any it had), so chart borders are
+//! seams, and a writer that splits a vertex at a seam gives each copy the
+//! vertex's weights.
 
 use core::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -117,8 +118,16 @@ fn cells(t: &[DVec2; 3], size: f64) -> impl Iterator<Item = Cell> {
     (x0..=x1).flat_map(move |x| (y0..=y1).map(move |y| (x, y)))
 }
 
-/// Unwraps `s` into charts packed in the unit square.
-pub fn unwrap(s: &Solid, d: &Unwrap) -> Result<Uvs, UnwrapError> {
+/// Unwraps `s` into charts packed in the unit square, sets its
+/// [`Solid::uvs`] to the result and returns the charts. On an error the
+/// solid is unchanged.
+pub fn unwrap(s: &mut Solid, d: &Unwrap) -> Result<Uvs, UnwrapError> {
+    let u = charts(s, d)?;
+    s.uvs = Some(u.corners.clone());
+    Ok(u)
+}
+
+fn charts(s: &Solid, d: &Unwrap) -> Result<Uvs, UnwrapError> {
     let angle = if d.angle == 0.0 { 66.0 } else { d.angle };
     if !(angle > 0.0 && angle < 90.0) {
         return Err(UnwrapError::BadDesc(
@@ -520,7 +529,9 @@ mod tests {
     use shape_gen::solids::{CylinderDesc, cylinder, sphere};
 
     fn check(s: &Solid) -> Uvs {
-        let uv = unwrap(s, &Unwrap::default()).unwrap();
+        let mut s = s.clone();
+        let uv = unwrap(&mut s, &Unwrap::default()).unwrap();
+        assert_eq!(s.uvs.as_ref(), Some(&uv.corners));
         // Inside the square, wound as the faces, no two triangles over one
         // another.
         for (i, t) in uv.corners.iter().enumerate() {

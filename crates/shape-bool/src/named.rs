@@ -9,6 +9,12 @@
 //! - An input edge that survives, whole or in pieces, keeps its names.
 //! - A named edge left between coplanar faces (within 0.5°) loses them.
 //!
+//! UVs ([`Solid::uvs`]) are carried the same way: each output triangle
+//! lies in one input triangle, and takes its UVs by barycentric
+//! interpolation there, so a face the boolean cuts keeps its texture
+//! mapping. When only one operand has UVs, the other's faces get (0, 0)
+//! at every corner and [`BoolReport::faces_without_uvs`] counts them.
+//!
 //! An operand whose surface passes through itself is refused
 //! ([`BoolError::SelfIntersecting`]): by [`check_operands`] before any
 //! work, or by [`boolean`] when its result comes out open. [`self_union`]
@@ -30,7 +36,7 @@
 
 use std::collections::BTreeMap;
 
-use shape_core::DVec3;
+use shape_core::{DVec2, DVec3};
 use shape_mesh::{EdgeKey, Solid, edge_key};
 
 use crate::csg::{CsgOp, OperandError, csg_points_traced, self_union_points};
@@ -176,6 +182,10 @@ pub struct BoolReport {
     /// Whether the operands touch: faces of one lie on faces of the other,
     /// or meet them without crossing.
     pub touching: bool,
+    /// Faces of the result given (0, 0) UVs because they came from the
+    /// operand without UVs while the other had them (0 when both or
+    /// neither have UVs).
+    pub faces_without_uvs: usize,
 }
 
 const CAPS: [&str; 4] = ["top", "bottom", "start", "end"];
@@ -213,11 +223,15 @@ pub fn components(s: &Solid) -> Vec<Solid> {
             let mut c = Solid {
                 positions: s.positions.clone(),
                 skin: s.skin.clone(),
+                uvs: s.uvs.as_ref().map(|_| Vec::new()),
                 ..Default::default()
             };
             for i in tris {
                 let tags: Vec<&str> = s.face_tags[i].iter().map(|&x| s.names.name(x)).collect();
                 c.push_triangle(s.triangles[i], s.surfaces[i], &tags);
+                if let (Some(to), Some(from)) = (&mut c.uvs, &s.uvs) {
+                    to[c.triangles.len() - 1] = from[i];
+                }
             }
             for (&(a, b), tags) in &s.edge_tags {
                 let tags: Vec<&str> = tags.iter().map(|&x| s.names.name(x)).collect();
@@ -262,8 +276,8 @@ pub fn fuse(s: &Solid) -> Result<Solid, BoolError> {
         acc = boolean_once(&acc, &untangled(p)?, &Boolean::default())?.0;
     }
     for mut v in voids {
-        for t in &mut v.triangles {
-            t.swap(1, 2);
+        for i in 0..v.triangles.len() {
+            v.reverse_triangle(i);
         }
         let d = Boolean {
             op: BoolOp::Cut,
@@ -494,6 +508,12 @@ fn boolean_once(
         });
     }
     let touching_edges = out.touching_edges;
+    let faces_without_uvs = if target.uvs.is_some() != tool.uvs.is_some() {
+        let bare = u8::from(target.uvs.is_some());
+        out.origins.iter().filter(|o| o.0 == bare).count()
+    } else {
+        0
+    };
     let s = named_result(
         out.points,
         &out.tris,
@@ -509,6 +529,7 @@ fn boolean_once(
             touching_edges,
             voids,
             touching,
+            faces_without_uvs,
         },
     ))
 }
@@ -578,6 +599,19 @@ fn named_result(
         let refs: Vec<&str> = tags.iter().map(String::as_str).collect();
         let surface = solid.surfaces[src as usize] + if m == 1 { surface_offset } else { 0 };
         out.push_triangle(*t, surface, &refs);
+        if target.uvs.is_some() || tool.uvs.is_some() {
+            let uv = solid.uvs.as_ref().map_or([DVec2::ZERO; 3], |u| {
+                let at = solid.triangles[src as usize].map(|v| solid.positions[v as usize]);
+                t.map(|v| interpolate(at, u[src as usize], out.positions[v as usize]))
+            });
+            let n = out.triangles.len();
+            out.uvs
+                .get_or_insert_with(Vec::new)
+                .resize(n, [DVec2::ZERO; 3]);
+            if let Some(u) = &mut out.uvs {
+                u[n - 1] = uv;
+            }
+        }
     }
     // Edges: each output edge's two triangles.
     let mut by_edge: BTreeMap<EdgeKey, Vec<usize>> = BTreeMap::new();
@@ -657,6 +691,23 @@ fn named_result(
     out.canonicalize()
         .map_err(|_| BoolError::NotFinite("result"))?;
     Ok(out)
+}
+
+/// The UV at `p`, a point in the plane of triangle `at` (to rounding),
+/// by barycentric interpolation of its corners' `uv`: areas measured
+/// along the triangle's normal. A degenerate triangle gives its first
+/// corner's UV.
+fn interpolate(at: [DVec3; 3], uv: [DVec2; 3], p: DVec3) -> DVec2 {
+    let [a, b, c] = at;
+    let n = (b - a).cross(c - a);
+    let whole = n.dot(n);
+    if whole <= 0.0 || whole.is_nan() {
+        return uv[0];
+    }
+    let la = (b - p).cross(c - p).dot(n) / whole;
+    let lb = (c - p).cross(a - p).dot(n) / whole;
+    let lc = (a - p).cross(b - p).dot(n) / whole;
+    uv[0] * la + uv[1] * lb + uv[2] * lc
 }
 
 /// Directed edges, after welding by exact position, used more often one

@@ -92,13 +92,26 @@ fn hash_uvs(h: &mut OutputHash, uvs: &[[DVec2; 3]]) -> Result<(), HashError> {
     Ok(())
 }
 
-fn hash_part(h: &mut OutputHash, p: &ImportedPart) -> Result<(), HashError> {
+/// A part as these cases hashed it before UVs moved onto the solid: the
+/// solid without them, then the UVs as the file has them (glTF's v runs
+/// down; the kernel's up, so `gltf` flips it back).
+fn hash_part(h: &mut OutputHash, p: &ImportedPart, gltf: bool) -> Result<(), HashError> {
     h.str(&p.name);
     h.str(&p.material);
     let t = &p.transform;
     h.dvec3s(&[t.x, t.y, t.z, t.t])?;
-    p.solid.hash_into(h)?;
-    match &p.uvs {
+    let mut bare = p.solid.clone();
+    let uvs = bare.uvs.take().map(|u| {
+        if gltf {
+            u.iter()
+                .map(|t| t.map(|q| DVec2::new(q.x, 1.0 - q.y)))
+                .collect()
+        } else {
+            u
+        }
+    });
+    bare.hash_into(h)?;
+    match &uvs {
         Some(u) => hash_uvs(h, u),
         None => {
             h.str("no uvs");
@@ -138,7 +151,7 @@ fn import_glb(h: &mut OutputHash) -> Result<(), HashError> {
     .map_err(fail)?;
     let imported = import(&bytes, &Import::default(), &no_files).map_err(fail)?;
     for p in &imported.parts {
-        hash_part(h, p)?;
+        hash_part(h, p, true)?;
     }
     join(&imported.parts).map_err(fail)?.hash_into(h)
 }
@@ -155,7 +168,7 @@ fn import_obj_case(h: &mut OutputHash) -> Result<(), HashError> {
     let imported = import_obj(text.as_bytes(), &Import::default(), &no_files).map_err(fail)?;
     h.u64(imported.polygons_triangulated as u64);
     for p in &imported.parts {
-        hash_part(h, p)?;
+        hash_part(h, p, false)?;
     }
     Ok(())
 }
@@ -204,7 +217,7 @@ Connections:  {
         let imported = import(&bytes, &Import::default(), &no_files).map_err(fail)?;
         h.u64(imported.polygons_triangulated as u64);
         for p in &imported.parts {
-            hash_part(h, p)?;
+            hash_part(h, p, false)?;
         }
         for i in &imported.images {
             h.str(&i.name);
@@ -221,7 +234,7 @@ fn import_skinned_case(h: &mut OutputHash) -> Result<(), HashError> {
         let bytes = skinned_support::skinned_glb(on_node);
         let imported = import(&bytes, &Import::default(), &no_files).map_err(fail)?;
         for p in &imported.parts {
-            hash_part(h, p)?;
+            hash_part(h, p, true)?;
             h.str(&measure(&p.solid, &Measure::default()).to_json());
         }
     }
@@ -237,7 +250,7 @@ fn import_skinned_scaled_case(h: &mut OutputHash) -> Result<(), HashError> {
         let bytes = skinned_support::skinned_glb_posed(true, Some([0.01; 3]), turn);
         let imported = import(&bytes, &Import::default(), &no_files).map_err(fail)?;
         for p in &imported.parts {
-            hash_part(h, p)?;
+            hash_part(h, p, true)?;
         }
         for s in &imported.skin_scales {
             h.str(&s.part);
@@ -385,7 +398,10 @@ fn hash_unwrap(h: &mut OutputHash, uv: &Uvs) -> Result<(), HashError> {
 
 fn unwrap_case(h: &mut OutputHash) -> Result<(), HashError> {
     let s = repaired()?;
-    hash_unwrap(h, &unwrap(&s, &Unwrap::default()).map_err(fail)?)?;
+    hash_unwrap(
+        h,
+        &unwrap(&mut s.clone(), &Unwrap::default()).map_err(fail)?,
+    )?;
     let b = cuboid(&BoxDesc {
         width: 40.0,
         depth: 10.0,
@@ -397,7 +413,7 @@ fn unwrap_case(h: &mut OutputHash) -> Result<(), HashError> {
         resolution: 256,
         padding: 4.0,
     };
-    hash_unwrap(h, &unwrap(&b, &d).map_err(fail)?)
+    hash_unwrap(h, &unwrap(&mut b.clone(), &d).map_err(fail)?)
 }
 
 fn measure_case(h: &mut OutputHash) -> Result<(), HashError> {
@@ -412,8 +428,8 @@ fn measure_case(h: &mut OutputHash) -> Result<(), HashError> {
         )
         .to_json(),
     );
-    let s = repaired()?;
-    let uv = unwrap(&s, &Unwrap::default()).map_err(fail)?;
+    let mut s = repaired()?;
+    unwrap(&mut s, &Unwrap::default()).map_err(fail)?;
     let png = shape_tools::png(&shape_tools::Image {
         width: 8,
         height: 4,
@@ -421,7 +437,6 @@ fn measure_case(h: &mut OutputHash) -> Result<(), HashError> {
     });
     let images = [shape_tools::ImageInfo::from_bytes("albedo.png", &png)];
     let d = Measure {
-        uvs: Some(&uv.corners),
         images: &images,
         uv_resolution: 128,
         intersections: true,
@@ -440,12 +455,13 @@ fn plain_case(h: &mut OutputHash) -> Result<(), HashError> {
         },
     )
     .map_err(fail)?;
-    let uv = unwrap(&low, &Unwrap::default()).map_err(fail)?;
+    let mut textured = low.clone();
+    unwrap(&mut textured, &Unwrap::default()).map_err(fail)?;
     let bytes = glb_plain(
-        &low,
+        &textured,
         &PlainGlb {
             name: "plain",
-            uvs: Some(&uv),
+            ..Default::default()
         },
     )
     .map_err(fail)?;

@@ -6,6 +6,7 @@ use std::fmt;
 use shape_core::{DVec3, Frame, trig};
 use shape_mesh::Solid;
 
+use crate::image::Texture;
 use crate::json::{Json, f32n, nums};
 use crate::surface::{METRES, face_normal, split, y_up};
 
@@ -28,6 +29,10 @@ pub struct Material {
     /// 1 opaque, 0 invisible (three.js `opacity`); `None` is 1. Below 1
     /// the material blends.
     pub opacity: Option<f64>,
+    /// Base-colour texture (three.js `map`), sampled at the solid's
+    /// [`Solid::uvs`]; PNG or JPEG. A part with a map and no UVs is
+    /// [`ExportError::BadTexture`].
+    pub map: Option<Texture>,
 }
 
 /// How a joint moves its part (`docs/research.md` §1.5).
@@ -159,6 +164,14 @@ pub enum ExportError {
         /// Why.
         why: String,
     },
+    /// A part's texture cannot be written: not PNG or JPEG, or the part
+    /// has no UVs to sample it with.
+    BadTexture {
+        /// The part.
+        part: String,
+        /// Why.
+        why: String,
+    },
 }
 
 impl fmt::Display for ExportError {
@@ -191,6 +204,9 @@ impl fmt::Display for ExportError {
                 "joint {j:?}: a fixed joint does not move: it takes no axis, range, mimic or value"
             ),
             ExportError::BadSkin { part, why } => write!(f, "part {part:?}: its skin: {why}"),
+            ExportError::BadTexture { part, why } => {
+                write!(f, "part {part:?}: its texture: {why}")
+            }
         }
     }
 }
@@ -498,7 +514,7 @@ fn linear(c: f64) -> f64 {
     }
 }
 
-fn material_json(m: &Material, part: &str) -> Result<Json, ExportError> {
+fn material_json(m: &Material, part: &str, map: Option<u64>) -> Result<Json, ExportError> {
     let name = if m.name.is_empty() { part } else { &m.name };
     let what = || format!("material {name:?}");
     let color = m.color.unwrap_or([1.0; 3]);
@@ -517,16 +533,15 @@ fn material_json(m: &Material, part: &str) -> Result<Json, ExportError> {
         linear(color[2]),
         opacity.clamp(0.0, 1.0),
     ];
+    let mut pbr = vec![("baseColorFactor", nums(&base))];
+    if let Some(k) = map {
+        pbr.push(("baseColorTexture", Json::Obj(vec![("index", Json::Int(k))])));
+    }
+    pbr.push(("metallicFactor", Json::Num(m.metalness.clamp(0.0, 1.0))));
+    pbr.push(("roughnessFactor", Json::Num(roughness.clamp(0.0, 1.0))));
     let mut fields = vec![
         ("name", Json::Str(name.to_string())),
-        (
-            "pbrMetallicRoughness",
-            Json::Obj(vec![
-                ("baseColorFactor", nums(&base)),
-                ("metallicFactor", Json::Num(m.metalness.clamp(0.0, 1.0))),
-                ("roughnessFactor", Json::Num(roughness.clamp(0.0, 1.0))),
-            ]),
-        ),
+        ("pbrMetallicRoughness", Json::Obj(pbr)),
     ];
     if m.emissive != [0.0; 3] {
         fields.push(("emissiveFactor", nums(&m.emissive.map(linear))));
@@ -605,6 +620,7 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
     let mut children: Vec<Vec<usize>> = Vec::new();
     let mut roots: Vec<usize> = Vec::new();
     let mut skins: Vec<SkinOut> = Vec::new();
+    let mut textures: Vec<&Texture> = Vec::new();
     let mut view = |bin: &mut Vec<u8>, start: usize, target: u64| -> u64 {
         views.push(Json::Obj(vec![
             ("buffer", Json::Int(0)),
@@ -667,6 +683,27 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
                 ("type", Json::Str("VEC3".into())),
             ]));
             attributes.push(("NORMAL", Json::Int((accessors.len() - 1) as u64)));
+            if !s.uvs.is_empty() {
+                if s.uvs.iter().any(|q| !q.is_finite()) {
+                    return Err(ExportError::NotFinite(format!(
+                        "part {:?}'s UVs",
+                        part.name
+                    )));
+                }
+                let start = bin.len();
+                s.uvs
+                    .iter()
+                    .flat_map(|&q| gltf_uv(q))
+                    .for_each(|v| push_f32(&mut bin, v));
+                let tv = view(&mut bin, start, ARRAY_BUFFER);
+                accessors.push(Json::Obj(vec![
+                    ("bufferView", Json::Int(tv)),
+                    ("componentType", Json::Int(FLOAT)),
+                    ("count", Json::Int(s.uvs.len() as u64)),
+                    ("type", Json::Str("VEC2".into())),
+                ]));
+                attributes.push(("TEXCOORD_0", Json::Int((accessors.len() - 1) as u64)));
+            }
             if let Some(sk) = skin {
                 let (j, w) = crate::skin::vertex_data(sk, &s.sources);
                 for (bytes, kind, name) in
@@ -698,7 +735,18 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
             primitive.push(("attributes", Json::Obj(attributes)));
             primitive.push(("indices", Json::Int((accessors.len() - 1) as u64)));
         }
-        materials.push(material_json(&part.material, &part.name)?);
+        let map = match &part.material.map {
+            Some(t) => {
+                check_texture(t, &part.name, part.solid.uvs.is_some())?;
+                let k = textures.iter().position(|x| *x == t).unwrap_or_else(|| {
+                    textures.push(t);
+                    textures.len() - 1
+                });
+                Some(k as u64)
+            }
+            None => None,
+        };
+        materials.push(material_json(&part.material, &part.name, map)?);
         let mesh_index = meshes.len() as u64;
         if !primitive.is_empty() {
             primitive.push(("material", Json::Int((materials.len() - 1) as u64)));
@@ -803,6 +851,7 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
         ));
         skins_json.push(Json::Obj(fields));
     }
+    let texture_fields = texture_json(&textures, &mut bin, &mut views);
     // Children lists go in last, now that every node exists.
     for (n, kids) in nodes.iter_mut().zip(&children) {
         if let (Json::Obj(fields), false) = (n, kids.is_empty()) {
@@ -840,6 +889,7 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
         if !skins_json.is_empty() {
             doc.push(("skins", Json::Arr(skins_json)));
         }
+        doc.extend(texture_fields);
         doc.push(("bufferViews", Json::Arr(views)));
         doc.push((
             "buffers",
@@ -873,6 +923,85 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
         out.extend_from_slice(&bin);
     }
     Ok(out)
+}
+
+/// Checks that a texture can be written: PNG or JPEG (glTF's core
+/// formats), on a part with UVs.
+pub(crate) fn check_texture(t: &Texture, part: &str, has_uvs: bool) -> Result<(), ExportError> {
+    let why = if !has_uvs {
+        "the part has no UVs to sample it with"
+    } else if t.mime != "image/png" && t.mime != "image/jpeg" {
+        "only PNG and JPEG are written (glTF's core image formats)"
+    } else {
+        return Ok(());
+    };
+    Err(ExportError::BadTexture {
+        part: part.to_string(),
+        why: why.to_string(),
+    })
+}
+
+/// The textures' images, appended to `bin` (each 4-byte aligned) with
+/// their buffer views, and the glTF `images`, `textures` and `samplers`
+/// (one sampler: linear, repeat).
+pub(crate) fn texture_json(
+    textures: &[&Texture],
+    bin: &mut Vec<u8>,
+    views: &mut Vec<Json>,
+) -> Vec<(&'static str, Json)> {
+    if textures.is_empty() {
+        return Vec::new();
+    }
+    let mut images = Vec::with_capacity(textures.len());
+    for t in textures {
+        while bin.len() % 4 != 0 {
+            bin.push(0);
+        }
+        let start = bin.len();
+        bin.extend_from_slice(&t.bytes);
+        views.push(Json::Obj(vec![
+            ("buffer", Json::Int(0)),
+            ("byteOffset", Json::Int(start as u64)),
+            ("byteLength", Json::Int(t.bytes.len() as u64)),
+        ]));
+        let mut image = vec![
+            ("bufferView", Json::Int(views.len() as u64 - 1)),
+            ("mimeType", Json::Str(t.mime.clone())),
+        ];
+        if !t.name.is_empty() {
+            image.insert(0, ("name", Json::Str(t.name.clone())));
+        }
+        images.push(Json::Obj(image));
+    }
+    vec![
+        ("images", Json::Arr(images)),
+        (
+            "samplers",
+            Json::Arr(vec![Json::Obj(vec![
+                ("magFilter", Json::Int(9729)),
+                ("minFilter", Json::Int(9987)),
+            ])]),
+        ),
+        (
+            "textures",
+            Json::Arr(
+                (0..textures.len())
+                    .map(|k| {
+                        Json::Obj(vec![
+                            ("sampler", Json::Int(0)),
+                            ("source", Json::Int(k as u64)),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+    ]
+}
+
+/// UVs as glTF writes them: f32, v flipped (glTF's origin is the top
+/// left).
+pub(crate) fn gltf_uv(q: shape_core::DVec2) -> [f32; 2] {
+    [q.x as f32, (1.0 - q.y) as f32]
 }
 
 fn vec3(v: DVec3) -> Json {

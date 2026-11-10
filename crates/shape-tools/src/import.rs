@@ -16,8 +16,12 @@
 //!
 //! Every polygon is triangulated on the way in (glTF strips and fans,
 //! OBJ faces of more than three corners). Triangles stay in file order and
-//! positions are not welded, so per-corner UVs line up with
-//! [`ImportedPart::uvs`]; repair welds.
+//! positions are not welded; repair welds. The first UV set (glTF
+//! `TEXCOORD_0`, OBJ `vt`, FBX's first UV layer) goes into
+//! [`Solid::uvs`], per triangle corner, when every triangle of the part
+//! has one; a part where only some do has none, and the import says so
+//! in [`Imported::skipped`]. The base-colour texture of the part's first
+//! material is kept as its file's bytes ([`ImportedPart::map`]).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -25,7 +29,7 @@ use std::fmt;
 use shape_core::{DVec2, DVec3, Frame};
 use shape_mesh::{Bone, Skin, Solid, Weights};
 
-use crate::image::ImageInfo;
+use crate::image::{ImageInfo, Texture};
 use crate::jsonread::{self, Value};
 use crate::polygon::triangulate;
 
@@ -99,11 +103,13 @@ pub struct ImportedPart {
     pub solid: Solid,
     /// Places the part in the model (kernel units).
     pub transform: Affine,
-    /// Per triangle, its corners' texture coordinates as the file has
-    /// them (glTF `TEXCOORD_0`, OBJ `vt`), if every triangle has them.
-    pub uvs: Option<Vec<[DVec2; 3]>>,
     /// The name of the first material the part uses, or "".
     pub material: String,
+    /// That material's base-colour texture (glTF
+    /// `baseColorTexture`, OBJ `map_Kd`, FBX `DiffuseColor`), if it has
+    /// one whose bytes could be read. Its coordinates are the solid's
+    /// [`Solid::uvs`].
+    pub map: Option<Texture>,
 }
 
 /// What an import read.
@@ -736,7 +742,8 @@ impl Doc<'_> {
 
     fn read(&self) -> Result<Imported, ImportError> {
         let mut out = Imported::default();
-        // Images: sizes only.
+        // Images: sizes, and the bytes for the parts' base-colour maps.
+        let mut image_bytes: Vec<Option<Vec<u8>>> = Vec::new();
         for (i, img) in self.json.get("images").items().iter().enumerate() {
             let name = img
                 .get("name")
@@ -752,10 +759,11 @@ impl Doc<'_> {
             } else {
                 Err("no URI or bufferView".to_string())
             };
-            out.images.push(match bytes {
-                Ok(b) => ImageInfo::from_bytes(&name, &b),
-                Err(why) => ImageInfo::missing(&name, &why),
+            out.images.push(match &bytes {
+                Ok(b) => ImageInfo::from_bytes(&name, b),
+                Err(why) => ImageInfo::missing(&name, why),
             });
+            image_bytes.push(bytes.ok());
         }
         // The scene's roots: the default scene, else the first, else every
         // node that is nobody's child.
@@ -806,6 +814,7 @@ impl Doc<'_> {
                 .map_or_else(|| format!("node{i}"), str::to_string);
             let name = unique(&name, &mut used);
             let (mut part, raw) = self.part(&name, mesh, &world, &mut out)?;
+            part.map = self.map(&name, mesh, &out.images, &image_bytes, &mut out.skipped);
             let weighted = raw.iter().any(|r| r.iter().any(|p| p.1 > 0.0));
             match n.get("skin").index() {
                 Some(k) => {
@@ -1173,6 +1182,7 @@ impl Doc<'_> {
         let mut solid = Solid::default();
         let mut uvs: Vec<[DVec2; 3]> = Vec::new();
         let mut all_uv = true;
+        let mut any_uv = false;
         let mut material = String::new();
         let mut raw: Vec<Vec<(u32, f64)>> = Vec::new();
         for (pi, prim) in mesh.get("primitives").items().iter().enumerate() {
@@ -1282,7 +1292,11 @@ impl Doc<'_> {
                 solid.push_triangle(t.map(|v| v + base), pi as u32, &[name]);
                 match &uv {
                     Some(uv) => {
-                        uvs.push(t.map(|v| DVec2::new(uv[v as usize * 2], uv[v as usize * 2 + 1])))
+                        any_uv = true;
+                        // glTF's v runs down the image; the kernel's up.
+                        uvs.push(
+                            t.map(|v| DVec2::new(uv[v as usize * 2], 1.0 - uv[v as usize * 2 + 1])),
+                        )
                     }
                     None => {
                         all_uv = false;
@@ -1294,17 +1308,75 @@ impl Doc<'_> {
         Ok((
             ImportedPart {
                 name: name.to_string(),
-                solid,
                 transform: conjugate(world, 1000.0),
-                uvs: if all_uv && !uvs.is_empty() {
-                    Some(uvs)
-                } else {
-                    None
+                solid: Solid {
+                    uvs: if all_uv && !uvs.is_empty() {
+                        Some(uvs)
+                    } else {
+                        if any_uv {
+                            out.skipped.push(format!(
+                                "{name}: TEXCOORD_0 on some primitives only, so no UVs"
+                            ));
+                        }
+                        None
+                    },
+                    ..solid
                 },
                 material,
+                map: None,
             },
             raw,
         ))
+    }
+
+    /// The base-colour texture of the first material `mesh` uses, if its
+    /// image could be read. What is read past (another UV set, a texture
+    /// transform) is noted in `skipped`.
+    fn map(
+        &self,
+        name: &str,
+        mesh: &Value,
+        images: &[ImageInfo],
+        bytes: &[Option<Vec<u8>>],
+        skipped: &mut Vec<String>,
+    ) -> Option<Texture> {
+        let mi = mesh
+            .get("primitives")
+            .items()
+            .iter()
+            .find_map(|p| p.get("material").index())?;
+        let info = self
+            .json
+            .get("materials")
+            .at(mi)
+            .get("pbrMetallicRoughness")
+            .get("baseColorTexture");
+        let ti = info.get("index").index()?;
+        if info.get("texCoord").index().unwrap_or(0) != 0 {
+            skipped.push(format!(
+                "{name}: its base-colour texture uses a second UV set, which is not read"
+            ));
+            return None;
+        }
+        if !info
+            .get("extensions")
+            .get("KHR_texture_transform")
+            .is_null()
+        {
+            skipped.push(format!(
+                "{name}: its base-colour texture's KHR_texture_transform is not applied to the UVs"
+            ));
+        }
+        let tex = self.json.get("textures").at(ti);
+        let ext = tex.get("extensions");
+        let source = tex
+            .get("source")
+            .index()
+            .or(ext.get("EXT_texture_webp").get("source").index())
+            .or(ext.get("KHR_texture_basisu").get("source").index())?;
+        let b = bytes.get(source)?.as_ref()?;
+        let n = images.get(source).map_or("", |i| i.name.as_str());
+        Some(Texture::from_bytes(n, b.clone()))
     }
 }
 
@@ -1313,8 +1385,10 @@ impl Doc<'_> {
 /// Reads Wavefront OBJ text. Each `o` starts a part (or each `g`, in a
 /// file with no `o`); `usemtl` starts a new surface. Faces of more than
 /// three corners are triangulated; negative (relative) indices are read;
-/// `vt` becomes [`ImportedPart::uvs`]. `mtllib` files are read through
-/// `resolve` for their texture maps' sizes. Points and lines are skipped.
+/// `vt` becomes [`Solid::uvs`]. `mtllib` files are read through
+/// `resolve` for their texture maps' sizes, and a part's first material's
+/// `map_Kd` becomes its [`ImportedPart::map`]. Points and lines are
+/// skipped.
 /// Every part's transform is the identity.
 pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported, ImportError> {
     let text = String::from_utf8_lossy(bytes);
@@ -1325,6 +1399,9 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
     let mut texcoords: Vec<DVec2> = Vec::new();
     let mut used = BTreeMap::new();
     let mut image_names: BTreeMap<String, ()> = BTreeMap::new();
+    // Each material's `map_Kd`, and the bytes of every image read.
+    let mut map_kd: BTreeMap<String, String> = BTreeMap::new();
+    let mut image_bytes: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     // The part being read: name, global → local vertex map, solid, uvs.
     struct Building {
         name: String,
@@ -1332,6 +1409,7 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
         solid: Solid,
         uvs: Vec<[DVec2; 3]>,
         all_uv: bool,
+        any_uv: bool,
         surface: u32,
         material: String,
         materials: BTreeMap<String, u32>,
@@ -1342,18 +1420,26 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
         solid: Solid::default(),
         uvs: Vec::new(),
         all_uv: true,
+        any_uv: false,
         surface: 0,
         material: String::new(),
         materials: BTreeMap::new(),
     };
     let finish = |b: Building, out: &mut Imported| {
         if !b.solid.triangles.is_empty() {
+            if !b.all_uv && b.any_uv {
+                out.skipped
+                    .push(format!("{}: vt on some faces only, so no UVs", b.name));
+            }
             out.parts.push(ImportedPart {
                 name: b.name,
-                solid: b.solid,
+                solid: Solid {
+                    uvs: if b.all_uv { Some(b.uvs) } else { None },
+                    ..b.solid
+                },
                 transform: Affine::IDENTITY,
-                uvs: if b.all_uv { Some(b.uvs) } else { None },
                 material: b.material,
+                map: None,
             });
         }
     };
@@ -1411,9 +1497,20 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
                 let file = tok.collect::<Vec<_>>().join(" ");
                 match fetch(&file, resolve) {
                     Ok(mtl) => {
+                        let mut current = String::new();
                         for l in String::from_utf8_lossy(&mtl).lines() {
                             let l = l.trim();
                             let lower = l.to_ascii_lowercase();
+                            if let Some(n) = l.strip_prefix("newmtl ") {
+                                current = n.trim().to_string();
+                            }
+                            if lower.starts_with("map_kd ")
+                                && let Some(img) = l.split_whitespace().last()
+                            {
+                                map_kd
+                                    .entry(current.clone())
+                                    .or_insert_with(|| img.to_string());
+                            }
                             if lower.starts_with("map_")
                                 || lower.starts_with("bump ")
                                 || lower.starts_with("disp ")
@@ -1426,7 +1523,11 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
                                     continue;
                                 }
                                 out.images.push(match fetch(img, resolve) {
-                                    Ok(b) => ImageInfo::from_bytes(img, &b),
+                                    Ok(b) => {
+                                        let info = ImageInfo::from_bytes(img, &b);
+                                        image_bytes.insert(img.to_string(), b);
+                                        info
+                                    }
                                     Err(e) => ImageInfo::missing(img, &e.to_string()),
                                 });
                             }
@@ -1481,6 +1582,7 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
                         corner_uv[k]
                     });
                     if uv.iter().all(Option::is_some) {
+                        b.any_uv = true;
                         b.uvs.push(uv.map(|u| u.unwrap_or(DVec2::ZERO)));
                     } else {
                         b.all_uv = false;
@@ -1493,6 +1595,11 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
     }
     if let Some(b) = cur.take() {
         finish(b, &mut out);
+    }
+    for p in &mut out.parts {
+        p.map = map_kd
+            .get(&p.material)
+            .and_then(|img| Some(Texture::from_bytes(img, image_bytes.get(img)?.clone())));
     }
     if points > 0 {
         out.skipped.push(format!("{points} point elements"));

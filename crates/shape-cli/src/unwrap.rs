@@ -34,16 +34,16 @@ pub fn unwrap(files: &dyn Files, d: &UnwrapDesc) -> Result<String, Failure> {
         [one] if one.solid.skin.is_some() => one.solid.clone(),
         _ => mesh.joined()?,
     };
-    let uvs = shape_tools::unwrap(&s, &d.unwrap).map_err(failed)?;
+    let mut s = s;
+    let uvs = shape_tools::unwrap(&mut s, &d.unwrap).map_err(failed)?;
     let m = shape_tools::measure(
         &s,
         &Measure {
-            uvs: Some(&uvs.corners),
             uv_resolution: d.unwrap.resolution,
             ..Default::default()
         },
     );
-    let output = write_solid(files, &mesh.name, &s, Some(&uvs), d.out.as_deref())?;
+    let output = write_solid(files, &mesh.name, &s, None, d.out.as_deref())?;
     Ok(object(&[
         ("unwrap", report::unwrap(&uvs)),
         ("measures", m.to_json()),

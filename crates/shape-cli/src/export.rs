@@ -4,13 +4,16 @@
 //! (skins kept in GLB).
 //!
 //! [`encode_solid`] writes the one solid the mesh tools make: GLB as
-//! `shape_tools::glb_plain` (one node, one mesh, with UVs when given),
-//! or OBJ or STL.
+//! `shape_tools::glb_plain` (one node, one mesh, with the solid's UVs and
+//! the texture given), or OBJ or STL.
+//!
+//! A mesh file exported as GLB keeps each part's UVs and base-colour
+//! texture.
 
 use std::path::Path;
 
 use shape_mesh::Solid;
-use shape_tools::{PlainGlb, Uvs, glb, glb_plain, obj, stl};
+use shape_tools::{PlainGlb, Texture, glb, glb_plain, obj, stl};
 
 use crate::args::{Args, IMPORT_OPTIONS};
 use crate::report::{object, string};
@@ -39,7 +42,10 @@ pub fn encode(source: &Source, out: &Path) -> Result<Vec<u8>, Failure> {
         },
         Source::Mesh(mesh) => {
             let placed = mesh.placed()?;
-            let s = scene(&mesh.name, &placed);
+            let mut s = scene(&mesh.name, &placed);
+            for (part, p) in s.parts.iter_mut().zip(&mesh.imported.parts) {
+                part.material.map = p.map.clone();
+            }
             match ext.as_str() {
                 "glb" => glb(&s).map_err(failed),
                 "obj" => obj(&s).map(String::into_bytes).map_err(failed),
@@ -67,16 +73,16 @@ pub fn written(out: &Path, bytes: usize) -> String {
 }
 
 /// One solid in the format `out`'s extension names: a plain GLB (with
-/// `uvs` if given), OBJ or STL.
+/// the solid's UVs, and `map` if given), OBJ or STL.
 pub fn encode_solid(
     name: &str,
     s: &Solid,
-    uvs: Option<&Uvs>,
+    map: Option<&Texture>,
     out: &Path,
 ) -> Result<Vec<u8>, Failure> {
     let parts = [(name.to_string(), s.clone())];
     match extension(out).as_str() {
-        "glb" => glb_plain(s, &PlainGlb { name, uvs }).map_err(failed),
+        "glb" => glb_plain(s, &PlainGlb { name, map }).map_err(failed),
         "obj" => obj(&scene(name, &parts))
             .map(String::into_bytes)
             .map_err(failed),
@@ -90,13 +96,13 @@ pub fn write_solid(
     files: &dyn Files,
     name: &str,
     s: &Solid,
-    uvs: Option<&Uvs>,
+    map: Option<&Texture>,
     out: Option<&Path>,
 ) -> Result<String, Failure> {
     match out {
         None => Ok("null".into()),
         Some(out) => {
-            let bytes = encode_solid(name, s, uvs, out)?;
+            let bytes = encode_solid(name, s, map, out)?;
             files.write(out, &bytes)?;
             Ok(written(out, bytes.len()))
         }
