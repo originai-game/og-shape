@@ -1214,3 +1214,219 @@ fn straight_profiles_on_end_faces_leave_no_flat_triangle() {
         check(&s, "chamfer");
     }
 }
+
+/// A part revolve (2 rad about z) of the section given, `(r, z)` corners.
+fn part_ring(section: &[(f64, f64)]) -> Solid {
+    shape_gen::solids::revolve(
+        &shape_2d::Profile::from_contour(shape_2d::Contour::corners(
+            section.iter().map(|&(x, y)| DVec2::new(x, y)).collect(),
+        )),
+        &shape_gen::solids::Revolve {
+            angle: 2.0,
+            axis: shape_gen::solids::Axis::Z,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+
+/// Names the real edges whose ends both pass `pick`.
+fn tag(s: &Solid, name: &str, pick: impl Fn(shape_core::DVec3) -> bool) -> Solid {
+    let mut out = s.clone();
+    for (a, b) in s.real_edges() {
+        if pick(s.positions[a as usize]) && pick(s.positions[b as usize]) {
+            out.tag_edge(a, b, &[name]);
+        }
+    }
+    out
+}
+
+#[test]
+fn a_pipe_through_curved_faces() {
+    // The outer wall at radius 10 is two bands split at z = 4 (a seam
+    // circle, smooth); the start cap's outer edge is split there too, so
+    // at (10, 0, 4) the two pieces are in line and the seam crosses them.
+    let ring = part_ring(&[
+        (5.0, 0.0),
+        (10.0, 0.0),
+        (10.0, 4.0),
+        (10.0, 8.0),
+        (5.0, 8.0),
+    ]);
+    let radius = |p: shape_core::DVec3| (p.x * p.x + p.y * p.y).sqrt();
+    let t = tag(&ring, "seam", |p| {
+        (radius(p) - 10.0).abs() < 1e-9 && p.z == 4.0
+    });
+    let t = tag(&t, "post", |p| {
+        p.y.abs() < 1e-12 && (radius(p) - 10.0).abs() < 1e-9
+    });
+    assert_eq!(t.edges(&["post"]).unwrap().len(), 2);
+    for n in [4, 8] {
+        let d = |edges: &[&str]| Fillet {
+            radius: 1.0,
+            edges: names(edges),
+            segments: n,
+            ..Default::default()
+        };
+        let s = fillet(&t, &d(&["seam", "post"])).unwrap();
+        check_closed(&s);
+        let q = quad_pairs(&s, &s.faces(&["fillet"]).unwrap());
+        assert!(q.triangles - q.paired <= 2, "{q:?}");
+        // The seam's faces are tangent, so its bevel is all but flat and
+        // the joint keeps the post's round: the volume is the post's
+        // alone, to the faceting of the bands (2e-6 of it).
+        let plain = fillet(&t, &d(&["post"])).unwrap();
+        let (v0, v1) = (plain.measure().volume, s.measure().volume);
+        assert!((v0 - v1).abs() < 5e-6 * v0, "{v0} {v1}");
+    }
+}
+
+#[test]
+fn patches_of_seven_and_more_sides() {
+    for k in [7, 9, 12] {
+        let p = ngon_prism(k, 1.0);
+        for n in [2, 4, 6] {
+            let s = fillet(
+                &p,
+                &Fillet {
+                    radius: 1.5,
+                    edges: names(&["side"]),
+                    segments: n,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let q = check(&s, "fillet");
+            assert!(q.max_fold < trig::to_radians(15.0), "{k} {n}: {q:?}");
+            inside(&s, &p);
+            // The apex patch: k sectors of (n/2)² quads. Each strip runs
+            // from the base (z = 0) to the patch in one row, so the patch
+            // is what lies wholly above z = 1.
+            let apex = s
+                .faces(&["fillet"])
+                .unwrap()
+                .into_iter()
+                .filter(|&t| {
+                    s.triangles[t as usize]
+                        .iter()
+                        .all(|&v| s.positions[v as usize].z > 1.0)
+                })
+                .count();
+            assert_eq!(apex, 2 * k * (n * n / 4) as usize, "{k} {n}");
+        }
+        let c = chamfer(
+            &p,
+            &Chamfer {
+                distance: 1.5,
+                edges: names(&["side"]),
+                segments: 2,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        check(&c, "chamfer");
+        inside(&c, &p);
+    }
+}
+
+#[test]
+fn loop_slide_around_a_curved_face() {
+    // A part revolve with a conical outer wall: at the start cap's top
+    // edge the cap (flat) and the cone meet the unbevelled post at
+    // different angles, so the two offset lines meet it apart.
+    let ring = part_ring(&[(5.0, 0.0), (10.0, 0.0), (7.0, 8.0), (5.0, 8.0)]);
+    let t = tag(&ring, "lid", |p| p.z == 8.0);
+    // The fillet's depth below the top on the start cap (y = 0), at both
+    // ends of the cap's top edge.
+    let depths = |slide: bool| {
+        let s = fillet(
+            &t,
+            &Fillet {
+                radius: 0.3,
+                edges: names(&["lid"]),
+                segments: 4,
+                loop_slide: slide,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        check_closed(&s);
+        let q = quad_pairs(&s, &s.faces(&["fillet"]).unwrap());
+        assert!(q.triangles - q.paired <= 2, "{q:?}");
+        let mut d: Vec<f64> = s
+            .positions
+            .iter()
+            .filter(|p| p.y == 0.0 && p.z < 8.0 && p.z > 4.0)
+            .map(|p| 8.0 - p.z)
+            .collect();
+        d.sort_by(f64::total_cmp);
+        d
+    };
+    let d = depths(false);
+    assert_eq!(d.len(), 2, "{d:?}");
+    assert!(d[1] - d[0] > 5e-3, "{d:?}");
+    let d = depths(true);
+    assert_eq!(d.len(), 2, "{d:?}");
+    assert!(d[1] - d[0] < 1e-9, "{d:?}");
+}
+
+#[test]
+fn miters_with_chamfers_of_several_segments() {
+    // The L's top, and an outline with arcs and a reflex corner.
+    let curvy = extrude(
+        &shape_2d::Path::new(0.0, 0.0)
+            .line_to(30.0, 0.0)
+            .tangent_arc_to(30.0, 10.0)
+            .line_to(10.0, 10.0)
+            .line_to(10.0, 30.0)
+            .arc_to(5.0, 35.0, 0.0, 30.0)
+            .close()
+            .unwrap(),
+        &Extrude {
+            height: 10.0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    for solid in [l_prism(), curvy.clone()] {
+        for segments in [2, 3, 4, 5] {
+            for (inner, outer) in [
+                (Miter::Arc, Miter::Sharp),
+                (Miter::Sharp, Miter::Arc),
+                (Miter::Sharp, Miter::Patch),
+                (Miter::Arc, Miter::Patch),
+            ] {
+                for spread in [0.0, 1e-6, 0.5] {
+                    let r = chamfer(
+                        &solid,
+                        &Chamfer {
+                            distance: 2.0,
+                            edges: names(&["top"]),
+                            segments,
+                            inner_miter: inner,
+                            outer_miter: outer,
+                            spread,
+                            ..Default::default()
+                        },
+                    );
+                    match r {
+                        Ok(s) => {
+                            check_closed(&s);
+                            let q = quad_pairs(&s, &s.faces(&["chamfer"]).unwrap());
+                            assert!(q.paired * 4 >= q.triangles * 3, "{q:?}");
+                        }
+                        // An inner arc at the curvy outline's corner of
+                        // nearly 180° slides its points past the next
+                        // arc point, a chord of 0.65: refused, unless
+                        // the spread is smaller.
+                        Err(BevelError::TooLarge(p)) => {
+                            assert!(inner == Miter::Arc && spread != 1e-6, "{p}");
+                            assert_eq!(p, shape_core::DVec3::new(0.0, 30.0, 10.0));
+                        }
+                        Err(e) => panic!("{e:?}"),
+                    }
+                }
+            }
+        }
+    }
+}

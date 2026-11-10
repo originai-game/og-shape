@@ -61,6 +61,10 @@ pub fn cases() -> Vec<Case> {
             name: "bevel.chamfers",
             run: chamfers,
         },
+        Case {
+            name: "bevel.untested",
+            run: untested,
+        },
     ]
 }
 
@@ -680,6 +684,102 @@ fn chamfers(h: &mut OutputHash) -> Result<(), HashError> {
             &Chamfer {
                 distance: 0.5,
                 ..side(1)
+            },
+        ),
+    )
+}
+
+/// The items §7.4 left untested: a pipe through curved faces, patches of
+/// seven and twelve sides, loop slide around a cone, and miters with
+/// chamfers of several segments on an outline with arcs
+/// (`docs/research.md` §7.5).
+fn untested(h: &mut OutputHash) -> Result<(), HashError> {
+    let part = |c: &[(f64, f64)]| {
+        revolve(
+            &shape_2d::Profile::from_contour(shape_2d::Contour::corners(
+                c.iter().map(|&(x, y)| DVec2::new(x, y)).collect(),
+            )),
+            &Revolve {
+                angle: 2.0,
+                axis: Axis::Z,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_default()
+    };
+    let radius = |p: DVec3| (p.x * p.x + p.y * p.y).sqrt();
+    let ring = part(&[
+        (5.0, 0.0),
+        (10.0, 0.0),
+        (10.0, 4.0),
+        (10.0, 8.0),
+        (5.0, 8.0),
+    ]);
+    let ring = tag(&ring, "seam", |p| {
+        (radius(p) - 10.0).abs() < 1e-9 && p.z == 4.0
+    });
+    let ring = tag(&ring, "post", |p| {
+        p.y.abs() < 1e-12 && (radius(p) - 10.0).abs() < 1e-9
+    });
+    solid(h, fillet(&ring, &round(1.0, &["seam", "post"], 4)))?;
+    for k in [7usize, 12] {
+        let ngon: Vec<(f64, f64)> = (0..k)
+            .map(|i| {
+                let a = trig::TAU * i as f64 / k as f64;
+                (10.0 * trig::cos(a), 10.0 * trig::sin(a))
+            })
+            .collect();
+        let pyr = prism(
+            &ngon,
+            &Extrude {
+                height: 20.0,
+                taper: 1.0,
+                ..Default::default()
+            },
+        );
+        solid(h, fillet(&pyr, &round(1.5, &["side"], 4)))?;
+    }
+    let cone = part(&[(5.0, 0.0), (10.0, 0.0), (7.0, 8.0), (5.0, 8.0)]);
+    let cone = tag(&cone, "lid", |p| p.z == 8.0);
+    solid(
+        h,
+        fillet(
+            &cone,
+            &Fillet {
+                loop_slide: true,
+                ..round(0.3, &["lid"], 4)
+            },
+        ),
+    )?;
+    let curvy = shape_2d::Path::new(0.0, 0.0)
+        .line_to(30.0, 0.0)
+        .tangent_arc_to(30.0, 10.0)
+        .line_to(10.0, 10.0)
+        .line_to(10.0, 30.0)
+        .arc_to(5.0, 35.0, 0.0, 30.0)
+        .close()
+        .ok()
+        .and_then(|p| {
+            extrude(
+                &p,
+                &Extrude {
+                    height: 10.0,
+                    ..Default::default()
+                },
+            )
+            .ok()
+        })
+        .unwrap_or_default();
+    solid(
+        h,
+        chamfer(
+            &curvy,
+            &Chamfer {
+                distance: 2.0,
+                edges: names(&["top"]),
+                segments: 3,
+                outer_miter: Miter::Patch,
+                ..Default::default()
             },
         ),
     )

@@ -1139,6 +1139,50 @@ closed solid or were built by hand for their tests.
   2 102 and the selections where a chamfer of 2 or 4 segments failed but
   the fillet and the one-segment chamfer fitted from 30 to 1.
 
+**The untested items of §7.4, now tested** (`cargo test -p shape-bevel`;
+golden case `bevel.untested`). Nothing in the code had to change for
+them beyond the flat-triangle fix above.
+
+| case | result | quads | worst fold |
+|---|---|---|---|
+| pipe through curved faces: part revolve r 5–10, outer wall split at z 4; seam and both post pieces, `fillet(1)`, 4 seg | volume 594.8315, post alone 594.8304 | 126/128 | 26.4° |
+| same, 8 seg | 594.9501 / 594.9498 | 302/304 | 17.2° |
+| pyramid of 7 sides, `fillet(1.5, side)`, 4 seg | 7 sectors, all quads, inside the pyramid | 112/112 | 11.9° |
+| pyramid of 12 sides, 6 seg | 12 sectors | 360/360 | 8.5° |
+| part revolve with a cone wall (r 10 → 7), `fillet(0.3)` on the top, averaged | cap depths 0.2905 / 0.3000 at the edge's two ends | 190/192 | 22.5° |
+| same, loop slide | 0.29526 / 0.29526 (equal to 1e-11) | 190/192 | 22.5° |
+| L-prism `chamfer(2, top)`, 2–5 seg, every inner/outer pair of arc and patch, spread 0, 1e-6, 0.5 | all closed | worst 64/81 (3 seg, inner arc: odd counts fill corners with fans) | 32.2° |
+| outline with arcs and a reflex corner, the same | all closed but one class below | worst 330/411 | 32.2° |
+
+- The pipe's through-faces are the start cap (flat) and the two wall
+  bands (curved). The seam's faces are tangent, so its bevel is all but
+  flat and the joint keeps the post's round: the volume differs from the
+  post's alone by 2e-6 of it, the faceting of the bands. A pipe whose
+  faces on both sides are curved needs a straight real edge between two
+  curved surfaces, which no generator makes.
+- Patches of 7 to 12 sides are the ADJ pattern; each has exactly
+  `k (n/2)²` quads.
+- An inner arc miter at the outline's corner where its arc meets the
+  closing line (nearly 180°, the arc's last chord 0.65 long) is
+  `TooLarge` at the default spread (the offset, 2) and at 0.5: the split
+  points slide past the next point of the arc. A spread of 1e-6 fits. It
+  stays an error value; a clamp would be a silent change.
+
+**Still errors, and untested.**
+- A bevel wider than a segment of a curved face (the part revolve's bore
+  at r 1.5) is still `TooLarge`. Not attempted: the golden case
+  `bevel.slivers` hashes exactly that error, and the task forbids moving
+  an existing hash, so closing it needs that hash re-blessed first. The
+  route is the V2 notes' inset-and-intersect re-meshing of the face.
+- The scan still finds selections where a fillet fits and a chamfer of
+  the same offset does not, or the reverse (about 80 of 19 000, on part
+  revolves with seams, posts joined to boxes, bores and twisted prisms),
+  all `TooLarge`; not analysed.
+- Unchanged from §7.4: miters only on planar gaps without unbevelled
+  edges; no Partial Vertex Bevel, Cutoff, custom vertex meshes,
+  per-corner spread or tip slide. A pipe with curved faces on both sides
+  is untested (no generator makes one).
+
 ## 8. Phase 4: parts, joints, the CLI and the wasm binding (stream E, 2026-11-09)
 
 ### 8.1 Sources

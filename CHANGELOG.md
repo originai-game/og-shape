@@ -482,3 +482,8 @@
   triangle of zero area. Such a face is now clipped again avoiding it;
   results that were accepted are unchanged. Golden case
   `bevel.chamfers`; no existing hash moved.
+- `shape-bevel` tests: pipes through curved faces, corner patches of 7
+  to 12 sides, loop slide around a cone, and arc and patch miters with
+  chamfers of 2 to 5 segments, on straight and curved outlines
+  (`docs/research.md` §7.5). Golden case `bevel.untested`; no existing
+  hash moved.
