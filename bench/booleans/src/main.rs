@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! cargo run --release -- [--thingi DIR] [--suite NAME]... [--engine NAME]...
-//!                        [--grid N] [--crossings]
+//!                        [--grid N] [--crossings] [--uncross]
 //!                        [--timeout SECS] [--out FILE] [--hashes FILE]
 //! ```
 //!
@@ -22,7 +22,9 @@
 //! `--hashes` the output hash of every boolean, for comparing hosts. With
 //! `--crossings`, the og-shape engines also count the pairs of triangles of
 //! each f64 output that cross within one shell (outside the timing), and
-//! the summary says how many cases left any.
+//! the summary says how many cases left any. With `--uncross`, the
+//! og-shape engines repair crossings by a rounding error in their outputs
+//! (`shape_bool::uncross_output`, inside the timing).
 
 mod engines;
 mod mesh;
@@ -45,6 +47,7 @@ struct Args {
     hashes: Option<PathBuf>,
     inputs: bool,
     crossings: bool,
+    uncross: bool,
 }
 
 fn args() -> Args {
@@ -58,6 +61,7 @@ fn args() -> Args {
         hashes: None,
         inputs: false,
         crossings: false,
+        uncross: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
@@ -72,6 +76,7 @@ fn args() -> Args {
             "--hashes" => a.hashes = Some(v().into()),
             "--inputs" => a.inputs = true,
             "--crossings" => a.crossings = true,
+            "--uncross" => a.uncross = true,
             _ => panic!("unknown argument {k}"),
         }
     }
@@ -242,6 +247,7 @@ fn guarded(case: &Case, engine: Engine, timeout: u64) -> Row {
 fn main() {
     let a = args();
     engines::COUNT_CROSSINGS.store(a.crossings, std::sync::atomic::Ordering::Relaxed);
+    engines::UNCROSS.store(a.uncross, std::sync::atomic::Ordering::Relaxed);
     std::panic::set_hook(Box::new(|_| {}));
     let want = |s: &str| a.suites.is_empty() || a.suites.iter().any(|x| x == s);
     let mut cases = Vec::new();

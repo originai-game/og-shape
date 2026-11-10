@@ -139,6 +139,30 @@ fn a_countersink_and_a_blind_hole() {
     assert!((r_max - 4.0).abs() < 1e-6, "{r_max}");
 }
 
+/// The countersink's cone is turned half a segment about the axis, so its
+/// generators run between the bore's columns and no rim point is made
+/// twice an ulp apart: the plate does not cross itself (it did by 4 and
+/// 32 pairs with the cone unturned; `docs/research.md` §23).
+#[test]
+fn a_countersink_rim_does_not_cross_itself() {
+    let plate = boxed(80.0, 50.0, 10.0);
+    for (x, y, depth) in [(0.0, -5.0, 6.0), (-30.0, -15.0, 6.0), (0.0, 0.0, 0.0)] {
+        let s = hole(
+            &plate,
+            &Hole {
+                diameter: 4.0,
+                at: vec![above(x, y)],
+                depth,
+                countersink: (8.0, trig::PI / 2.0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        closed(&s);
+        assert_eq!(shape_bool::crossing_pairs(&s), 0, "({x}, {y})");
+    }
+}
+
 #[test]
 fn shells_measure_their_walls() {
     // shell(box(40, 30, 20), 2, open="top")

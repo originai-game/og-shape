@@ -108,6 +108,72 @@ pub fn cases() -> Vec<Case> {
             },
         },
         Case {
+            name: "touching.gap.slabs",
+            run: |h| {
+                // Slabs stacked two ulps apart: joined whole, one shell
+                // (`docs/research.md` §23).
+                let a = block(10.0, 10.0, 1.0)?;
+                let top = a.positions.iter().map(|p| p.z).fold(f64::MIN, f64::max);
+                let low = a.positions.iter().map(|p| p.z).fold(f64::MAX, f64::min);
+                let gap = top.next_up().next_up();
+                let mut b = moved(a.clone(), DVec3::new(0.0, 0.0, top - low));
+                b.map_positions(
+                    |p| {
+                        if p.z == top {
+                            DVec3::new(p.x, p.y, gap)
+                        } else {
+                            p
+                        }
+                    },
+                    false,
+                );
+                both(h, &a, &b, BoolOp::Join)?;
+                both(h, &a, &b, BoolOp::Cut)
+            },
+        },
+        Case {
+            name: "touching.uncross",
+            run: |h| {
+                // Outputs that crossed themselves by a rounding error,
+                // repaired (`shape_bool::uncross_output`, §23): the post,
+                // the countersink ring, the torus ring on a box face.
+                let plate = block(20.0, 20.0, 10.0)?;
+                let pin = moved(frustum(3.0, 3.0, 0.0, 8.0)?, DVec3::new(0.0, 0.0, 10.0));
+                let big = block(40.0, 40.0, 10.0)?;
+                let d = Boolean {
+                    op: BoolOp::Cut,
+                    ..Default::default()
+                };
+                let bored = shape_bool::boolean(&big, &frustum(2.0, 2.0, -30.0, 40.06)?, &d)
+                    .map_err(fail)?;
+                let sink = frustum(2.0, 4.06, 8.0, 2.06)?;
+                let t = torus(351.0, 127.0).map_err(fail)?;
+                let q = moved(block(600.0, 400.0, 600.0)?, DVec3::new(300.0, 0.0, 0.0));
+                use shape_bool::CsgOp;
+                for (a, b, op) in [
+                    (&plate, &pin, CsgOp::Union),
+                    (&bored, &sink, CsgOp::Subtract),
+                    (&t, &q, CsgOp::Intersect),
+                ] {
+                    let o = shape_bool::csg_points_traced(
+                        (&a.positions, &a.triangles),
+                        (&b.positions, &b.triangles),
+                        op,
+                    )
+                    .map_err(|e| fail(format!("{e:?}")))?;
+                    let (u, r) = shape_bool::uncross_output(&a.positions, &b.positions, o);
+                    h.str(&format!("{r:?}"));
+                    h.dvec3s(&u.points)?;
+                    for t in &u.tris {
+                        for &v in t {
+                            h.u64(u64::from(v));
+                        }
+                    }
+                }
+                Ok(())
+            },
+        },
+        Case {
             name: "touching.program.rim",
             run: |h| replay(h, RIM),
         },

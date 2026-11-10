@@ -39,7 +39,7 @@ use std::collections::BTreeMap;
 use shape_core::{DVec2, DVec3};
 use shape_mesh::{EdgeKey, Solid, edge_key};
 
-use crate::csg::{CsgOp, OperandError, csg_points_traced, self_union_points};
+use crate::csg::{CsgOp, OperandError, csg_points_traced, self_union_points, uncross_output};
 use crate::selfcheck;
 
 /// The operation.
@@ -445,6 +445,12 @@ pub fn check_operands(target: &Solid, tool: &Solid) -> Result<(), BoolError> {
     Ok(())
 }
 
+/// Whether [`boolean`] repairs a result that crosses itself by a
+/// rounding error ([`uncross_output`]). Off until the seven golden lines
+/// it moves, whose outputs crossed themselves, are reviewed
+/// (`docs/research.md` §23); `uncross_output` applies it on request.
+const UNCROSS: bool = false;
+
 fn boolean_once(
     target: &Solid,
     tool: &Solid,
@@ -466,6 +472,11 @@ fn boolean_once(
         OperandError::NotFinite(0) => BoolError::NotFinite("target"),
         OperandError::NotFinite(_) => BoolError::NotFinite("tool"),
     })?;
+    let out = if UNCROSS {
+        uncross_output(&target.positions, &tool.positions, out).0
+    } else {
+        out
+    };
     let touching = !out.coplanar.is_empty() || !out.touching.is_empty();
     if out.tris.is_empty() {
         return Err(BoolError::Empty);

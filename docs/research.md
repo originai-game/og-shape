@@ -4539,3 +4539,250 @@ measures is the model as posed.
   compare the washing machine's GLB and PNG). Not run: the golden run as
   wasm32-wasip1 under wasmtime (not installable here), aarch64 and
   Windows (CI only).
+
+## 23. Boolean outputs that cross themselves by an ulp (stream AA, 2026-11-10)
+
+Base b57f2d7. Every side below is still decided by `orient3d` and
+`orient2d`. Two choices use a distance, both the design's snap distance
+(2⁻⁴⁰ of the operands' box diagonal, §18.1, `docs/design.md` §6): which
+points the repair may merge or which needles it may split (each change is
+then kept or undone by exact predicates), and which tool vertices the snap
+moves.
+
+### 23.1 The countersink turn (§18.5)
+
+`hole` turns the countersink's cone half a segment (π/n) about the axis,
+so its generators run between the bore's columns. Swept on an 80 × 50 × 10
+plate (positions (0, −5), (−30, −15), (0, 0), (12.3, 4.56); diameters 3,
+4, 5, 6.6; through and 6 deep; angles 60°, 82°, 90°; mouth twice the
+diameter): 53 of 96 countersunk plates crossed themselves before (3 to 79
+pairs), none after. Golden: `edit.holes.pocket` moved, no other line.
+Test `a_countersink_rim_does_not_cross_itself` (`shape-edit`; it fails
+unturned).
+
+The plain hole: 0 of 32 crossed. The counterbore: 1 of 32, before and
+after: diameter 6.6 with a 13.2 counterbore at (12.3, 4.56), through,
+8 pairs. It was not diagnosed; the turn was not applied to the
+counterbore, whose crossings did not appear elsewhere in the sweep, and
+is left to the repair (§23.2).
+
+### 23.2 Where the kernel's booleans leave crossings, and the repair
+
+Every boolean the golden cases run was checked (`crossing_pairs` on its
+result, operands checked too). Ten golden lines hold a boolean whose
+output crosses itself where its operands do not: `bevel.sound` (the post,
+4 pairs), `smallgaps.hole.diagonal` (2), `smallgaps.knob.program` (6 to
+11 per join), `touching.countersink.ring` (34), `touching.lofts.cut`
+(34), `touching.lofts.join` (8), `touching.program.elbows` (68),
+`touching.program.rim` (20), `touching.torus.ring` (47), plus
+`selfunion.check`, whose inputs cross by design. §18.5 counted only the
+chains whose crossing output is a later boolean's operand.
+
+Two shapes, read off the pairs:
+
+- **Points a rounding error apart joined by needles** (all but one). One
+  operand's edge passes an ulp off the other's edge or vertex, so two
+  exact crossing points lie 10⁻¹⁶ to 10⁻¹³ apart; rounded, the needle
+  between them turns over its neighbour. The post (§7.7): the plate's top
+  diagonal x = y passes 3·10⁻¹⁵ from the pin's vertex column at 225°
+  (whose cos and sin round apart), so the diagonal's crossing with the
+  pin's bottom edge is made next to that vertex, and the needle between
+  them folds over the plate's piece and through the pin's wall.
+- **Needles along a long edge** (the countersink ring): a point exactly on
+  a ring edge rounds off it, and the needle with the edge's two ends
+  folds.
+
+**The repair** (`crates/shape-bool/src/uncross.rs`,
+`shape_bool::uncross_output`). Only triangles with a constructed corner (a
+position that is no operand's vertex) can have moved, so only pairs with
+one are tested: a grid over those triangles, every output triangle
+queried against it. None found: the output is returned as built. Else:
+
+1. each edge at a crossing pair's corners shorter than the snap distance,
+   with a constructed end, shortest first, is collapsed: the constructed
+   end moves onto the other (an operand's vertex never moves); the two
+   triangles on the edge go;
+2. each triangle at a pair still crossing whose corner lies within the
+   snap distance of the opposite edge, between its ends, is a needle: the
+   triangle across that edge is split at the corner and the needle
+   dropped (`sliver::flip`'s move, for a corner an ulp off the line);
+3. each change is kept only if no triangle at it is degenerate (exact)
+   or doubled, every edge at it is used once each way, and the crossing
+   pairs there, by `selfcheck::crossing`, become strictly fewer;
+   otherwise it is undone.
+
+Rounds repeat (at most 16) while a change is kept. Every kept collapse
+removes a point and every kept split removes a crossing pair, so it ends.
+A closed result stays closed (each change rewrites only edges at one
+point, checked). An output it cannot improve is returned unchanged.
+
+On every golden case above it leaves no crossing pair (checked with the
+full `self_crossings`, not only the seam's), the result closed, the
+volume equal to 10⁻¹³: the post 4 → 0 (one point merged),
+`hole.diagonal` 2 → 0, the knob's joins 6 → 0, the countersink ring
+34 → 0 (8 needles split), the lofts 34 → 0 and 8 → 0, the elbows'
+intersection 68 → 0 (23 merged), the rim 20 → 0, the torus ring 47 → 0.
+It runs in 0.3 to 17 ms on these. Tests: `crates/shape-bool/tests/
+uncross.rs` (the post, the countersink ring, the torus ring, a clean
+output returned equal); golden `touching.uncross`.
+
+**This is not snap rounding.** Snap rounding in 3D (round every point to
+the grid, then split every edge and face passing through a rounded
+point's cell, until nothing crosses) has no bound on the number of rounds
+that we could prove here, can blow up the triangle count (Fortune's
+vertex rounding of a 3D subdivision; Devillers, Lazard and Lenhart's
+rounding of 3D meshes), and its splits make two sheets meet along a seam
+used four times, which a closed solid then has to resolve by a self-union
+at the scale of rounding, where probes cannot classify. The repair above
+is the step short of it: local, bounded (each kept change removes a point
+or a pair), exact in what it keeps, and a no-op where nothing crosses.
+What it does not do: split a face that a rounded point passed through
+(no case needed it), or move an operand's vertex.
+
+**Not on in `boolean`.** `named.rs`'s `UNCROSS` is `false`. Turned on,
+these golden lines move: `smallgaps.knob.program` and
+`touching.program.elbows` (allowed by the stream), and also
+`smallgaps.hole.diagonal`, `touching.countersink.ring`,
+`touching.lofts.cut`, `touching.lofts.join` and `touching.torus.ring`.
+In each the output crossed itself before and does not after, with the
+volume equal to 10⁻¹³ and names from the same input faces (the repair
+keeps each triangle's source). `bevel.sound` and `touching.program.rim`
+do not move, although a boolean inside each is repaired (not
+investigated further). The stream's rule is to stop and report lines beyond the two,
+so the switch is left for review; flipping it and blessing is the whole
+change. No test failed with it on.
+
+### 23.3 The post's points (§7.7) and the bevel's weld
+
+The two points 10⁻¹⁵ apart come from the plate's top diagonal passing
+3·10⁻¹⁵ off the pin's vertex at 225° (above). The exact arrangement must
+keep both; rounding makes the fold. The repair merges the crossing into
+the pin's vertex (`uncross_output`, `Uncrossed { before: 4, after: 0,
+collapsed: 1 }`). With it on in `boolean`, `bevel.sound`'s hash is
+unchanged, and the post's boolean output no longer crosses itself, so the
+bevel's input weld is not needed for this case. It should stay: other
+inputs (imported meshes, booleans the repair cannot improve) can still
+reach the bevel crossing themselves. `shape-bevel` was not edited (stream X).
+
+### 23.4 Faces a few ulps apart (§18.8)
+
+Reproductions (two 32-gon prisms, 0 to 10 and 10 to 20, radius 10, joined,
+cut and intersected):
+
+| case | before | now |
+|---|---|---|
+| tool turned and turned back (vertices ulps off, corresponding) | closed | closed |
+| the same, tool caps fanned from another vertex | closed | closed |
+| both tilted, caps fanned differently (one ring, two triangulations, not planar by ulps) | refused, naming `top`/`bottom`, `side` | the same |
+| tool cap with a vertex at each edge's midpoint, untilted | closed (4 crossing pairs) | the same |
+| the same, tilted | join: not closed, 10 touching edges, 3 crossing pairs | the same |
+| tool's bottom 2 ulps above the target's top | **union lost the tool, closed, no error** | joined, one shell |
+| the same, tilted | the same wrong union | joined, one shell |
+| tool's bottom 2 ulps below | closed | closed |
+
+**Found: a wrong union with no error.** A region that meets the other
+surface nowhere was classified by probes a millionth of the operands' size
+in front of and behind its largest piece; across a gap of two ulps the
+front probe lands inside the other solid, and the region is taken to lie
+on its surface and dropped. Such a region (none of its triangles crossed,
+touched or lying in one plane with the other's) is now classified
+exactly: the signed crossings, by `orient3d`, of a segment from its
+largest piece's first corner to a point outside both boxes, along one of
+six fixed directions (one through an edge, a vertex, or ending in a
+plane, is tried along the next). The winding sum at the corner would not
+do: within 10⁻¹³ of a face a term's sign is lost to rounding.
+
+**A closed result in several shells** is now built again with the snap
+(§18.1), and taken if closed, manifold and in fewer shells: the stacked
+prisms join as one shell, as the touching ones do. Test
+`slabs_stacked_two_ulps_apart_join_whole` (it fails with either change
+undone); golden `touching.gap.slabs`. No existing golden line moved.
+
+**Not closed:** the tilted ring triangulated two ways (still
+`OpenTouching`, naming the faces), and the tilted midpoints (a join that
+reports touching edges where there should be none). Both are two
+surfaces with one boundary that are not exactly one plane. The smaller
+step: treat two regions with the same boundary loop, edge for edge, as one
+surface when every vertex of each lies within the snap distance of the
+other (`coincident_regions` asks for exact coplanarity now). That is a
+distance deciding a classification, so it is left for review. A tool
+vertex near a target face or edge but not a vertex (a pocket a few ulps
+short of a face, leaving a membrane) is not snapped; that needs the
+target's triangle split at the vertex first, and was not attempted.
+
+### 23.5 The winding tree's bound (§18.3, §18.8)
+
+Proved: with `y = x − p`, `u = y/|y|`, a unit `h` and `c = u·h`,
+`∂²K[h, h] = (u (9c² − 3) − 6c (h − c u)) / |y|⁴`; its length squared
+times `|y|⁸` is `45c⁴ − 18c² + 9`, at most 36 for `c²` in [0, 1]. So
+`|∂²K[h, h]| ≤ 6|h|²/|y|⁴`, with equality along `u`. The remainder of
+the first-order expansion, in integral form along the segment from the
+cluster's centre (inside the cluster's ball, at least `ρ` from `p`), is
+at most `½ · 6/ρ⁴ · ∫|x − c|² dA = 3 S/ρ⁴`. The code used `4 S/ρ⁴`
+(6 taken as 8); it uses `3 S/ρ⁴` now. Decisions are the direct sum's, so
+no output changed; the unit test of §18.3 passes. (Checked numerically
+too: 20 000 random `y`, `h`, finite differences match the formula, and
+the largest `|∂²K[h, h]| |y|⁴` was 5.9991.)
+
+### 23.6 `check_operands` on by default
+
+Measured with `check_operands(target, tool)` called first in
+`boolean_report`:
+
+| | golden lines that move |
+|---|---|
+| §18.5 (before this stream) | 4: `selfunion.check`, `edit.holes.pocket`, `smallgaps.knob.program`, `touching.program.elbows` |
+| countersink turned (now) | 3: `selfunion.check`, `smallgaps.knob.program`, `touching.program.elbows` |
+| countersink turned and the repair on | 1: `selfunion.check` (its inputs cross by design: refused up front instead of after) |
+
+Not turned on. Its cost is §5.2's (35–55 % of a boolean).
+
+### 23.7 Benchmark (`bench/booleans`, x86-64, release, one thread)
+
+Engines og-geom, og-shape-checked, og-shape-untangled, every suite,
+`--crossings`; three runs back to back: before (b57f2d7), now, and now
+with `--uncross` (the repair inside the timing). Mean ms of ok cases:
+
+| suite | engine | before | now | now, `--uncross` |
+|---|---|---|---|---|
+| sand3d (17) | og-geom | 3.6 | 3.2 | 3.3 |
+| | og-shape-checked | 8.0 | 8.0 | 9.8 |
+| | og-shape-untangled | 8.4 | 8.6 | 10.2 |
+| Thingi10K (40) | og-geom | 137.2 | 140.1 | 132.4 |
+| | og-shape-checked | 402.1 | 403.0 | 528.4 |
+| | og-shape-untangled | 473.2 | 484.2 | 604.3 |
+| synthetic (40) | og-geom | 120.5 | 116.8 | 118.4 |
+| | og-shape-checked | 507.0 | 506.6 | 533.7 |
+| | og-shape-untangled | 615.8 | 604.9 | 616.0 |
+| touching (7) | og-geom | 0.7 | 0.7 | 0.7 |
+| | og-shape-checked | 35.4 | 37.4 | 42.8 |
+| | og-shape-untangled | 42.9 | 44.3 | 46.2 |
+| scaling (5) | og-geom | 210.1 | 183.7 | 211.1 |
+| | og-shape-checked | 482.1 | 461.0 | 480.1 |
+| | og-shape-untangled | 665.0 | 673.1 | 645.9 |
+
+Verdicts are the same in all three runs (§18.7's table). All 921 output
+hashes are the same before and now. With `--uncross`, 913 are the same;
+the 8 that move are the two cases whose outputs crossed:
+`rounded.box.degenerate` (subtract, both engines) and
+`torus.ring.on.face` (all three operations, both engines). `--crossings`:
+outputs crossing themselves within one shell, before and now synthetic 1
+of 24 and 29, touching 1 of 7 (as §18.7); with `--uncross` 0 in every
+suite. The timings here ran on a shared 4-core container and are noisier
+than §18.7's (og-geom, unchanged code, moved from 210 to 184 ms on
+scaling between two runs). The repair's cost is its detection: up to
+about 30 % on Thingi10K (403 → 528 ms) and 20 % on sand3d, where nothing
+crosses. Most of it is welding the output and looking every output point
+up among the operands' positions to find the constructed ones; the
+arrangement knows them already (ids past the operands' points), and
+passing that through would remove both. Not done here.
+
+### 23.8 What is untested
+
+- The repair is tested on the kernel's own outputs only (golden and the
+  bench). On an operand that already crosses itself it leaves those pairs
+  (only pairs with a constructed corner are its business).
+- The counterbore case of §23.1 is found, not repaired in a test.
+- The two refusals and the touching join of §23.4.
+- Every new hash is checked natively (x86-64) and as wasm32 under
+  wasmtime by the gate here; aarch64 and Windows run in CI only.

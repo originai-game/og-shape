@@ -5,7 +5,7 @@ use std::time::Instant;
 use glam::DVec3;
 use manifold_rust::manifold::Manifold;
 use manifold_rust::types::{BooleanEngine, Error, MeshGL, OpType};
-use shape_bool::{CsgOp, csg, csg_points, self_union_points, selfcheck};
+use shape_bool::{CsgOp, csg, csg_points_traced, self_union_points, selfcheck, uncross_output};
 use shape_gen::Placement;
 
 use crate::mesh::Tri;
@@ -76,6 +76,11 @@ pub struct Run {
 /// (`--crossings`; outside the timing).
 pub static COUNT_CROSSINGS: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the og-shape engines repair their outputs' crossings by a
+/// rounding error (`uncross_output`, inside the timing; `--uncross`,
+/// `docs/research.md` §23).
+pub static UNCROSS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// A mesh welded by exact position, in f64.
 struct Welded {
@@ -215,9 +220,17 @@ fn og_shape(
     };
     let used = Some((vol(&ops[0]), vol(&ops[1])));
     let mut crossings = None;
-    let r = csg_points((&ops[0].pos, &ops[0].tris), (&ops[1].pos, &ops[1].tris), op)
+    let r = csg_points_traced((&ops[0].pos, &ops[0].tris), (&ops[1].pos, &ops[1].tris), op)
+        .map(|o| {
+            let o = if UNCROSS.load(std::sync::atomic::Ordering::Relaxed) {
+                uncross_output(&ops[0].pos, &ops[1].pos, o).0
+            } else {
+                o
+            };
+            (o.points, o.tris)
+        })
         .map_err(|e| format!("{e:?}"))
-        .and_then(|(p, t, _)| {
+        .and_then(|(p, t)| {
             let out = from_points(&p, &t);
             if t.is_empty() || out.closed() {
                 if COUNT_CROSSINGS.load(std::sync::atomic::Ordering::Relaxed) {
