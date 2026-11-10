@@ -951,3 +951,11 @@
   was `TooLarge`, now removes what its single-row twin does to 1e-9.
   Where the wall is too short for the bevel, the error is `TooLarge` at
   the vertex. New golden line `bevel.rows`; no other line moved.
+- `bench/booleans` repairs the og-shape engines' outputs by default, as
+  `boolean` does; `--no-uncross` replaces `--uncross` and leaves them as
+  built. `--hashes` with `--crossings` writes each boolean's crossing
+  pairs after its hash (`docs/research.md` §25.2).
+- Tests (research §25): a counterbore whose floor crossed itself by a
+  rounding error (now repaired by `boolean`), and two prisms stacked on a
+  tilted ring triangulated two ways or with midpoints. No golden line
+  moved.

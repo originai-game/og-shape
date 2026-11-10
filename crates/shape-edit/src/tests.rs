@@ -163,6 +163,36 @@ fn a_countersink_rim_does_not_cross_itself() {
     }
 }
 
+/// A counterbore's floor has an edge along a diameter, from a corner at
+/// one of the bore's column angles: the bore's column lies on that edge in
+/// exact arithmetic and an ulp off it in f64, and its crossing with the
+/// floor rounds to z = 6.000000000000001 against the floor's 6. These
+/// three crossed themselves by 8, 4 and 4 pairs as built; the boolean's
+/// repair merges the two points (`docs/research.md` §25.1).
+#[test]
+fn a_counterbore_floor_does_not_cross_itself() {
+    let plate = boxed(80.0, 50.0, 10.0);
+    for (x, y, depth, cb_depth) in [
+        (12.3, 4.56, 0.0, 4.0),
+        (-21.4, 11.9, 8.5, 4.0),
+        (-21.4, 11.9, 8.5, 5.5),
+    ] {
+        let s = hole(
+            &plate,
+            &Hole {
+                diameter: 6.6,
+                at: vec![above(x, y)],
+                depth,
+                counterbore: (13.2, cb_depth),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        closed(&s);
+        assert_eq!(shape_bool::crossing_pairs(&s), 0, "({x}, {y}) {depth}");
+    }
+}
+
 #[test]
 fn shells_measure_their_walls() {
     // shell(box(40, 30, 20), 2, open="top")

@@ -5713,3 +5713,165 @@ tangent.
   and wasm (the wasm32 builds, the golden run as wasm32-wasip1 under
   wasmtime 50.0.1, the binding under bun and node), all green. aarch64
   and Windows: CI only.
+
+## 25. The counterbore, and the repair measured (stream AD, 2026-11-10)
+
+Base 5417fac, where `boolean` repairs every result
+(`shape_bool::uncross_output`, §23.2). Every side is still decided by
+`orient3d` and `orient2d`.
+
+### 25.1 The counterbore (§23.1)
+
+**Re-measured with the repair on: it no longer crosses itself.** The
+plate of §23.1 (80 × 50 × 10, a 6.6 hole with a 13.2 counterbore 4 deep at
+(12.3, 4.56), through) has 8 crossing pairs as built and none repaired
+(one point merged, `Uncrossed { before: 8, after: 0, collapsed: 1 }`).
+
+**Cause.** The bore is cut first, then the counterbore. The counterbore's
+floor (its tool's bottom cap, at z = 6) has an edge along a diameter, from
+the corner at one of the bore's column angles (both tools have the same
+segment count and the same angles; the corner is at twice the bore's
+radius, on the same ray). The bore's column at that angle lies on the
+edge in exact arithmetic and an ulp off it in f64. The column's crossing
+with the floor rounds to z = 0.6 · 10 = 6.000000000000001, against 6.0
+for the floor edge's crossing with the bore wall next to it, so a needle
+between the two points (1.2·10⁻⁴ long in x, an ulp in z) folds over the
+floor and the wall: 8 pairs. Same kind of coincidence as the
+countersink's (§23.1), with a floor edge in place of a cone generator.
+
+**Not fixed in `shape-edit`.** Turning the counterbore half a segment, as
+the countersink is, clears the counterbores (3 → 0 of 414 below, repair
+off), but the countersink's cone, turned the same half segment, then has
+its generators on the counterbore's columns: 440 of 828 counterbores with
+a countersink crossed themselves (up to 156 pairs; all repaired). The
+counterbore is left unturned and the repair handles it; no golden line
+moved.
+
+**The sweep, extended** (plate 80 × 50 × 10; positions (0, −5),
+(−30, −15), (0, 0), (12.3, 4.56), (7.77, −3.21), (−21.4, 11.9),
+(23.3, −11.7), (0.1, 0.1); diameters 2.5, 3, 4, 5, 6.6 and 8.4 (the last two
+not at |x| > 25); through, 6 and 8.5 deep; counterbore twice the
+diameter, 2, 4 and 5.5 deep (shallower than the hole); countersink twice
+the diameter at 60°, 82°, 90°; both together, counterbore 4 deep with a
+countersink 2.5 or 3 times the diameter at the same three angles):
+
+| holes | repair off | repair on |
+|---|---|---|
+| plain (138) | 0 | 0 |
+| counterbore (414) | 3: (12.3, 4.56) 6.6 through, 4 deep (8 pairs); (−21.4, 11.9) 6.6, 8.5 deep, 4 and 5.5 deep (4 each) | 0 |
+| countersink (414) | 0 | 0 |
+| counterbore and countersink (828) | 0 | 0 |
+
+Every result closed. Test `a_counterbore_floor_does_not_cross_itself`
+(`shape-edit`, the three counterbores; it fails with the repair off).
+
+### 25.2 The bench with the repair on
+
+`bench/booleans` now repairs the og-shape engines' outputs as `boolean`
+does (inside the timing); `--no-uncross` leaves them as built, and
+`--hashes` with `--crossings` writes each boolean's crossing pairs after
+its hash. Engines og-geom, og-shape-checked, og-shape-untangled, every
+suite, `--crossings`; the two runs back to back, one binary (x86-64,
+release, one thread; a shared 4-core container). Mean ms of ok cases:
+
+| suite | engine | repair off | repair on |
+|---|---|---|---|
+| sand3d (17) | og-geom | 3.3 | 3.4 |
+| | og-shape-checked | 7.6 | 10.3 |
+| | og-shape-untangled | 8.2 | 9.7 |
+| Thingi10K (40) | og-geom | 127.2 | 130.3 |
+| | og-shape-checked | 377.9 | 506.0 |
+| | og-shape-untangled | 446.8 | 580.8 |
+| synthetic (40) | og-geom | 106.7 | 107.5 |
+| | og-shape-checked | 485.4 | 521.2 |
+| | og-shape-untangled | 568.7 | 613.1 |
+| touching (7) | og-geom | 0.7 | 0.6 |
+| | og-shape-checked | 32.7 | 37.8 |
+| | og-shape-untangled | 40.6 | 47.0 |
+| scaling (5) | og-geom | 208.2 | 198.7 |
+| | og-shape-checked | 483.0 | 516.4 |
+| | og-shape-untangled | 639.2 | 655.4 |
+
+**Verdicts:** the same case by case (§18.7's counts). **Hashes:** 8 of
+921 move, each from an output that crossed itself to one that does not:
+`rounded.box.degenerate` subtract (2 → 0 pairs, both og-shape engines) and
+`torus.ring.on.face` union, intersect and subtract (checked 12, 8, 8 → 0;
+untangled 31, 28, 29 → 0). No unmoved output crosses itself.
+**`--crossings`:** ok outputs crossing themselves, repair off: synthetic
+1 of 24 and 29, touching 1 of 7, every other suite 0; on: 0 everywhere.
+**Speed:** the repair's detection costs up to a third on Thingi10K, where
+nothing crosses (378 → 506 ms checked), as §23.7 found; og-geom, whose
+code did not change, moved by 5 % between the runs (noise).
+
+### 25.3 Why `bevel.sound` and `touching.program.rim` did not move (§23.2)
+
+Both reach the repair and are repaired; neither hash can see it.
+
+- **`bevel.sound`:** the post's join (pin on plate) is repaired, 4 pairs
+  → 0, one point merged: 56 points and 108 triangles against 57 and 110
+  as built. The case hashes the fillet of that post, and the bevel welds
+  an input that crosses itself first (§7.7), collapsing the same edge
+  shorter than 10⁻⁹ of the offset. The fillet's bytes are the same
+  either way.
+- **`touching.program.rim`:** the cup's rim join is repaired in the
+  cup's own frame, 20 pairs → 0, two points merged (350 triangles against
+  354). The case hashes the program's GLB: the part is placed in the
+  world (turned 22.5°, then canonicalized and its slivers dropped,
+  `shape-model`'s `placed`), 330 triangles either way, and rounded to
+  f32, where the two differ no more. The repair is reached where it
+  should be.
+- **Found:** the world-placed cup crosses itself by 5 pairs with the
+  repair on or off: on its top face (z = 137), two points 2·10⁻¹⁴ apart
+  whose needle the turn's rounding folds. No boolean makes these (the
+  boolean's result in the cup's frame has none), so the boolean's repair
+  cannot reach them; `placed` is `shape-model`'s and was not changed.
+
+### 25.4 Faces a few ulps apart, tested (§23.4, §23.8)
+
+Stream AA's reproductions were not kept; these are rebuilt
+(`crates/shape-bool/tests/ulps_apart.rs`): two 32-gon prisms of radius 10,
+0 to 10 and 10 to 20, built by hand so each cap's fan is chosen, tilted
+0.3 rad about x and 0.2 about y (the shared ring's corners turn to the same
+f64 points in both).
+
+| case | join | cut | intersect |
+|---|---|---|---|
+| tilted, the tool's bottom fanned from corner 5 | refused: `OpenTouching`, 8 edges, `side`, `top` / `bottom`, `side` | refused: `NotManifold`, 1 edge | empty |
+| the tool's bottom with a vertex at each edge's midpoint, flat | closed, touching, 0 touching edges, 0 pairs | the same | empty |
+| the same, tilted | refused: `OpenTouching`, 42 edges, `side`, `top` / `bottom`, `side` | **closed, 259 crossing pairs** | empty |
+
+Tests `a_tilted_ring_fanned_two_ways_is_refused` and
+`a_ring_with_midpoints_joins_flat_and_is_refused_tilted`. With this tilt
+the midpoints' join is refused rather than returned with touching edges
+(§23.4's own tilt was not recorded).
+
+**Found: a closed cut that crosses itself, returned with no error.** The
+tilted midpoints' cut keeps the target's top cap (30 triangles) in 156
+pieces, cut by the tool's 64-vertex fan lying within ulps of its plane;
+each such crossing point is an edge's crossing with a plane it lies ulps
+from, so it can fall anywhere along the edge, and the pieces fold over
+one another (257 `top`/`top` pairs, 2 `side`/`top`). The volume is right
+(3121.445, as untilted). The repair merges one point (266 → 259); its
+moves are a snap distance long and cannot fix points misplaced by
+millimetres. Not fixed here: the fix is §23.4's "one surface" step (two
+regions with one boundary loop within the snap distance taken as one), or
+refusing a result whose repair leaves crossing pairs at constructed
+corners. The second costs nothing (the repair counts them) and would move
+one golden line, `selfunion.check` (whose inputs cross; 26 pairs left),
+with the error changing. Both are left for review.
+
+### 25.5 `check_operands` on by default, with the repair on
+
+Measured with `check_operands(target, tool)` called first in
+`boolean_report` (not kept): **1 golden line moves**, `selfunion.check`
+(two of its booleans refused up front instead of after; its inputs cross
+by design). No operand of any other golden boolean crosses itself, the
+kernel's own intermediate solids included (§23.6's three chains are
+clean now). Not turned on; its cost is §5.2's.
+
+### 25.6 What is untested
+
+- The counterbore is swept on one plate, top face only, axis along z.
+- The tilted cut of §25.4 is found, not refused or fixed.
+- Every new hash is checked natively (x86-64) and as wasm32 under
+  wasmtime by the gate here; aarch64 and Windows run in CI only.
