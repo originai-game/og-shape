@@ -7,7 +7,7 @@
 //! write one kernel report each, in `shape-tools`' snake_case.
 
 use serde_json::{Value, json};
-use shape_tools::{DecimateReport, Imported, RepairReport, Uvs};
+use shape_tools::{Blocked, DecimateReport, Imported, RepairReport, Uvs};
 
 /// `{"k": v, …}` from keys and values that are JSON text already.
 pub fn object(fields: &[(&str, String)]) -> String {
@@ -63,6 +63,22 @@ pub fn decimate(r: &DecimateReport) -> String {
         ("triangles", r.triangles.to_string()),
         ("target", r.target.to_string()),
         ("error", Value::from(r.error).to_string()),
+        ("folds_refused", r.folds_refused.to_string()),
+        ("blocked", blocked(&r.blocked)),
+    ])
+}
+
+/// Why the edges left after a decimation that missed its target cannot
+/// collapse (all zero when it reached it).
+fn blocked(b: &Blocked) -> String {
+    object(&[
+        ("fixed", b.fixed.to_string()),
+        ("error", b.error.to_string()),
+        ("link", b.link.to_string()),
+        ("turn", b.turn.to_string()),
+        ("uv", b.uv.to_string()),
+        ("fold", b.fold.to_string()),
+        ("not_retried", b.not_retried.to_string()),
     ])
 }
 

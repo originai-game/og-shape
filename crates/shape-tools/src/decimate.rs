@@ -18,8 +18,20 @@
 //!   triangles), so a closed manifold stays closed and manifold; when it
 //!   would turn a triangle over (its normal turns by more than 90°) or
 //!   leave it with no area; and beyond `max_error`.
+//! - A collapse is refused when it would make the surface pass through
+//!   itself: each triangle it rewrites is tested, exactly
+//!   (`shape_bool::selfcheck::crossing`), against the triangles near it,
+//!   found in a spatial hash over the triangles' boxes ([`Grid`]), and
+//!   against the other rewritten ones. On an input that already crosses
+//!   itself, a collapse that keeps a crossing is taken only when it adds
+//!   no crossing partner and no pair: the count never rises.
 //! - Collapses are taken cheapest first; ties go to the smaller edge key,
-//!   then the smaller vertex. The order depends only on the input.
+//!   then the smaller vertex. The order depends only on the input; a
+//!   refused collapse is only skipped, so where none would fold the
+//!   result is the one without the test.
+//! - When the target is not reached, the report says why: each edge left
+//!   is counted under the first rule that refuses its cheapest collapse
+//!   ([`Blocked`]).
 //!
 //! Skins are carried: each collapse gives the kept vertex the blend of
 //! the two ends' weights by where it lands (`Weights::blend`: its own
@@ -53,6 +65,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BinaryHeap};
 use std::fmt;
 
+use shape_bool::selfcheck::{crossing, degenerate};
 use shape_core::predicates::orient2d;
 use shape_core::{DVec2, DVec3};
 use shape_mesh::{EdgeKey, Skin, Solid, Weights, edge_key};
@@ -92,6 +105,41 @@ pub struct DecimateReport {
     /// The largest error of a collapse taken, mm (root-mean-square
     /// distance to the planes the collapsed vertices stood for).
     pub error: f64,
+    /// Collapses not taken because the surface would have passed through
+    /// itself (each attempt counts; an edge can be tried again after its
+    /// neighbourhood changes).
+    pub folds_refused: usize,
+    /// When `triangles` is above `target`: the edges left, each counted
+    /// under the rule that refuses its cheapest collapse. All zero when
+    /// the target was reached.
+    pub blocked: Blocked,
+}
+
+/// Why the edges left after a decimation that missed its target cannot
+/// collapse: each under the first rule that refuses its cheapest
+/// collapse, in this order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Blocked {
+    /// Neither end may move: corners, or a border or feature line (a
+    /// surface or name border, a named edge, a UV seam) the edge does not
+    /// run along; or longer than the short-edge limit.
+    pub fixed: usize,
+    /// Beyond `max_error`.
+    pub error: usize,
+    /// The ends share a neighbour off the edge's triangles: collapsing
+    /// would pinch the surface.
+    pub link: usize,
+    /// A triangle would turn over or lose its area.
+    pub turn: usize,
+    /// The UVs cannot follow: a corner's side of a UV seam is unclear, or
+    /// a UV triangle would turn over or flatten.
+    pub uv: usize,
+    /// The surface would pass through itself.
+    pub fold: usize,
+    /// Collapsible now, but not tried again: its last try was refused,
+    /// and what refused it changed in a collapse that re-planned only the
+    /// edges at the vertex it kept.
+    pub not_retried: usize,
 }
 
 /// Why a decimation could not run.
@@ -288,6 +336,148 @@ struct Mesh {
 /// A corner's new UV: triangle, corner, UV.
 type UvMove = (u32, usize, DVec2);
 
+/// Why a collapse is refused, besides a fold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Refusal {
+    Link,
+    Turn,
+    Uv,
+}
+
+/// A triangle's box.
+fn bounds(t: [DVec3; 3]) -> (DVec3, DVec3) {
+    (t[0].min(t[1]).min(t[2]), t[0].max(t[1]).max(t[2]))
+}
+
+/// A spatial hash over the live triangles' boxes: each triangle is listed
+/// in the buckets of the cells its box covers (cells about twice a mean
+/// triangle across); a triangle covering more than [`Grid::MAX_CELLS`]
+/// cells is listed apart and returned by every query. Rebuilt with larger
+/// cells each time the triangle count halves, so a cell keeps a few
+/// triangles. Queries return candidates sorted, so nothing depends on
+/// the order triangles came and went.
+struct Grid {
+    lo: DVec3,
+    h: f64,
+    buckets: Vec<Vec<u32>>,
+    big: Vec<u32>,
+    /// Live triangles when built.
+    built: usize,
+}
+
+impl Grid {
+    /// Cells a triangle may cover and still be listed in them.
+    const MAX_CELLS: i64 = 512;
+    /// Cells a query may visit before it scans every bucket instead.
+    const MAX_QUERY: i64 = 8192;
+
+    fn new(m: &Mesh) -> Grid {
+        let live: Vec<u32> = (0..m.tris.len() as u32)
+            .filter(|&t| m.alive[t as usize])
+            .collect();
+        let (mut lo, mut hi) = (DVec3::INFINITY, DVec3::NEG_INFINITY);
+        let mut extent = 0.0;
+        for &t in &live {
+            let (a, b) = bounds(m.tris[t as usize].map(|v| m.pos[v as usize]));
+            lo = lo.min(a);
+            hi = hi.max(b);
+            extent += (b - a).max_element();
+        }
+        let span = (hi - lo).max_element();
+        let mut h = 2.0 * extent / live.len().max(1) as f64;
+        // At most about 2^20 cells a side.
+        if !(h > 0.0 && h.is_finite()) || span / h > (1u64 << 20) as f64 {
+            h = (span / (1u64 << 20) as f64).max(f64::MIN_POSITIVE);
+        }
+        let mut g = Grid {
+            lo: if lo.is_finite() { lo } else { DVec3::ZERO },
+            h,
+            buckets: vec![Vec::new(); (2 * live.len()).max(16).next_power_of_two()],
+            big: Vec::new(),
+            built: live.len(),
+        };
+        for t in live {
+            g.insert(m, t);
+        }
+        g
+    }
+
+    fn cells(&self, lo: DVec3, hi: DVec3, max: i64) -> Option<([i64; 3], [i64; 3])> {
+        let c = |p: DVec3| {
+            let q = ((p - self.lo) / self.h).floor();
+            [q.x as i64, q.y as i64, q.z as i64]
+        };
+        let (a, b) = (c(lo), c(hi));
+        let n = (0..3).fold(1i64, |n, k| n.saturating_mul(b[k] - a[k] + 1));
+        (n <= max).then_some((a, b))
+    }
+
+    fn bucket(&self, c: [i64; 3]) -> usize {
+        let h = (c[0] as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ (c[1] as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+            ^ (c[2] as u64).wrapping_mul(0x1656_67B1_9E37_79F9);
+        ((h ^ (h >> 29)) as usize) & (self.buckets.len() - 1)
+    }
+
+    fn each_bucket(&self, lo: DVec3, hi: DVec3, max: i64, mut f: impl FnMut(usize)) -> bool {
+        let Some((a, b)) = self.cells(lo, hi, max) else {
+            return false;
+        };
+        for x in a[0]..=b[0] {
+            for y in a[1]..=b[1] {
+                for z in a[2]..=b[2] {
+                    f(self.bucket([x, y, z]));
+                }
+            }
+        }
+        true
+    }
+
+    fn insert(&mut self, m: &Mesh, t: u32) {
+        let (lo, hi) = bounds(m.tris[t as usize].map(|v| m.pos[v as usize]));
+        let mut at = Vec::new();
+        if self.each_bucket(lo, hi, Self::MAX_CELLS, |b| at.push(b)) {
+            for b in at {
+                self.buckets[b].push(t);
+            }
+        } else {
+            self.big.push(t);
+        }
+    }
+
+    /// Takes `t` out, with the box it was inserted with.
+    fn remove(&mut self, m: &Mesh, t: u32) {
+        let (lo, hi) = bounds(m.tris[t as usize].map(|v| m.pos[v as usize]));
+        let mut at = Vec::new();
+        if self.each_bucket(lo, hi, Self::MAX_CELLS, |b| at.push(b)) {
+            for b in at {
+                self.buckets[b].retain(|&x| x != t);
+            }
+        } else {
+            self.big.retain(|&x| x != t);
+        }
+    }
+
+    /// The triangles listed near the box, sorted, each once.
+    fn near(&self, lo: DVec3, hi: DVec3, out: &mut Vec<u32>) {
+        let mut at = Vec::new();
+        if self.each_bucket(lo, hi, Self::MAX_QUERY, |b| at.push(b)) {
+            for b in at {
+                out.extend(&self.buckets[b]);
+            }
+            out.extend(&self.big);
+        } else {
+            // A box over many cells: every triangle.
+            for b in &self.buckets {
+                out.extend(b);
+            }
+            out.extend(&self.big);
+        }
+        out.sort_unstable();
+        out.dedup();
+    }
+}
+
 impl Mesh {
     fn neighbours(&self, v: u32) -> Vec<u32> {
         let mut n: Vec<u32> = self.around[v as usize]
@@ -307,6 +497,12 @@ impl Mesh {
 
     /// The collapse `from → to` at `p`, if it keeps the mesh sound.
     fn valid(&self, from: u32, to: u32, p: DVec3) -> bool {
+        self.refusal(from, to, p).is_none()
+    }
+
+    /// Why the collapse `from → to` at `p` would break the mesh (not
+    /// counting folds), if it would.
+    fn refusal(&self, from: u32, to: u32, p: DVec3) -> Option<Refusal> {
         // Link condition: the shared neighbours are exactly the third
         // corners of the edge's triangles.
         let b = self.neighbours(to);
@@ -324,10 +520,10 @@ impl Mesh {
         opposite.sort_unstable();
         opposite.dedup();
         if shared != opposite || opposite.is_empty() {
-            return false;
+            return Some(Refusal::Link);
         }
         if self.uv_moves(from, to, p).is_none() {
-            return false;
+            return Some(Refusal::Uv);
         }
         // Nothing turns over or loses its area.
         for v in [from, to] {
@@ -339,11 +535,129 @@ impl Mesh {
                 let before = self.normal(tri, u32::MAX, DVec3::ZERO);
                 let after = self.normal(tri, v, p);
                 if after == DVec3::ZERO || after.dot(before) <= 0.0 {
-                    return false;
+                    return Some(Refusal::Turn);
                 }
             }
         }
-        true
+        None
+    }
+
+    /// The triangle's corners and positions after the collapse
+    /// `from → to` at `p` (unchanged when it has neither).
+    fn moved(&self, t: u32, from: u32, to: u32, p: DVec3) -> ([u32; 3], [DVec3; 3]) {
+        let ids = self.tris[t as usize].map(|v| if v == from { to } else { v });
+        let pos = ids.map(|v| if v == to { p } else { self.pos[v as usize] });
+        (ids, pos)
+    }
+
+    /// The live triangles around `from` or `to`, sorted.
+    fn fan(&self, from: u32, to: u32) -> Vec<u32> {
+        let mut f: Vec<u32> = self.around[from as usize]
+            .iter()
+            .chain(&self.around[to as usize])
+            .copied()
+            .collect();
+        f.sort_unstable();
+        f.dedup();
+        f
+    }
+
+    /// Crossing pairs of `tris` (ids and positions) with the live
+    /// triangles near them outside `fan`, and among themselves: the pairs,
+    /// as (index in `tris`, partner or `u32::MAX` for one of `tris`).
+    /// Stops at the first when `first`.
+    fn crossings(
+        &self,
+        grid: &Grid,
+        tris: &[([u32; 3], [DVec3; 3])],
+        fan: &[u32],
+        first: bool,
+    ) -> Vec<(usize, u32)> {
+        let mut out = Vec::new();
+        let boxes: Vec<(DVec3, DVec3)> = tris.iter().map(|t| bounds(t.1)).collect();
+        let (lo, hi) = boxes
+            .iter()
+            .fold((DVec3::INFINITY, DVec3::NEG_INFINITY), |(l, h), b| {
+                (l.min(b.0), h.max(b.1))
+            });
+        // One query for the whole fan; each candidate's box against each
+        // triangle's.
+        let mut near: Vec<(u32, [u32; 3], [DVec3; 3], (DVec3, DVec3))> = Vec::new();
+        let mut ids: Vec<u32> = Vec::new();
+        grid.near(lo, hi, &mut ids);
+        for c in ids {
+            if !self.alive[c as usize] || fan.binary_search(&c).is_ok() {
+                continue;
+            }
+            let ib = self.tris[c as usize];
+            let b = ib.map(|v| self.pos[v as usize]);
+            let bb = bounds(b);
+            if lo.cmple(bb.1).all() && bb.0.cmple(hi).all() && !degenerate(b) {
+                near.push((c, ib, b, bb));
+            }
+        }
+        for (i, &(ia, a)) in tris.iter().enumerate() {
+            let (lo, hi) = boxes[i];
+            for &(c, ib, b, (blo, bhi)) in &near {
+                if lo.cmple(bhi).all() && blo.cmple(hi).all() && crossing(ia, a, ib, b) {
+                    out.push((i, c));
+                    if first {
+                        return out;
+                    }
+                }
+            }
+            for &(ib, b) in &tris[i + 1..] {
+                let (blo, bhi) = bounds(b);
+                if lo.cmple(bhi).all() && blo.cmple(hi).all() && crossing(ia, a, ib, b) {
+                    out.push((i, u32::MAX));
+                    if first {
+                        return out;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The collapse `from → to` at `p` would make the surface pass through
+    /// itself: a rewritten triangle would be flat (exactly), or cross a
+    /// triangle it did not cross before, or the fan would cross more
+    /// pairs than it does now.
+    fn folds(&self, grid: &Grid, from: u32, to: u32, p: DVec3) -> bool {
+        let fan = self.fan(from, to);
+        let after: Vec<([u32; 3], [DVec3; 3])> = fan
+            .iter()
+            .filter(|&&t| {
+                let tri = self.tris[t as usize];
+                !(tri.contains(&from) && tri.contains(&to))
+            })
+            .map(|&t| self.moved(t, from, to, p))
+            .collect();
+        if after.iter().any(|t| degenerate(t.1)) {
+            return true;
+        }
+        if self.crossings(grid, &after, &fan, true).is_empty() {
+            return false;
+        }
+        // The fan crosses something after: allowed only if it already did,
+        // with the same partners and no more pairs.
+        let before: Vec<([u32; 3], [DVec3; 3])> = fan
+            .iter()
+            .map(|&t| {
+                let ids = self.tris[t as usize];
+                (ids, ids.map(|v| self.pos[v as usize]))
+            })
+            .filter(|t| !degenerate(t.1))
+            .collect();
+        let was = self.crossings(grid, &before, &fan, false);
+        let now = self.crossings(grid, &after, &fan, false);
+        if now.len() > was.len() {
+            return true;
+        }
+        let mut partners: Vec<u32> = was.iter().map(|x| x.1).collect();
+        partners.sort_unstable();
+        now.iter()
+            .any(|x| x.1 != u32::MAX && partners.binary_search(&x.1).is_err())
     }
 
     /// The corners' new UVs for the collapse `from → to` at `p`: empty on
@@ -534,6 +848,60 @@ impl Mesh {
         self.stamp[to as usize] += 1;
     }
 
+    /// The collapse's error, mm, without the skin's penalty.
+    fn error_of(&self, e: &Entry) -> f64 {
+        let mut q = self.quadric[e.from as usize];
+        q.add(&self.quadric[e.to as usize]);
+        if q.w > 0.0 {
+            ((e.cost - e.penalty).max(0.0) / q.w).sqrt()
+        } else {
+            0.0
+        }
+    }
+
+    /// `a` and `b` are both still there and joined by an edge.
+    fn joined(&self, a: u32, b: u32) -> bool {
+        self.into[a as usize] == a
+            && self.into[b as usize] == b
+            && self.around[a as usize]
+                .iter()
+                .any(|&t| self.tris[t as usize].contains(&b))
+    }
+
+    /// Every live edge under the first rule that refuses its cheapest
+    /// collapse.
+    fn blocked(&self, grid: &Grid, d: &Decimate) -> Blocked {
+        let mut edges: Vec<EdgeKey> = Vec::new();
+        for (t, tri) in self.tris.iter().enumerate() {
+            if self.alive[t] {
+                for k in 0..3 {
+                    edges.push(edge_key(tri[k], tri[(k + 1) % 3]));
+                }
+            }
+        }
+        edges.sort_unstable();
+        edges.dedup();
+        let mut b = Blocked::default();
+        for (x, y) in edges {
+            let Some(e) = self.plan(x, y) else {
+                b.fixed += 1;
+                continue;
+            };
+            if d.max_error > 0.0 && self.error_of(&e) > d.max_error {
+                b.error += 1;
+                continue;
+            }
+            match self.refusal(e.from, e.to, e.pos) {
+                Some(Refusal::Link) => b.link += 1,
+                Some(Refusal::Turn) => b.turn += 1,
+                Some(Refusal::Uv) => b.uv += 1,
+                None if self.folds(grid, e.from, e.to, e.pos) => b.fold += 1,
+                None => b.not_retried += 1,
+            }
+        }
+        b
+    }
+
     fn root(&self, mut v: u32) -> u32 {
         while self.into[v as usize] != v {
             v = self.into[v as usize];
@@ -596,6 +964,8 @@ fn collapse(
         triangles: n,
         target,
         error: 0.0,
+        folds_refused: 0,
+        blocked: Blocked::default(),
     };
     if n <= target && max_len == 0.0 {
         return Ok((s.clone(), report));
@@ -756,32 +1126,72 @@ fn collapse(
             heap.push(e);
         }
     }
-    while m.live > target {
-        let Some(e) = heap.pop() else { break };
-        if (m.stamp[e.from as usize], m.stamp[e.to as usize]) != e.stamp {
-            continue;
-        }
-        let mut q = m.quadric[e.from as usize];
-        q.add(&m.quadric[e.to as usize]);
-        let err = if q.w > 0.0 {
-            ((e.cost - e.penalty).max(0.0) / q.w).sqrt()
-        } else {
-            0.0
-        };
-        if d.max_error > 0.0 && err > d.max_error {
-            continue;
-        }
-        if !m.valid(e.from, e.to, e.pos) {
-            continue;
-        }
-        m.collapse(&e);
-        report.error = report.error.max(err);
-        let to = e.to;
-        for x in m.neighbours(to) {
-            if let Some(next) = m.plan(to, x) {
-                heap.push(next);
+    let mut grid = Grid::new(&m);
+    // Edges refused for folding: whether they fold depends on triangles
+    // that are not their neighbours, so they are tried again once the
+    // queue runs dry, until a round takes none.
+    let mut folded: Vec<EdgeKey> = Vec::new();
+    let mut first = true;
+    loop {
+        let mut taken = 0usize;
+        while m.live > target {
+            let Some(e) = heap.pop() else { break };
+            if (m.stamp[e.from as usize], m.stamp[e.to as usize]) != e.stamp {
+                continue;
+            }
+            let err = m.error_of(&e);
+            if d.max_error > 0.0 && err > d.max_error {
+                continue;
+            }
+            if !m.valid(e.from, e.to, e.pos) {
+                continue;
+            }
+            if m.folds(&grid, e.from, e.to, e.pos) {
+                report.folds_refused += 1;
+                folded.push(e.edge);
+                continue;
+            }
+            let fan = m.fan(e.from, e.to);
+            for &t in &fan {
+                grid.remove(&m, t);
+            }
+            m.collapse(&e);
+            for &t in &fan {
+                if m.alive[t as usize] {
+                    grid.insert(&m, t);
+                }
+            }
+            if 2 * m.live < grid.built {
+                grid = Grid::new(&m);
+            }
+            taken += 1;
+            report.error = report.error.max(err);
+            let to = e.to;
+            for x in m.neighbours(to) {
+                if let Some(next) = m.plan(to, x) {
+                    heap.push(next);
+                }
             }
         }
+        if m.live <= target || folded.is_empty() || (!first && taken == 0) {
+            break;
+        }
+        first = false;
+        folded.sort_unstable();
+        folded.dedup();
+        for (a, b) in std::mem::take(&mut folded) {
+            if m.joined(a, b)
+                && let Some(e) = m.plan(a, b)
+            {
+                heap.push(e);
+            }
+        }
+        if heap.is_empty() {
+            break;
+        }
+    }
+    if m.live > target {
+        report.blocked = m.blocked(&grid, d);
     }
     let mut out = Solid {
         positions: m.pos.clone(),
@@ -900,6 +1310,68 @@ mod tests {
         assert_eq!(gone, 1);
         let m = s.measure();
         assert!(m.closed && m.triangles == b.triangles.len(), "{m:?}");
+    }
+
+    /// Crossing pairs, as `measure` counts them.
+    fn crossings(s: &Solid) -> usize {
+        let (p, t) = crate::measure::weld_exact(s);
+        crate::intersect::self_intersections(&p, &t).len()
+    }
+
+    /// A hollow ball, its wall 1 % of the radius: decimated hard, the
+    /// outer sphere's chords would cut through the inner one.
+    fn hollow_ball() -> Solid {
+        let mut shell = sphere(10.0).unwrap();
+        let mut inner = sphere(9.9).unwrap();
+        for i in 0..inner.triangles.len() {
+            inner.reverse_triangle(i);
+        }
+        shell.append(&inner);
+        shell.canonicalize().unwrap();
+        shell
+    }
+
+    #[test]
+    fn a_thin_shell_does_not_fold_through_itself() {
+        let shell = hollow_ball();
+        assert_eq!(crossings(&shell), 0);
+        let (low, r) = decimate(
+            &shell,
+            &Decimate {
+                target: 8,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(crossings(&low), 0, "{r:?}");
+        assert!(low.measure().closed);
+        assert!(r.folds_refused > 0, "{r:?}");
+        // The target is not reachable without folding: the report says
+        // how far it got and why.
+        assert!(r.triangles > r.target && r.blocked.fold > 0, "{r:?}");
+        assert_eq!(r.triangles, low.triangles.len());
+    }
+
+    #[test]
+    fn a_shell_crossing_itself_crosses_no_more_after() {
+        // The hollow ball with one outer vertex pushed through the inner
+        // wall: a few crossings to start with.
+        let mut shell = hollow_ball();
+        let v = (0..shell.positions.len())
+            .max_by(|&a, &b| shell.positions[a].x.total_cmp(&shell.positions[b].x))
+            .unwrap();
+        shell.positions[v] *= 0.97;
+        let before = crossings(&shell);
+        assert!(before > 0);
+        let (low, r) = decimate(
+            &shell,
+            &Decimate {
+                target: 100,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(crossings(&low) <= before, "{before} {r:?}");
     }
 
     /// The box with its top's first triangle split at a point 1e-5 mm

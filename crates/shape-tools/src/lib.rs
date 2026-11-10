@@ -60,7 +60,9 @@ mod skin;
 mod surface;
 mod unwrap;
 
-pub use decimate::{Decimate, DecimateError, DecimateReport, collapse_short_edges, decimate, lods};
+pub use decimate::{
+    Blocked, Decimate, DecimateError, DecimateReport, collapse_short_edges, decimate, lods,
+};
 pub use export::{
     ExportError, Joint, JointKind, Material, Mimic, Part, Placement, Scene, glb, obj, obj_at,
     posed, stl, stl_at,
