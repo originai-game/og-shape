@@ -1,0 +1,1 @@
+{"name":"curved_plate","ops":[{"height":17.53,"name":"plate","op":"extrude","profile":{"poly":{"points":[[152.4,-457.2],[152.4,457.2],{"bulge":-50,"x":27.40000000000001,"y":457.2},[-152.4,-157.2],[-152.4,-457.2]]}}},{"color":"#a0a0a0","ids":[0],"op":"material","roughness":0.6}]}

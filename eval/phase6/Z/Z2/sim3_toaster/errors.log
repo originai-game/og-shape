@@ -1,0 +1,35 @@
+--- build 1 (run_typescript)
+error: the program failed (exit status: 1): error: op 1 fillet "housing": at [-64, -100.88570519044515, 175]: a bevel along a face whose triangles at this vertex are not in one plane (a twisted or converging face), where the bevel would tilt them is not supported (at /tmp/shape-mcp-7796-0/program.ts:54:7)
+error: op 1 fillet "housing": at [-64, -100.88570519044515, 175]: a bevel along a face whose triangles at this vertex are not in one plane (a twisted or converging face), where the bevel would tilt them is not supported
+--- logs ---
+112 | 
+113 | /** Throws `e` with the author's call site appended to its message. */
+114 | function located(e: unknown): never {
+115 |   const message = e instanceof Error ? e.message : String(e);
+116 |   const at = callSite();
+117 |   throw new Error(at === undefined ? message : `${message} (at ${at})`, { cause: e });
+                  ^
+error: op 1 fillet "housing": at [-64, -100.88570519044515, 175]: a bevel along a face whose triangles at this vertex are not in one plane (a twisted or converging face), where the bevel would tilt them is not supported (at /tmp/shape-mcp-7796-0/program.ts:54:7)
+      at located (/home/user/og-shape/crates/shape-wasm/ts/src/index.ts:117:13)
+      at <anonymous> (/home/user/og-shape/crates/shape-wasm/ts/src/index.ts:557:7)
+      at fillet (/home/user/og-shape/crates/shape-wasm/ts/src/index.ts:477:10)
+      at makeHousing (/tmp/shape-mcp-7796-0/program.ts:54:7)
+      at program_default (/tmp/shape-mcp-7796-0/program.ts:10:19)
+      at /tmp/shape-mcp-7796-0/run.ts:25:25
+
+29 |         let deferred3_0;
+30 |         let deferred3_1;
+31 |         try {
+32 |             const ptr0 = passStringToWasm0(op, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+33 |             const len0 = WASM_VECTOR_LEN;
+34 |             const ret = wasm.model_apply(this.__wbg_ptr, ptr0, len0);
+                                  ^
+error: op 1 fillet "housing": at [-64, -100.88570519044515, 175]: a bevel along a face whose triangles at this vertex are not in one plane (a twisted or converging face), where the bevel would tilt them is not supported
+      at apply (/home/user/og-shape/crates/shape-wasm/ts/pkg/shape_wasm.js:34:30)
+      at <anonymous> (/home/user/og-shape/crates/shape-wasm/ts/src/index.ts:555:18)
+      at fillet (/home/user/og-shape/crates/shape-wasm/ts/src/index.ts:477:10)
+      at makeHousing (/tmp/shape-mcp-7796-0/program.ts:54:7)
+      at program_default (/tmp/shape-mcp-7796-0/program.ts:10:19)
+      at /tmp/shape-mcp-7796-0/run.ts:25:25
+
+Bun v1.4.4 (Linux x64)

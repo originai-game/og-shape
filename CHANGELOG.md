@@ -896,3 +896,24 @@
     (`golden/programs/uv_plate.json`, `checker.png`); no line moved.
     `tools/check_uvs.ts` loads the plate in three.js; screenshots in
     `docs/previews/uv/`.
+- MCP: `preview`, `measure` and `export` take `pose: {joint: value}`
+  (radians, or mm for a slide), posing a program's joints for that call
+  only; `measure` takes `posed` (implied by `pose`) and answers the posed
+  measures with each joint's seating and the interference. `preview`
+  refuses an elevation of 0 or below as out of range, where the kernel
+  called it "not finite". The `run_typescript` description says the
+  `path` file must exist and that `console.log` comes back as `logs`.
+- Guides (run `Z`, research §22): 3D paths for `sweep` and `wire` are
+  the list itself, not `og.path`; a swept end on an arc tilts by half a
+  segment (lead in with a straight piece); `body`'s `plan` is the full
+  width, an end closes only where width and height both reach 0, smooth
+  lines can overshoot; what `touching`, the posed `interference` fields
+  and its box mean; `grid`'s frame order; `og.frame`'s x with `up`;
+  `snap`; `bulge` in mm; a flat on a polygon's +x; a hollow or square
+  bent bar as a `sweep`; a cylinder along +X; posing through MCP.
+- `eval/phase6`: run `Z` (`Z/Z1`, `Z/Z2`); `mcp_run.ts` takes `--run`
+  and `--jobs` and writes each failed build's whole error to
+  `errors.log`; `references.json` records each reference's OpenUSD path
+  and SHA-256; `Z/distance.ts` measures a symmetric surface distance
+  between a built program and its reference mesh (also written for runs
+  `B` and `U`).

@@ -1,0 +1,5 @@
+run_typescript ok parts 4 open 0 joints 1 triangles 8740
+run_typescript error error: the program failed (exit status: 1): error: op 3 body "mouse_shell": body: at y = -57 only one view closes: a body closes to a point where both views clo
+run_typescript ok parts 4 open 0 joints 1 triangles 8852
+run_typescript ok parts 4 open 0 joints 1 triangles 9636
+run_typescript ok parts 4 open 0 joints 1 triangles 9636

@@ -1,0 +1,35 @@
+--- build 2 (run_typescript)
+error: the program failed (exit status: 1): error: op 3 body "mouse_shell": body: at y = -57 only one view closes: a body closes to a point where both views close, at an end (at /tmp/shape-mcp-7804-1/program.ts:25:17)
+error: op 3 body "mouse_shell": body: at y = -57 only one view closes: a body closes to a point where both views close, at an end
+--- logs ---
+112 | 
+113 | /** Throws `e` with the author's call site appended to its message. */
+114 | function located(e: unknown): never {
+115 |   const message = e instanceof Error ? e.message : String(e);
+116 |   const at = callSite();
+117 |   throw new Error(at === undefined ? message : `${message} (at ${at})`, { cause: e });
+                  ^
+error: op 3 body "mouse_shell": body: at y = -57 only one view closes: a body closes to a point where both views close, at an end (at /tmp/shape-mcp-7804-1/program.ts:25:17)
+      at located (/home/user/og-shape/crates/shape-wasm/ts/src/index.ts:117:13)
+      at <anonymous> (/home/user/og-shape/crates/shape-wasm/ts/src/index.ts:557:7)
+      at part (/home/user/og-shape/crates/shape-wasm/ts/src/index.ts:239:20)
+      at makeShell (/tmp/shape-mcp-7804-1/program.ts:25:17)
+      at program_default (/tmp/shape-mcp-7804-1/program.ts:8:17)
+      at /tmp/shape-mcp-7804-1/run.ts:25:25
+
+29 |         let deferred3_0;
+30 |         let deferred3_1;
+31 |         try {
+32 |             const ptr0 = passStringToWasm0(op, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+33 |             const len0 = WASM_VECTOR_LEN;
+34 |             const ret = wasm.model_apply(this.__wbg_ptr, ptr0, len0);
+                                  ^
+error: op 3 body "mouse_shell": body: at y = -57 only one view closes: a body closes to a point where both views close, at an end
+      at apply (/home/user/og-shape/crates/shape-wasm/ts/pkg/shape_wasm.js:34:30)
+      at <anonymous> (/home/user/og-shape/crates/shape-wasm/ts/src/index.ts:555:18)
+      at part (/home/user/og-shape/crates/shape-wasm/ts/src/index.ts:239:20)
+      at makeShell (/tmp/shape-mcp-7804-1/program.ts:25:17)
+      at program_default (/tmp/shape-mcp-7804-1/program.ts:8:17)
+      at /tmp/shape-mcp-7804-1/run.ts:25:25
+
+Bun v1.4.4 (Linux x64)

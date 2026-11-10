@@ -1,0 +1,1 @@
+{"name":"bollard","ops":[{"axis":"+Z","name":"bollard","op":"revolve","profile":{"poly":{"points":[[0,0],[157,0],{"radius":3,"x":157,"y":14},{"radius":4,"x":126,"y":24},[116,24],[116,46],[122,46],{"radius":4,"x":122,"y":960},{"radius":2,"x":108,"y":960},{"radius":3,"x":102,"y":948},[0,948]]}},"segments":64},{"color":"#2b2d2f","ids":[0],"op":"material","roughness":0.6}]}

@@ -1,0 +1,77 @@
+{
+ "triangles": 17760,
+ "boundsMin": [
+  -126.97,
+  -126.97,
+  0
+ ],
+ "boundsMax": [
+  574.89,
+  368.3,
+  1658.4
+ ],
+ "size": [
+  701.86,
+  495.27,
+  1658.4
+ ],
+ "joints": [
+  "upper_spin"
+ ],
+ "parts": [
+  {
+   "name": "lower_tube",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 5920,
+   "boundsMin": [
+    -126.97,
+    -126.97,
+    0
+   ],
+   "boundsMax": [
+    574.89,
+    368.3,
+    552.8
+   ]
+  },
+  {
+   "name": "middle_tube",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 5920,
+   "boundsMin": [
+    -126.97,
+    -126.97,
+    552.8
+   ],
+   "boundsMax": [
+    574.89,
+    368.3,
+    1105.6
+   ]
+  },
+  {
+   "name": "top_tube",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 5920,
+   "boundsMin": [
+    -126.97,
+    -126.97,
+    1105.6
+   ],
+   "boundsMax": [
+    574.89,
+    368.3,
+    1658.4
+   ]
+  }
+ ]
+}

@@ -1,0 +1,294 @@
+{
+ "triangles": 1122,
+ "boundsMin": [
+  -630,
+  -420,
+  0
+ ],
+ "boundsMax": [
+  630,
+  420,
+  48
+ ],
+ "size": [
+  1260,
+  840,
+  48
+ ],
+ "joints": [
+  "front_panel_slide",
+  "rear_panel_slide"
+ ],
+ "parts": [
+  {
+   "name": "frame",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 698,
+   "boundsMin": [
+    -630,
+    -420,
+    0
+   ],
+   "boundsMax": [
+    630,
+    420,
+    34
+   ]
+  },
+  {
+   "name": "front_carrier",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -580,
+    -350.5,
+    40
+   ],
+   "boundsMax": [
+    -70,
+    350.5,
+    44
+   ]
+  },
+  {
+   "name": "front_shoe_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -560,
+    -358.5,
+    34
+   ],
+   "boundsMax": [
+    -520,
+    -342.5,
+    40.5
+   ]
+  },
+  {
+   "name": "front_shoe_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -130,
+    -358.5,
+    34
+   ],
+   "boundsMax": [
+    -90,
+    -342.5,
+    40.5
+   ]
+  },
+  {
+   "name": "front_shoe_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -560,
+    342.5,
+    34
+   ],
+   "boundsMax": [
+    -520,
+    358.5,
+    40.5
+   ]
+  },
+  {
+   "name": "front_shoe_4",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -130,
+    342.5,
+    34
+   ],
+   "boundsMax": [
+    -90,
+    358.5,
+    40.5
+   ]
+  },
+  {
+   "name": "front_cable_anchor",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    -565,
+    -336,
+    32
+   ],
+   "boundsMax": [
+    -535,
+    -320,
+    40.5
+   ]
+  },
+  {
+   "name": "front_glass",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 140,
+   "boundsMin": [
+    -575,
+    -370,
+    44
+   ],
+   "boundsMax": [
+    -75,
+    370,
+    48
+   ]
+  },
+  {
+   "name": "rear_carrier",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    70,
+    -350.5,
+    40
+   ],
+   "boundsMax": [
+    580,
+    350.5,
+    44
+   ]
+  },
+  {
+   "name": "rear_shoe_1",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    90,
+    -358.5,
+    34
+   ],
+   "boundsMax": [
+    130,
+    -342.5,
+    40.5
+   ]
+  },
+  {
+   "name": "rear_shoe_2",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    520,
+    -358.5,
+    34
+   ],
+   "boundsMax": [
+    560,
+    -342.5,
+    40.5
+   ]
+  },
+  {
+   "name": "rear_shoe_3",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    90,
+    342.5,
+    34
+   ],
+   "boundsMax": [
+    130,
+    358.5,
+    40.5
+   ]
+  },
+  {
+   "name": "rear_shoe_4",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    520,
+    342.5,
+    34
+   ],
+   "boundsMax": [
+    560,
+    358.5,
+    40.5
+   ]
+  },
+  {
+   "name": "rear_cable_anchor",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 12,
+   "boundsMin": [
+    535,
+    -336,
+    32
+   ],
+   "boundsMax": [
+    565,
+    -320,
+    40.5
+   ]
+  },
+  {
+   "name": "rear_glass",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 140,
+   "boundsMin": [
+    75,
+    -370,
+    44
+   ],
+   "boundsMax": [
+    575,
+    370,
+    48
+   ]
+  }
+ ]
+}

@@ -1,0 +1,133 @@
+{
+ "triangles": 4346,
+ "boundsMin": [
+  -77.56,
+  -161.55,
+  0
+ ],
+ "boundsMax": [
+  77.56,
+  145,
+  179
+ ],
+ "size": [
+  155.11,
+  306.55,
+  179
+ ],
+ "joints": [
+  "lever_slide",
+  "dial_turn",
+  "cancel_push"
+ ],
+ "parts": [
+  {
+   "name": "housing",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 2182,
+   "boundsMin": [
+    -77.56,
+    -145,
+    4
+   ],
+   "boundsMax": [
+    77.56,
+    145,
+    179
+   ]
+  },
+  {
+   "name": "wire_supports",
+   "closed": true,
+   "components": 20,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 560,
+   "boundsMin": [
+    -46.6,
+    -81.1,
+    65
+   ],
+   "boundsMax": [
+    46.6,
+    81.1,
+    162
+   ]
+  },
+  {
+   "name": "feet",
+   "closed": true,
+   "components": 4,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 240,
+   "boundsMin": [
+    -58,
+    -118,
+    0
+   ],
+   "boundsMax": [
+    58,
+    118,
+    4.5
+   ]
+  },
+  {
+   "name": "lever_tab",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 632,
+   "boundsMin": [
+    -20,
+    -161.55,
+    114
+   ],
+   "boundsMax": [
+    20,
+    -133.5,
+    126
+   ]
+  },
+  {
+   "name": "dial",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 624,
+   "boundsMin": [
+    -36,
+    -158.5,
+    20
+   ],
+   "boundsMax": [
+    -8,
+    -144,
+    48
+   ]
+  },
+  {
+   "name": "cancel_button",
+   "closed": true,
+   "components": 1,
+   "nonManifoldEdges": 0,
+   "degenerateTriangles": 0,
+   "triangles": 108,
+   "boundsMin": [
+    22,
+    -151,
+    29
+   ],
+   "boundsMax": [
+    34,
+    -139,
+    39
+   ]
+  }
+ ]
+}

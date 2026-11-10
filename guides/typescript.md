@@ -24,14 +24,17 @@ op, its index, the part and your line.
 
 - `og.model({ name, units? })` → `Shape`; `og.deg(d)`; `og.world`.
 - `og.frame({ origin?, normal?, up? })`: +z along `normal`, +y toward
-  `up`, else by the facing rule.
+  `up` (x = y × z: normal −Y and up +Z give x +X), else by the facing
+  rule.
 - Profiles are 2D, centred on their origin: `og.rect({ width, height,
   radius? })` (x by y), `og.circle({ radius, segments? })`,
   `og.ellipse({ rx, ry })`, `og.slot({ length, width })` (along x),
   `og.polygon({ sides, radius | flats })` (to the corners, or across
-  the flats; a corner on +x), `og.poly({ points: [[x, y] | { x, y,
-  radius?, bulge? }] })` (`radius` rounds that corner; `bulge` bows the
-  edge to the next point into an arc that far, outward if positive), `og.gear({ teeth, module })`, `og.union /
+  the flats; a corner on +x: `og.rotate` by π / `sides` puts a flat
+  there), `og.poly({ points: [[x, y] | { x, y, radius?, bulge? }] })`
+  (`radius` rounds that corner; `bulge` bows the edge from this point
+  to the next into an arc whose middle stands that many mm off the
+  chord, outward if positive), `og.gear({ teeth, module })`, `og.union /
   subtract / intersect(a, b, …)` (subtract makes a hollow section),
   `og.translate({ profile, x?, y? })`, `og.rotate({ profile, angle })`,
   `og.offset({ profile, distance })`, `og.scale({ profile, x?, y? })`,
@@ -42,8 +45,10 @@ op, its index, the part and your line.
   `og.text({ text, font, size, spacing? })`.
 - A path is a start point, then pieces: a point (a line to it), `{ arc:
   { through, to } }`, `{ tangentArc: { to } }`, `{ spline: { points }
-  }`. `sweep` and `wire` take 3D paths, or `og.helix({ radius, pitch,
-  turns })` (about +z from `[radius, 0, 0]`).
+  }`. `og.path` makes a profile of one. `sweep` and `wire` take the
+  list itself in 3D (`path: [[0, 0, 0], { arc: { through, to } }]`, not
+  `og.path`), or `og.helix({ radius, pitch, turns })` (about +z from
+  `[radius, 0, 0]`).
 - Fonts: `og.model({ name, fonts: { "fonts/a.ttf": bytes } })`; `text`
   names one. Name it by its path relative to the program, so `shape`
   replays it; `og.replay(program, { fonts })`.
@@ -78,9 +83,9 @@ part's x, y.
 | `loft({ sections: [{ profile, z }], samples?, steps?, curve? })` | `z` in its own space; straight between sections; `steps` > 1 curves (`curve: "spline"` through every section), and can overshoot: a surface that passes through itself is refused, naming the sections. Polygon corners stay samples and run corner to corner |
 | `sphere({ radius, axis? })` | centred |
 | `revolve({ profile, angle?, axis? })`, `dome({ radius, height?, axis? })`, `torus({ radius, tube, angle?, tubeSegments?, axis? })` | about **+y**, or `axis: "+Z"` (profile y up; a sphere, dome or torus rests on z = 0, a torus's centre at z = `tube`); profile x is the radius (≥ 0); a part `angle` turns from +x toward −z; a dome `height` makes a cap |
-| `sweep({ profile, path, up?, twist?, scaleEnd? })` | the profile (its y toward `up`) along a path; corners mitred |
+| `sweep({ profile, path, up?, twist?, scaleEnd? })` | the profile (its y toward `up`, `[x, y, z]`) along a path; corners mitred, ends square to the path. An end on an arc tilts by half a segment (a known gap): start and end on a straight piece a tenth of the profile's width or longer. A hollow bent pipe is a ring (`og.subtract` of two circles) swept |
 | `wire({ path, diameter, fillet?, fillets?, closed? })` | a round rod along a path; corners between pieces bent round `fillet` (≥ diameter / 2), else mitred |
-| `body({ plan, top, bottom, n? })` | along +y: `plan` the width, `top` and `bottom` the z lines, `n` the squareness (2 round); each a number, `[[y, v], …]` or `{ points, smooth: true }` |
+| `body({ plan, top, bottom, n? })` | along +y: `plan` the full width, `top` and `bottom` the z lines, `n` the squareness (2 round); each a number, `[[y, v], …]` or `{ points, smooth: true }` (smooth can overshoot its points, like a curved loft: add points). An end closes to a point only where `plan` and the height both reach 0; else it is flat |
 | `gear({ teeth, module, width, bore?, hub?, hubHeight? })`, `knurl({ diameter, height, pitch?, straight? })` | about +z from z = 0; `bore`, `hub` diameters |
 | `wedge({ width, height, depth })`, `thread({ radius, pitch, length, depth })` | from the origin into +x, +y, +z; about +z |
 
@@ -93,11 +98,13 @@ Placement (readers answer frames and are not recorded):
 - `bbox(parts, "+X" | "+X-Y" | "+X-Y+Z" …)`: the centre of that side,
   edge or corner of the whole box; +z along the first direction.
 - `grid({ nx, ny?, px?, py?, stagger?, on? })`: centred on `on`, in its
-  xy. `ring({ n, radius, start?, angle?, on? })`: `n` frames on a circle
+  xy; x runs fastest, from −x, rows from −y. `ring({ n, radius, start?, angle?, on? })`: `n` frames on a circle
   in `on`'s xy from its +x (over `angle` if given, ends included), each
   x pointing out; `radius: 0` turns in place.
-- `edge(part, name)` → a path; `along(path, { pitch?, count? })`,
-  `snap(parts, { points, direction? })` → frames; `names(part)`.
+- `edge(part, name)` → a path; `along(path, { pitch?, count? })` →
+  frames; `snap(parts, { points, direction? })` → a frame on the surface
+  per point (the nearest spot, or where a ray along `direction` meets
+  it), +z out toward the point; `names(part)`.
 
 Structure: `group({ name, children })`, `assembly({ name, children,
 anchors? })`, `attach(assembly, { name, children })`, `copy(part, name)`,
@@ -107,8 +114,10 @@ as the image of the original, posed by the same values.
 
 Edits (a tool must be a part; it is used up; the target keeps its name):
 - `cut`, `join`, `intersect(target, tool, { check? })` return `{ voids,
-  touchingEdges, touching }`; `check` refuses an operand that passes
-  through itself. `merge(target, tool)` adds the tool as it is (no
+  touchingEdges, touching }`: voids left; edges where the operands only
+  touch (> 0: not closed there); `touching`, faces lying on each other
+  somewhere (not an error by itself). `check` refuses an operand that
+  passes through itself. `merge(target, tool)` adds the tool as it is (no
   boolean); `delete(part)`. `seat(host, part)` cuts
   `part`'s volume out of `host` and keeps `part`. `scale(part, { x?, y?,
   z? })` along its own axes, about its own origin.
@@ -138,12 +147,20 @@ Materials, joints, pose:
   default); kinds `revolute` (default), `continuous`, `prismatic`,
   `fixed`, `floating`; revolute and prismatic need a `range` holding 0.
 - `pose(joint, value)`: export, preview and `measure({ posed: true })`.
-  Read frames before posing: `face`, `bbox`, `edge`, `snap` of a part a
-  posed joint moves throw.
+  It is recorded in the program: through MCP, pose with the `preview`
+  and `measure` tools' `pose: { joint: value }` instead, which leaves the
+  program at rest. Read frames before posing: `face`, `bbox`, `edge`,
+  `snap` of a part a posed joint moves throw.
 
 Output: `measure()` (per solid part, at rest; `{ posed: true }` at the
-pose, with `joints` and `interference`), `glb()`, `obj()` and `stl()`
+pose, with `joints`: each pivot's distance to its parent and child, and
+`interference`: pairs `{ a, b, crossings, touching, inside, asBuilt,
+boundsMin, boundsMax }`, the box round both parts' meeting triangles;
+with `asBuilt: false` a flush contact can count crossings by rounding),
+`glb()`, `obj()` and `stl()`
 (at the pose if one is set),
 `preview({ width?, views?, columns?, elevation?, azimuth?, noEdges?,
-noGround? })` (PNG; views from −Y, then +X, +Y, −X, 25° up),
-`program()`.
+noGround? })` (PNG; views from −Y, then +X, +Y, −X, 25° up;
+`elevation` over 0 and up to π/2, no view from below),
+`program()`. `console.log` output comes back in `run_typescript`'s
+`logs`.

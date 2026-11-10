@@ -15,14 +15,14 @@ use shape_cli::build::report as build_report;
 use shape_cli::decimate::{DecimateDesc, decimate};
 use shape_cli::export::{export, written};
 use shape_cli::import::{ImportDesc, import};
-use shape_cli::measure::{MeasureDesc, measure};
+use shape_cli::measure::{MeasureDesc, measure, measure_posed};
 use shape_cli::preview::{PreviewDesc, render};
 use shape_cli::process::{ProcessDesc, STEPS, process_steps};
 use shape_cli::repair::{RepairDesc, repair};
 use shape_cli::report::{object, string};
 use shape_cli::source::{Source, load, load_uvs};
 use shape_cli::unwrap::{UnwrapDesc, unwrap};
-use shape_cli::{Failure, Files, Input};
+use shape_cli::{Failure, Files, Input, failed};
 use shape_tools::{Decimate, Floaters, Import, Preview, Repair, Unwrap};
 
 use crate::Server;
@@ -55,7 +55,8 @@ const TOOLS: [Tool; 10] = [
     Tool {
         name: "preview",
         description: "Render a turntable of a program or a mesh file with the kernel's CPU \
-            rasterizer: one PNG with the views side by side. Look at it after every change.",
+            rasterizer: one PNG with the views side by side, at `pose` if given. Look at it \
+            after every change.",
         schema: preview_schema,
         handler: preview_tool,
     },
@@ -121,7 +122,9 @@ const TOOLS: [Tool; 10] = [
             (resource og-shape://guides/typescript.md): its default export takes `og` and \
             returns the Shape it built. The program it recorded is replayed by the native kernel, \
             which gives the report and measures; the program JSON comes back too, for `build`, \
-            `preview` and `export`. The program runs with the server's permissions.",
+            `preview` and `export` (which take `pose` to look at a pose without changing it), \
+            and its `console.log` output as `logs`. The program runs with the server's \
+            permissions.",
         schema: ts_schema,
         handler: ts_tool,
     },
@@ -396,6 +399,20 @@ fn program_props() -> Vec<(&'static str, Value)> {
     ]
 }
 
+/// `pose`: joint values set on a program for this call only.
+fn pose_prop() -> (&'static str, Value) {
+    (
+        "pose",
+        json!({
+            "type": "object",
+            "additionalProperties": { "type": "number" },
+            "description": "A program only: joints to pose for this call, {\"lid_hinge\": 1.2} \
+                (radians, or mm for a slide), on top of the program's own `pose` ops; the \
+                program is not changed.",
+        }),
+    )
+}
+
 fn obj_props() -> Vec<(&'static str, Value)> {
     vec![
         (
@@ -487,7 +504,7 @@ fn preview_schema() -> Value {
         ("columns", int("Views a row; 0 puts them all in one row.")),
         (
             "elevation",
-            num("Radians above the horizon; absent is 25 degrees."),
+            num("Radians above the horizon, over 0 and up to pi/2; absent is 25 degrees."),
         ),
         (
             "azimuth",
@@ -499,6 +516,7 @@ fn preview_schema() -> Value {
             "out",
             path("Also save the PNG at this path in the workspace."),
         ),
+        pose_prop(),
     ]);
     p.extend(obj_props());
     schema(p, &[])
@@ -506,10 +524,21 @@ fn preview_schema() -> Value {
 
 fn measure_schema() -> Value {
     let mut p = program_props();
-    p.push((
-        "intersections",
-        boolean("Meshes: count self-intersecting triangle pairs (exact; slower)."),
-    ));
+    p.extend([
+        (
+            "intersections",
+            boolean("Meshes: count self-intersecting triangle pairs (exact; slower)."),
+        ),
+        (
+            "posed",
+            boolean(
+                "A program at its pose (its `pose` ops and `pose` here): bounds at the pose, \
+                 how each joint holds (`joints`) and the parts that meet (`interference`). \
+                 Implied by `pose`.",
+            ),
+        ),
+        pose_prop(),
+    ]);
     p.extend(obj_props());
     schema(p, &[])
 }
@@ -520,6 +549,7 @@ fn export_schema() -> Value {
         "out",
         path("Where to write, in the workspace: .glb, .obj or .stl."),
     ));
+    p.push(pose_prop());
     p.extend(obj_props());
     schema(p, &["out"])
 }
@@ -620,7 +650,10 @@ fn ts_schema() -> Value {
             ),
             (
                 "path",
-                path("Instead of `source`: a .ts file in the workspace (relative imports work)."),
+                path(
+                    "Instead of `source`: a .ts file already in the workspace (relative imports \
+                     work); the server writes no .ts file.",
+                ),
             ),
             (
                 "program_out",
@@ -634,7 +667,19 @@ fn ts_schema() -> Value {
 // ── handlers ──
 
 fn loaded(server: &Server, a: &Args) -> Result<Source, Failure> {
-    load_uvs(&server.ws, &a.input(server)?, &a.import()?, a.flag("uvs")?)
+    let mut source = load_uvs(&server.ws, &a.input(server)?, &a.import()?, a.flag("uvs")?)?;
+    if let Some(pose) = a.sub("pose")? {
+        let Source::Program(model) = &mut source else {
+            return Err(bad("pose", "a program's joints; a mesh file has none"));
+        };
+        for (joint, value) in pose.o {
+            let v = value
+                .as_f64()
+                .ok_or_else(|| bad("pose", "joint values are numbers"))?;
+            model.pose(joint, v).map_err(failed)?;
+        }
+    }
+    Ok(source)
 }
 
 fn build_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
@@ -662,12 +707,19 @@ fn png_size(png: &[u8]) -> (u32, u32) {
 }
 
 fn preview_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
+    let elevation = a.opt_num("elevation")?;
+    if elevation.is_some_and(|e| !(e > 0.0 && e <= std::f64::consts::FRAC_PI_2)) {
+        return Err(bad(
+            "elevation",
+            "radians above the horizon, over 0 and up to pi/2 (1.5708); no view from below",
+        ));
+    }
     let d = PreviewDesc {
         preview: Preview {
             width: a.u32("width")?,
             height: a.u32("height")?,
             views: a.u32("views")?,
-            elevation: a.opt_num("elevation")?,
+            elevation,
             azimuth: a.num("azimuth")?,
             no_edges: a.flag("no_edges")?,
             no_ground: a.flag("no_ground")?,
@@ -702,7 +754,11 @@ fn measure_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<
     let d = MeasureDesc {
         intersections: a.flag("intersections")?,
     };
-    Ok(vec![text(measure(&loaded(server, a)?, &d)?)])
+    let source = loaded(server, a)?;
+    if a.flag("posed")? || a.sub("pose")?.is_some() {
+        return Ok(vec![text(measure_posed(&source)?)]);
+    }
+    Ok(vec![text(measure(&source, &d)?)])
 }
 
 fn export_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {

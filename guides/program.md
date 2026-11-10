@@ -156,11 +156,12 @@ walls by arc length round and along).
 | `soften` | `id`, `radius`, `angle`? (30° by default), `edges`?, `segments`? | rounds every edge sharper than `angle` |
 | `material` | `ids`, `name`?, `color`? (`"#rrggbb"` or `[r, g, b]`), `metalness`?, `roughness`?, `emissive`?, `opacity`?, `map`? (an image's file name, PNG or JPEG, read beside the program; the parts need UVs), `mapSize`? (units the image spans; 1) | glTF metallic-roughness |
 | `joint` | `child`, `parent`, `name`, `kind`? (`revolute`, `continuous`, `prismatic`, `fixed`, `floating`), `on` (the pivot frame), `axis`? (`"+X"`… or `[x, y, z]`; `on`'s z by default), `range`? `[lo, hi]`, `mimic`? `{"joint", "multiplier"}` | revolute and prismatic need a range containing 0 |
-| `pose` | `joint`, `value` | posed in export, preview and `measure` with `posed` |
+| `pose` | `joint`, `value` | posed in export, preview and `measure` with `posed`; the MCP tools also take `pose` for one call |
 
 ## What comes back
 
-`build` reports every part (name, parent, joint, triangles). `measure`
+`build` reports every part (name, parent, joint, triangles; `parent` is
+the export's: a group with no joint of its own is flattened away). `measure`
 reports per part and for the model: `triangles`, `vertices`,
 `boundsMin`/`boundsMax`, `area`, `volume`, `closed`, `boundaryEdges`,
 `nonManifoldEdges`, `degenerateTriangles`, `components`, and the joints,
@@ -176,7 +177,8 @@ a posed joint moves they are refused; read before `pose`. A posed
 model's OBJ and STL are written at the pose (the header ends `posed`);
 its GLB keeps rest meshes and the pose in its joint nodes.
 `build` also lists every boolean with the voids it left and the edges
-where its operands touch (`touchingEdges` > 0: not closed there).
+where its operands touch (`touchingEdges` > 0: not closed there;
+`touching`: faces lie on each other somewhere, not an error by itself).
 A part with UVs adds `uv`: `coverage` and `overlap` (shares of the
 image, after `mapSize`), `flipped` and `zeroArea` (triangles mirrored or
 flat in UV), `outside`, `overlappingPairs`, `area`; the model,
