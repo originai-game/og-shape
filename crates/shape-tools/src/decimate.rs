@@ -115,6 +115,15 @@ pub struct Decimate {
     /// feature line, and a corner across it gets its UV through the move.
     /// The texture is not rewritten. 0: off, every seam stays.
     pub merge_charts: f64,
+    /// On a solid with vertex colours, collapse across hard colour
+    /// borders as freely as anywhere (off by default: a border is a
+    /// feature line, as a UV seam is). A removed vertex's corners then
+    /// take the kept vertex's colour on the collapsed edge (the mean of
+    /// its colours there when they differ; at a midpoint, the mean with
+    /// their own), so a border moves and blurs by up to an edge. For a
+    /// mesh whose colours were sampled per vertex, where borders mark no
+    /// feature (`docs/research.md` §33).
+    pub cross_color_borders: bool,
 }
 
 /// What a decimation did.
@@ -371,6 +380,9 @@ struct Mesh {
     charts: Option<(Vec<u32>, Vec<Rigid>, f64)>,
     /// Per triangle, its corners' colours, on a solid with colours.
     colors: Option<Vec<CornerColors>>,
+    /// Colours are matched apart from UVs, so a colour border does not
+    /// hold a collapse (`Decimate::cross_color_borders`).
+    cross_colors: bool,
 }
 
 /// What a corner carries besides its vertex: its UV and its colour
@@ -945,6 +957,34 @@ impl Mesh {
                 pairs.push((self.attr(t, kf), self.attr(t, kt)));
             }
         }
+        // Crossing colour borders, corners match by UV alone, and each
+        // takes the other end's colour on the edge (their mean where the
+        // edge's triangles differ there).
+        let key = |a: Attr| {
+            if self.cross_colors {
+                Attr {
+                    color: [0.0; 4],
+                    ..a
+                }
+            } else {
+                a
+            }
+        };
+        let end_color = |from_end: bool| -> [f64; 4] {
+            let mut cs: Vec<[f64; 4]> = pairs
+                .iter()
+                .map(|&(a, b)| if from_end { b.color } else { a.color })
+                .collect();
+            cs.sort_by(|a, b| {
+                (0..4)
+                    .map(|k| a[k].total_cmp(&b[k]))
+                    .find(|o| o.is_ne())
+                    .unwrap_or(Ordering::Equal)
+            });
+            cs.dedup();
+            let n = cs.len().max(1) as f64;
+            core::array::from_fn(|k| cs.iter().map(|c| c[k]).sum::<f64>() / n)
+        };
         let midpoint = p != self.pos[to as usize];
         let mut moves: Vec<UvMove> = Vec::new();
         // One end's attributes mapped to the other's, if exactly one
@@ -953,8 +993,8 @@ impl Mesh {
             let mut found: Option<Attr> = None;
             for &(a, b) in &pairs {
                 let (mine, theirs) = if from_end { (a, b) } else { (b, a) };
-                if mine == u {
-                    if found.is_some_and(|f| f != theirs) {
+                if key(mine) == key(u) {
+                    if found.is_some_and(|f| key(f) != key(theirs)) {
                         return Err(());
                     }
                     found = Some(theirs);
@@ -985,7 +1025,7 @@ impl Mesh {
                 return None;
             }
             let (cm, ct) = (self.attr(e, kv), self.attr(e, kw));
-            if cm.color != u.color {
+            if !self.cross_colors && cm.color != u.color {
                 return None;
             }
             let (goal, color) = if midpoint {
@@ -1018,6 +1058,19 @@ impl Mesh {
                         (true, false) => Attr::mean(o, u),
                     },
                     None => across(t, u, v, w)?,
+                };
+                let new = if self.cross_colors {
+                    let o = end_color(from_end);
+                    Attr {
+                        color: if midpoint {
+                            core::array::from_fn(|ch| (u.color[ch] + o[ch]) * 0.5)
+                        } else {
+                            o
+                        },
+                        ..new
+                    }
+                } else {
+                    new
                 };
                 moves.push((t, k, new));
             }
@@ -1320,6 +1373,7 @@ fn collapse(
         uvs: s.uvs.clone(),
         charts: None,
         colors: s.colors.clone(),
+        cross_colors: d.cross_color_borders,
     };
     if s.uvs.is_some() {
         let tol = d.merge_charts;
@@ -1384,15 +1438,16 @@ fn collapse(
                                         <= *tol
                                 })
                         })
-                }) || s.colors.as_ref().is_some_and(|c| {
-                    // A hard colour border, likewise; a merged chart does
-                    // not join colours.
-                    let at = |t: usize, v: u32| {
-                        let k = s.triangles[t].iter().position(|&w| w == v).unwrap_or(0);
-                        c[t][k]
-                    };
-                    at(x, a) != at(y, a) || at(x, b) != at(y, b)
-                })
+                }) || !d.cross_color_borders
+                    && s.colors.as_ref().is_some_and(|c| {
+                        // A hard colour border, likewise; a merged chart does
+                        // not join colours.
+                        let at = |t: usize, v: u32| {
+                            let k = s.triangles[t].iter().position(|&w| w == v).unwrap_or(0);
+                            c[t][k]
+                        };
+                        at(x, a) != at(y, a) || at(x, b) != at(y, b)
+                    })
             }
         };
         let open = ts.len() == 1;

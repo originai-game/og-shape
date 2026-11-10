@@ -14,13 +14,15 @@
 //!                [--floater-size MM] [--non-manifold] [--holes N] [--fuse]
 //!                [--min-edge MM] [--intersections]
 //! shape decimate <mesh> (--ratio R | --target N) [--max-error MM]
-//!                [--lock-border] [--merge-charts UV] [--lods N] [-o out]
+//!                [--lock-border] [--merge-charts UV] [--cross-color-borders]
+//!                [--lods N] [-o out]
 //! shape unwrap   <mesh> [-o out.glb] [--angle DEG] [--resolution PX]
 //!                [--padding TEXELS]
 //! shape place    <mesh> [-o out] [--up AXIS] [--front AXIS] [--turn DEG]
 //!                [--longest L | --height L | --width L | --depth L | --scale F]
 //!                [--pivot base|center|X,Y,Z]
-//! shape process  <mesh> [--budget N] [--merge-charts UV] [-o out.glb]
+//! shape process  <mesh> [--budget N] [--merge-charts UV]
+//!                [--cross-color-borders] [-o out.glb]
 //!                [repair, unwrap and place options] [--intersections]
 //!                [--unwrap] [--texture-max PX]
 //! ```
@@ -66,13 +68,13 @@ const USAGE: &str = "usage: shape <command> <input> [options]
            [--floater-size MM] [--non-manifold] [--holes N] [--fuse] [--min-edge MM]
            [--intersections]
   decimate <mesh> (--ratio R | --target N) [--max-error MM] [--lock-border]
-           [--merge-charts UV] [--lods N] [-o out]
+           [--merge-charts UV] [--cross-color-borders] [--lods N] [-o out]
   unwrap   <mesh> [-o out.glb] [--angle DEG] [--resolution PX] [--padding TEXELS]
   place    <mesh> [-o out] [--up AXIS] [--front AXIS] [--turn DEG]
            [--longest L | --height L | --width L | --depth L | --scale F]
            [--pivot base|center|X,Y,Z]      turn, size (L with a unit: 1.2m, 90cm,
                                                 900mm) and origin, before and after
-  process  <mesh> [--budget N] [--merge-charts UV] [-o out.glb]
+  process  <mesh> [--budget N] [--merge-charts UV] [--cross-color-borders] [-o out.glb]
            [repair, unwrap and place options]
            [--intersections] [--unwrap] [--texture-max PX]";
 

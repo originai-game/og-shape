@@ -753,6 +753,7 @@ fn decimate_schema() -> Value {
             boolean("Never move vertices on open borders."),
         ),
         ("merge_charts", merge_charts_prop()),
+        ("cross_color_borders", cross_color_borders_prop()),
         (
             "lods",
             int(
@@ -778,6 +779,14 @@ fn place_schema() -> Value {
     schema(p, &["path"])
 }
 
+fn cross_color_borders_prop() -> Value {
+    boolean(
+        "Collapse across hard vertex-colour borders as anywhere (default false: a border is a \
+         feature line, as a UV seam is). For colours sampled per vertex, where a border marks \
+         no feature; a border then moves and blurs by up to an edge.",
+    )
+}
+
 fn merge_charts_prop() -> Value {
     num(
         "UV islands that meet along an edge and agree there up to a rigid move in UV space \
@@ -793,6 +802,7 @@ fn process_schema() -> Value {
             int("Decimate to at most this many triangles; 0 does not decimate."),
         ),
         ("merge_charts", merge_charts_prop()),
+        ("cross_color_borders", cross_color_borders_prop()),
         (
             "repair",
             json!({
@@ -1033,6 +1043,7 @@ fn decimate_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec
             max_error: a.num("max_error")?,
             lock_border: a.flag("lock_border")?,
             merge_charts: a.num("merge_charts")?,
+            cross_color_borders: a.flag("cross_color_borders")?,
             ..Default::default()
         },
         lods: a.u32("lods")?,
@@ -1071,6 +1082,7 @@ fn process_tool(server: &Server, a: &Args, p: &mut dyn Progress) -> Result<Vec<V
         repair: a.sub("repair")?.as_ref().unwrap_or(&none).repair()?,
         budget: a.uint("budget")? as usize,
         merge_charts: a.num("merge_charts")?,
+        cross_color_borders: a.flag("cross_color_borders")?,
         unwrap: a.sub("unwrap")?.as_ref().unwrap_or(&none).unwrap()?,
         intersections: a.flag("intersections")?,
         fresh_uvs: a.flag("fresh_uvs")?,

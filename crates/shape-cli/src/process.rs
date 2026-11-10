@@ -54,6 +54,9 @@ pub struct ProcessDesc {
     /// to a rigid move within this distance are one chart for the seam
     /// rule; 0 is off.
     pub merge_charts: f64,
+    /// `Decimate::cross_color_borders`: collapse across hard vertex-colour
+    /// borders as anywhere.
+    pub cross_color_borders: bool,
     /// The unwrap.
     pub unwrap: Unwrap,
     /// Unwrap even a mesh that carries UVs (its texture is then not
@@ -181,6 +184,7 @@ pub fn process_steps(
             &Decimate {
                 target: d.budget,
                 merge_charts: d.merge_charts,
+                cross_color_borders: d.cross_color_borders,
                 ..Default::default()
             },
         )
@@ -251,6 +255,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         "--out",
         "--budget",
         "--merge-charts",
+        "--cross-color-borders",
         "--intersections",
         "--unwrap",
         "--texture-max",
@@ -271,6 +276,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
             repair,
             budget: a.number("--budget")?.unwrap_or(0),
             merge_charts: a.number("--merge-charts")?.unwrap_or(0.0),
+            cross_color_borders: a.switch("--cross-color-borders"),
             unwrap: crate::unwrap::options(a)?,
             fresh_uvs: a.switch("--unwrap"),
             intersections: a.switch("--intersections"),

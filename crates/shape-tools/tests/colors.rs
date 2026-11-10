@@ -106,6 +106,55 @@ fn decimation_moves_colours_with_their_corners_and_keeps_hard_borders() {
 }
 
 #[test]
+fn crossing_colour_borders_reaches_the_target_and_changes_nothing_smooth() {
+    // Every triangle its own colour: every edge is a border, so keeping
+    // borders keeps the mesh; crossing them reaches the target.
+    let mut s = sphere(40.0).unwrap();
+    paint(&mut s, |i, _| {
+        let k = (i % 7) as f64 / 6.0;
+        [k, 1.0 - k, 0.5, 1.0]
+    });
+    s.canonicalize().unwrap();
+    let target = s.triangles.len() / 8;
+    let keep = Decimate {
+        target,
+        ..Default::default()
+    };
+    let cross = Decimate {
+        cross_color_borders: true,
+        ..keep
+    };
+    let (kept, _) = decimate(&s, &keep).unwrap();
+    assert!(
+        kept.triangles.len() > 2 * target,
+        "{}",
+        kept.triangles.len()
+    );
+    let (low, r) = decimate(&s, &cross).unwrap();
+    assert!(low.triangles.len() <= target, "{r:?}");
+    // Colours blur between the input's, never outside them.
+    let c = low.colors.as_ref().unwrap();
+    assert!(
+        c.iter()
+            .flatten()
+            .all(|v| v.iter().all(|x| (0.0..=1.0).contains(x)))
+    );
+    // A smooth colour has no border to cross: the same output.
+    let mut smooth = sphere(40.0).unwrap();
+    paint(&mut smooth, |_, p| affine(p));
+    smooth.canonicalize().unwrap();
+    let half = |cross_color_borders| Decimate {
+        ratio: 0.5,
+        cross_color_borders,
+        ..Default::default()
+    };
+    assert_eq!(
+        decimate(&smooth, &half(true)).unwrap().0,
+        decimate(&smooth, &half(false)).unwrap().0
+    );
+}
+
+#[test]
 fn repair_fills_holes_with_their_rims_colours() {
     // A coloured sphere as a soup (every triangle its own corners) with
     // three triangles gone: welding joins it, the fill takes the rim's
