@@ -1,5 +1,5 @@
 //! Writes the previews of the bevel cases `docs/research.md` §7.4, §7.5,
-//! §7.6 and §7.7 add:
+//! §7.6, §7.7 and §7.8 add:
 //! one PNG per case, four views, of a close-up (the result intersected
 //! with a cube around the vertex that matters) or of the whole solid.
 //!
@@ -278,6 +278,7 @@ fn cases() -> Result<Vec<Case>, Error> {
     stream_p(&mut out)?;
     stream_q(&mut out)?;
     stream_w(&mut out)?;
+    stream_x(&mut out)?;
     Ok(out)
 }
 
@@ -574,6 +575,85 @@ fn stream_w(out: &mut Vec<Case>) -> Result<(), Error> {
         solid: bottom,
         focus: None,
         azimuth: 0.5,
+    });
+    Ok(())
+}
+
+/// Lone pieces tapering to tips at both ends, and faces cut on their
+/// folds (`docs/research.md` §7.8).
+fn stream_x(out: &mut Vec<Case>) -> Result<(), Error> {
+    let pin = cylinder(&CylinderDesc {
+        radius: 5.0,
+        height: 10.0,
+        ..Default::default()
+    })?;
+    let piece = tag(&pin, "pick", |p| p.z == 10.0 && p.x > 4.8 && p.y >= 0.0);
+    out.push(Case {
+        name: "lone_rim_piece",
+        solid: fillet(&piece, &round(1.5, &["pick"], 4))?,
+        focus: Some((DVec3::new(5.0, 0.6, 9.0), 1.5)),
+        azimuth: 0.3,
+    });
+    let slot = extrude(
+        &shape_2d::rect(&shape_2d::Rect {
+            width: 30.0,
+            height: 20.0,
+            radius: 4.0,
+        })?,
+        &Extrude {
+            height: 6.0,
+            ..Default::default()
+        },
+    )?;
+    let straight = tag(&slot, "pick", |p| p.z == 6.0 && p.y == -10.0);
+    out.push(Case {
+        name: "lone_straight_edge",
+        solid: chamfer(
+            &straight,
+            &Chamfer {
+                distance: 1.5,
+                edges: vec!["pick".into()],
+                ..Default::default()
+            },
+        )?,
+        focus: None,
+        azimuth: 0.3,
+    });
+    let rr = |w: f64, h: f64, r: f64| {
+        shape_2d::rect(&shape_2d::Rect {
+            width: w,
+            height: h,
+            radius: r,
+        })
+    };
+    let housing = shape_gen::loft::loft(&shape_gen::loft::Loft {
+        sections: vec![
+            (rr(155.0, 285.0, 30.0)?, 0.0),
+            (rr(151.0, 281.0, 32.0)?, 61.25),
+            (rr(125.0, 275.0, 24.0)?, 175.0),
+        ],
+        ..Default::default()
+    })?;
+    out.push(Case {
+        name: "loft_top_folds",
+        solid: fillet(&housing, &round(14.0, &["top"], 0))?,
+        focus: None,
+        azimuth: 0.6,
+    });
+    let square = [(-10.0, -10.0), (10.0, -10.0), (10.0, 10.0), (-10.0, 10.0)];
+    let twisted = prism(
+        &square,
+        &Extrude {
+            height: 20.0,
+            twist: 1.0,
+            ..Default::default()
+        },
+    )?;
+    out.push(Case {
+        name: "twisted_all",
+        solid: fillet(&twisted, &round(1.5, &[], 4))?,
+        focus: None,
+        azimuth: 0.6,
     });
     Ok(())
 }

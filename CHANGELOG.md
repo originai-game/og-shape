@@ -830,3 +830,36 @@
 - The winding tree's remainder bound is proved (`|∂²K| ≤ 6/|y|⁴`, sharp)
   and used as proved (3 S/ρ⁴ for 4 S/ρ⁴). Decisions are the direct sum's,
   so no output changed.
+- `shape-bevel` bevels a lone piece of a longer crease (one segment of a
+  rim, a piece of a boolean's cut edge, a straight edge meeting arcs
+  tangentially), which since stream W was refused as "tapers to a tip at
+  both ends": the bevel now tapers to a tip at each end inside the edge,
+  its width rising at 45° to the offset (a piece shorter than twice the
+  offset peaks at half its length in the middle), its new points in the
+  planes of the edge's own triangles, so no old face tilts
+  (`docs/research.md` §7.8). Where that taper does not fit, the error is
+  `BevelError::LonePiece(a, b, names)`: it names the piece and its names
+  and asks for the whole crease. In the scan, 10 358 of the 10 812 such
+  refusals are now results and 46 are this error; the rest fail on the
+  selection's other edges, as they do without the piece.
+- `shape-bevel` cuts a corner on a face whose triangles there are not one
+  plane (a loft's or a twisted prism's rows, a cone's fan at its apex) on
+  that face's folds, each fold taken as a real edge and each triangle cut
+  in its own plane, where the classic layout would tilt it and the cut
+  bands of §7.6 do not reach. Run A's toaster, `fillet(14, top)` on a
+  loft, refused since stream W, builds again; the twisted prism's side
+  edges and every edge, the apex revolve's start cap and §7.5's ridge
+  build. 194 of the scan's 216 refusals of this kind are now results.
+- `shape-bevel`'s final crossing check tests only pairs with a triangle
+  the bevel made or moved, found by a tree of boxes: the box's twelve
+  edges at 32 segments 42 → 16–18 ms for the check. Every result and
+  error is the same.
+- Golden: `bevel.sound` moved (its last case, one piece of a cylinder's
+  rim, hashed the tip refusal; now the tapered result); `bevel.inline`
+  moved (the ridge's fillet and chamfer hashed the tilt refusal; now
+  results, every old face in its plane; the needle's refusal unchanged);
+  `bevel.slivers` moved (the twisted prism's fillet of every edge hashed
+  the tilt refusal; now a result removing 108.5 mm³, the tapered prism
+  101; its other six results unchanged). Golden cases `bevel.tips` and
+  `bevel.folds` added. Previews `lone_rim_piece`, `lone_straight_edge`,
+  `loft_top_folds` and `twisted_all` added in `docs/previews/phase3/`.

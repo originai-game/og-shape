@@ -11,7 +11,9 @@
 //! profile, edge strips, and corner patches by the number of bevelled
 //! edges at a vertex. Gaps with several unbevelled edges, tips, pipe
 //! joints, arc and patch miters and loop slide follow the same notes
-//! (`docs/research.md` §7.4).
+//! (`docs/research.md` §7.4). A lone piece of a longer crease tapers to
+//! a tip at both ends, and a corner on a face whose triangles are not one
+//! plane is cut on its folds (§7.8).
 //!
 //! Names (`docs/design.md` §4):
 //! - New faces carry only `fillet` or `chamfer`.
@@ -73,6 +75,10 @@ pub enum BevelError {
     /// The solid passes through itself near this point (two of its
     /// triangles cross): repair it before bevelling.
     SelfCrossing(DVec3),
+    /// A lone piece of a longer crease (its ends given, then its names)
+    /// tapers to a tip at both ends, and that taper does not fit: select
+    /// the whole crease by one of its names (`docs/research.md` §7.8).
+    LonePiece(DVec3, DVec3, Vec<String>),
 }
 
 impl std::fmt::Display for BevelError {
@@ -102,6 +108,11 @@ impl std::fmt::Display for BevelError {
             BevelError::SelfCrossing(p) => write!(
                 f,
                 "the solid passes through itself near {p}: repair it before bevelling"
+            ),
+            BevelError::LonePiece(a, b, names) => write!(
+                f,
+                "the edge {a}–{b} is a piece of a longer crease whose neighbours are not bevelled, and its bevel, tapering to a tip at both ends, does not fit: select the whole crease (named {})",
+                names.join(", ")
             ),
             BevelError::Skinned => f.write_str(
                 "the solid is skinned; bevels do not carry skins yet: bevel first, then skin it",
@@ -268,6 +279,7 @@ pub fn fillet(s: &Solid, d: &Fillet) -> Result<Solid, BevelError> {
             kind: Kind::Fillet,
             miters: miters(d.inner_miter, d.outer_miter, d.spread)?,
             loop_slide: d.loop_slide,
+            checked: None,
         },
     )
 }
@@ -303,6 +315,7 @@ pub fn chamfer(s: &Solid, d: &Chamfer) -> Result<Solid, BevelError> {
             kind: Kind::Chamfer,
             miters: miters(d.inner_miter, d.outer_miter, d.spread)?,
             loop_slide: d.loop_slide,
+            checked: None,
         },
     )
 }
@@ -336,6 +349,7 @@ pub fn soften(s: &Solid, d: &Soften) -> Result<Solid, BevelError> {
             kind: Kind::Fillet,
             miters: Miters::default(),
             loop_slide: false,
+            checked: None,
         },
     )
 }
