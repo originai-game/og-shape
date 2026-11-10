@@ -1062,6 +1062,42 @@ no degenerate triangle. Quads are `quad_pairs` over the new faces.
   fillet meets the concave seam fillets show a small light streak in the
   preview; the octant there is fitted to a saddle, not a cube corner.
 
+### 7.5 The cases §7.4 left (stream P, 2026-11-10)
+
+**Sources.** The same two published design notes as §7.1 and §7.4 and
+nothing else from Blender: Trickey's page
+(http://archive.blender.org/wiki/2024/wiki/User:Howardt/Bevel.html) and
+the Bevel V2 issue #98674, read through
+`projects.blender.org/api/v1/repos/blender/blender/issues/98674`.
+Blender's source and the Mesh Bevel node PR (#158151) were not opened.
+Neither note covers the cases below (they are mesh-topology corners the
+notes do not reach); every choice here is ours and says so.
+
+**How the cases were found.** A scratch scan bevelled about 19 000
+selections (all edges, each name, each single edge, random subsets;
+fillet and chamfer at 0.5 and 1.5) on generator solids (boxes,
+cylinders, cones, tubes, wedges, domes, pyramids and prisms of 3–8
+sides, twisted, tapered, D-slots, rounded rectangles, full and part
+revolves with seams and apexes) and booleans (joins touching at a
+corner or an edge, bores, notches, posts, cross bars and cross bores).
+Of the `Unsupported` cases §7.4 lists, only two cones at one vertex
+occurred (256 times); the others are shown below to be unreachable on a
+closed solid or were built by hand for their tests.
+
+- **A vertex whose fan does not close: unreachable.** On a closed solid
+  each directed edge has one triangle and its twin one more, so the walk
+  around a vertex is a permutation of its triangles and returns to its
+  start. The guard stays, as `NotClosed`.
+- **Two cones at one vertex** (two surfaces that only touch at a point,
+  as a join of boxes meeting at a corner leaves): each such vertex at the
+  end of a bevelled edge is split before bevelling, one copy per fan at
+  the same position, each with its cone's triangles, edges and edge
+  names (`cones.rs`). Each cone is then an ordinary corner. Copies left
+  unbevelled weld back when the result is canonicalized. Two boxes
+  joined at a corner, `fillet(2)` all, 4 segments, has exactly the volume
+  of the two boxes filleted apart, all quads; with one box's edges only,
+  the other keeps its corner.
+
 ## 8. Phase 4: parts, joints, the CLI and the wasm binding (stream E, 2026-11-09)
 
 ### 8.1 Sources

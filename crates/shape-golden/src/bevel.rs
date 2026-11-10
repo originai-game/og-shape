@@ -49,6 +49,10 @@ pub fn cases() -> Vec<Case> {
             name: "bevel.slivers",
             run: slivers,
         },
+        Case {
+            name: "bevel.cones",
+            run: cones,
+        },
     ]
 }
 
@@ -518,4 +522,31 @@ fn slivers(h: &mut OutputHash) -> Result<(), HashError> {
         solid(h, fillet(&s, &round(1.5, &[], 4)))?;
     }
     Ok(())
+}
+
+/// Two cones of faces at one vertex: two boxes joined at a corner
+/// (`docs/research.md` §7.5).
+fn cones(h: &mut OutputHash) -> Result<(), HashError> {
+    let a = cuboid(&BoxDesc {
+        width: 20.0,
+        depth: 20.0,
+        height: 10.0,
+    })
+    .unwrap_or_default();
+    let mut b = a.clone();
+    b.map_positions(|p| p + DVec3::new(20.0, 20.0, 10.0), false);
+    let j = shape_bool::boolean(&a, &b, &shape_bool::Boolean::default()).unwrap_or_default();
+    solid(h, fillet(&j, &round(2.0, &[], 4)))?;
+    let low = tag(&j, "low", |p| p.x <= 10.0 && p.y <= 10.0 && p.z <= 10.0);
+    solid(
+        h,
+        chamfer(
+            &low,
+            &Chamfer {
+                distance: 1.0,
+                edges: names(&["low"]),
+                ..Default::default()
+            },
+        ),
+    )
 }

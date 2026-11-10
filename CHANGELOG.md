@@ -465,3 +465,8 @@
   corners; N's interference field in the measures), and
   `touching.program.elbows_turned` (still refused; M's errors now name the
   operation). No hash that was on main before moved.
+- `shape-bevel`: a vertex where two cones of faces touch (two boxes
+  joined at a corner) is bevelled as two corners instead of
+  `Unsupported`. A fan that does not close is `NotClosed`: it cannot
+  happen on a closed solid (`docs/research.md` §7.5). Golden case
+  `bevel.cones`; no existing hash moved.

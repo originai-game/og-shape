@@ -24,6 +24,8 @@ use crate::patch::{self, Corner};
 use crate::profile;
 use crate::{BevelError, Miter};
 
+#[path = "cones.rs"]
+mod cones;
 #[path = "general.rs"]
 mod general;
 #[path = "runs.rs"]
@@ -59,6 +61,7 @@ pub(crate) enum Offsets {
 }
 
 /// A resolved bevel request.
+#[derive(Clone)]
 pub(crate) struct Spec {
     pub edges: Vec<EdgeKey>,
     pub offsets: Offsets,
@@ -144,11 +147,11 @@ fn fan(s: &Solid, topo: &Topology, v: u32) -> Result<Fan, BevelError> {
         if cur == start {
             break;
         }
+        // Each directed edge has one triangle and its twin another (the
+        // solid is closed), so the walk is a cycle and comes back to
+        // `start`; this guards that invariant.
         if f.tris.len() > here.len() {
-            return Err(BevelError::Unsupported(
-                p,
-                "a vertex whose fan does not close",
-            ));
+            return Err(BevelError::NotClosed);
         }
     }
     if f.tris.len() != here.len() {
@@ -702,22 +705,34 @@ fn is_cap(name: &str) -> bool {
 }
 
 pub(crate) fn bevel(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
+    // A vertex where two cones of faces touch is split into one per cone.
+    if let Some((solid, edges)) = cones::split(s, &spec.edges) {
+        return bevel_runs(
+            &solid,
+            &Spec {
+                edges,
+                ..spec.clone()
+            },
+        );
+    }
+    bevel_runs(s, spec)
+}
+
+fn bevel_runs(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
     match bevel_once(s, spec) {
         Err(BevelError::TooLarge(at)) => {
             // Straight runs may be cut into pieces shorter than the bevel.
             let Some((solid, edges)) = runs::dissolve(s, &spec.edges) else {
                 return Err(BevelError::TooLarge(at));
             };
-            let again = Spec {
-                edges,
-                offsets: spec.offsets,
-                segments: spec.segments,
-                exponent: spec.exponent,
-                kind: spec.kind,
-                miters: spec.miters,
-                loop_slide: spec.loop_slide,
-            };
-            bevel_once(&solid, &again).map_err(|_| BevelError::TooLarge(at))
+            bevel_once(
+                &solid,
+                &Spec {
+                    edges,
+                    ..spec.clone()
+                },
+            )
+            .map_err(|_| BevelError::TooLarge(at))
         }
         r => r,
     }

@@ -925,3 +925,70 @@ fn loop_slide_keeps_each_bevel_s_width_even_along_its_edge() {
     assert_eq!(w.len(), 2, "{w:?}");
     assert!((w[0] - w[1]).abs() < 1e-6, "{w:?}");
 }
+
+/// Two boxes 20 × 20 × 10 joined where they touch at one corner: the
+/// corner (10, 10, 10) is a vertex of two cones of faces.
+fn corner_touch() -> Solid {
+    let a = cuboid(&BoxDesc {
+        width: 20.0,
+        depth: 20.0,
+        height: 10.0,
+    })
+    .unwrap();
+    let mut b = a.clone();
+    b.map_positions(|p| p + shape_core::DVec3::new(20.0, 20.0, 10.0), false);
+    shape_bool::boolean(&a, &b, &shape_bool::Boolean::default()).unwrap()
+}
+
+#[test]
+fn two_cones_at_one_vertex_are_bevelled_as_two_corners() {
+    let j = corner_touch();
+    let corner = shape_core::DVec3::new(10.0, 10.0, 10.0);
+    let d = Fillet {
+        radius: 2.0,
+        segments: 4,
+        ..Default::default()
+    };
+    let s = fillet(&j, &d).unwrap();
+    check(&s, "fillet");
+    // Each box rounds its own corner: the same as the two boxes apart.
+    let one = fillet(
+        &cuboid(&BoxDesc {
+            width: 20.0,
+            depth: 20.0,
+            height: 10.0,
+        })
+        .unwrap(),
+        &d,
+    )
+    .unwrap();
+    let (v, w) = (s.measure().volume, 2.0 * one.measure().volume);
+    assert!((v - w).abs() < 1e-9 * w, "{v} {w}");
+    assert_eq!(s.measure().components, 2);
+    assert!(!s.positions.contains(&corner));
+    // Only the lower box's edges: the upper box keeps its corner, and the
+    // lower box's copy of it is gone.
+    let mut low = j.clone();
+    for (a, b) in j.real_edges() {
+        let q = [a, b].map(|x| j.positions[x as usize]);
+        if q.iter().all(|p| p.x <= 10.0 && p.y <= 10.0 && p.z <= 10.0) {
+            low.tag_edge(a, b, &["low"]);
+        }
+    }
+    let s = chamfer(
+        &low,
+        &Chamfer {
+            distance: 1.0,
+            edges: names(&["low"]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    check_closed(&s);
+    // Strips pair; each of the eight corners is one flat triangle.
+    let q = quad_pairs(&s, &s.faces(&["chamfer"]).unwrap());
+    assert_eq!(q.triangles - q.paired, 8, "{q:?}");
+    assert_eq!(s.positions.iter().filter(|&&p| p == corner).count(), 1);
+    // The lower box's corner is cut away, so the boxes no longer touch.
+    assert_eq!(s.measure().components, 2);
+}
