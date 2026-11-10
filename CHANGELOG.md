@@ -540,3 +540,53 @@
   one line per bevel, so two runs compare line by line.
 - Previews of the §7.6 cases in `docs/previews/phase3/` (`wide_bore`,
   `wide_hole_rim`, `wide_cylinder_slice`, `wide_twisted_top`).
+- UVs in the data model (`docs/research.md` §17): `Solid::uvs`, one
+  texture coordinate per triangle corner, f64 inside and f32 on output,
+  optional. Canonical order and the output hash include them only when
+  present, so no golden hash moved. `Solid::push_triangle_uv` and
+  `Solid::reverse_triangle` keep them with their triangles.
+- Import keeps UVs and textures: glTF `TEXCOORD_0` (v flipped to the
+  kernel's v-up), OBJ `vt` and FBX's first UV layer now go into
+  `Solid::uvs` (`ImportedPart::uvs` is gone), and each part's
+  base-colour texture is kept as `ImportedPart::map` (`Texture`: the
+  file's bytes and MIME type; glTF `baseColorTexture`, OBJ `map_Kd`, FBX
+  `DiffuseColor`). `Imported::skipped` names a part with UVs on only some
+  faces, a texture on a second UV set, a `KHR_texture_transform`, and the
+  material maps that are not kept (normal, occlusion, emissive,
+  metallic-roughness).
+- Export writes them: `glb` writes a solid's UVs as `TEXCOORD_0` and
+  `Material::map` as an embedded PNG or JPEG; `glb_plain` writes the
+  solid's UVs and `PlainGlb::map` (`PlainGlb::uvs` is gone). A map on a
+  solid without UVs, or not PNG or JPEG, is `ExportError::BadTexture` /
+  `PlainGlbError::BadTexture`.
+- `unwrap` takes `&mut Solid` and sets its `uvs`; `measure` reads the
+  solid's UVs (`Measure::uvs` is gone), so coverage and overlap are
+  measured on carried UVs too.
+- Repair, `apply_transform`, `join` and decimation carry UVs: welds keep
+  each triangle's UVs, turned triangles turn theirs, hole fills take
+  their rim's (`RepairReport::uv_seam_fills` counts fills across a UV
+  seam; `close_holes` returns that count too), parts without UVs joined
+  to parts with them get (0, 0). Decimation keeps UV seams as feature
+  lines and refuses a collapse that cannot match a corner's UV side or
+  would turn a UV triangle over. Measured on Khronos's Duck, Avocado,
+  BoxTextured and DamagedHelmet decimated to half: mean UV error at most
+  a third of a texel, p99 at most 2.2 texels; the texture reaches
+  three.js.
+- Booleans and `fuse` interpolate UVs inside each source face, so cut
+  faces keep their mapping; `BoolReport::faces_without_uvs` counts faces
+  from an operand without UVs when the other has them.
+- `shape_gen::solids::textured(&Generator)`: extrude, revolve, box,
+  cylinder, cone, tube, sphere, torus and dome with UVs in millimetres
+  (caps planar; extrude walls by contour arc length and height; turned
+  walls by radius × angle and profile arc length; unmirrored). The
+  generators themselves are unchanged.
+- `shape-bevel`: `fillet`, `chamfer` and `soften` refuse a solid with
+  UVs (`BevelError::HasUvs`) until bevels interpolate them.
+- CLI and MCP: `repair`, `decimate` and `export` of a mesh write its UVs
+  and texture; `process` keeps a textured mesh's UVs and texture and
+  skips the unwrap (`"unwrap": null`) unless `--unwrap` (MCP
+  `fresh_uvs`) asks for new UVs. The import report shows `"map"` on a
+  part that has a texture.
+- Golden cases added: `uvs.generators`, `uvs.chain`, `uvs.boolean`,
+  `uvs.glb`. `bench/meshtools` gains `uv-check`; three.js renders of the
+  full and halved Duck and DamagedHelmet in `docs/previews/uv/`.
