@@ -240,13 +240,184 @@ fn motion(from: &Frame, to: &Frame) -> Frame {
 /// A solid mapped by a placement (rigid: no mirror).
 fn placed(mut s: Solid, f: &Frame) -> Solid {
     s.map_positions(|p| f.point_to_world(p), false);
+    rounded(s)
+}
+
+/// A solid whose positions were just rounded by a motion or a scale, made
+/// canonical and kept from crossing itself (`docs/research.md` §26).
+///
+/// - Rounding can put a needle a rounding error wide onto one line
+///   (§15.4): such slivers are flipped away, exactly.
+/// - It can turn a needle between two points a rounding error apart over
+///   its neighbours (§25.3, §26): where the solid has an edge shorter
+///   than the boolean's snap distance or a corner that close to the
+///   opposite edge, and only then, its crossing pairs are counted, and
+///   any are repaired by the boolean's repair (`uncross_output`, §23.2),
+///   every point free to move. A solid it cannot improve is returned as
+///   it is.
+fn rounded(mut s: Solid) -> Solid {
     let _ = s.canonicalize();
-    // Rounding can put a needle a rounding error wide onto one line
-    // (`docs/research.md` §15.4): such slivers are flipped away, exactly.
     if shape_bool::drop_slivers(&mut s) {
         let _ = s.canonicalize();
     }
+    if thin(&s) && shape_bool::crossing_pairs(&s) > 0 {
+        s = uncrossed(s);
+    }
     s
+}
+
+/// The boolean's snap distance on `s`: 2⁻⁴⁰ of its box's diagonal
+/// (`docs/research.md` §18.1, §23.2), with the box's corners.
+fn snap_distance(s: &Solid) -> (f64, [DVec3; 2]) {
+    let (mut lo, mut hi) = (DVec3::INFINITY, DVec3::NEG_INFINITY);
+    for &p in &s.positions {
+        lo = lo.min(p);
+        hi = hi.max(p);
+    }
+    ((hi - lo).length() * (1.0 / (1u64 << 40) as f64), [lo, hi])
+}
+
+/// Whether `s` has a triangle that rounding can turn over: an edge shorter
+/// than the snap distance, or a corner that close to the line of the
+/// opposite (longest) edge. Only these decide whether to look; what is
+/// changed is decided by exact predicates.
+fn thin(s: &Solid) -> bool {
+    if s.triangles.is_empty() {
+        return false;
+    }
+    let (tol, _) = snap_distance(s);
+    let tol2 = tol * tol;
+    s.triangles.iter().any(|t| {
+        let [a, b, c] = t.map(|v| s.positions[v as usize]);
+        let longest = (b - a)
+            .length_squared()
+            .max((c - b).length_squared())
+            .max((a - c).length_squared());
+        let shortest = (b - a)
+            .length_squared()
+            .min((c - b).length_squared())
+            .min((a - c).length_squared());
+        // Twice the area is the height on the longest edge times its length.
+        shortest < tol2 || (b - a).cross(c - a).length_squared() < tol2 * longest
+    })
+}
+
+/// `s` (canonical, closed) with its crossing pairs repaired by
+/// [`shape_bool::uncross_output`]: points closer than the snap distance
+/// merged, needles split away, each change kept only if it leaves the
+/// solid closed and crossing itself strictly less. Each kept triangle
+/// keeps its source's surface, names and UVs (interpolated at a moved
+/// corner); a named edge keeps its names on what it became; a skinned
+/// vertex keeps its weights. Unchanged if nothing improves.
+fn uncrossed(s: Solid) -> Solid {
+    let (_, corners) = snap_distance(&s);
+    let out = shape_bool::CsgOutput {
+        points: s.positions.clone(),
+        tris: s.triangles.clone(),
+        origins: (0..s.triangles.len() as u32).map(|i| (0, i)).collect(),
+        coplanar: Vec::new(),
+        touching: Vec::new(),
+        second_pass: false,
+        unmatched: 0,
+        touching_edges: 0,
+        non_manifold: 0,
+        snapped: false,
+    };
+    // The box's corners stand in for the operands: they set the snap
+    // distance and pin nothing a rounding error matters to.
+    let (out, report) = shape_bool::uncross_output(&corners, &[], out);
+    if report.after >= report.before || out.unmatched > 0 || out.non_manifold > 0 {
+        return s;
+    }
+    let key = |p: DVec3| p.to_array().map(|x| (x + 0.0).to_bits());
+    let at: BTreeMap<[u64; 3], u32> = out
+        .points
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| (key(p), i as u32))
+        .collect();
+    // Each old vertex's new one: itself, or for a merged point the
+    // nearest point left (it was merged onto a point within the snap
+    // distance); ties to the lower index.
+    let new_of: Vec<u32> = s
+        .positions
+        .iter()
+        .map(|&p| {
+            at.get(&key(p)).copied().unwrap_or_else(|| {
+                let mut best = (f64::INFINITY, 0u32);
+                for (i, &q) in out.points.iter().enumerate() {
+                    let d = (q - p).length_squared();
+                    if d < best.0 {
+                        best = (d, i as u32);
+                    }
+                }
+                best.1
+            })
+        })
+        .collect();
+    let mut r = Solid {
+        positions: out.points,
+        names: s.names.clone(),
+        ..Default::default()
+    };
+    let mut uvs = s.uvs.as_ref().map(|_| Vec::with_capacity(out.tris.len()));
+    for (t, &(_, src)) in out.tris.iter().zip(&out.origins) {
+        let src = src as usize;
+        r.triangles.push(*t);
+        r.surfaces.push(s.surfaces[src]);
+        r.face_tags.push(s.face_tags[src].clone());
+        if let (Some(u), Some(old)) = (&mut uvs, &s.uvs) {
+            u.push(t.map(|v| s.uv_at(src, r.positions[v as usize]).unwrap_or(old[src][0])));
+        }
+    }
+    r.uvs = uvs;
+    // Named edges: on the edge their ends became, or, split at a point,
+    // on both its pieces.
+    let mut edges: BTreeSet<(u32, u32)> = BTreeSet::new();
+    for t in &r.triangles {
+        for k in 0..3 {
+            edges.insert(shape_mesh::edge_key(t[k], t[(k + 1) % 3]));
+        }
+    }
+    let mut tagged: BTreeMap<(u32, u32), Vec<shape_mesh::Tag>> = BTreeMap::new();
+    for (&(a, b), tags) in &s.edge_tags {
+        let (a, b) = (new_of[a as usize], new_of[b as usize]);
+        if a == b {
+            continue;
+        }
+        let pieces: Vec<(u32, u32)> = if edges.contains(&shape_mesh::edge_key(a, b)) {
+            vec![shape_mesh::edge_key(a, b)]
+        } else {
+            (0..r.positions.len() as u32)
+                .find(|&m| {
+                    edges.contains(&shape_mesh::edge_key(a, m))
+                        && edges.contains(&shape_mesh::edge_key(m, b))
+                })
+                .map(|m| vec![shape_mesh::edge_key(a, m), shape_mesh::edge_key(m, b)])
+                .unwrap_or_default()
+        };
+        for e in pieces {
+            let entry = tagged.entry(e).or_default();
+            entry.extend(tags);
+            entry.sort_unstable();
+            entry.dedup();
+        }
+    }
+    r.edge_tags = tagged;
+    if let Some(skin) = &s.skin {
+        let mut weights = vec![Default::default(); r.positions.len()];
+        for (old, &new) in new_of.iter().enumerate() {
+            if r.positions[new as usize] == s.positions[old] {
+                weights[new as usize] = skin.weights.get(old).copied().unwrap_or_default();
+            }
+        }
+        r.skin = Some(shape_mesh::Skin {
+            bones: skin.bones.clone(),
+            weights,
+        });
+    }
+    let _ = r.canonicalize();
+    r
 }
 
 impl Model {
@@ -750,8 +921,7 @@ impl Model {
             let solid = node.solid.clone().map(|mut s| {
                 let f = node.placement;
                 s.map_positions(|p| image(f.point_to_world(p)), true);
-                let _ = s.canonicalize();
-                s
+                rounded(s)
             });
             (solid, Frame::IDENTITY)
         })?;
@@ -1746,6 +1916,7 @@ impl Model {
         let mut s = self.world_solid(id)?;
         if k != 1.0 {
             s.map_positions(|p| p * k, false);
+            s = rounded(s);
         }
         // A map spanning `size` units: UVs in images, not units.
         let (material, size) = self.mapped_of(id);

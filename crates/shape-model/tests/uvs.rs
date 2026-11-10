@@ -237,10 +237,18 @@ fn every_edit_carries_uvs() {
     assert_eq!(uv("c"), uv("a"));
     // The mirror image's UVs read mirrored: every triangle that read
     // the right way is turned over, and the other way round.
-    let b = parts.iter().find(|p| p["name"] == "b").unwrap();
     let n = |name: &str, k: &str| uv(name)[k].as_u64().unwrap();
-    assert_eq!(
-        n("b", "flipped") + n("b", "zeroArea") + n("a", "flipped"),
-        b["triangles"].as_u64().unwrap()
-    );
+    // The image is repaired where the mirror's rounding folded needles
+    // (`docs/research.md` §26): it may have a few triangles fewer, never
+    // more, and it does not cross itself.
+    let tri = |name: &str| {
+        parts.iter().find(|p| p["name"] == name).unwrap()["triangles"]
+            .as_u64()
+            .unwrap()
+    };
+    let read = n("b", "flipped") + n("b", "zeroArea") + n("a", "flipped");
+    assert!(tri("b") <= tri("a") && tri("a") - tri("b") <= 8);
+    assert!((tri("b")..=tri("a")).contains(&read), "{read}");
+    let image = s.model().world_solid(s.model().find("b").unwrap()).unwrap();
+    assert_eq!(shape_bool::crossing_pairs(&image), 0);
 }

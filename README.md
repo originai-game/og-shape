@@ -51,7 +51,7 @@ Run on `main` on 2026-11-10; each line says where the numbers come from.
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 104 of 106 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
-| No part passes through itself | 139 of 140 built solids have no crossing triangle pair (exact predicates). One has 8: the mouse's shell, a `body` cut twice and filleted | `shape_bool::crossing_pairs` on every part |
+| No part passes through itself | 140 of 140 built solids have no crossing triangle pair (exact predicates). The mouse's shell had 8: its move into the world folded a needle, now repaired (`docs/research.md` §26) | `crates/shape-model/tests/built_parts.rs`, `shape_bool::crossing_pairs` on every part |
 | Bevels never return a wrong result | 17 948 fillets and chamfers on generator and boolean solids: 16 648 built, 1 300 refused with an error value, none returned crossing itself | `cargo run --release -p shape-bevel --example scan` |
 | Booleans against outside meshes | 109 cases from sand3d, Thingi10K, synthetic defects and touching operands; no ok output crosses itself with the repair on | `bench/booleans` (`docs/research.md` §25.2) |
 | The mesh chain on a damaged mesh | open, 2 pieces, 79 flipped faces → closed, 1 piece, on budget, unwrapped with no UV overlap | `shape process golden/meshes/ball_defects.obj` |
@@ -59,10 +59,8 @@ Run on `main` on 2026-11-10; each line says where the numbers come from.
 | three.js reads the output | the washing machine's joints move and a skinned figure poses in headless Chromium; vertex positions match the kernel's own pose | `docs/research.md` §19 |
 | A real MCP client | the official TypeScript SDK client and headless Claude Code drive every tool and resource | `docs/research.md` §19 |
 
-Known limits. Each is an error value or a recorded gap; the two marked
-silent return a result with no error:
-- **Silent:** one built part in the table above crosses itself and was
-  returned without an error (the mouse's shell): to be traced.
+Known limits. Each is an error value or a recorded gap; the one marked
+silent returns a result with no error:
 - **Silent:** a boolean whose result still crosses itself by rounding
   after the repair is returned without an error. Seen on a cup's `shell`
   (44 needle pairs at rounding scale; the cup is closed and of the right

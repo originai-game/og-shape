@@ -965,3 +965,15 @@
   leave, each a solid swept along a helix: `gen2.sweep.ends`,
   `rest.program.glb`, `rest.program.measure`, `solid.sweep.helix`,
   `solid.thread`, `uvs.generators2`.
+- A part moved into the world (`at`, `on`, a turn, a unit other than
+  millimetres) or mirrored no longer crosses itself where the rounding
+  folded a needle between two points a rounding error apart. Where the
+  moved part has an edge or a triangle that thin and crosses itself, the
+  boolean's repair runs on it (`docs/research.md` §26). The mouse's shell
+  in `eval/phase6/Z/Z1/sim2_mouse_and_pad` went from 8 crossing pairs to
+  none, and §25.3's cup from 5 to none. Golden: `touching.program.rim`
+  moved (the cup: two needle triangles fewer, the same volume and names);
+  new `model.placed.slot`. A test builds every `eval/phase6/Z/Z1` program
+  and checks every part closed with no crossing pair. Over every
+  committed program, parts crossing themselves went from 7 to 2 (the
+  octagonal cup's `shell`, §25.4).
