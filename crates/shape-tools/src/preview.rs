@@ -47,8 +47,11 @@
 //! - A ground square under the scene, with the scene's shadow cast on it
 //!   along the light; where only transparent parts cast it, it is lighter
 //!   by their opacity (the most opaque caster at the pixel).
-//! - `metalness`, `roughness` and `emissive` do not change the picture
-//!   (`docs/research.md` §30).
+//! - A material's `emissive` (times `emissive_intensity`, in its
+//!   `color_space`) is added to the lit colour in linear light, before
+//!   blending: it glows the same in shade and in light. A part without it
+//!   is drawn as before, to the byte. The emissive map, `metalness` and
+//!   `roughness` do not change the picture (`docs/research.md` §30, §33).
 //!
 //! No GPU, threads or SIMD; every step is integer arithmetic or f64
 //! `+ - * /`, `sqrt`, `floor` and `trig` in a fixed order, so the
@@ -465,6 +468,21 @@ pub fn views(scene: &Scene, d: &Preview) -> Result<Views, ExportError> {
             ColorSpace::Srgb => rgb,
             ColorSpace::Linear => rgb.map(|c| to_srgb(c.clamp(0.0, 1.0))),
         };
+        let strength = p.material.emissive_intensity.unwrap_or(1.0);
+        if !(strength.is_finite() && p.material.emissive.iter().all(|c| c.is_finite())) {
+            return Err(ExportError::NotFinite(format!(
+                "the emissive colour of part {:?}",
+                p.name
+            )));
+        }
+        let emissive = p.material.emissive.map(|c| {
+            let c = c.clamp(0.0, 1.0);
+            let c = match p.material.color_space {
+                ColorSpace::Srgb => to_linear(c),
+                ColorSpace::Linear => c,
+            };
+            c * strength.max(0.0)
+        });
         let paint = paint(
             p.name.as_str(),
             p.solid,
@@ -478,6 +496,7 @@ pub fn views(scene: &Scene, d: &Preview) -> Result<Views, ExportError> {
             normals,
             edges,
             rgb,
+            emissive,
             opacity: opacity.clamp(0.0, 1.0),
             paint,
         });
@@ -665,6 +684,8 @@ struct Drawn {
     edges: Vec<(DVec3, DVec3)>,
     /// sRGB colour.
     rgb: [f64; 3],
+    /// Light given off, linear, added to the lit colour.
+    emissive: [f64; 3],
     /// In 0..=1; 1 is opaque.
     opacity: f64,
     /// Per-pixel colour, if the part has a map or vertex colours.
@@ -878,7 +899,16 @@ fn draw_triangle(t: &mut Target, look: &Look, p: &Drawn, k: usize) {
         look.cam.corner(q[i], light)
     });
     let persp = look.cam.eye.is_some();
-    let (rgb, alpha) = (p.rgb, p.opacity);
+    let (rgb, alpha, e) = (p.rgb, p.opacity, p.emissive);
+    // The lit sRGB component `c × l`, plus the emissive light (none: the
+    // product as it was).
+    let glow = |c: f64, l: f64, k: usize| {
+        if e[k] == 0.0 {
+            c * l
+        } else {
+            to_srgb((to_linear((c * l).clamp(0.0, 1.0)) + e[k]).min(1.0))
+        }
+    };
     let (depth, ground, out) = (&mut t.depth, &mut t.ground, &mut t.rgb);
     let Some(paint) = &p.paint else {
         raster(dims, c, persp, false, |f| {
@@ -889,11 +919,11 @@ fn draw_triangle(t: &mut Target, look: &Look, p: &Drawn, k: usize) {
             if alpha == 1.0 {
                 depth[i] = z;
                 ground[i] = false;
-                out[i] = [byte(rgb[0] * l), byte(rgb[1] * l), byte(rgb[2] * l)];
+                out[i] = [0, 1, 2].map(|c| byte(glow(rgb[c], l, c)));
             } else {
                 let under = out[i];
                 out[i] = [0, 1, 2].map(|c| {
-                    byte(rgb[c] * l * alpha + f64::from(under[c]) / 255.0 * (1.0 - alpha))
+                    byte(glow(rgb[c], l, c) * alpha + f64::from(under[c]) / 255.0 * (1.0 - alpha))
                 });
             }
         });
@@ -934,12 +964,12 @@ fn draw_triangle(t: &mut Target, look: &Look, p: &Drawn, k: usize) {
         if alpha == 1.0 {
             depth[i] = z;
             ground[i] = false;
-            out[i] = [byte(srgb[0] * l), byte(srgb[1] * l), byte(srgb[2] * l)];
+            out[i] = [0, 1, 2].map(|c| byte(glow(srgb[c], l, c)));
         } else {
             let a = alpha * col[3].clamp(0.0, 1.0);
             let under = out[i];
-            out[i] =
-                [0, 1, 2].map(|c| byte(srgb[c] * l * a + f64::from(under[c]) / 255.0 * (1.0 - a)));
+            out[i] = [0, 1, 2]
+                .map(|c| byte(glow(srgb[c], l, c) * a + f64::from(under[c]) / 255.0 * (1.0 - a)));
         }
     });
 }
@@ -1301,5 +1331,40 @@ mod tests {
         let v = one_view(&floor_quad(), bad, Preview::default());
         assert_eq!(v.images, plain);
         assert_eq!(v.undrawn.len(), 1);
+    }
+
+    #[test]
+    fn emissive_adds_its_colour_in_shade_and_light() {
+        // A black part glowing red is red whatever the light; a dim red
+        // glow on a grey part reddens it; no glow is the plain bytes.
+        let s = floor_quad();
+        let black = Material {
+            color: Some([0.0; 3]),
+            emissive: [1.0, 0.0, 0.0],
+            ..Default::default()
+        };
+        for unlit in [false, true] {
+            let d = Preview {
+                unlit,
+                ..Default::default()
+            };
+            let im = &one_view(&s, black.clone(), d).images[0];
+            assert_eq!(rgb_at(im, 128, 128), [255, 0, 0]);
+        }
+        let grey = Material {
+            color: Some([0.5; 3]),
+            ..Default::default()
+        };
+        let plain = rgb_at(
+            &one_view(&s, grey.clone(), Preview::default()).images[0],
+            128,
+            128,
+        );
+        let warm = Material {
+            emissive: [0.1, 0.0, 0.0],
+            ..grey
+        };
+        let lit = rgb_at(&one_view(&s, warm, Preview::default()).images[0], 128, 128);
+        assert!(lit[0] > plain[0] && lit[1] == plain[1] && lit[2] == plain[2]);
     }
 }
