@@ -279,6 +279,7 @@ fn cases() -> Result<Vec<Case>, Error> {
     stream_q(&mut out)?;
     stream_w(&mut out)?;
     stream_x(&mut out)?;
+    stream_ac(&mut out)?;
     Ok(out)
 }
 
@@ -653,6 +654,44 @@ fn stream_x(out: &mut Vec<Case>) -> Result<(), Error> {
         name: "twisted_all",
         solid: fillet(&twisted, &round(1.5, &[], 4))?,
         focus: None,
+        azimuth: 0.6,
+    });
+    Ok(())
+}
+
+/// Stream AC (`docs/research.md` §7.9): run Z2's toaster housing, a
+/// spline loft whose rows are shallower than its top fillet, and a close-up
+/// of one top corner.
+fn stream_ac(out: &mut Vec<Case>) -> Result<(), Error> {
+    let rr = |w: f64, d: f64, r: f64| {
+        shape_2d::rect(&shape_2d::Rect {
+            width: w,
+            height: d,
+            radius: r,
+        })
+    };
+    let housing = shape_gen::loft::loft(&shape_gen::loft::Loft {
+        sections: vec![
+            (rr(146.0, 284.0, 30.0)?, 0.0),
+            (rr(155.0, 290.0, 34.0)?, 45.0),
+            (rr(150.0, 288.0, 32.0)?, 120.0),
+            (rr(128.0, 264.0, 24.0)?, 175.0),
+        ],
+        steps: 8,
+        curve: shape_gen::loft::LoftCurve::Spline,
+        ..Default::default()
+    })?;
+    let top = fillet(&housing, &round(10.0, &["top"], 0))?;
+    out.push(Case {
+        name: "loft_rows_top",
+        solid: top.clone(),
+        focus: None,
+        azimuth: 0.6,
+    });
+    out.push(Case {
+        name: "loft_rows_top_corner",
+        solid: top,
+        focus: Some((DVec3::new(-50.0, -118.0, 158.0), 20.0)),
         azimuth: 0.6,
     });
     Ok(())

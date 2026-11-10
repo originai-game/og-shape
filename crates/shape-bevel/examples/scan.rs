@@ -293,6 +293,28 @@ fn solids() -> Result<Vec<(String, Solid)>, Error> {
     ] {
         out.push((label.into(), shape_edit::hole(&plate, &d)?));
     }
+    // A spline loft of rounded rectangles whose rows (1 mm) are shorter
+    // than the larger offset (`docs/research.md` §7.9).
+    let rr = |w: f64, d: f64, r: f64| {
+        shape_2d::rect(&shape_2d::Rect {
+            width: w,
+            height: d,
+            radius: r,
+        })
+    };
+    out.push((
+        "loft".into(),
+        shape_gen::loft::loft(&shape_gen::loft::Loft {
+            sections: vec![
+                (rr(20.0, 16.0, 4.0)?, 0.0),
+                (rr(22.0, 18.0, 5.0)?, 4.0),
+                (rr(16.0, 12.0, 3.0)?, 8.0),
+            ],
+            steps: 4,
+            curve: shape_gen::loft::LoftCurve::Spline,
+            ..Default::default()
+        })?,
+    ));
     Ok(out)
 }
 
