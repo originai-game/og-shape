@@ -27,10 +27,22 @@ pub struct Measures {
     pub boundary_edges: usize,
     /// Edges used by more than two triangles, or twice the same way.
     pub non_manifold_edges: usize,
-    /// Triangles of zero area.
+    /// Triangles of zero area: three corners exactly on one line (exact
+    /// predicates, as the mesh tools' measure and the booleans decide it).
+    /// A needle whose exact area is not zero is not counted, though its
+    /// f64 area and normal may round to zero (`docs/research.md` §18).
     pub degenerate_triangles: usize,
     /// Connected pieces (by shared vertices).
     pub components: usize,
+}
+
+/// Three points exactly on one line: collinear in each axis plane.
+fn collinear(t: [DVec3; 3]) -> bool {
+    use shape_core::DVec2;
+    use shape_core::predicates::orient2d;
+    let on =
+        |f: fn(DVec3) -> DVec2| orient2d(f(t[0]), f(t[1]), f(t[2])) == std::cmp::Ordering::Equal;
+    on(|p| DVec2::new(p.x, p.y)) && on(|p| DVec2::new(p.y, p.z)) && on(|p| DVec2::new(p.z, p.x))
 }
 
 pub(crate) fn measure(s: &Solid) -> Measures {
@@ -62,7 +74,7 @@ pub(crate) fn measure(s: &Solid) -> Measures {
         let [a, b, c] = t.map(|i| s.positions[i as usize]);
         let n = (b - a).cross(c - a);
         let area = n.length() / 2.0;
-        if area == 0.0 {
+        if area == 0.0 && collinear([a, b, c]) {
             m.degenerate_triangles += 1;
         }
         m.area += area;

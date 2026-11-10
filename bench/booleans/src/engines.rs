@@ -67,7 +67,15 @@ pub struct Run {
     /// The volumes of the operands the engine used, where it changed them
     /// (untangled): the identities hold for these.
     pub used: Option<(f64, f64)>,
+    /// With [`COUNT_CROSSINGS`], the og-shape engines' f64 output's pairs
+    /// of triangles crossing within one shell (`docs/research.md` §18).
+    pub crossings: Option<usize>,
 }
+
+/// Whether the og-shape engines count their f64 outputs' self-crossings
+/// (`--crossings`; outside the timing).
+pub static COUNT_CROSSINGS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// A mesh welded by exact position, in f64.
 struct Welded {
@@ -126,6 +134,28 @@ fn shell_crossings(m: &Welded) -> (usize, usize) {
     (n, shells.len())
 }
 
+/// An f64 mesh welded by exact position, degenerate triangles left out.
+fn welded64(points: &[DVec3], tris: &[[u32; 3]]) -> Welded {
+    let mut id: std::collections::BTreeMap<[u64; 3], u32> = Default::default();
+    let mut pos = Vec::new();
+    let w: Vec<u32> = points
+        .iter()
+        .map(|p| {
+            *id.entry(p.to_array().map(|x| (x + 0.0).to_bits()))
+                .or_insert_with(|| {
+                    pos.push(*p);
+                    pos.len() as u32 - 1
+                })
+        })
+        .collect();
+    let tris = tris
+        .iter()
+        .map(|t| t.map(|v| w[v as usize]))
+        .filter(|t| t[0] != t[1] && t[1] != t[2] && t[0] != t[2])
+        .collect();
+    Welded { pos, tris }
+}
+
 fn from_points(points: &[DVec3], tris: &[[u32; 3]]) -> Tri {
     Tri {
         pos: points.iter().map(|p| p.as_vec3().to_array()).collect(),
@@ -141,7 +171,7 @@ fn og_shape(
     b: &Tri,
     op: CsgOp,
     untangle: bool,
-) -> (Result<Tri, String>, f64, Option<(f64, f64)>) {
+) -> (Result<Tri, String>, f64, Option<(f64, f64)>, Option<usize>) {
     let start = Instant::now();
     let mut ops = Vec::new();
     for (name, t) in [("A", a), ("B", b)] {
@@ -170,7 +200,7 @@ fn og_shape(
         };
         match prepared {
             Ok(m) => ops.push(m),
-            Err(e) => return (Err(e), start.elapsed().as_secs_f64() * 1000.0, None),
+            Err(e) => return (Err(e), start.elapsed().as_secs_f64() * 1000.0, None, None),
         }
     }
     let prep = start.elapsed().as_secs_f64() * 1000.0;
@@ -184,17 +214,21 @@ fn og_shape(
             .sum::<f64>()
     };
     let used = Some((vol(&ops[0]), vol(&ops[1])));
+    let mut crossings = None;
     let r = csg_points((&ops[0].pos, &ops[0].tris), (&ops[1].pos, &ops[1].tris), op)
         .map_err(|e| format!("{e:?}"))
         .and_then(|(p, t, _)| {
             let out = from_points(&p, &t);
             if t.is_empty() || out.closed() {
+                if COUNT_CROSSINGS.load(std::sync::atomic::Ordering::Relaxed) {
+                    crossings = Some(shell_crossings(&welded64(&p, &t)).0);
+                }
                 Ok(out)
             } else {
                 Err("open result".to_string())
             }
         });
-    (r, prep, used)
+    (r, prep, used, crossings)
 }
 
 fn to_manifold(t: &Tri, robust: bool) -> Result<Manifold, String> {
@@ -238,6 +272,7 @@ pub fn run(engine: Engine, a: &Tri, b: &Tri, op: Op) -> Run {
     let start = Instant::now();
     let mut prep_ms = 0.0;
     let mut used = None;
+    let mut crossings = None;
     let csg_op = match op {
         Op::Union => CsgOp::Union,
         Op::Intersect => CsgOp::Intersect,
@@ -245,9 +280,10 @@ pub fn run(engine: Engine, a: &Tri, b: &Tri, op: Op) -> Run {
     };
     let result = match engine {
         Engine::OgShapeChecked | Engine::OgShapeUntangled => {
-            let (r, prep, u) = og_shape(a, b, csg_op, engine == Engine::OgShapeUntangled);
+            let (r, prep, u, x) = og_shape(a, b, csg_op, engine == Engine::OgShapeUntangled);
             prep_ms = prep;
             used = u;
+            crossings = x;
             r
         }
         Engine::OgGeom => {
@@ -287,5 +323,6 @@ pub fn run(engine: Engine, a: &Tri, b: &Tri, op: Op) -> Run {
         ms: start.elapsed().as_secs_f64() * 1000.0,
         prep_ms,
         used,
+        crossings,
     }
 }

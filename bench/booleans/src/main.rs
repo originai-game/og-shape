@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! cargo run --release -- [--thingi DIR] [--suite NAME]... [--engine NAME]...
-//!                        [--grid N]
+//!                        [--grid N] [--crossings]
 //!                        [--timeout SECS] [--out FILE] [--hashes FILE]
 //! ```
 //!
@@ -19,7 +19,10 @@
 //! - `panic`, `timeout`.
 //!
 //! Output: one TSV row per case and engine, a summary per suite, and with
-//! `--hashes` the output hash of every boolean, for comparing hosts.
+//! `--hashes` the output hash of every boolean, for comparing hosts. With
+//! `--crossings`, the og-shape engines also count the pairs of triangles of
+//! each f64 output that cross within one shell (outside the timing), and
+//! the summary says how many cases left any.
 
 mod engines;
 mod mesh;
@@ -41,6 +44,7 @@ struct Args {
     out: Option<PathBuf>,
     hashes: Option<PathBuf>,
     inputs: bool,
+    crossings: bool,
 }
 
 fn args() -> Args {
@@ -53,6 +57,7 @@ fn args() -> Args {
         out: None,
         hashes: None,
         inputs: false,
+        crossings: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
@@ -66,6 +71,7 @@ fn args() -> Args {
             "--out" => a.out = Some(v().into()),
             "--hashes" => a.hashes = Some(v().into()),
             "--inputs" => a.inputs = true,
+            "--crossings" => a.crossings = true,
             _ => panic!("unknown argument {k}"),
         }
     }
@@ -87,6 +93,8 @@ struct Row {
     tris: usize,
     detail: String,
     hashes: Vec<(Op, String)>,
+    /// Self-crossing pairs over the three outputs (`--crossings`).
+    crossings: Option<usize>,
 }
 
 fn evaluate(case: &Case, engine: Engine) -> Row {
@@ -98,8 +106,12 @@ fn evaluate(case: &Case, engine: Engine) -> Row {
     let mut tris = 0;
     let mut hashes = Vec::new();
     let mut verdict = Verdict::Ok;
+    let mut crossings: Option<usize> = None;
     for op in Op::ALL {
         let r = run(engine, &case.a, &case.b, op);
+        if let Some(n) = r.crossings {
+            crossings = Some(crossings.unwrap_or(0) + n);
+        }
         ms += r.ms;
         prep_ms += r.prep_ms;
         used = used.or(r.used);
@@ -112,6 +124,7 @@ fn evaluate(case: &Case, engine: Engine) -> Row {
                     tris,
                     detail: format!("{op:?}: {e}"),
                     hashes,
+                    crossings,
                 };
             }
             Ok(m) => {
@@ -148,12 +161,16 @@ fn evaluate(case: &Case, engine: Engine) -> Row {
             let _ = write!(detail, "identities off by {e1:.1e}, {e2:.1e}; ");
         }
     }
+    if let Some(n) = crossings {
+        let _ = write!(detail, "outputs cross themselves: {n} pairs; ");
+    }
     Row {
         verdict,
         ms,
         tris,
         detail,
         hashes,
+        crossings,
     }
 }
 
@@ -202,6 +219,7 @@ fn guarded(case: &Case, engine: Engine, timeout: u64) -> Row {
                     tris: 0,
                     detail: msg.lines().next().unwrap_or("").chars().take(120).collect(),
                     hashes: Vec::new(),
+                    crossings: None,
                 }
             }
             Err(_) => Row {
@@ -210,6 +228,7 @@ fn guarded(case: &Case, engine: Engine, timeout: u64) -> Row {
                 tris: 0,
                 detail: String::new(),
                 hashes: Vec::new(),
+                crossings: None,
             },
         }
     }
@@ -222,6 +241,7 @@ fn guarded(case: &Case, engine: Engine, timeout: u64) -> Row {
 
 fn main() {
     let a = args();
+    engines::COUNT_CROSSINGS.store(a.crossings, std::sync::atomic::Ordering::Relaxed);
     std::panic::set_hook(Box::new(|_| {}));
     let want = |s: &str| a.suites.is_empty() || a.suites.iter().any(|x| x == s);
     let mut cases = Vec::new();
@@ -262,6 +282,10 @@ fn main() {
     let mut hashes = String::new();
     // (suite, engine) -> verdict counts and total ms of ok cases.
     let mut summary: std::collections::BTreeMap<(String, &str), ([usize; 5], f64, usize)> =
+        Default::default();
+    // (suite, engine) -> ok cases whose outputs were checked, and of those,
+    // the ones that cross themselves.
+    let mut crossed: std::collections::BTreeMap<(String, &str), (usize, usize)> =
         Default::default();
     for case in &cases {
         for engine in Engine::ALL {
@@ -309,6 +333,13 @@ fn main() {
             if row.verdict == Verdict::Ok {
                 e.1 += row.ms;
                 e.2 += 1;
+                if let Some(n) = row.crossings {
+                    let c = crossed
+                        .entry((case.suite.to_string(), engine.name()))
+                        .or_default();
+                    c.0 += 1;
+                    c.1 += usize::from(n > 0);
+                }
             }
         }
     }
@@ -324,6 +355,14 @@ fn main() {
             "| {suite} | {engine} | {} | {} | {} | {} | {} | {mean} |",
             n[0], n[1], n[2], n[3], n[4]
         );
+    }
+    if !crossed.is_empty() {
+        println!();
+        println!("| suite | engine | ok cases checked | outputs crossing themselves |");
+        println!("|---|---|---|---|");
+        for ((suite, engine), (n, k)) in &crossed {
+            println!("| {suite} | {engine} | {n} | {k} |");
+        }
     }
     if let Some(p) = &a.out {
         std::fs::write(p, tsv).expect("write --out");
