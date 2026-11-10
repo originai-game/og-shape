@@ -1120,6 +1120,24 @@ closed solid or were built by hand for their tests.
   unreachable.** Around a vertex the surface id changes exactly at its
   real edges, and a cycle cannot change exactly once. The arm now joins
   the tip's (a lone edge whose faces meet again).
+- **Flat triangles from straight profiles** (found by the scan, not in
+  §7.4's list). A chamfer of two or more segments puts collinear points
+  on an end face. The ear clip of `finish` could leave three of them as
+  one triangle: counter-clockwise by the exact predicate, but of zero
+  area in floating point, so the whole result was `TooLarge` (one bottom
+  edge of an octagonal prism, `chamfer(0.5, segments 2)`; the side edges
+  of 7-, 9- and 11-gon prisms and pyramids). The same happened beside a
+  boolean's bore, whose rim had two points 2e-15 apart, for chamfers of
+  one or two segments at the block's corners. Now, only where the first
+  clip leaves such a triangle (zero area as `Solid::measure` computes
+  it: from the corner first in position order, which is where
+  `canonicalize` starts it), the polygon is clipped again choosing ears
+  in this order: no flat ear while another fits, an ear beside a flat
+  vertex first (so that vertex gets a new neighbour), then the most
+  nearly equilateral. Results without a flat triangle are the first
+  pass's, so no hash moved. In the scan, `TooLarge` fell from 2 173 to
+  2 102 and the selections where a chamfer of 2 or 4 segments failed but
+  the fillet and the one-segment chamfer fitted from 30 to 1.
 
 ## 8. Phase 4: parts, joints, the CLI and the wasm binding (stream E, 2026-11-09)
 

@@ -476,3 +476,9 @@
   offset as collinear edges on a plane do. A bevelled edge that is the
   only real edge at its vertex cannot happen and is no longer a case.
   Golden case `bevel.inline`; no existing hash moved.
+- Fixed (`shape-bevel`): chamfers of several segments on regular prisms
+  and pyramids, and chamfers at the corners of a bored block, were
+  refused as `TooLarge` although they fit: a face was clipped into a
+  triangle of zero area. Such a face is now clipped again avoiding it;
+  results that were accepted are unchanged. Golden case
+  `bevel.chamfers`; no existing hash moved.

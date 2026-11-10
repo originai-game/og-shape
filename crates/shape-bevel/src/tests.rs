@@ -1128,3 +1128,89 @@ fn an_edge_in_line_with_its_unbevelled_neighbour_across_a_curved_face() {
         }
     }
 }
+
+/// A regular `k`-gon prism of radius 10, 20 tall.
+fn ngon_prism(k: usize, taper: f64) -> Solid {
+    let pts: Vec<DVec2> = (0..k)
+        .map(|i| {
+            let a = trig::TAU * i as f64 / k as f64;
+            DVec2::new(10.0 * trig::cos(a), 10.0 * trig::sin(a))
+        })
+        .collect();
+    extrude(
+        &shape_2d::Profile::from_contour(shape_2d::Contour::corners(pts)),
+        &Extrude {
+            height: 20.0,
+            taper,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn straight_profiles_on_end_faces_leave_no_flat_triangle() {
+    // A chamfer's profile is straight: where an end face was clipped
+    // into a triangle of three of its points, flat in floating point,
+    // the result was refused as `TooLarge` though the chamfer fits.
+    let side = |d: f64, seg: u32| Chamfer {
+        distance: d,
+        edges: names(&["side"]),
+        segments: seg,
+        ..Default::default()
+    };
+    for (k, taper, seg) in [(11, 0.0, 2), (9, 0.0, 3), (7, 1.0, 2)] {
+        let s = chamfer(&ngon_prism(k, taper), &side(1.5, seg)).unwrap();
+        check_closed(&s);
+    }
+    // One bottom edge of an octagonal prism: its end faces are the two
+    // walls beside it.
+    let p = ngon_prism(8, 0.0);
+    let mut one = p.clone();
+    let e = p
+        .edges(&["bottom"])
+        .unwrap()
+        .into_iter()
+        .find(|&(a, b)| [a, b].iter().all(|&v| p.positions[v as usize].y > 7.0))
+        .unwrap();
+    one.tag_edge(e.0, e.1, &["one"]);
+    let s = chamfer(
+        &one,
+        &Chamfer {
+            distance: 0.5,
+            edges: names(&["one"]),
+            segments: 2,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    check(&s, "chamfer");
+    // A block with a bore: its bottom face is rebuilt from its outline,
+    // whose bore rim has two points 2e-15 apart from the cut.
+    let b = cuboid(&BoxDesc {
+        width: 20.0,
+        depth: 20.0,
+        height: 10.0,
+    })
+    .unwrap();
+    let mut c = cylinder(&CylinderDesc {
+        radius: 4.0,
+        height: 30.0,
+        ..Default::default()
+    })
+    .unwrap();
+    c.map_positions(|p| p + shape_core::DVec3::new(0.0, 0.0, -10.0), false);
+    let bored = shape_bool::boolean(
+        &b,
+        &c,
+        &shape_bool::Boolean {
+            op: shape_bool::BoolOp::Cut,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    for seg in [1, 2] {
+        let s = chamfer(&bored, &side(0.5, seg)).unwrap();
+        check(&s, "chamfer");
+    }
+}

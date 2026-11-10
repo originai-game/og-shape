@@ -509,7 +509,43 @@ fn projector(n: DVec3) -> impl Fn(DVec3) -> DVec2 {
 
 /// Ear-clips a polygon (vertex ids) facing `n`; every triangle must turn
 /// counter-clockwise by the exact predicate, or the bevel does not fit.
+///
+/// The first ear found is cut each time. Where that leaves a triangle of
+/// zero area in floating point (three points of a straight chamfer
+/// profile, counter-clockwise only by the exact predicate), the polygon
+/// is clipped again cutting the best-shaped ear each time
+/// (`docs/research.md` §7.5); results without such a triangle are the
+/// first pass's.
 fn clip(poly: &[u32], pos: &[DVec3], n: DVec3) -> Option<Vec<[u32; 3]>> {
+    let first = clip_with(poly, pos, n, false)?;
+    let flat = |t: &[u32; 3]| flat(t, pos);
+    if !first.iter().any(flat) {
+        return Some(first);
+    }
+    clip_with(poly, pos, n, true).filter(|ts| !ts.iter().any(flat))
+}
+
+/// Zero area as [`Solid::measure`] will find it: the canonical solid
+/// starts each triangle at its first vertex in position order, and the
+/// rounding of the area depends on the corner it starts from. Two equal
+/// positions (welded into one) count as zero area too.
+fn flat(t: &[u32; 3], pos: &[DVec3]) -> bool {
+    use shape_core::order::cmp_dvec3;
+    let p = t.map(|v| pos[v as usize] + DVec3::ZERO);
+    let mut r = 0;
+    for k in 1..3 {
+        if cmp_dvec3(p[k], p[r]).is_lt() {
+            r = k;
+        }
+    }
+    let (a, b, c) = (p[r], p[(r + 1) % 3], p[(r + 2) % 3]);
+    cmp_dvec3(a, b).is_eq()
+        || cmp_dvec3(b, c).is_eq()
+        || cmp_dvec3(c, a).is_eq()
+        || (b - a).cross(c - a).length() == 0.0
+}
+
+fn clip_with(poly: &[u32], pos: &[DVec3], n: DVec3, best: bool) -> Option<Vec<[u32; 3]>> {
     use core::cmp::Ordering::Greater;
     let proj = projector(n);
     let mut ring: Vec<u32> = poly.to_vec();
@@ -518,10 +554,11 @@ fn clip(poly: &[u32], pos: &[DVec3], n: DVec3) -> Option<Vec<[u32; 3]>> {
         ring.pop();
     }
     let p2 = |i: u32| proj(pos[i as usize]);
+    let flat = |t: &[u32; 3]| flat(t, pos);
     let mut out = Vec::new();
     while ring.len() > 3 {
         let len = ring.len();
-        let ear = (0..len).find(|&i| {
+        let is_ear = |i: usize| {
             let (a, b, c) = (ring[(i + len - 1) % len], ring[i], ring[(i + 1) % len]);
             let (pa, pb, pc) = (p2(a), p2(b), p2(c));
             if predicates::orient2d(pa, pb, pc) != Greater {
@@ -536,7 +573,38 @@ fn clip(poly: &[u32], pos: &[DVec3], n: DVec3) -> Option<Vec<[u32; 3]>> {
                     && predicates::orient2d(pb, pc, pq) != core::cmp::Ordering::Less
                     && predicates::orient2d(pc, pa, pq) != core::cmp::Ordering::Less)
             })
-        })?;
+        };
+        let ear = if best {
+            // Never a flat ear while another fits; first an ear beside a
+            // flat vertex, which then gets a new neighbour (otherwise the
+            // flat vertex and its neighbours end as the last triangle);
+            // then the most nearly equilateral (twice its area over the
+            // sum of its squared sides); then the first by index.
+            let at = |i: usize| [ring[(i + len - 1) % len], ring[i], ring[(i + 1) % len]];
+            let shape = |i: usize| {
+                let [a, b, c] = at(i).map(|v| pos[v as usize]);
+                let sides =
+                    (b - a).length_squared() + (c - b).length_squared() + (a - c).length_squared();
+                (b - a).cross(c - a).length() / sides
+            };
+            let mut found: Option<((bool, bool, f64), usize)> = None;
+            for i in (0..len).filter(|&i| is_ear(i)) {
+                let beside = flat(&at((i + len - 1) % len)) || flat(&at((i + 1) % len));
+                let q = (!flat(&at(i)), beside, shape(i));
+                let better = found.is_none_or(|(f, _)| {
+                    (q.0, q.1)
+                        .cmp(&(f.0, f.1))
+                        .then(q.2.total_cmp(&f.2))
+                        .is_gt()
+                });
+                if better {
+                    found = Some((q, i));
+                }
+            }
+            found.map(|(_, i)| i)
+        } else {
+            (0..len).find(|&i| is_ear(i))
+        }?;
         let (a, b, c) = (
             ring[(ear + len - 1) % len],
             ring[ear],

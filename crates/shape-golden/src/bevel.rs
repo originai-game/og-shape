@@ -57,6 +57,10 @@ pub fn cases() -> Vec<Case> {
             name: "bevel.inline",
             run: inline,
         },
+        Case {
+            name: "bevel.chamfers",
+            run: chamfers,
+        },
     ]
 }
 
@@ -614,6 +618,68 @@ fn inline(h: &mut OutputHash) -> Result<(), HashError> {
                 distance: 0.3,
                 edges: names(&["along", "split"]),
                 ..Default::default()
+            },
+        ),
+    )
+}
+
+/// Chamfers of several segments whose straight profiles once left a
+/// flat triangle on an end face (`docs/research.md` §7.5).
+fn chamfers(h: &mut OutputHash) -> Result<(), HashError> {
+    let ngon = |k: usize| -> Vec<(f64, f64)> {
+        (0..k)
+            .map(|i| {
+                let a = trig::TAU * i as f64 / k as f64;
+                (10.0 * trig::cos(a), 10.0 * trig::sin(a))
+            })
+            .collect()
+    };
+    let side = |seg: u32| Chamfer {
+        distance: 1.5,
+        edges: names(&["side"]),
+        segments: seg,
+        ..Default::default()
+    };
+    for (k, taper, seg) in [(11, 0.0, 2), (9, 0.0, 3), (7, 1.0, 2)] {
+        let p = prism(
+            &ngon(k),
+            &Extrude {
+                height: 20.0,
+                taper,
+                ..Default::default()
+            },
+        );
+        solid(h, chamfer(&p, &side(seg)))?;
+    }
+    let b = cuboid(&BoxDesc {
+        width: 20.0,
+        depth: 20.0,
+        height: 10.0,
+    })
+    .unwrap_or_default();
+    let mut c = cylinder(&CylinderDesc {
+        radius: 4.0,
+        height: 30.0,
+        ..Default::default()
+    })
+    .unwrap_or_default();
+    c.map_positions(|p| p + DVec3::new(0.0, 0.0, -10.0), false);
+    let bored = shape_bool::boolean(
+        &b,
+        &c,
+        &shape_bool::Boolean {
+            op: shape_bool::BoolOp::Cut,
+            ..Default::default()
+        },
+    )
+    .unwrap_or_default();
+    solid(
+        h,
+        chamfer(
+            &bored,
+            &Chamfer {
+                distance: 0.5,
+                ..side(1)
             },
         ),
     )
