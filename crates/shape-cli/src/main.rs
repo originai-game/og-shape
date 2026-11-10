@@ -7,7 +7,8 @@
 //! shape measure  <input> [--intersections]
 //! shape preview  <input> -o <out.png> [--views N] [--width PX]
 //!                [--height PX] [--columns N] [--elevation RAD]
-//!                [--azimuth RAD] [--no-edges] [--no-ground]
+//!                [--azimuth RAD] [--no-edges] [--no-ground] [--fov RAD]
+//!                [--unlit] [--each] [--uv [--uv-size PX]]
 //! shape import   <mesh> [-o out]
 //! shape repair   <mesh> [-o out] [--weld MM] [--weld-all] [--floaters F]
 //!                [--floater-size MM] [--holes N] [--fuse] [--min-edge MM]
@@ -45,6 +46,10 @@ const USAGE: &str = "usage: shape <command> <input> [options]
                                                 at its pose, its joints and interference
   preview  <input> -o <out.png> [--views N] [--width PX] [--height PX]
            [--columns N] [--elevation RAD] [--azimuth RAD] [--no-edges] [--no-ground]
+           [--fov RAD] [--unlit] [--each] [--uv [--uv-size PX]]
+                                                draws base-colour maps and vertex colours;
+                                                --each: a PNG a view with its camera;
+                                                --uv: each material's UV layout instead
   import   <mesh> [-o out.glb|obj|stl]          parts, images and what was skipped
   repair   <mesh> [-o out] [--weld MM] [--weld-all] [--floaters FRACTION]
            [--floater-size MM] [--holes N] [--fuse] [--min-edge MM] [--intersections]

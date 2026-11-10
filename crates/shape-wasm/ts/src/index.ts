@@ -240,6 +240,10 @@ export interface PreviewDesc {
   azimuth?: number;
   noEdges?: boolean;
   noGround?: boolean;
+  /** Perspective: vertical field of view in radians, up to π/3; orthographic by default. */
+  fov?: number;
+  /** Colour only: no light. */
+  unlit?: boolean;
 }
 
 /** One model. Every method is one kernel operation. */
@@ -544,7 +548,9 @@ export class Shape {
   }
   /** A turntable of the posed model as one PNG, from the CPU rasterizer. */
   preview(d: PreviewDesc = {}): Uint8Array {
-    only("preview", d, ["width", "height", "views", "columns", "elevation", "azimuth", "noEdges", "noGround"]);
+    only("preview", d, [
+      "width", "height", "views", "columns", "elevation", "azimuth", "noEdges", "noGround", "fov", "unlit",
+    ]);
     return this.m.preview(
       d.width ?? 0,
       d.height ?? 0,
@@ -554,6 +560,8 @@ export class Shape {
       d.azimuth ?? 0,
       d.noEdges ?? false,
       d.noGround ?? false,
+      d.fov ?? 0,
+      d.unlit ?? false,
     );
   }
   /** The recorded program (JSON), which `shape` replays to the same bytes. */

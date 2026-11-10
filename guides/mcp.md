@@ -66,7 +66,7 @@ Tools (arguments are in each tool's schema):
 | tool | takes | gives |
 |---|---|---|
 | `build` | `program` (JSON) or `path` (.json) | parts, joints, measures |
-| `preview` | a program or a mesh file; `views`, `width`, `height`, `columns`, `elevation` (over 0, up to π/2), `azimuth` (radians), `no_edges`, `no_ground`, `pose`?, `out`? | a PNG (image content) |
+| `preview` | a program or a mesh file; `views`, `width`, `height`, `columns`, `elevation` (over 0, up to π/2), `azimuth` (radians), `no_edges`, `no_ground`, `fov` (perspective, over 0, up to π/3), `unlit`, `each` (one PNG a view, with its camera), `uv` and `uv_size` (the UV layout of each material instead), `pose`?, `out`? | PNGs (image content); a report: `images` (each with what it `shows`: cameras, or `uv_min` and `tiles`) and `undrawn` maps |
 | `measure` | a program or a mesh file; `intersections`, `posed`, `pose`? | measures, no thresholds |
 | `export` | a program or a mesh file; `out` (.glb, .obj, .stl), `pose`? | the file |
 | `import` | a mesh file; `out`? | parts, materials, UVs, bones, images, what was skipped |

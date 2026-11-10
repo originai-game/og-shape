@@ -60,7 +60,16 @@ import → join → repair → decimate → unwrap → measure → preview → e
    across a seam. After decimation, `uv.overlapping_pairs` and
    `uv.flipped` should be what they were before (a file's own mirrored
    charts count as flipped).
-7. **Preview** and look at it.
+7. **Preview** and look at it. It draws the base-colour map (PNG or
+   JPEG) and vertex colours; its `undrawn` lists a map it could not
+   draw (WebP, KTX2, no UVs). `--uv` (MCP `uv`) shows the UV layout over
+   the map: dark lines are chart outlines, dimmed texels are unused. For
+   a texturing step: `--each --fov 0.7` gives one PNG a view with its
+   camera (position, target, up, field of view; in the scene's frame and
+   the GLB's), `--unlit --no-edges --no-ground` the colour alone, and
+   `--uv --uv-size PX` the layout to paint into (pixel (x, y) is
+   u = uv_min[0] + tiles (x + 0.5) / size, v = uv_min[1] + tiles
+   (size − y − 0.5) / size).
 8. **Export** `glb_plain` for texturing (with `map` to keep the file's
    texture), or `glb` for parts, joints and skins (a part's
    `material.map`). To check a decimated skin, pose both meshes the same way

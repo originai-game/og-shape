@@ -38,13 +38,14 @@ Meshes from elsewhere go through the same kernel:
 
 | | |
 |---|---|
-| ![generated bear](docs/previews/generated/hunyuan-300.png) | ![generated barn](docs/previews/generated/meshy-barn.png) |
-| A Hunyuan3D-2 bear (150 000 triangles) as generated, at 10 000 and at 2 000, its texture kept; top `shape preview`, bottom three.js (`docs/research.md` §28). | A Meshy barn (37 000 triangles), the same way. Its metallic-roughness map is dropped: only the base colour is kept. |
+| ![generated police car](docs/previews/generated/meshy-car_police-colour.png) | ![generated cabinet](docs/previews/generated/spar3d-120-colour.png) |
+| A Meshy police car (37 000 triangles, a 2048² JPEG map) in `shape preview`: top before it drew maps, bottom with its base-colour map sampled per pixel (`docs/research.md` §30). | A SPAR3D cabinet, the same way: the wood inside the grey shell shows only with the map. Its normal map is not drawn. |
 
 `docs/previews/` holds more: the bevel cases (`phase3/`), a skinned
 figure and Mixamo's Soldier posed (`phase5b/`), the models loaded and
 moved in three.js (`validate/`), UVs under a checker (`uv/`), twelve
-generated meshes before and after the chain (`generated/`).
+generated meshes before and after the chain and thirteen before and
+after the preview drew their colour (`generated/`).
 
 ## What has been checked
 
@@ -80,8 +81,10 @@ silent returns a result with no error:
 - 1 300 of the scan's bevels are refused: too large for the faces (426),
   a lone piece of a crease that does not fit (226), a twisted face (340),
   an edge with more than two faces (308).
-- The unwrap is planar per chart, with no atlas packing; the preview
-  draws no textures.
+- The unwrap is planar per chart, with no atlas packing. The preview
+  draws base-colour maps (PNG, JPEG) and vertex colours, but no normal,
+  metallic-roughness or emissive maps, and no metalness, roughness or
+  emissive factors.
 - Not read: Draco and meshopt-compressed glTF, morph targets, vertex
   colours. No USD or URDF export.
 - The declarative `.ogt` source and `og cook` belong to the merge.

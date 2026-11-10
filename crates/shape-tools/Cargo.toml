@@ -12,6 +12,7 @@ shape-core.workspace = true
 shape-mesh.workspace = true
 shape-bool.workspace = true
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
+jpeg-decoder = { version = "0.3.2", default-features = false, features = ["platform_independent"] }
 
 [dev-dependencies]
 gltf = { version = "1.4.1", default-features = false, features = ["utils", "names", "extras"] }

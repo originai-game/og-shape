@@ -68,6 +68,9 @@ pub struct Solid {
     pub skin: Option<Skin>,
     /// Per triangle, its corners' texture coordinates, if it has any.
     pub uvs: Option<Vec<CornerUvs>>,
+    /// Per triangle, its corners' colours, linear RGBA, if it has any;
+    /// parallel to [`Solid::uvs`].
+    pub colors: Option<Vec<[[f64; 4]; 3]>>,
 }
 
 impl Solid {

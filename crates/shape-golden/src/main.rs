@@ -14,6 +14,7 @@ mod interference;
 mod mcp;
 mod meshtools;
 mod model;
+mod painted;
 mod rest;
 mod selfunion;
 mod skin;

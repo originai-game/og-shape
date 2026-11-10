@@ -16,14 +16,14 @@ use shape_cli::decimate::{DecimateDesc, decimate};
 use shape_cli::export::{export, written};
 use shape_cli::import::{ImportDesc, import};
 use shape_cli::measure::{MeasureDesc, measure, measure_posed};
-use shape_cli::preview::{PreviewDesc, render};
+use shape_cli::preview::{PreviewDesc, image_path, render};
 use shape_cli::process::{ProcessDesc, STEPS, process_steps};
 use shape_cli::repair::{RepairDesc, repair};
-use shape_cli::report::{object, string};
+use shape_cli::report::{array, object, string};
 use shape_cli::source::{Source, load, load_uvs};
 use shape_cli::unwrap::{UnwrapDesc, unwrap};
 use shape_cli::{Failure, Files, Input, failed};
-use shape_tools::{Decimate, Floaters, Import, Preview, Repair, Unwrap};
+use shape_tools::{Decimate, Floaters, Import, Preview, Repair, Unwrap, UvView};
 
 use crate::Server;
 use crate::ts::{TsSource, run_polled as run_ts};
@@ -55,8 +55,10 @@ const TOOLS: [Tool; 10] = [
     Tool {
         name: "preview",
         description: "Render a turntable of a program or a mesh file with the kernel's CPU \
-            rasterizer: one PNG with the views side by side, at `pose` if given. Look at it \
-            after every change.",
+            rasterizer: one PNG with the views side by side, at `pose` if given, with each \
+            part's base-colour map and vertex colours. Look at it after every change. `each`: \
+            one PNG a view with its camera (for a texturing step); `uv`: the UV layout of each \
+            material over its map or a checker instead.",
         schema: preview_schema,
         handler: preview_tool,
     },
@@ -513,8 +515,45 @@ fn preview_schema() -> Value {
         ("no_edges", boolean("Do not draw edges.")),
         ("no_ground", boolean("Do not draw the ground shadow.")),
         (
+            "fov",
+            num(
+                "Perspective: vertical field of view in radians, over 0 and up to pi/3; absent \
+                 is orthographic.",
+            ),
+        ),
+        (
+            "unlit",
+            boolean(
+                "Colour only: no light (with no_edges and no_ground, a flat colour \
+                 pass).",
+            ),
+        ),
+        (
+            "each",
+            boolean(
+                "One PNG a view instead of one sheet; the report gives each view's camera \
+                     (position, target, up, fov or ortho_height; scene frame and glTF frame).",
+            ),
+        ),
+        (
+            "uv",
+            boolean(
+                "Draw the UV layout of each material instead: chart outlines over its map, \
+                     or over a checker. The report gives uv_min and tiles: pixel (x, y) is \
+                     u = uv_min[0] + tiles (x + 0.5) / size, v = uv_min[1] + tiles (size - y - \
+                     0.5) / size.",
+            ),
+        ),
+        (
+            "uv_size",
+            int("With `uv`: pixels across and down; 0 is 512."),
+        ),
+        (
             "out",
-            path("Also save the PNG at this path in the workspace."),
+            path(
+                "Also save the PNG at this path in the workspace; several images go to \
+                  <stem>.<k>.png beside it.",
+            ),
         ),
         pose_prop(),
     ]);
@@ -717,6 +756,17 @@ fn preview_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<
             "radians above the horizon, over 0 and up to pi/2 (1.5708); no view from below",
         ));
     }
+    let fov = a.opt_num("fov")?;
+    if fov.is_some_and(|f| !(f > 0.0 && f <= std::f64::consts::FRAC_PI_3)) {
+        return Err(bad(
+            "fov",
+            "radians of vertical field of view, over 0 and up to pi/3 (1.0472)",
+        ));
+    }
+    let uv = a.flag("uv")?;
+    if !uv && a.u32("uv_size")? != 0 {
+        return Err(bad("uv_size", "goes with `uv`"));
+    }
     let d = PreviewDesc {
         preview: Preview {
             width: a.u32("width")?,
@@ -726,31 +776,53 @@ fn preview_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<
             azimuth: a.num("azimuth")?,
             no_edges: a.flag("no_edges")?,
             no_ground: a.flag("no_ground")?,
+            fov,
+            unlit: a.flag("unlit")?,
         },
         columns: a.u32("columns")?,
-    };
-    let png = render(&loaded(server, a)?, &d)?;
-    let output = match a.path("out")? {
-        None => "null".to_string(),
-        Some(out) => {
-            server.ws.write(&out, &png)?;
-            written(&out, png.len())
-        }
-    };
-    let (w, h) = png_size(&png);
-    Ok(vec![
-        json!({
-            "type": "image",
-            "data": crate::base64::encode(&png),
-            "mimeType": "image/png",
+        each: a.flag("each")?,
+        uv: uv.then(|| UvView {
+            size: a.u32("uv_size").unwrap_or(0),
         }),
-        text(object(&[
+    };
+    let rendered = render(&loaded(server, a)?, &d)?;
+    let out = a.path("out")?;
+    let n = rendered.images.len();
+    let mut content = Vec::with_capacity(n + 1);
+    let mut listed = Vec::with_capacity(n);
+    for (k, (png, shows)) in rendered.images.iter().enumerate() {
+        let output = match &out {
+            None => "null".to_string(),
+            Some(out) => {
+                let path = image_path(out, k, n);
+                server.ws.write(&path, png)?;
+                written(&path, png.len())
+            }
+        };
+        let (w, h) = png_size(png);
+        listed.push(vec![
             ("width", w.to_string()),
             ("height", h.to_string()),
             ("bytes", png.len().to_string()),
             ("output", output),
-        ])),
-    ])
+            ("shows", shows.clone()),
+        ]);
+        content.push(json!({
+            "type": "image",
+            "data": crate::base64::encode(png),
+            "mimeType": "image/png",
+        }));
+    }
+    // The first image's fields at the top, as before `each` and `uv`.
+    let mut fields: Vec<(&str, String)> =
+        listed.first().map(|f| f[..4].to_vec()).unwrap_or_default();
+    fields.push((
+        "images",
+        array(&listed.iter().map(|f| object(f)).collect::<Vec<_>>()),
+    ));
+    fields.push(("undrawn", rendered.undrawn));
+    content.push(text(object(&fields)));
+    Ok(content)
 }
 
 fn measure_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {

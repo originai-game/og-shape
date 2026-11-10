@@ -1050,3 +1050,27 @@
   texture. `guides/meshtools.md` told authors to read it, and the report
   left it out. Golden line `mcp.process.ball_defects` moved for the new
   field (its value there is 0), with the owner's leave.
+- The preview draws colour (`docs/research.md` §30): a part's base-colour
+  map (PNG or JPEG; a program's `map`, an imported file's) sampled per
+  pixel from a box-filtered mip chain, and `Solid::colors` (linear RGBA
+  per triangle corner, a new field) interpolated, both times the
+  material's `color` in linear light. A part with neither looks as
+  before, to the byte. A map that cannot be drawn is listed in
+  `Views::undrawn` and the CLI's and MCP's `undrawn`. Metalness,
+  roughness and emissive still do not change the picture.
+- `Preview::fov` (perspective, up to π/3; orthographic stays the
+  default) and `Preview::unlit` (colour only); `shape_tools::views`
+  gives each view's camera (`ViewCamera`). CLI `shape preview --fov RAD
+  --unlit --each`, MCP `preview` `fov`, `unlit`, `each`; the binding's
+  `preview({ fov, unlit })`. `shape preview` now prints a JSON report:
+  the files written, what each shows (cameras in the scene's frame and
+  the GLB's), and the maps not drawn.
+- The UV view: `shape_tools::uv_view`, `shape preview --uv [--uv-size
+  PX]`, MCP `preview` `uv`, `uv_size`: one image per material, chart
+  outlines over its map or a checker, covering whole UV tiles
+  (`uv_min`, `tiles` in the report).
+- `shape preview` of a mesh file draws each part's imported map.
+- New dependency: `jpeg-decoder` 0.3.2 (MIT OR Apache-2.0), without its
+  SIMD paths.
+- Golden: new `tools.preview.textured`, `tools.preview.colors`,
+  `tools.preview.uv`, `uvs.program.preview`; no line moved.

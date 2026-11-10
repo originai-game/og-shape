@@ -298,3 +298,47 @@ fn build_reads_fonts_beside_the_program_and_reports_booleans() {
     assert!(e.contains("not a TrueType"), "{e}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn preview_writes_each_view_with_its_camera_and_the_uv_layout() {
+    let dir = std::env::temp_dir().join(format!("shape-cli-views-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let out = dir.join("v.png");
+    let o = out.to_str().unwrap();
+    let r = report(&[
+        "preview", PROGRAM, "-o", o, "--each", "--views", "2", "--width", "32", "--fov", "0.6",
+    ]);
+    let images = r["images"].as_array().unwrap();
+    assert_eq!(images.len(), 2);
+    for (k, im) in images.iter().enumerate() {
+        let path = im["output"]["path"].as_str().unwrap();
+        assert!(path.ends_with(&format!("v.{k}.png")), "{path}");
+        assert!(std::fs::read(path).unwrap().starts_with(b"\x89PNG"));
+        let cam = &im["shows"]["camera"];
+        assert_eq!(cam["fov"], 0.6);
+        assert_eq!(cam["position"].as_array().unwrap().len(), 3);
+        // The glTF frame: metres, Y up.
+        assert_eq!(
+            cam["gltf"]["target"][1].as_f64().unwrap(),
+            cam["target"][2].as_f64().unwrap() / 1000.0
+        );
+    }
+    // The UV view: the program asked for UVs, one image a material.
+    let r = report(&[
+        "preview",
+        PROGRAM,
+        "--uvs",
+        "-o",
+        o,
+        "--uv",
+        "--uv-size",
+        "64",
+    ]);
+    let images = r["images"].as_array().unwrap();
+    assert!(!images.is_empty());
+    assert_eq!(images[0]["shows"]["size"], 64);
+    assert_eq!(images[0]["shows"]["under"], "checker");
+    // Without UVs there is nothing to lay out.
+    let failed = shape(&["preview", PROGRAM, "-o", o, "--uv"]);
+    assert!(!failed.status.success());
+}

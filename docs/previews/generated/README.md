@@ -15,4 +15,12 @@ Renders of meshes others generated and published:
   huggingface.co/datasets/tfnn/MESHY.AI_800_GLB_3D-Assets_Categorised_and_Labelled;
   generated with Meshy by its users.
 
+`<name>-colour.png` (`docs/research.md` §30): top row `shape preview`
+before it drew maps and vertex colours, bottom row after; the file as
+generated, three views. The vertex-coloured three (`triposr-*`,
+`instantmesh-*`, `unique3d-*`) were drawn with their colours read by a
+scratch reader standing in for the importer's (stream AH).
+`meshy-car_police-handoff.png`: `shape preview --each --views 4 --fov 0.7
+--unlit --no-edges --no-ground`, the views a texturing step takes.
+
 The URL and SHA-256 of each file are in `bench/generated/manifest.tsv`.

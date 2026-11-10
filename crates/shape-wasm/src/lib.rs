@@ -94,7 +94,8 @@ impl Model {
 
     /// A turntable of the posed model as one PNG, `columns` views a row
     /// (0 for all in one). Zeros take the preview's defaults; a negative
-    /// `elevation` is the default 25°.
+    /// `elevation` is the default 25°; a `fov` of 0 or less is
+    /// orthographic; `unlit` leaves the light out (colour only).
     #[allow(clippy::too_many_arguments)]
     pub fn preview(
         &self,
@@ -106,6 +107,8 @@ impl Model {
         azimuth: f64,
         no_edges: bool,
         no_ground: bool,
+        fov: f64,
+        unlit: bool,
     ) -> Result<Vec<u8>, JsError> {
         let d = Preview {
             width,
@@ -115,6 +118,8 @@ impl Model {
             azimuth,
             no_edges,
             no_ground,
+            fov: (fov > 0.0).then_some(fov),
+            unlit,
         };
         let images = self.session.model().preview(&d).map_err(js)?;
         let columns = if columns == 0 {
