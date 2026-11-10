@@ -5431,3 +5431,111 @@ passing that through would remove both. Not done here.
 - The two refusals and the touching join of §23.4.
 - Every new hash is checked natively (x86-64) and as wasm32 under
   wasmtime by the gate here; aarch64 and Windows run in CI only.
+
+## 24. Sweep and wire ends square to the path (stream AB)
+
+Closes §22.5 item 1. Checked against 5417fac.
+
+### 24.1 What was wrong
+
+`paths::sweep` takes its frames from `rmf`, whose tangent at an end is
+the first or last chord; `wire` places its end rings square to the first
+and last run. Along a flattened curve each chord turns half a segment
+from the curve's tangent at its end, so an end section tilts by that
+much and overshoots by r·sin(half a segment): the reproduction (radius
+127 along a quarter arc of radius 276.39) reached z −5.85 and x 282.24
+for 0 and 276.39.
+
+### 24.2 Decisions
+
+- **The flattening knows the tangent; the path carries it.**
+  `path3::Flat::tangents` holds the unit tangent at the start and the end
+  where a curve piece ends the path, zero where a line does. Exact, no
+  transcendental call: an arc's is `axis × (end − centre)` (its start's
+  `e2`); a tangent arc's the same with its own axis; a spline's the
+  direction of the Bézier's first and last control legs (`c1 − p1`,
+  `p2 − c2`); the helix's its derivative
+  (`paths::helix_tangents`, one `sin_cos` of the whole angle, the same
+  call that places its last point).
+- **Sweep and wire take them; zero is the chord.** `paths::Sweep` and
+  `wire::Wire` gain `tangents: [DVec3; 2]`, zero by default, so a path of
+  points and a path whose ends are lines go through exactly the same
+  arithmetic as before (`rmf` is `rmf_ends` with zeros). A given tangent
+  replaces the end's chord in the frames (`rmf_ends`): the end section is
+  square to it, the cap's normal is it. `wire` places its end ring as a
+  mitre's (its run's frame moved onto the plane square to the tangent,
+  through the end point), as every ring inside a curve already is.
+  Refused: a tangent that is not finite, or at 90° or more from its
+  chord (a flattening never gives one; the kernel struct could).
+  `closed` wires ignore them.
+- **Inside, unchanged.** A sweep's inner section is square to the
+  direction from the point before to the point after, a wire's to the
+  bisector of its two runs; on a curve flattened with even steps both
+  are the curve's own tangent at that point. Where a line meets an arc
+  (a lead-in) the mitre is as before; no defect was shown there.
+- **A plain point has no tangent.** The program passes `Flat::tangents`
+  through for `sweep` and `wire` (`shape-model`'s `program.rs`, two
+  lines); a list of points gives zeros. `guides/program.md` and
+  `guides/typescript.md` say so in a clause; the lead-in workaround
+  (`typescript.md`'s `sweep` row, §22.3) is removed.
+
+### 24.3 Other users of the same frames
+
+- `thread` sweeps a triangle along `paths::helix`'s points with the
+  chord at each end: the same tilt. It now passes the helix's tangents.
+  Its z bounds barely move (for radius 4, pitch 0.7, length 5: −0.31440
+  to 5.46848 before, −0.31484 to 5.46656 now; the triangle's half width
+  dominates), but the end faces now lie square to the helix.
+- `sweep::sweep` (three.js-style, `frames::frenet_frames`) and
+  `extrude` along an `ExtrudePath` take each sample's tangent from the
+  curve's own `sample`: no chord, no overshoot. Unchanged.
+- `loft` has no path. Unchanged.
+
+### 24.4 Golden
+
+Every golden line of a point path or a straight-ended path keeps its
+bytes. Moved, each a sweep or wire ending on a curve piece or a helix,
+with the angle between each end cap's normal and the path's exact
+tangent (measured from the built caps, old → new):
+
+| line | what ends on a curve | old | new |
+|---|---|---|---|
+| `rest.program.glb`, `rest.program.measure` | `rail` (sweep, ends in a spline) | start 0° (a line), end 5.52° | 0°, 6e-14° |
+| | `spring` (wire, helix radius 3, 2.5 turns) | 18.64°, 18.64° | 2e-15°, 5e-15° |
+| | `crook` (wire, ends in an arc) | start 0° (a line), end 7.50° | 0°, 0° |
+| `solid.thread`, `uvs.generators2` | `thread` (the only change in either: with the thread's tangents set to zero both keep their bytes) | 53.5° chord to tangent at both ends | 8e-14° |
+
+Every moved part stays closed with no self-intersection (`shape measure
+--intersections` on the exported parts: 0 each). New:
+`gen2.sweep.ends` — the reproduction with its `through` exact (a sweep
+and a wire; the case fails unless z starts at 0 and x ends at 276.39 to
+1e-9), a sweep ending in a spline and a wire along a helix.
+`crates/shape-gen/tests/sweep_ends.rs` checks the same bounds; with the
+end tangents ignored it fails (z −5.87).
+
+The reproduction as committed (`eval/phase6/Z/repro/sweep_end_tangent.json`,
+its `through` rounded to 0.01) now measures z from −0.0200 and x to
+276.4100: exactly 127 · sin of the angle by which that rounded arc's own
+tangent leans from +z (1.576e-4 rad), so the caps sit on the arc's
+tangent.
+
+### 24.5 Found, not changed
+
+- **`paths::helix` has one turn's segments in all.** It asks
+  `segments(radius, 2π · turns)`, and `shape_2d::curve::segments` clamps
+  the angle to one turn, so a helix of any number of turns gets the
+  segment count of one (24 for these radii): `thread`'s golden helix
+  (7.1 turns) has 107° a segment, `rest`'s spring 37.5°. With the ends
+  on the tangent this no longer shows at the ends, but the helix itself
+  is coarse (§16.4's spring reaching 6.498 for 6.5 is the same). Fixing
+  it moves every line with a helix (`solid.thread`, `uvs.generators2`,
+  `rest.program.*`, `gen2.sweep.ends`); not this stream's to decide.
+- **A tangent arc after a curve leaves along the last chord**, not the
+  curve's tangent (`flatten`'s `heading`): a `tangentArc` after an `arc`
+  or `spline` kinks by half a segment. Interior, so not changed here.
+
+### 24.6 What is untested
+
+- A spline's and a tangent arc's end tangent are checked through the
+  golden case and the cap angles above, not by a dedicated test.
+- aarch64 and Windows: CI only.

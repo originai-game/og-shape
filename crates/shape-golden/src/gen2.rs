@@ -6,7 +6,8 @@ use shape_2d::{Circle, Rect, circle, rect};
 use shape_core::{DVec3, HashError, OutputHash, trig};
 use shape_gen::body::{Body, View, body};
 use shape_gen::parts::{GearDesc, Knurl, gear_solid, knurl};
-use shape_gen::paths::{Loft, LoftCurve, loft};
+use shape_gen::path3::{Path3, Piece, flatten};
+use shape_gen::paths::{Helix, Loft, LoftCurve, Sweep, loft, sweep};
 use shape_gen::solids::{
     Axis, DomeDesc, Revolve, SphereDesc, TorusDesc, dome_desc, revolve, sphere_desc, torus_desc,
 };
@@ -44,6 +45,10 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "gen2.gear",
             run: gears,
+        },
+        Case {
+            name: "gen2.sweep.ends",
+            run: sweep_ends,
         },
     ]
 }
@@ -292,6 +297,86 @@ fn gears(h: &mut OutputHash) -> Result<(), HashError> {
             pressure_angle: trig::to_radians(14.5),
             width: 4.0,
             bore: 4.0,
+            ..Default::default()
+        }),
+    )
+}
+
+/// `docs/research.md` §24: a `sweep` and a `wire` of radius 127 along a
+/// quarter arc of radius 276.39 tangent to +z at its start and to +x at
+/// its end (`eval/phase6/Z/repro/sweep_end_tangent.json`, its `through`
+/// exact), whose ends sit square to the arc there: z from 0 and x to
+/// 276.39, or the case fails; a sweep ending in a spline and a wire along
+/// a helix, both ends curved.
+fn sweep_ends(h: &mut OutputHash) -> Result<(), HashError> {
+    let r = 276.39;
+    let half = (0.5f64).sqrt();
+    let arc = flatten(&Path3 {
+        start: DVec3::ZERO,
+        pieces: vec![Piece::Arc {
+            through: DVec3::new(r * (1.0 - half), 0.0, r * half),
+            to: DVec3::new(r, 0.0, r),
+        }],
+    })
+    .map_err(|e| {
+        eprintln!("gen2.sweep.ends: {e}");
+        HashError::NaN
+    })?;
+    let tube = sweep(
+        &disc(127.0),
+        &Sweep {
+            path: arc.points.clone(),
+            up: DVec3::Y,
+            tangents: arc.tangents,
+            ..Default::default()
+        },
+    );
+    let rod = wire(&Wire {
+        path: arc.points.clone(),
+        diameter: 254.0,
+        tangents: arc.tangents,
+        ..Default::default()
+    });
+    for s in [&tube, &rod].into_iter().flatten() {
+        let m = s.measure();
+        if m.bounds_min.z.abs() > 1e-9 || (m.bounds_max.x - r).abs() > 1e-9 {
+            eprintln!("gen2.sweep.ends: the ends are not square to the arc: {m:?}");
+            return Err(HashError::NaN);
+        }
+    }
+    solid(h, tube)?;
+    solid(h, rod)?;
+    let rail = flatten(&Path3 {
+        start: DVec3::ZERO,
+        pieces: vec![
+            Piece::Line(DVec3::new(6.0, 0.0, 0.0)),
+            Piece::Spline(vec![DVec3::new(10.0, 4.0, 2.0), DVec3::new(14.0, 0.0, 4.0)]),
+        ],
+    })
+    .map_err(|_| HashError::NaN)?;
+    solid(
+        h,
+        sweep(
+            &disc(1.0),
+            &Sweep {
+                path: rail.points,
+                tangents: rail.tangents,
+                ..Default::default()
+            },
+        ),
+    )?;
+    let spring = shape_gen::path3::helix(&Helix {
+        radius: 3.0,
+        pitch: 2.0,
+        turns: 2.5,
+    })
+    .map_err(|_| HashError::NaN)?;
+    solid(
+        h,
+        wire(&Wire {
+            path: spring.points,
+            diameter: 1.0,
+            tangents: spring.tangents,
             ..Default::default()
         }),
     )

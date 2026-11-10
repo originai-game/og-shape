@@ -43,15 +43,21 @@ pub struct Path3 {
     pub pieces: Vec<Piece>,
 }
 
-/// A flattened path: its points, and per point whether it is a corner
-/// (the start, the end, and where two pieces meet without a tangent
-/// piece leaving it). Points inside a curve are not corners.
+/// A flattened path: its points, per point whether it is a corner (the
+/// start, the end, and where two pieces meet without a tangent piece
+/// leaving it), and the path's direction at its two ends. Points inside a
+/// curve are not corners.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Flat {
     /// The points.
     pub points: Vec<DVec3>,
     /// Per point: a corner.
     pub corner: Vec<bool>,
+    /// The unit tangent at the start and at the end where a curve piece
+    /// (an arc, a spline, the helix) ends the path there; zero where a
+    /// line does, whose first or last chord is its direction. For
+    /// [`crate::paths::Sweep::tangents`] and [`crate::wire::Wire::tangents`].
+    pub tangents: [DVec3; 2],
 }
 
 fn finite3(p: DVec3, what: &str) -> Result<DVec3, GenError> {
@@ -100,6 +106,11 @@ fn cubic(p0: DVec3, p1: DVec3, p2: DVec3, p3: DVec3) -> Vec<DVec3> {
         .collect()
 }
 
+/// `v` of unit length, or zero when it has none.
+fn unit(v: DVec3) -> DVec3 {
+    v.try_normalize().unwrap_or(DVec3::ZERO)
+}
+
 /// The path's points. Refused: a non-finite point, an arc whose three
 /// points are on one line or repeat, a tangent arc with no direction
 /// before it or whose end lies straight behind it, and a piece that does
@@ -108,6 +119,7 @@ pub fn flatten(d: &Path3) -> Result<Flat, GenError> {
     let mut f = Flat {
         points: vec![finite3(d.start, "the start")?],
         corner: vec![true],
+        tangents: [DVec3::ZERO; 2],
     };
     for (k, piece) in d.pieces.iter().enumerate() {
         let a = *f.points.last().unwrap_or(&d.start);
@@ -117,6 +129,8 @@ pub fn flatten(d: &Path3) -> Result<Flat, GenError> {
         };
         let what = |w: &str| GenError::Invalid(format!("path piece {}: {w}", k + 1));
         let mut smooth_start = false;
+        // The piece's exact tangent at its start and end; zero for a line.
+        let mut ends = [DVec3::ZERO; 2];
         let pts: Vec<DVec3> = match piece {
             Piece::Line(p) => vec![finite3(*p, "a point")?],
             Piece::Arc { through, to } => {
@@ -134,7 +148,9 @@ pub fn flatten(d: &Path3) -> Result<Flat, GenError> {
                         / (2.0 * ww);
                 let r = (a - o).length();
                 let e1 = (a - o) / r;
-                let e2 = (w / ww.sqrt()).cross(e1);
+                let axis = w / ww.sqrt();
+                let e2 = axis.cross(e1);
+                ends = [e2, unit(axis.cross(c - o))];
                 arc_points(o, r, e1, e2, turn(c - o, e1, e2), c)
             }
             Piece::TangentArc(p) => {
@@ -154,6 +170,7 @@ pub fn flatten(d: &Path3) -> Result<Flat, GenError> {
                     let k = dv.length_squared() / (2.0 * m.dot(dv));
                     let o = a + m * k;
                     let r = k.abs();
+                    ends = [t, unit((-m).cross(t).cross(c - o))];
                     arc_points(o, r, -m, t, turn(c - o, -m, t), c)
                 }
             }
@@ -171,7 +188,14 @@ pub fn flatten(d: &Path3) -> Result<Flat, GenError> {
                     let p0 = all[i.saturating_sub(1)];
                     let (p1, p2) = (all[i], all[i + 1]);
                     let p3 = all[(i + 2).min(m - 1)];
-                    out.extend(cubic(p1, p1 + (p2 - p0) / 6.0, p2 - (p3 - p1) / 6.0, p2));
+                    let (c1, c2) = (p1 + (p2 - p0) / 6.0, p2 - (p3 - p1) / 6.0);
+                    if i == 0 {
+                        ends[0] = unit(c1 - p1);
+                    }
+                    if i + 2 == m {
+                        ends[1] = unit(p2 - c2);
+                    }
+                    out.extend(cubic(p1, c1, c2, p2));
                 }
                 out
             }
@@ -182,6 +206,10 @@ pub fn flatten(d: &Path3) -> Result<Flat, GenError> {
         if smooth_start && let Some(s) = f.corner.last_mut() {
             *s = false;
         }
+        if k == 0 {
+            f.tangents[0] = ends[0];
+        }
+        f.tangents[1] = ends[1];
         let n = pts.len();
         for (i, p) in pts.into_iter().enumerate() {
             f.points.push(p);
@@ -192,13 +220,15 @@ pub fn flatten(d: &Path3) -> Result<Flat, GenError> {
 }
 
 /// The helix of [`crate::paths::helix`] as a [`Flat`]: its ends are
-/// corners, the rest smooth.
+/// corners, the rest smooth, and its tangents
+/// [`crate::paths::helix_tangents`].
 pub fn helix(d: &crate::paths::Helix) -> Result<Flat, GenError> {
     let points = crate::paths::helix(d)?;
     let n = points.len();
     Ok(Flat {
         points,
         corner: (0..n).map(|i| i == 0 || i + 1 == n).collect(),
+        tangents: crate::paths::helix_tangents(d),
     })
 }
 

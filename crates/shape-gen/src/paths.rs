@@ -17,13 +17,38 @@ pub use crate::loft::{Loft, LoftCurve, loft};
 
 /// Rotation-minimizing frames along a polyline by double reflection
 /// (Wang, Jüttler, Zheng, Liu, TOG 2008): `(tangent, normal)` per point.
-/// The first normal is `up` made perpendicular to the first tangent.
+/// The first normal is `up` made perpendicular to the first tangent. The
+/// tangent at an end is the first or last chord's direction; inside, the
+/// direction from the point before to the point after.
 pub fn rmf(path: &[DVec3], up: DVec3) -> Result<Vec<(DVec3, DVec3)>, GenError> {
+    rmf_ends(path, up, [DVec3::ZERO; 2])
+}
+
+/// [`rmf`] with the tangents at the two ends given: `ends[0]` at the
+/// start and `ends[1]` at the end, each zero for the chord's direction.
+/// Refused: a given tangent that is not finite, or at 90° or more from
+/// its chord.
+pub fn rmf_ends(
+    path: &[DVec3],
+    up: DVec3,
+    ends: [DVec3; 2],
+) -> Result<Vec<(DVec3, DVec3)>, GenError> {
     let n = path.len();
     if n < 2 {
         return Err(GenError::Profile(ProfileError::TooFewPoints(n)));
     }
+    let ends = end_tangents(path, ends)?;
     let tangent = |i: usize| {
+        if i == 0
+            && let Some(t) = ends[0]
+        {
+            return Ok(t);
+        }
+        if i == n - 1
+            && let Some(t) = ends[1]
+        {
+            return Ok(t);
+        }
         let d = if i == 0 {
             path[1] - path[0]
         } else if i == n - 1 {
@@ -76,10 +101,18 @@ pub struct Sweep {
     pub twist: f64,
     /// Scale of the profile at the end (0 keeps it).
     pub scale_end: f64,
+    /// The path's direction at its start and at its end, which the end
+    /// sections are square to; zero for the first or last chord's
+    /// direction (a path of points has no other). A path of curve pieces
+    /// gives them ([`crate::path3::Flat::tangents`]).
+    pub tangents: [DVec3; 2],
 }
 
 /// Sweeps `profile` (in its xy plane, y towards `up`) along `d.path` with
-/// rotation-minimizing frames. The ends are capped `start` and `end`.
+/// rotation-minimizing frames. The ends are capped `start` and `end`,
+/// each square to the path's direction there (`d.tangents`, else the
+/// chord); a section inside is square to the direction from the point
+/// before it to the point after.
 pub fn sweep(profile: &Profile, d: &Sweep) -> Result<Solid, GenError> {
     sweep_with(profile, d, false)
 }
@@ -95,7 +128,7 @@ pub(crate) fn sweep_with(profile: &Profile, d: &Sweep, uvs: bool) -> Result<Soli
     if d.path.iter().any(|p| !p.is_finite()) || !d.twist.is_finite() || !d.scale_end.is_finite() {
         return Err(GenError::NotFinite("sweep"));
     }
-    let frames = rmf(&d.path, d.up)?;
+    let frames = rmf_ends(&d.path, d.up, d.tangents)?;
     let n = d.path.len();
     let end_scale = if d.scale_end == 0.0 { 1.0 } else { d.scale_end };
     // Arc length, so twist and scale spread by distance, not by point.
@@ -199,6 +232,36 @@ pub(crate) fn sweep_with(profile: &Profile, d: &Sweep, uvs: bool) -> Result<Soli
     finish(s)
 }
 
+/// The given end tangents made unit (`None` where zero: the chord), each
+/// checked against its chord.
+pub(crate) fn end_tangents(
+    path: &[DVec3],
+    ends: [DVec3; 2],
+) -> Result<[Option<DVec3>; 2], GenError> {
+    let n = path.len();
+    let chords = [path[1] - path[0], path[n - 1] - path[n - 2]];
+    let mut out = [None; 2];
+    for k in 0..2 {
+        let t = ends[k];
+        if !t.is_finite() {
+            return Err(GenError::NotFinite("tangents"));
+        }
+        if t == DVec3::ZERO {
+            continue;
+        }
+        let t = t.normalize();
+        if t.dot(chords[k]) <= 0.0 {
+            return Err(GenError::Invalid(format!(
+                "the path's {} tangent is at 90° or more from its {} chord",
+                ["start", "end"][k],
+                ["first", "last"][k]
+            )));
+        }
+        out[k] = Some(t);
+    }
+    Ok(out)
+}
+
 fn contour_runs(c: &Contour) -> Vec<(usize, usize)> {
     let n = c.points.len();
     let corners: Vec<usize> = (0..n).filter(|&i| c.sharp[i]).collect();
@@ -244,6 +307,23 @@ pub fn helix(d: &Helix) -> Result<Vec<DVec3>, GenError> {
         .collect())
 }
 
+/// The helix's unit tangent at its start and its end (its derivative, not
+/// a chord).
+pub fn helix_tangents(d: &Helix) -> [DVec3; 2] {
+    let angle = trig::TAU * d.turns;
+    let rise = d.pitch * d.turns;
+    let (s, c) = trig::sin_cos(angle);
+    let unit = |v: DVec3| v.try_normalize().unwrap_or(DVec3::ZERO);
+    [
+        unit(DVec3::new(0.0, d.radius * angle, rise)),
+        unit(DVec3::new(
+            -d.radius * angle * s,
+            d.radius * angle * c,
+            rise,
+        )),
+    ]
+}
+
 /// An external screw thread's ridge.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Thread {
@@ -278,11 +358,12 @@ pub(crate) fn thread_with(d: &Thread, uvs: bool) -> Result<Solid, GenError> {
         return Err(GenError::NotPositive("radius - depth"));
     }
     let root = d.radius - depth;
-    let path = helix(&Helix {
+    let spiral = Helix {
         radius: root - 0.1 * depth,
         pitch: d.pitch,
         turns: d.length / d.pitch,
-    })?;
+    };
+    let path = helix(&spiral)?;
     // In the profile plane: x along the binormal (≈ along the axis), y
     // along the normal. The normal starts radial; make the ridge point out.
     let half = 0.45 * d.pitch;
@@ -297,6 +378,7 @@ pub(crate) fn thread_with(d: &Thread, uvs: bool) -> Result<Solid, GenError> {
         &Sweep {
             path,
             up: start_radial,
+            tangents: helix_tangents(&spiral),
             ..Default::default()
         },
         uvs,

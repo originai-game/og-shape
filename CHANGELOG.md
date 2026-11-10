@@ -927,3 +927,13 @@
   `smallgaps.hole.diagonal`, `smallgaps.knob.program`,
   `touching.countersink.ring`, `touching.lofts.cut`, `touching.lofts.join`,
   `touching.program.elbows`, `touching.torus.ring`.
+- `sweep` and `wire` along a path that ends in a curve piece (an arc, a
+  tangent arc, a spline, the helix) end square to the curve's tangent
+  there, not to the first or last chord: the caps sit at the path's end
+  points with the path's direction as their normal (`docs/research.md`
+  §24). A plain point keeps the chord. `shape_gen::path3::Flat` carries
+  `tangents`; `paths::Sweep` and `wire::Wire` take `tangents` (zero: the
+  chord); `paths::rmf_ends`, `paths::helix_tangents`. `thread` ends
+  square to its helix too. Golden lines moved: `rest.program.glb`,
+  `rest.program.measure`, `solid.thread`, `uvs.generators2`; new
+  `gen2.sweep.ends`. The guides' lead-in workaround is gone.
