@@ -403,6 +403,22 @@ pub(crate) fn drop_unused(s: &Solid) -> Solid {
     rebuild(s, &all, &remap, positions)
 }
 
+/// The solid with only the triangles `keep` (indices, in order) and the
+/// vertices they use: one copy, not a rebuilt one and then a compacted one.
+fn kept(s: &Solid, keep: &[usize]) -> Solid {
+    let mut remap = vec![u32::MAX; s.positions.len()];
+    let mut positions = Vec::new();
+    for &i in keep {
+        for &v in &s.triangles[i] {
+            if remap[v as usize] == u32::MAX {
+                remap[v as usize] = positions.len() as u32;
+                positions.push(s.positions[v as usize]);
+            }
+        }
+    }
+    rebuild(s, keep, &remap, positions)
+}
+
 fn rebuild(s: &Solid, triangles: &[usize], remap: &[u32], positions: Vec<DVec3>) -> Solid {
     let mut out = Solid {
         positions,
@@ -473,6 +489,11 @@ pub struct Weld {
 /// positions, not on their order. Returns the solid and how many vertices
 /// went.
 pub fn weld(s: &Solid, d: &Weld) -> Result<(Solid, usize), RepairError> {
+    weld_owned(s.clone(), d)
+}
+
+/// [`weld`], on a solid it may take apart: no second copy is made.
+fn weld_owned(s: Solid, d: &Weld) -> Result<(Solid, usize), RepairError> {
     let distance = d.distance;
     if !(distance >= 0.0 && distance.is_finite()) {
         return Err(RepairError::BadDistance);
@@ -481,11 +502,10 @@ pub fn weld(s: &Solid, d: &Weld) -> Result<(Solid, usize), RepairError> {
         return Err(RepairError::NaN);
     }
     let before = s.positions.len();
-    let mut exact = s.clone();
+    let mut exact = s;
     exact.canonicalize()?;
-    let s = &exact;
-    let mut out = s.clone();
-    if distance > 0.0 {
+    let welded = if distance > 0.0 {
+        let s = &exact;
         let mut uses: BTreeMap<(u32, u32), u32> = BTreeMap::new();
         for t in &s.triangles {
             for k in 0..3 {
@@ -544,9 +564,21 @@ pub fn weld(s: &Solid, d: &Weld) -> Result<(Solid, usize), RepairError> {
             };
         }
         let all: Vec<usize> = (0..s.triangles.len()).collect();
-        out = rebuild(s, &all, &remap, kept);
-    }
-    let mut out = drop_unused(&out);
+        Some(rebuild(s, &all, &remap, kept))
+    } else {
+        None
+    };
+    // One copy at a time: each is dropped before the next step's stands.
+    let out = match welded {
+        Some(w) => {
+            drop(exact);
+            w
+        }
+        None => exact,
+    };
+    let used = drop_unused(&out);
+    drop(out);
+    let mut out = used;
     out.canonicalize()?;
     let removed = before - out.positions.len();
     Ok((out, removed))
@@ -574,8 +606,7 @@ pub fn remove_degenerate(s: &Solid) -> Result<(Solid, usize, usize), RepairError
         }
         keep.push(i);
     }
-    let remap: Vec<u32> = (0..s.positions.len() as u32).collect();
-    let mut out = drop_unused(&rebuild(s, &keep, &remap, s.positions.clone()));
+    let mut out = kept(s, &keep);
     out.canonicalize()?;
     Ok((out, deg, dup))
 }
@@ -656,8 +687,7 @@ pub fn remove_floaters(s: &Solid, d: &Floaters) -> Result<(Solid, usize, usize),
         .collect();
     let dropped = drop.iter().filter(|&&x| x).count();
     let tris = s.triangles.len() - keep.len();
-    let remap: Vec<u32> = (0..s.positions.len() as u32).collect();
-    let mut out = drop_unused(&rebuild(s, &keep, &remap, s.positions.clone()));
+    let mut out = kept(s, &keep);
     out.canonicalize()?;
     Ok((out, dropped, tris))
 }
@@ -669,7 +699,11 @@ pub fn remove_floaters(s: &Solid, d: &Floaters) -> Result<(Solid, usize, usize),
 /// more than two triangles do not propagate. Returns the solid and how
 /// many triangles were turned.
 pub fn orient(s: &Solid) -> Result<(Solid, usize), RepairError> {
-    let mut s = s.clone();
+    orient_owned(s.clone())
+}
+
+/// [`orient`], on a solid it may change in place.
+fn orient_owned(mut s: Solid) -> Result<(Solid, usize), RepairError> {
     s.canonicalize()?;
     let n = s.triangles.len();
     let mut by_edge: BTreeMap<(u32, u32), Vec<u32>> = BTreeMap::new();
@@ -1578,20 +1612,24 @@ fn fuse_shells(s: &Solid, floaters: &Floaters, r: &mut RepairReport) -> Result<S
     }
     let mut all = Solid::default();
     let mut whole: Option<Solid> = None;
-    for (c, t) in comps.iter().zip(&tangled) {
-        let shells = if *t {
-            match shape_bool::self_union(c) {
+    let alone = comps.len() == 1;
+    // Each shell is given up as it is taken, and each copy dropped once
+    // the next stands (`docs/research.md` §36).
+    for (c, t) in comps.into_iter().zip(tangled) {
+        let shells = if t {
+            match shape_bool::self_union(&c) {
                 Ok(u) => {
+                    drop(c);
                     let parts = shape_bool::components(&u);
-                    if comps.len() == 1 && parts.len() == 1 {
+                    if alone && parts.len() == 1 {
                         whole = Some(u);
                     }
                     parts
                 }
-                Err(_) => vec![c.clone()],
+                Err(_) => vec![c],
             }
         } else {
-            vec![c.clone()]
+            vec![c]
         };
         for x in &shells {
             all.append(x);
@@ -1603,7 +1641,9 @@ fn fuse_shells(s: &Solid, floaters: &Floaters, r: &mut RepairReport) -> Result<S
         // One shell, untangled whole: the self-union is the result.
         return Ok(u);
     }
-    let (all, dropped, gone) = remove_floaters(&all, floaters).map_err(|e| e.to_string())?;
+    let (kept, dropped, gone) = remove_floaters(&all, floaters).map_err(|e| e.to_string())?;
+    drop(all);
+    let all = kept;
     r.pockets_dropped = dropped;
     r.pocket_triangles_dropped = gone;
     // Which shells must be joined: they meet, or one's box holds the
@@ -1696,8 +1736,18 @@ fn fuse_shells(s: &Solid, floaters: &Floaters, r: &mut RepairReport) -> Result<S
 /// triangles, floaters, orientation, holes, fuse, short edges) and reports
 /// what each changed. The result is in canonical order.
 pub fn repair(s: &Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairError> {
+    repair_owned(s.clone(), d)
+}
+
+/// [`repair`], taking the solid: a caller done with its input gives it
+/// up, and the steps work on one copy less (300 MiB on 600 000 triangles
+/// with colours, `docs/research.md` §36). The result is the same.
+pub fn repair_owned(s: Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairError> {
     let mut r = RepairReport::default();
-    let (s, welded) = weld(
+    // Each step's input is dropped as soon as its output stands: a mesh
+    // of 600 000 triangles with colours is some 300 MiB, and nine of them
+    // held to the end were most of the peak (`docs/research.md` §36).
+    let (mut s, welded) = weld_owned(
         s,
         &Weld {
             distance: d.weld,
@@ -1705,42 +1755,44 @@ pub fn repair(s: &Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairErro
         },
     )?;
     r.welded = welded;
-    let (s, deg, dup) = remove_degenerate(&s)?;
+    let (next, deg, dup) = remove_degenerate(&s)?;
+    s = next;
     r.degenerate = deg;
     r.duplicates = dup;
-    let (s, f, ft) = remove_floaters(&s, &d.floaters)?;
+    let (next, f, ft) = remove_floaters(&s, &d.floaters)?;
+    s = next;
     r.floaters = f;
     r.floater_triangles = ft;
-    let (s, flipped) = orient(&s)?;
+    let (next, flipped) = orient_owned(s)?;
+    s = next;
     r.flipped = flipped;
-    let s = if d.non_manifold {
-        let (s, mut nm) = split_non_manifold(&s)?;
+    if d.non_manifold {
+        let (next, mut nm) = split_non_manifold(&s)?;
+        s = next;
         // Sheets apart now may be floaters, and orientation can now run
         // across the edges that were split.
-        let (s, f, ft) = remove_floaters(&s, &d.floaters)?;
+        let (next, f, ft) = remove_floaters(&s, &d.floaters)?;
+        s = next;
         nm.sheets_dropped = f;
         nm.sheet_triangles_dropped = ft;
-        let (s, more) = orient(&s)?;
+        let (next, more) = orient_owned(s)?;
+        s = next;
         r.flipped += more;
         r.non_manifold = Some(nm);
-        s
-    } else {
-        s
-    };
-    let s = if d.max_hole_edges > 0 {
-        let (s, h) = close_holes(&s, d.max_hole_edges)?;
+    }
+    if d.max_hole_edges > 0 {
+        let (next, h) = close_holes(&s, d.max_hole_edges)?;
+        s = next;
         r.uv_seam_fills = h.uv_seam_fills;
         r.holes_filled = h.filled;
         r.large_holes_filled = h.large;
         r.fill_triangles = h.triangles;
         r.holes_left = h.left;
         // Filling can join pieces that were apart; orient once more.
-        let (s, more) = orient(&s)?;
+        let (next, more) = orient_owned(s)?;
+        s = next;
         r.flipped += more;
-        s
-    } else {
-        s
-    };
+    }
     let s = if d.fuse {
         let n = pieces(&s).1;
         // One shell is left as it is unless it is closed and passes

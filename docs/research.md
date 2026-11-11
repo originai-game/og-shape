@@ -8045,3 +8045,48 @@ hollow that was not one. No shell that was clean changed volume.
   solid with room for less than 10⁻⁶ of its size is refused as `NoRoom`.
 - The walls' UVs are the outer face's carried along its plane, not the
   copy's corner for corner: the texture does not shrink with the hollow.
+
+## 36. Repair's memory peak (2026-11-11)
+
+§33.4 left 3.0–3.3 GiB peaks on vertex-coloured files of 600 000 to
+800 000 triangles, untraced. Traced on Unique3D's bear (`unique3d-300`,
+619 000 triangles with colours, 16 MiB of GLB), resident memory read at
+each step (`VmHWM`):
+
+- A `Solid` of that size is about 300 MiB (per triangle: 96 bytes of
+  corner colours, 48 of UVs, a `Vec` of face names, its corners and
+  surface).
+- **`repair` held every step's solid to the end.** Each step was
+  `let (s, …) = step(&s)?`: the name is shadowed, the value lives on.
+  Nine solids stood when the last step ran.
+- `weld` made two copies it did not need (a clone overwritten, a
+  rebuilt solid kept while its compacted copy was made); the steps that
+  drop triangles rebuilt the solid and then compacted it, two copies
+  for one; `fuse` kept each shell, its union and the joined copy.
+- `process` and `shape repair` kept the joined input while repairing it.
+
+**Changed.** Each step's input is dropped when its output stands;
+`weld` and `orient` work on the solid they are given when the caller
+is done with it; the kept triangles and their vertices are built in one
+copy; `fuse` gives up each shell as it takes it. New
+`shape_tools::repair_owned` takes the solid (`repair(&s)` is
+`repair_owned(s.clone())`); `shape process` and `shape repair` use it.
+
+| the bear, peak resident memory | before | after |
+|---|---|---|
+| `shape process --budget 10000 --intersections --non-manifold` | 2 663 MiB | 879 MiB |
+| the bench's (`--weld 0.001 --floaters 0.05 --non-manifold --holes 64 --fuse`) | 3 366 MiB | 1 497 MiB |
+| `shape repair --non-manifold` | 2 663 MiB | 910 MiB |
+
+Times are unchanged (33 s, 51 s, 12 s). **The outputs are byte for byte
+the same** (`cmp` on the three GLBs), and no golden line moved.
+
+**What is left.** With the bench's flags the peak is in `fuse`
+(`self_union` on one shell of 619 000 triangles: 1 042 → 1 497 MiB);
+without it, in the steps that drop triangles (the input, the output and
+`canonicalize`'s sorted copy at once). The floor from here is the file
+(186 MiB as imported, kept for its materials) plus two solids. Going
+lower means a smaller `Solid` (face names shared per surface instead of
+a `Vec` per triangle, colours as 8-bit when they were read as 8-bit):
+a change to `shape-mesh`, not made. Only the bear was fetched here; the
+other 53 files were not rerun.

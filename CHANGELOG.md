@@ -1309,3 +1309,10 @@
   clean. Solids that are not convex are shelled as before and can still
   answer `crossingPairs`. Sweep and numbers: `docs/research.md` §35. No
   golden line moved.
+- `repair` holds one mesh at a time: each step's input is dropped when
+  its output stands, and `weld`, `orient` and `fuse` no longer keep
+  copies they do not need. New `shape_tools::repair_owned` takes the
+  solid; `shape process` and `shape repair` use it. On a 619 000-triangle
+  vertex-coloured mesh the peak falls from 2.7 GiB to 0.9 GiB (3.4 to
+  1.5 GiB with `--fuse`), in the same time, with byte-identical output
+  (`docs/research.md` §36). No golden line moved.

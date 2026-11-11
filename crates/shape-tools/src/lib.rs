@@ -111,7 +111,7 @@ pub use preview::{Image, Preview, ViewCamera, Views, preview, sheet, views};
 pub use repair::{
     Floaters, Holes, LARGE_HOLE_EDGES, NonManifold, Repair, RepairError, RepairReport, Weld,
     apply_transform, close_holes, join, orient, remove_degenerate, remove_floaters, repair,
-    split_non_manifold, weld,
+    repair_owned, split_non_manifold, weld,
 };
 pub use texture::{Downsize, TextureError, decode, downsize};
 pub use unwrap::{Unwrap, UnwrapError, Uvs, unwrap};

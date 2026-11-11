@@ -191,7 +191,7 @@ pub fn process_steps(
     let imported = report::imported(&mesh.format, &mesh.imported);
     let joined = mesh.joined()?;
     step(1)?;
-    let (mut fixed, r) = shape_tools::repair(&joined, &d.repair).map_err(failed)?;
+    let (mut fixed, r) = shape_tools::repair_owned(joined, &d.repair).map_err(failed)?;
     // The bake's source: the repaired mesh with its UVs and colours.
     let source = (d.bake > 0).then(|| fixed.clone());
     if source.is_some() {

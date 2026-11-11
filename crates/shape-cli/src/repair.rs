@@ -32,12 +32,13 @@ pub struct RepairDesc {
 pub fn repair(files: &dyn Files, d: &RepairDesc) -> Result<String, Failure> {
     let mesh = load_mesh(files, &d.input, &d.import)?;
     let joined = mesh.joined()?;
-    let (fixed, r) = shape_tools::repair(&joined, &d.repair).map_err(failed)?;
+    let triangles_in = joined.triangles.len();
+    let (fixed, r) = shape_tools::repair_owned(joined, &d.repair).map_err(failed)?;
     let m = shape_tools::measure(&fixed, &Measure::default());
     let (material, defaults, dropped) = mesh.material();
     let output = write_solid(files, &mesh.name, &fixed, Some(&material), d.out.as_deref())?;
     Ok(object(&[
-        ("triangles_in", joined.triangles.len().to_string()),
+        ("triangles_in", triangles_in.to_string()),
         ("repair", report::repair(&r)),
         ("measures", m.to_json()),
         ("material", report::material(&material, &defaults, &dropped)),
