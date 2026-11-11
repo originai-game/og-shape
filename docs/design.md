@@ -44,8 +44,11 @@ What it is not:
 | Mesh tools | import (glb/gltf/obj/fbx), weld, remove floaters and degenerate faces, apply transforms, triangulate, join into one node, decimate (ratio or triangle target, with LODs), UV unwrap, measure, preview, export (GLB, OBJ, STL) | platform `asset_process` (`docs/research.md` §3) |
 
 Not in the first release: USD and URDF export, runtime (in-game)
-generation, remeshing to quads, baking high-poly detail onto low-poly,
-atlas packing. Each can be added later without changing the API.
+generation, remeshing to quads. Each can be added later without changing
+the API. Atlas packing on a texel grid and baking a source mesh's maps,
+vertex colours and shading normals onto a decimated mesh's new atlas are
+in (`docs/research.md` §34): mesh tools, like the rest of the table's
+last row.
 
 ## 3. How an author uses it
 

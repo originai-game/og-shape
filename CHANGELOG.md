@@ -1227,3 +1227,31 @@
   `emissive_intensity`) to the lit colour, in linear light. Golden
   `tools.preview` and `tools.preview.png` moved for it (the tools
   scene's wheel glows red); no other line.
+- Atlas packing (`shape_tools::pack`, `unwrap_atlas`, `repack`,
+  `atlas_measures`; `Atlas`, `AtlasReport`): charts packed tallest first
+  by a bottom-left skyline on an integer texel grid, padding in texels,
+  optional quarter turns, one texel density (or a weight per chart), and
+  measured: coverage, overlap, overlapping pairs, texel density min,
+  median and max. `Model::glb_atlas` and `shape export --uvs --atlas PX`
+  pack every part's UVs into one atlas and let parts whose materials
+  agree share one material (`glb_shared`); a part with a map keeps its
+  UVs.
+- Baking (`shape_tools::bake`; `Bake`, `BakeSource`, `BakeReport`): a
+  source mesh's base colour (times its vertex colours),
+  metallic-roughness, emissive and occlusion maps and its shading
+  normals (its normal map, or its shape) baked into a low mesh's atlas:
+  conservative rasterisation in UV space, the source point along the
+  low normal with the facing agreeing (exact crossings) or the nearest
+  point, dilation, PNG. The report counts texels without a source, those
+  taken from the nearest point, those whose nearest crossing faced away,
+  ambiguous ones, the largest distance, and the normal map's angle to the
+  source's shading with and without it.
+- `PlainGlb::tangents` writes `TANGENT`: per-vertex sums of ∂P/∂u and
+  ∂P/∂v (not MikkTSpace), the frame the bake uses.
+- `shape process --bake PX [--bake-distance MM]` (MCP `process`
+  `bake`, `bake_distance`): repair, decimate without UVs or vertex
+  colours to the budget, pack at PX², bake, write the GLB with the baked
+  maps, the factors and `TANGENT`; the report's `unwrap` is the atlas's
+  and `bake` is new. Without it nothing changes. Golden: new
+  `atlas.pack`, `atlas.model`, `bake.fixture`, `mcp.process.bake`; no
+  existing line moved.

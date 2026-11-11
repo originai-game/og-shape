@@ -3,7 +3,7 @@
 //!
 //! ```text
 //! shape build    <program.json>
-//! shape export   <input> -o <out.glb|out.obj|out.stl>
+//! shape export   <input> -o <out.glb|out.obj|out.stl> [--atlas PX]
 //! shape measure  <input> [--intersections]
 //! shape preview  <input> -o <out.png> [--views N] [--width PX]
 //!                [--height PX] [--columns N] [--elevation RAD]
@@ -25,6 +25,7 @@
 //!                [--cross-color-borders] [-o out.glb]
 //!                [repair, unwrap and place options] [--intersections]
 //!                [--unwrap] [--texture-max PX]
+//!                [--bake PX [--bake-distance MM]]
 //! ```
 //!
 //! An input is a program (the JSON a binding records,
@@ -51,7 +52,9 @@ const USAGE: &str = "usage: shape <command> <input> [options]
   (build, export, measure, preview): every part it makes gets UVs
   build    <program.json>                       report the built model as JSON
   export   <input> -o <out.glb|obj|stl>         write the posed model or the mesh;
-                                                OBJ and STL at the pose if one is set
+                                                OBJ and STL at the pose if one is set;
+                                                --atlas PX: a program's parts' UVs in
+                                                one atlas, alike materials shared
   measure  <input> [--intersections] [--posed] [--axes]
                                                 measures as JSON; --posed: a program
                                                 at its pose, its joints and interference;
@@ -76,7 +79,9 @@ const USAGE: &str = "usage: shape <command> <input> [options]
                                                 900mm) and origin, before and after
   process  <mesh> [--budget N] [--merge-charts UV] [--cross-color-borders] [-o out.glb]
            [repair, unwrap and place options]
-           [--intersections] [--unwrap] [--texture-max PX]";
+           [--intersections] [--unwrap] [--texture-max PX]
+           [--bake PX [--bake-distance MM]]    --bake: fresh UVs packed at PX², the
+                                                look baked into new maps";
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();

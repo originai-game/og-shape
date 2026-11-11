@@ -786,6 +786,17 @@ type SkinOut = (Vec<u8>, Vec<usize>, Option<usize>);
 ///
 /// The bytes depend only on the scene.
 pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
+    glb_with(scene, false)
+}
+
+/// [`glb`], with parts whose materials are written alike (the same
+/// name, factors and maps) sharing one glTF material, as an atlas they
+/// share asks ([`crate::repack`]).
+pub fn glb_shared(scene: &Scene) -> Result<Vec<u8>, ExportError> {
+    glb_with(scene, true)
+}
+
+fn glb_with(scene: &Scene, share: bool) -> Result<Vec<u8>, ExportError> {
     let checked = check_joints(scene)?;
     let mut bin: Vec<u8> = Vec::new();
     let mut views: Vec<Json> = Vec::new();
@@ -943,10 +954,22 @@ pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
         )?;
         let (material, strength) = material_json(&part.material, &part.name, maps)?;
         emissive_strength |= strength;
-        materials.push(material);
+        let same = |m: &Json| {
+            let (mut a, mut b) = (String::new(), String::new());
+            m.write(&mut a);
+            material.write(&mut b);
+            a == b
+        };
+        let index = match materials.iter().position(same).filter(|_| share) {
+            Some(k) => k,
+            None => {
+                materials.push(material);
+                materials.len() - 1
+            }
+        };
         let mesh_index = meshes.len() as u64;
         if !primitive.is_empty() {
-            primitive.push(("material", Json::Int((materials.len() - 1) as u64)));
+            primitive.push(("material", Json::Int(index as u64)));
             primitive.push(("mode", Json::Int(4)));
             meshes.push(Json::Obj(vec![
                 ("name", Json::Str(part.name.clone())),

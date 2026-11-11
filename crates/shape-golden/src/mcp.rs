@@ -23,6 +23,10 @@ pub fn cases() -> Vec<Case> {
             name: "mcp.process.look",
             run: look_case,
         },
+        Case {
+            name: "mcp.process.bake",
+            run: bake_case,
+        },
     ]
 }
 
@@ -123,6 +127,54 @@ fn look_case(h: &mut OutputHash) -> Result<(), HashError> {
                 fresh_uvs,
                 texture_max: 2,
                 out: Some(PathBuf::from(out)),
+                ..Default::default()
+            },
+        )
+        .map_err(fail)?;
+        h.str(&report);
+        for (path, bytes) in files.written.borrow().iter() {
+            h.str(&path.display().to_string());
+            h.bytes(bytes);
+        }
+    }
+    Ok(())
+}
+
+/// `process --bake` at 64 texels: the coloured sphere with every map (a
+/// 4 × 2 normal map applied, the vertex colours multiplied in), and the
+/// committed mesh with defects (normals only); each report and GLB (the
+/// baked PNGs inside).
+fn bake_case(h: &mut OutputHash) -> Result<(), HashError> {
+    let s = crate::look::painted_sphere()?;
+    let mut part = shape_tools::Part::new("ball", &s);
+    part.material = crate::look::material();
+    let glb = shape_tools::glb(&shape_tools::Scene {
+        name: "look".into(),
+        parts: vec![part],
+    })
+    .map_err(fail)?;
+    let obj = include_bytes!("../../../golden/meshes/ball_defects.obj").to_vec();
+    for (name, bytes, budget) in [("ball.glb", glb, 300), ("ball_defects.obj", obj, 500)] {
+        let files = Memory {
+            input: (PathBuf::from(name), bytes),
+            written: RefCell::new(Vec::new()),
+        };
+        let report = process(
+            &files,
+            &ProcessDesc {
+                input: Input::Path(PathBuf::from(name)),
+                repair: Repair {
+                    weld: 0.001,
+                    floaters: Floaters {
+                        fraction: 0.05,
+                        ..Default::default()
+                    },
+                    max_hole_edges: 64,
+                    ..Default::default()
+                },
+                budget,
+                bake: 64,
+                out: Some(PathBuf::from("out.glb")),
                 ..Default::default()
             },
         )

@@ -117,7 +117,9 @@ import → join → repair → decimate → place → unwrap → measure → pre
    names them); the factors and vertex colours stay. Raise `resolution`
    to the texture size you will bake at,
    so the padding is in its texels. `shape process` keeps a textured
-   mesh's UVs unless given `--unwrap`.
+   mesh's UVs unless given `--unwrap`, or `--bake PX`, which unwraps,
+   packs and bakes the old maps into new ones (below, "Keep the UVs or
+   bake").
 7. **Measure** (`measure`) with the images and `intersections`; it
    measures the UVs the mesh carries. After repair, look at
    `uv_seam_fills` in its report: those hole fills stretch the texture
@@ -150,6 +152,71 @@ import → join → repair → decimate → place → unwrap → measure → pre
    check a decimated skin, pose both meshes the same way
    (`shape-skin`'s `pose`) and compare them: the posed error should be no
    more than the rest error.
+
+## Keep the UVs or bake
+
+A textured or vertex-coloured mesh reaches a budget one of two ways
+(`shape process`):
+
+- **Keep the UVs** (the default). The maps stay as the file made them,
+  byte for byte, and nothing is resampled. Decimation stops at about
+  three triangles a UV island (`blocked.fixed` in the report): on the 54
+  generated meshes, 14 miss 2 000 triangles this way and one misses
+  10 000 (`docs/research.md` §34). Keep the UVs when the budget is met:
+  `decimate.triangles` at most `budget`.
+- **Bake** (`--bake PX`, MCP `bake`) when it is not, or when the file's
+  atlas is wasteful. The repaired mesh is the source. A copy without UVs
+  or vertex colours is decimated (nothing holds it back, so any budget is
+  reached), its charts are packed on a PX × PX texel grid at one texel
+  density, and the source's base colour (times its vertex colours),
+  metallic-roughness, emissive and occlusion maps and its shading normals
+  are baked into new PNG maps in that layout. The GLB carries the baked
+  maps, the material's factors and `TANGENT`. Bake at the texture size
+  the game uses (`--texture-max` then has nothing to shrink). The source's
+  vertex colours are in the base-colour map, so the output has none.
+
+What to check in the report:
+
+- `unwrap` (the atlas): `measures.coverage` (how much of the square the
+  charts fill; 0.5–0.65 on the 54), `overlap` and `overlapping_pairs`
+  (0), `density_texels_per_mm` (min, median, max: even when they are
+  close).
+- `bake.no_source`: covered texels that found no source point within
+  `bake.distance` (2 % of the diagonal unless `--bake-distance` says);
+  they are filled from their neighbours like the padding. Above a few
+  hundred, raise the distance or look at the preview.
+- `bake.nearest`: texels sampled at the nearest source point because the
+  normal line found no source surface facing the same way;
+  `bake.facing_away`: texels whose nearest crossing faced away (the
+  inside of a thin wall) and were taken from farther;
+  `bake.ambiguous`: two source sheets facing the same way on both sides
+  of the low surface (parts pressed together), the nearer taken. Where
+  these are high, compare the preview with the source's.
+- `bake.largest_distance`: how far a source point was, in mm. Near
+  `distance`, some texels reached for something far away.
+- `bake.normals`: the shading normal's angle to the source's, mean and
+  95th percentile, with the baked map (the bytes' rounding: about 0.2°)
+  and without it (`*_without_map`: what the low mesh shows by its own
+  normals). The difference is the detail the map carries.
+- `bake.not_baked`: a map that could not be read (WebP, KTX2, a
+  progressive JPEG) is not baked and is named here.
+- `material.maps`: the baked maps (`baked_map.png`, …), `defaults` and
+  the factors as the file had them.
+
+The tangents are this kernel's (per-vertex sums of ∂P/∂u, not
+MikkTSpace) and are written to the GLB as `TANGENT`: a viewer that reads
+`TANGENT` shades the baked normal map as it was baked; one that derives
+its own frame does not. What the bake cannot do, it reports and does not
+guess: thin shells and touching sheets (choose by `facing_away` and
+`ambiguous`), a source that crosses itself, mirrored source islands (read
+correctly; the output has none), and seams between charts in the normal
+map (each chart's frame is its own; a seam can show as a faint line in
+glancing light).
+
+`shape export program.json --uvs --atlas PX -o out.glb` (a program's
+parts, not a mesh) packs every part's UV islands into one atlas at one
+density and lets parts whose materials agree share one material; a part
+whose material has a map keeps its own UVs (`own_uvs`).
 
 ## Reading the measures
 
@@ -208,7 +275,8 @@ Measured on 54 outputs of eight generators (`docs/research.md` §28):
 - Keeping the file's UVs, decimation stops at about three triangles a
   UV island (thousands on an atlas of 2 000 islands); `blocked.fixed`
   says so. `merge_charts` lowers it by 8–31 % on the atlases measured.
-  Below that, `--unwrap` reaches the budget and drops the texture.
+  Below that, `--bake 1024` reaches the budget and keeps the look
+  (`--unwrap` alone reaches it and drops the texture).
 - TRELLIS's meshes have non-manifold edges: repair with `non_manifold`.
 - A hole filled across UV seams takes one colour (`uv_seam_fills`).
 - The material and every map are kept, and TripoSR's, InstantMesh's

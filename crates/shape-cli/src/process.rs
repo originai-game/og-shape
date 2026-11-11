@@ -21,6 +21,20 @@
 //! each map kept whose longest side is over `PX` texels
 //! (`shape_tools::downsize`) and reports each map's size before and
 //! after (`textures`).
+//!
+//! `--bake PX` keeps the look through a fresh unwrap: the repaired mesh
+//! (with its UVs, maps and vertex colours) is the source; a copy without
+//! UVs or colours is decimated to the budget, its charts packed on a
+//! PX × PX grid (`shape_tools::unwrap_atlas`; `--padding` texels apart,
+//! 4 if not given), and the source's base colour (times its vertex
+//! colours), metallic-roughness, emissive and occlusion maps and its
+//! shading normals are baked into new maps in that layout
+//! (`shape_tools::bake`; `--bake-distance` in the file's units, mm for a
+//! glTF, 2 % of the diagonal if not given). The GLB carries the baked
+//! maps, the material's factors and `TANGENT`. The report gains `bake`
+//! (what was baked, texels without a source, the distances, the normal
+//! map's angles), and `unwrap` is the atlas's report (its measures:
+//! coverage, overlap, texel density). Without `--bake` nothing changes.
 
 use std::path::PathBuf;
 
@@ -67,6 +81,12 @@ pub struct ProcessDesc {
     /// Shrink every map kept whose longest side is over this many texels
     /// (box filter, written as PNG); 0 keeps them as they are.
     pub texture_max: u32,
+    /// Bake the source's look into maps of this many texels across, on
+    /// fresh UVs (implies `fresh_uvs`); 0 does not bake.
+    pub bake: u32,
+    /// How far from the low surface a source point may be when baking, in
+    /// the mesh's units (mm); 0 is 2 % of the diagonal.
+    pub bake_distance: f64,
     /// Where to write the result, if anywhere.
     pub out: Option<PathBuf>,
 }
@@ -172,7 +192,13 @@ pub fn process_steps(
     let joined = mesh.joined()?;
     step(1)?;
     let (mut fixed, r) = shape_tools::repair(&joined, &d.repair).map_err(failed)?;
-    if d.fresh_uvs {
+    // The bake's source: the repaired mesh with its UVs and colours.
+    let source = (d.bake > 0).then(|| fixed.clone());
+    if source.is_some() {
+        // Both are baked into the maps; neither holds the decimation back.
+        fixed.colors = None;
+    }
+    if d.fresh_uvs || source.is_some() {
         // The file's UVs are replaced after decimation, so their seams
         // must not hold the decimation back.
         fixed.uvs = None;
@@ -194,6 +220,18 @@ pub fn process_steps(
         (fixed, "null".to_string())
     };
     step(3)?;
+    let (mut material, defaults, mut dropped) = mesh.material();
+    // Baked before placing: the bake's distances are the file's.
+    let mut low = low;
+    let baked = match &source {
+        Some(src) => {
+            let (atlas, baked) = bake_onto(&mesh, src, &mut low, d)?;
+            dropped.extend(drop_maps(&mut material));
+            material = baked.material;
+            Some((atlas, baked.report))
+        }
+        None => None,
+    };
     // Placed last of the steps that move vertices, so the box it stands
     // on is the output's.
     let (mut low, placed) = if placing {
@@ -203,8 +241,9 @@ pub fn process_steps(
     } else {
         (low, None)
     };
-    let (mut material, defaults, mut dropped) = mesh.material();
-    let unwrapped = if low.uvs.is_none() || d.fresh_uvs {
+    let unwrapped = if let Some((atlas, _)) = &baked {
+        atlas.to_json()
+    } else if low.uvs.is_none() || d.fresh_uvs {
         let uvs = shape_tools::unwrap(&mut low, &d.unwrap).map_err(failed)?;
         dropped.extend(drop_maps(&mut material));
         report::unwrap(&uvs)
@@ -229,7 +268,11 @@ pub fn process_steps(
         },
     );
     step(6)?;
-    let output = write_solid(files, &mesh.name, &low, Some(&material), d.out.as_deref())?;
+    let output = if baked.is_some() {
+        crate::export::write_solid_tangents(files, &mesh.name, &low, &material, d.out.as_deref())?
+    } else {
+        write_solid(files, &mesh.name, &low, Some(&material), d.out.as_deref())?
+    };
     let mut fields = vec![
         ("import", imported),
         ("repair", report::repair(&r)),
@@ -238,14 +281,88 @@ pub fn process_steps(
     if let Some(p) = placed {
         fields.push(("place", p));
     }
+    fields.push(("unwrap", unwrapped));
+    if let Some((_, b)) = &baked {
+        fields.push(("bake", b.to_json()));
+    }
     fields.extend([
-        ("unwrap", unwrapped),
         ("material", report::material(&material, &defaults, &dropped)),
         ("textures", textures),
         ("measures", m.to_json()),
         ("output", output),
     ]);
     Ok(object(&fields))
+}
+
+/// Packs `low`'s fresh charts at `d.bake` texels and bakes `src` into
+/// them, with the file's materials (per part, by the part's face name,
+/// when they differ).
+fn bake_onto(
+    mesh: &crate::source::Mesh,
+    src: &shape_mesh::Solid,
+    low: &mut shape_mesh::Solid,
+    d: &ProcessDesc,
+) -> Result<(shape_tools::AtlasReport, shape_tools::Baked), Failure> {
+    let padding = if d.unwrap.padding > 0.0 {
+        d.unwrap.padding.ceil() as u32
+    } else {
+        4
+    };
+    let atlas = shape_tools::unwrap_atlas(
+        low,
+        &d.unwrap,
+        &shape_tools::Atlas {
+            size: d.bake,
+            padding,
+            no_turns: false,
+        },
+    )
+    .map_err(failed)?;
+    let parts = &mesh.imported.parts;
+    let materials: Vec<Material> = parts.iter().map(|p| p.material.clone()).collect();
+    let bare = |m: &Material| Material {
+        name: String::new(),
+        ..m.clone()
+    };
+    let same = materials.iter().all(|m| bare(m) == bare(&materials[0]));
+    let material_of: Vec<u32> = if same {
+        Vec::new()
+    } else {
+        src.face_tags
+            .iter()
+            .map(|tags| {
+                tags.iter()
+                    .find_map(|&t| {
+                        let name = src.names.name(t);
+                        parts.iter().position(|p| p.name == name)
+                    })
+                    .unwrap_or(0) as u32
+            })
+            .collect()
+    };
+    let (materials, material_of) = if same {
+        (materials[..materials.len().min(1)].to_vec(), material_of)
+    } else {
+        (materials, material_of)
+    };
+    let baked = shape_tools::bake(
+        &shape_tools::BakeSource {
+            solid: src,
+            materials: &materials,
+            material_of: &material_of,
+        },
+        low,
+        &shape_tools::Bake {
+            size: d.bake,
+            distance: d.bake_distance,
+            ..Default::default()
+        },
+    )
+    .map_err(failed)?;
+    if baked.report.colors_baked {
+        low.colors = None;
+    }
+    Ok((atlas, baked))
 }
 
 /// The command line.
@@ -259,6 +376,8 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         "--intersections",
         "--unwrap",
         "--texture-max",
+        "--bake",
+        "--bake-distance",
     ];
     known.extend(IMPORT_OPTIONS);
     known.extend(crate::repair::OPTIONS);
@@ -281,6 +400,8 @@ pub fn run(a: &Args) -> Result<String, Failure> {
             fresh_uvs: a.switch("--unwrap"),
             intersections: a.switch("--intersections"),
             texture_max: a.number("--texture-max")?.unwrap_or(0),
+            bake: a.number("--bake")?.unwrap_or(0),
+            bake_distance: a.number("--bake-distance")?.unwrap_or(0.0),
             out: a.out_opt()?,
         },
     )

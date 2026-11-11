@@ -129,7 +129,9 @@ const TOOLS: [Tool; 11] = [
             → export (`out`, a plain GLB with UVs, vertex colours and the material). One report \
             of every step. A mesh that carries UVs keeps them and its material's maps, and is \
             not unwrapped unless `fresh_uvs` is set; `texture_max` shrinks maps over that many \
-            texels.",
+            texels. `bake` (texels) keeps the look through fresh UVs: the repaired mesh's maps, \
+            vertex colours and shading normals are baked into new maps on the decimated mesh's \
+            packed atlas (the report's `bake` says what was baked and what found no source).",
         schema: process_schema,
         handler: process_tool,
     },
@@ -845,6 +847,19 @@ fn process_schema() -> Value {
             int("Shrink every map kept whose longest side is over this many texels (box filter, \
                  written as PNG); the report gives each map's size before and after. 0 keeps them."),
         ),
+        (
+            "bake",
+            int("Bake the repaired mesh's look into new maps this many texels across, on fresh \
+                 UVs packed into one atlas: decimate without UVs or vertex colours, pack, and \
+                 bake base colour (times vertex colours), metallic-roughness, emissive, \
+                 occlusion and normals (from the source's normal map, or its shape). The GLB \
+                 gets the baked maps, the factors and TANGENT. 0 does not bake."),
+        ),
+        (
+            "bake_distance",
+            num("How far from the decimated surface a baked texel's source point may be, in \
+                 the mesh's units (mm); 0 is 2 % of the bounding-box diagonal."),
+        ),
     ]);
     schema(p, &["path"])
 }
@@ -1087,6 +1102,8 @@ fn process_tool(server: &Server, a: &Args, p: &mut dyn Progress) -> Result<Vec<V
         intersections: a.flag("intersections")?,
         fresh_uvs: a.flag("fresh_uvs")?,
         texture_max: a.u32("texture_max")?,
+        bake: a.u32("bake")?,
+        bake_distance: a.num("bake_distance")?,
         out: a.path("out")?,
     };
     let total = STEPS.len();

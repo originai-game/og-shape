@@ -53,6 +53,7 @@ pub fn all() -> Vec<Case> {
     cases.extend(crate::smallgaps::cases());
     cases.extend(crate::uvs::cases());
     cases.extend(crate::place::cases());
+    cases.extend(crate::bake::cases());
     cases
 }
 

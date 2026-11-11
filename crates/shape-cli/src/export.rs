@@ -184,9 +184,81 @@ pub fn write_solid(
     }
 }
 
+/// [`write_solid`] as a plain GLB with `TANGENT` (the frame a baked
+/// normal map was baked in); OBJ and STL as [`write_solid`].
+pub fn write_solid_tangents(
+    files: &dyn Files,
+    name: &str,
+    s: &Solid,
+    material: &Material,
+    out: Option<&Path>,
+) -> Result<String, Failure> {
+    let Some(out) = out else {
+        return Ok("null".into());
+    };
+    if extension(out) != "glb" {
+        return write_solid(files, name, s, Some(material), Some(out));
+    }
+    let bytes = glb_plain(
+        s,
+        &PlainGlb {
+            name,
+            material: Some(material),
+            tangents: true,
+            ..Default::default()
+        },
+    )
+    .map_err(failed)?;
+    files.write(out, &bytes)?;
+    Ok(written_lost(
+        out,
+        bytes.len(),
+        &not_written(s, Some(material), out),
+    ))
+}
+
+/// A program to a GLB with its parts' UVs packed into one atlas of
+/// `size` texels (`Model::glb_atlas`); reports the file, `atlas` (the
+/// packing and its measures), `materials` (how many the packed parts
+/// share) and `own_uvs` (parts with a map, left with their UVs).
+pub fn export_atlas(
+    files: &dyn Files,
+    source: &Source,
+    out: &Path,
+    size: u32,
+) -> Result<String, Failure> {
+    let Source::Program(model) = source else {
+        return Err(Failure::Usage(
+            "--atlas packs a program's parts; a mesh's UVs are its own (process --bake)".into(),
+        ));
+    };
+    if extension(out) != "glb" {
+        return Err(Failure::Usage("--atlas writes a GLB".into()));
+    }
+    let e = model
+        .glb_atlas(&shape_tools::Atlas {
+            size,
+            ..Default::default()
+        })
+        .map_err(failed)?;
+    files.write(out, &e.glb)?;
+    Ok(object(&[
+        ("path", string(&out.display().to_string())),
+        ("format", string("glb")),
+        ("bytes", e.glb.len().to_string()),
+        ("geometry", string("rest")),
+        ("atlas", e.atlas.to_json()),
+        ("materials", e.materials.to_string()),
+        (
+            "own_uvs",
+            crate::report::array(&e.own.iter().map(|n| string(n)).collect::<Vec<_>>()),
+        ),
+    ]))
+}
+
 /// The command line.
 pub fn run(a: &Args) -> Result<String, Failure> {
-    let mut known = vec!["-o", "--out", "--uvs"];
+    let mut known = vec!["-o", "--out", "--uvs", "--atlas"];
     known.extend(IMPORT_OPTIONS);
     a.only(&known)?;
     let out = a.out()?;
@@ -194,5 +266,8 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         return Err(bad_extension(&out));
     }
     let source = load_uvs(&Local, &a.input()?, &a.import()?, a.switch("--uvs"))?;
-    export(&Local, &source, &out)
+    match a.number::<u32>("--atlas")? {
+        Some(size) => export_atlas(&Local, &source, &out, size),
+        None => export(&Local, &source, &out),
+    }
 }

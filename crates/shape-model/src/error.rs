@@ -99,6 +99,8 @@ pub enum ModelError {
     Bevel(BevelError),
     /// The scene could not be written.
     Export(ExportError),
+    /// The parts' UVs could not be packed into one atlas.
+    Atlas(shape_tools::AtlasError),
     /// A program could not be read (where, and what was wrong).
     Program(String),
     /// A field of an operation is missing or holds the wrong kind of value
@@ -205,6 +207,7 @@ impl fmt::Display for ModelError {
             ModelError::Edit(e) => write!(f, "{e}"),
             ModelError::Bevel(e) => write!(f, "{e}"),
             ModelError::Export(e) => write!(f, "{e}"),
+            ModelError::Atlas(e) => write!(f, "{e}"),
             ModelError::Program(w) => write!(f, "program: {w}"),
             ModelError::BadField(field, want) => write!(f, "{field}: {want}"),
             ModelError::UnknownField {
@@ -268,6 +271,12 @@ impl From<EditError> for ModelError {
 impl From<BevelError> for ModelError {
     fn from(e: BevelError) -> Self {
         ModelError::Bevel(e)
+    }
+}
+
+impl From<shape_tools::AtlasError> for ModelError {
+    fn from(e: shape_tools::AtlasError) -> Self {
+        ModelError::Atlas(e)
     }
 }
 

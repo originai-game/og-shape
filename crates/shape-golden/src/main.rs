@@ -5,6 +5,7 @@
 //! `golden/hashes.txt` byte for byte. Each crate adds its operations as
 //! cases here.
 
+mod bake;
 mod bevel;
 mod cases;
 mod font;

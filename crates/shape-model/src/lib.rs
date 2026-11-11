@@ -31,7 +31,9 @@ pub mod program;
 
 pub use checked::loft;
 pub use error::ModelError;
-pub use model::{BoolRecord, Built, Combine, Id, JointDesc, Model, PartMeasures, Seating, Unit};
+pub use model::{
+    AtlasExport, BoolRecord, Built, Combine, Id, JointDesc, Model, PartMeasures, Seating, Unit,
+};
 pub use place::Path;
 pub use shape_bool::{BoolOp, BoolReport};
 pub use shape_core::Frame;

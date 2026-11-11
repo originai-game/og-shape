@@ -167,6 +167,19 @@ impl Built {
     }
 }
 
+/// What [`Model::glb_atlas`] wrote.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AtlasExport {
+    /// The GLB.
+    pub glb: Vec<u8>,
+    /// The packing: where each island went, and the atlas's measures.
+    pub atlas: shape_tools::AtlasReport,
+    /// Materials the packed parts share, once alike ones are merged.
+    pub materials: usize,
+    /// Parts with UVs left out of the atlas: their material has a map.
+    pub own: Vec<String>,
+}
+
 /// A model: named parts (solids with a placement and a material), groups
 /// and assemblies above them, and joints between them (`docs/design.md`
 /// §4).
@@ -1948,6 +1961,68 @@ impl Model {
     /// as `s3d_joint` extras.
     pub fn glb(&self) -> Result<Vec<u8>, ModelError> {
         Ok(shape_tools::glb(&self.build()?.scene())?)
+    }
+
+    /// The model as GLB ([`Model::glb`]) with its parts' UVs packed into
+    /// one atlas (`shape_tools::repack`: every UV island of every part
+    /// with UVs and a material without maps, at one texel density, on
+    /// `d`'s grid), and parts whose materials then agree (names aside)
+    /// sharing one material, named after the first. A part whose material
+    /// has a map keeps its own UVs (its map was painted for them) and its
+    /// material: [`AtlasExport::own`] names it. Joints, placements and
+    /// names are as [`Model::glb`] writes them.
+    pub fn glb_atlas(&self, d: &shape_tools::Atlas) -> Result<AtlasExport, ModelError> {
+        let built = self.build()?;
+        let mut scene = built.scene();
+        let packs = |m: &Material, s: &Solid| s.uvs.is_some() && m.maps().is_empty();
+        let mut own = Vec::new();
+        let mut taken: Vec<usize> = Vec::new();
+        let mut solids: Vec<Solid> = Vec::new();
+        for (k, p) in scene.parts.iter().enumerate() {
+            if packs(&p.material, p.solid) {
+                taken.push(k);
+                solids.push(p.solid.clone());
+            } else if p.solid.uvs.is_some() {
+                own.push(p.name.clone());
+            }
+        }
+        if solids.is_empty() {
+            return Err(ModelError::Atlas(shape_tools::AtlasError::NoUvs));
+        }
+        let atlas = shape_tools::repack(&mut solids, d)?;
+        // Materials alike (names aside) take the first one's name.
+        let bare = |m: &Material| Material {
+            name: String::new(),
+            ..m.clone()
+        };
+        let mut firsts: Vec<(Material, String)> = Vec::new();
+        for &k in &taken {
+            let p = &mut scene.parts[k];
+            let b = bare(&p.material);
+            let name = match firsts.iter().find(|(m, _)| *m == b) {
+                Some((_, n)) => n.clone(),
+                None => {
+                    let n = if p.material.name.is_empty() {
+                        p.name.clone()
+                    } else {
+                        p.material.name.clone()
+                    };
+                    firsts.push((b, n.clone()));
+                    n
+                }
+            };
+            p.material.name = name;
+        }
+        for (k, s) in taken.iter().zip(&solids) {
+            scene.parts[*k].solid = s;
+        }
+        let glb = shape_tools::glb_shared(&scene)?;
+        Ok(AtlasExport {
+            glb,
+            atlas,
+            materials: firsts.len(),
+            own,
+        })
     }
 
     /// Where [`Model::obj`] and [`Model::stl`] put the parts: at the pose
