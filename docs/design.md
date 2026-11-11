@@ -52,15 +52,10 @@ last row.
 
 ## 3. How an author uses it
 
-- **The source.** An author writes either:
-  - a TypeScript program in the engine's API style, or
-  - the declarative `type model` `.ogt` text, which already exists in the
-    engine and is extended with the new operations.
-  
-  Both go through the same kernel. Before the merge, this repository
-  carries a TypeScript binding over the wasm build (the `og-shape` npm
-  package, private) for its own tests and examples. After the merge, the
-  binding is generated from the engine's IDL as `og.shape`.
+- **The source.** An author writes a program: JSON (`{name, ops}`,
+  `guides/program.md`), or TypeScript through the binding over the wasm
+  build (`guides/typescript.md`), which records the same program. Both
+  go through the same kernel.
 
   ```ts
   const plate = shape.extrude({ name: "plate", profile: shape.rect({ width: 80, height: 40, radius: 4 }), depth: 6 });
@@ -68,12 +63,11 @@ last row.
   shape.fillet(plate, { radius: 1, edges: "top" });
   ```
 
-- **Where the result lives.** The program lives under the game's
-  `assets/models/`. `og cook` builds it into the engine's model blob, the
-  same blob a glTF cooks to, with LODs, compression and pivots. Joints
-  become pivots and joint metadata that animation and physics read.
-  `og model export` writes GLB for tools outside the engine (the asset
-  card, the Stage viewer, providers' texturing).
+- **Where the result lives.** The program is the asset, kept wherever
+  its project keeps sources. `shape export` (the MCP `export` tool, the
+  binding's `glb`) writes a GLB with parts, joints as nodes, materials
+  and clips; `shape process` and `shape decimate` make the levels of
+  detail and the texture budget a game needs.
 - **When it runs.** At asset build time only, for now. The kernel also
   runs in wasm, so in-game generation can be added later as more API
   members, without a second implementation.
@@ -159,7 +153,7 @@ A Cargo workspace. Each crate has one job and a small public surface.
 | `shape-tools` | import, repair, decimate and LODs, UV unwrap, measure, preview, export | own glTF, OBJ and FBX readers, own QEM decimator, own unwrap, own CPU rasterizer, miniz_oxide (`docs/research.md` §9) |
 | `shape-model` | parts, groups, joints, materials, the program API in Rust | all |
 | `shape-wasm` | wasm32 build and the TypeScript binding | wasm-bindgen |
-| `shape-cli` | `shape build / export / measure / preview / import / repair / decimate / unwrap / process`, for tests and for the platform before the merge; its commands are a library the MCP server calls | all |
+| `shape-cli` | `shape build / export / measure / preview / import / repair / decimate / unwrap / process`, the tools as commands; its commands are a library the MCP server calls | all |
 | `shape-mcp` | an MCP server on stdio: the CLI's commands as tools, a TypeScript program run through the binding and replayed natively, the guides as resources, paths confined to a workspace | `shape-cli`, serde_json |
 
 Why og-geom's code is copied and not depended on:
@@ -167,8 +161,6 @@ Why og-geom's code is copied and not depended on:
   and an exact-predicate CSG.
 - Copying it at a pinned engine commit keeps this repository free of
   engine dependencies.
-- At the merge, og-shape replaces og-geom in the engine, so the code
-  returns home.
 - The commit it was copied from is recorded in `third_party/og-geom/SOURCE`.
 
 ## 6. Determinism
@@ -203,8 +195,7 @@ The rules are in `AGENTS.md`. The design consequences:
 ## 8. The merge into origin-engine (dropped)
 
 Not going ahead (the owner, 2026-11-11): og-shape is its own project.
-This section, and what §2 and §3 say of the engine's IDL, `og cook` and
-`og model`, record what the merge would have been.
+This section records what the merge would have been.
 
 Done once, at plan phase M:
 1. Vendor the crates under `crates/og-shape*` in origin-engine and replace

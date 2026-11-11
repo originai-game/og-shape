@@ -1,4 +1,4 @@
-//! `shape decimate <mesh> (--ratio R | --target N) [--lods N] [-o out]`:
+//! `shape decimate <mesh> (--ratio R | --target N | --lod-ratios A,B,…) [--lods N] [-o out]`:
 //! the file's parts joined and decimated (`shape_tools::decimate`), as
 //! JSON: per level, the decimation's report and the measures after. With
 //! `--lods N`, N levels, each decimated from the one before
@@ -31,6 +31,11 @@ pub struct DecimateDesc {
     /// triangles; with a `target`, level 1 keeps it and each next level
     /// half the level before.
     pub lods: u32,
+    /// The levels' shares of the input's triangles, one a level, each
+    /// level decimated from the one before (`[0.5, 0.2, 0.05]`); empty
+    /// for `lods`' rule. Each over 0 and at most 1, falling. Not with
+    /// `lods`, a ratio or a target.
+    pub lod_ratios: Vec<f64>,
     /// Where to write the result, if anywhere.
     pub out: Option<PathBuf>,
 }
@@ -65,7 +70,26 @@ fn lod_levels(d: &Decimate, n: u32) -> Vec<Decimate> {
 pub fn decimate(files: &dyn Files, d: &DecimateDesc) -> Result<String, Failure> {
     let mesh = load_mesh(files, &d.input, &d.import)?;
     let joined = mesh.joined()?;
-    let levels = if d.lods == 0 {
+    let levels = if !d.lod_ratios.is_empty() {
+        let falling = d.lod_ratios.windows(2).all(|w| w[1] < w[0]);
+        let shares = d.lod_ratios.iter().all(|&r| r > 0.0 && r <= 1.0);
+        if d.lods > 0 || d.decimate.ratio != 0.0 || d.decimate.target != 0 || !falling || !shares {
+            return Err(Failure::Usage(
+                "lod ratios: shares of the input over 0 and at most 1, falling, and no \
+                 --lods, --ratio or --target with them"
+                    .into(),
+            ));
+        }
+        let each: Vec<Decimate> = d
+            .lod_ratios
+            .iter()
+            .map(|&ratio| Decimate {
+                ratio,
+                ..d.decimate
+            })
+            .collect();
+        lods(&joined, &each).map_err(failed)?
+    } else if d.lods == 0 {
         vec![shape_tools::decimate(&joined, &d.decimate).map_err(failed)?]
     } else {
         lods(&joined, &lod_levels(&d.decimate, d.lods)).map_err(failed)?
@@ -73,10 +97,11 @@ pub fn decimate(files: &dyn Files, d: &DecimateDesc) -> Result<String, Failure> 
     let (material, defaults, dropped) = mesh.material();
     let mut list = Vec::new();
     for (k, (s, r)) in levels.iter().enumerate() {
-        let out = match (&d.out, d.lods) {
+        let several = d.lods > 0 || !d.lod_ratios.is_empty();
+        let out = match (&d.out, several) {
             (None, _) => None,
-            (Some(o), 0) => Some(o.clone()),
-            (Some(o), _) => Some(lod_path(o, k as u32 + 1)),
+            (Some(o), false) => Some(o.clone()),
+            (Some(o), true) => Some(lod_path(o, k as u32 + 1)),
         };
         let m = shape_tools::measure(s, &Measure::default());
         list.push(object(&[
@@ -107,6 +132,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         "--merge-charts",
         "--cross-color-borders",
         "--lods",
+        "--lod-ratios",
         IMPORT_OPTIONS[0],
         IMPORT_OPTIONS[1],
         IMPORT_OPTIONS[2],
@@ -121,8 +147,19 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         cross_color_borders: a.switch("--cross-color-borders"),
         ..Default::default()
     };
-    if dec.ratio == 0.0 && dec.target == 0 {
-        return Err(Failure::Usage("give --ratio R or --target N".into()));
+    // `--lod-ratios 0.5,0.2,0.05`: one share a level.
+    let lod_ratios: Vec<f64> = match a.value(&["--lod-ratios"])? {
+        None => Vec::new(),
+        Some(list) => list
+            .split(',')
+            .map(|x| x.trim().parse::<f64>())
+            .collect::<Result<_, _>>()
+            .map_err(|_| Failure::Usage("--lod-ratios: numbers with commas between".into()))?,
+    };
+    if dec.ratio == 0.0 && dec.target == 0 && lod_ratios.is_empty() {
+        return Err(Failure::Usage(
+            "give --ratio R, --target N or --lod-ratios A,B,…".into(),
+        ));
     }
     decimate(
         &Local,
@@ -131,6 +168,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
             import: a.import()?,
             decimate: dec,
             lods: a.number("--lods")?.unwrap_or(0),
+            lod_ratios,
             out: a.out_opt()?,
         },
     )

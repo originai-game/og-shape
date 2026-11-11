@@ -1,6 +1,7 @@
-//! `shape process <mesh> --budget N [-o out.glb]`: the mesh tools'
+//! `shape process <mesh> (--budget N | --ratio R) [-o out.glb]`: the mesh tools'
 //! chain on one file (`guides/meshtools.md`): import → join → repair →
-//! decimate to the triangle budget → place → unwrap → textures → measure →
+//! decimate to the triangle budget (or `--ratio R` of what the repair
+//! leaves) → place → unwrap → textures → measure →
 //! export,
 //! as one JSON report of every step. The place step (turn, size, pivot:
 //! `shape place`) runs only when asked, and only then has a `place` key
@@ -64,6 +65,9 @@ pub struct ProcessDesc {
     /// Decimate to at most this many triangles; 0 skips decimation, and
     /// so does a mesh already within it.
     pub budget: usize,
+    /// Decimate to this share of the triangles the repair leaves, over 0
+    /// and at most 1; 0 is off. Not with `budget`.
+    pub ratio: f64,
     /// `Decimate::merge_charts`: UV islands that agree across a seam up
     /// to a rigid move within this distance are one chart for the seam
     /// rule; 0 is off.
@@ -204,11 +208,21 @@ pub fn process_steps(
         fixed.uvs = None;
     }
     step(2)?;
-    let (low, dec) = if d.budget > 0 && fixed.triangles.len() > d.budget {
+    let budget = if d.ratio == 0.0 {
+        d.budget
+    } else if d.budget > 0 || !(d.ratio > 0.0 && d.ratio <= 1.0) {
+        return Err(Failure::Usage(
+            "give --budget N or --ratio R (over 0, at most 1), not both".into(),
+        ));
+    } else {
+        // Of what the repair leaves: the share asked, one triangle at least.
+        ((fixed.triangles.len() as f64 * d.ratio).round() as usize).max(1)
+    };
+    let (low, dec) = if budget > 0 && fixed.triangles.len() > budget {
         let (low, dr) = shape_tools::decimate(
             &fixed,
             &Decimate {
-                target: d.budget,
+                target: budget,
                 merge_charts: d.merge_charts,
                 cross_color_borders: d.cross_color_borders,
                 ..Default::default()
@@ -371,6 +385,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         "-o",
         "--out",
         "--budget",
+        "--ratio",
         "--merge-charts",
         "--cross-color-borders",
         "--intersections",
@@ -394,6 +409,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
             place: crate::place::options(a)?,
             repair,
             budget: a.number("--budget")?.unwrap_or(0),
+            ratio: a.number("--ratio")?.unwrap_or(0.0),
             merge_charts: a.number("--merge-charts")?.unwrap_or(0.0),
             cross_color_borders: a.switch("--cross-color-borders"),
             unwrap: crate::unwrap::options(a)?,

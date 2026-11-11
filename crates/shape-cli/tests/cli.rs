@@ -412,3 +412,79 @@ fn preview_draws_a_files_vertex_colours_in_place() {
     assert!(bottom[2] > 200 && bottom[0] < 100, "bottom {bottom:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// What a runner passes on without checking: a share of the triangles
+/// for `process`, a list of shares for the levels, and a turn of many
+/// frames, whose names sort and whose size is bounded.
+#[test]
+fn ratios_levels_and_frames_are_taken_and_bounded() {
+    let dir = std::env::temp_dir().join(format!("shape-cli-ratio-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = |name: &str| dir.join(name).to_str().unwrap().to_string();
+    // A quarter of what the repair leaves (1 980 triangles).
+    let r = report(&[
+        "process",
+        MESH,
+        "--weld",
+        "0.001",
+        "--floaters",
+        "0.05",
+        "--ratio",
+        "0.25",
+    ]);
+    let kept = r["measures"]["triangles"].as_u64().unwrap();
+    assert!(kept <= 495 && kept > 480, "{kept}");
+    let o = shape(&["process", MESH, "--ratio", "0.25", "--budget", "100"]);
+    assert_eq!(o.status.code(), Some(2));
+    // Levels by their shares of the input, each from the one before.
+    let r = report(&[
+        "decimate",
+        MESH,
+        "--lod-ratios",
+        "0.5,0.2,0.05",
+        "-o",
+        &path("l.glb"),
+    ]);
+    let levels = r["levels"].as_array().unwrap();
+    let counts: Vec<u64> = levels
+        .iter()
+        .map(|l| l["decimate"]["triangles"].as_u64().unwrap())
+        .collect();
+    assert_eq!(counts.len(), 3);
+    assert!(
+        counts[0] <= 992 && counts[1] <= 397 && counts[2] < counts[1],
+        "{counts:?}"
+    );
+    assert!(
+        levels[2]["output"]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("l.lod3.glb")
+    );
+    let o = shape(&["decimate", MESH, "--lod-ratios", "0.2,0.5"]);
+    assert_eq!(o.status.code(), Some(2));
+    // Twelve frames: two digits each, in order.
+    let out = path("turn.png");
+    let r = report(&[
+        "preview", PROGRAM, "-o", &out, "--each", "--views", "12", "--width", "16",
+    ]);
+    let names: Vec<&str> = r["images"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["output"]["path"].as_str().unwrap())
+        .collect();
+    assert!(names[0].ends_with("turn.00.png") && names[11].ends_with("turn.11.png"));
+    // Past the bounds, an error and nothing drawn.
+    for args in [
+        vec!["--width", "9000"],
+        vec!["--views", "721", "--width", "8"],
+        vec!["--views", "100", "--width", "4096"],
+    ] {
+        let mut all = vec!["preview", PROGRAM, "-o", out.as_str(), "--each"];
+        all.extend(args);
+        let o = shape(&all);
+        assert_eq!(o.status.code(), Some(1), "{all:?}");
+        assert!(String::from_utf8_lossy(&o.stderr).contains("too large"));
+    }
+}

@@ -68,6 +68,13 @@ pub enum EditError {
     NoSuchEdge(Vec<String>, Vec<String>),
     /// What the edit does not do, and what to do instead.
     Unsupported(&'static str),
+    /// The inner solid of a shell came out through itself, most of its
+    /// walls facing the other way: the walls meet and nothing would be
+    /// hollowed (a ring hollowed thicker than its tube).
+    InsideOut {
+        /// The wall asked for.
+        thickness: f64,
+    },
     /// A convex solid has no point `thickness` from every face it keeps:
     /// walls that thick meet, and nothing would be hollowed. `short` is
     /// how far the deepest point is from being that far in (0 when the
@@ -130,6 +137,11 @@ impl std::fmt::Display for EditError {
                 have.join(", ")
             ),
             EditError::Unsupported(what) => f.write_str(what),
+            EditError::InsideOut { thickness } => write!(
+                f,
+                "walls {thickness} thick meet inside the solid and leave no hollow: its inner \
+                 solid comes out through itself"
+            ),
             EditError::NoRoom { thickness, short } => write!(
                 f,
                 "walls {thickness} thick meet inside the solid and leave no hollow: \
@@ -843,6 +855,13 @@ pub fn shell_report(s: &Solid, d: &Shell) -> Result<(Solid, EditReport), EditErr
         )
     };
     if crossing_pairs(&inner) == 0 {
+        // A copy that does not cross itself may still be inside out: a
+        // ring hollowed thicker than its tube comes out through its own
+        // middle, whole and the right way round. Its walls then face
+        // against their own, and it is no hollow.
+        if turned_share(s, &planes) > 0.5 {
+            return Err(EditError::InsideOut { thickness: t });
+        }
         return cut(&inner).map(|(out, r)| {
             let mut report = EditReport::default();
             report.add(&r);
@@ -915,6 +934,29 @@ pub fn shell_report(s: &Solid, d: &Shell) -> Result<(Solid, EditReport), EditErr
         (Some(u), Err(_)) => Ok(u),
         (_, f) => f,
     }
+}
+
+/// The share of `s`'s area whose triangles face the other way once each
+/// vertex is moved by its planes ([`offset`]): 0 for a copy that keeps
+/// its shape, 1 for one turned inside out.
+fn turned_share(s: &Solid, planes: &[Vec<(DVec3, f64)>]) -> f64 {
+    let moved: Vec<DVec3> = s
+        .positions
+        .iter()
+        .enumerate()
+        .map(|(v, p)| *p + offset(&planes[v]))
+        .collect();
+    let (mut turned, mut whole) = (0.0, 0.0);
+    for tri in &s.triangles {
+        let [a, b, c] = tri.map(|v| s.positions[v as usize]);
+        let [a1, b1, c1] = tri.map(|v| moved[v as usize]);
+        let n = (b - a).cross(c - a);
+        whole += n.length();
+        if (b1 - a1).cross(c1 - a1).dot(n) < 0.0 {
+            turned += n.length();
+        }
+    }
+    if whole > 0.0 { turned / whole } else { 0.0 }
 }
 
 // ── dent ────────────────────────────────────────────────────────────────────

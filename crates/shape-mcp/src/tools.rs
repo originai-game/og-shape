@@ -785,6 +785,16 @@ fn decimate_schema() -> Value {
                  ratio^k of the triangles, or the target and then half the level before; 0 is one.",
             ),
         ),
+        (
+            "lod_ratios",
+            json!({
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "One level a number, each decimated from the one before: its share \
+                    of the input's triangles (over 0, at most 1, falling), as [0.5, 0.2, 0.05]. \
+                    Instead of `lods`, `ratio` and `target`.",
+            }),
+        ),
     ]);
     schema(p, &["path"])
 }
@@ -851,6 +861,13 @@ fn process_schema() -> Value {
         (
             "budget",
             int("Decimate to at most this many triangles; 0 does not decimate."),
+        ),
+        (
+            "ratio",
+            num(
+                "Decimate to this share of the triangles the repair leaves (over 0, at most \
+                 1), instead of `budget`.",
+            ),
         ),
         ("merge_charts", merge_charts_prop()),
         ("cross_color_borders", cross_color_borders_prop()),
@@ -1111,6 +1128,13 @@ fn decimate_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec
             ..Default::default()
         },
         lods: a.u32("lods")?,
+        lod_ratios: match a.o.get("lod_ratios") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(v) => v
+                .as_array()
+                .and_then(|l| l.iter().map(Value::as_f64).collect::<Option<Vec<f64>>>())
+                .ok_or_else(|| bad("lod_ratios", "a list of numbers"))?,
+        },
         out: a.path("out")?,
     };
     Ok(vec![text(decimate(&server.ws, &d)?)])
@@ -1159,6 +1183,7 @@ fn process_tool(server: &Server, a: &Args, p: &mut dyn Progress) -> Result<Vec<V
         place: a.sub("place")?.as_ref().unwrap_or(&none).place()?,
         repair: a.sub("repair")?.as_ref().unwrap_or(&none).repair()?,
         budget: a.uint("budget")? as usize,
+        ratio: a.num("ratio")?,
         merge_charts: a.num("merge_charts")?,
         cross_color_borders: a.flag("cross_color_borders")?,
         unwrap: a.sub("unwrap")?.as_ref().unwrap_or(&none).unwrap()?,

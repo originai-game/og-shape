@@ -190,7 +190,8 @@ pub fn render(source: &Source, d: &PreviewDesc) -> Result<Rendered, Failure> {
 }
 
 /// Where image `k` of `n` goes: `out` itself when there is one, else
-/// `<stem>.<k>.<extension>` beside it.
+/// `<stem>.<k>.<extension>` beside it, `k` with leading zeros to the
+/// width of the last index.
 pub fn image_path(out: &Path, k: usize, n: usize) -> PathBuf {
     if n == 1 {
         return out.to_path_buf();
@@ -200,7 +201,10 @@ pub fn image_path(out: &Path, k: usize, n: usize) -> PathBuf {
         .and_then(|s| s.to_str())
         .unwrap_or("preview");
     let ext = out.extension().and_then(|s| s.to_str()).unwrap_or("png");
-    out.with_file_name(format!("{stem}.{k}.{ext}"))
+    // As many digits as the last index has, so the names sort as the
+    // views turn (`turn.000.png` … `turn.119.png`).
+    let digits = (n - 1).to_string().len();
+    out.with_file_name(format!("{stem}.{k:0digits$}.{ext}"))
 }
 
 /// Writes the images and gives the report.

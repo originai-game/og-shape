@@ -250,6 +250,9 @@ pub enum ExportError {
     BadRange(String),
     /// A joint's axis or pivot is degenerate.
     BadAxis(String),
+    /// A preview asked for more than it draws: the limit that was passed
+    /// and what was asked.
+    TooLarge(String),
     /// A clip cannot be written: which, and why.
     BadClip {
         /// The clip's name.
@@ -297,6 +300,7 @@ impl fmt::Display for ExportError {
                 "joint {j:?}: its range must run from low to high and contain 0 (the rest pose)"
             ),
             ExportError::BadClip { clip, why } => write!(f, "clip {clip:?}: {why}"),
+            ExportError::TooLarge(why) => write!(f, "the preview is too large: {why}"),
             ExportError::BadAxis(j) => {
                 write!(f, "joint {j:?}: its axis or pivot frame is degenerate")
             }

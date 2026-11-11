@@ -1387,3 +1387,18 @@
   (this project is MIT); GPL source may now be read to understand a tool
   and compare results, with what is written here taken from the idea
   and the commit saying what was read.
+- `shape process --ratio R` (MCP `ratio`): decimates to a share of the
+  triangles the repair leaves, instead of `--budget N`; both is a usage
+  error.
+- `shape decimate --lod-ratios 0.5,0.2,0.05` (MCP `lod_ratios`): levels
+  by their own shares of the input, each from the one before (over 0,
+  at most 1, falling); written `<out>.lod<k>.<ext>` as `--lods` does.
+- `shape preview --each`: the view index in each file's name has leading
+  zeros to the width of the last index (`turn.00.png` … `turn.11.png`),
+  so the names sort; up to ten views are named as before. A preview is
+  bounded: 8 192 pixels a side, 720 views, 2²⁸ pixels in all
+  (`ExportError::TooLarge`, with what was asked).
+- `shell` of a solid whose inner copy comes out through itself without
+  crossing (a ring hollowed thicker than its tube) is refused
+  (`EditError::InsideOut`): it was cut as a hollow before, and the ring
+  came back with thinner walls than asked and no count.

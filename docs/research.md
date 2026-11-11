@@ -8313,8 +8313,11 @@ skipped by `inset`, more of its convex solids are taken by their planes
   61 842.5). It is the last resort before the pieces, and what it
   returns is checked for crossings, not for volume.
 - **A solid that is not convex and has no room** (a torus hollowed
-  thicker than its tube) is still returned inside out when it is the
-  whole solid: the share-of-walls test is used on pieces only.
+  thicker than its tube) was still returned inside out when it was the
+  whole solid. Refused since (`EditError::InsideOut`): where the copy
+  does not cross itself and more than half its area faces against its
+  own, by the same share-of-walls test
+  (`a_ring_hollowed_thicker_than_its_tube_is_refused`).
 - A hole whose rim is pinched at a vertex is not taken apart. A rim of
   more than 2 000 points is not filled.
 

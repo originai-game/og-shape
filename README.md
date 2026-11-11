@@ -96,7 +96,7 @@ Run on `main` on 2026-11-10 and 11; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 165 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 356 pass | `scripts/check.sh test` |
+| Tests | 358 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -126,9 +126,7 @@ silent returns a result with no error:
   `selfunion.check` (its inputs cross by design), bench case, or swept
   `hole`, `pocket`, `seat` or `dent` leaves any. A shell still answers
   pairs, or is refused, where holes cross each other inside the part or
-  a pocket's mouth is rounded narrower than the wall; and a part that
-  is not convex and has no room for its walls (a ring hollowed thicker
-  than its tube) comes back inside out with no count
+  a pocket's mouth is rounded narrower than the wall
   (`docs/research.md` §38).
 - 1 300 of the scan's bevels are refused: too large for the faces (426),
   a lone piece of a crease that does not fit (226), a twisted face (340),

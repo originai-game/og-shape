@@ -427,9 +427,19 @@ impl<'a> Maps<'a> {
     }
 }
 
+/// The longest side of a preview image, in pixels.
+pub const MAX_SIDE: u32 = 8192;
+/// The most views of one preview.
+pub const MAX_VIEWS: u32 = 720;
+/// The most pixels of one preview, all its views together (2²⁸: a
+/// gigabyte of RGBA).
+pub const MAX_PIXELS: u64 = 1 << 28;
+
 /// The scene from `views` directions around its vertical axis, with each
 /// view's camera and the maps not drawn.
 ///
+/// Refuses more than [`MAX_SIDE`] pixels a side, [`MAX_VIEWS`] views or
+/// [`MAX_PIXELS`] pixels in all ([`ExportError::TooLarge`]).
 /// Errors as [`crate::glb`] does on an invalid scene, and on an elevation
 /// or field of view out of range.
 pub fn views(scene: &Scene, d: &Preview) -> Result<Views, ExportError> {
@@ -438,6 +448,24 @@ pub fn views(scene: &Scene, d: &Preview) -> Result<Views, ExportError> {
     let width = if d.width == 0 { 256 } else { d.width };
     let height = if d.height == 0 { width } else { d.height };
     let views = if d.views == 0 { 4 } else { d.views };
+    // Bounds, so a caller that passes a request on need not check it:
+    // an image side, the views, and the pixels of them all.
+    if width > MAX_SIDE || height > MAX_SIDE {
+        return Err(ExportError::TooLarge(format!(
+            "{width} x {height} pixels; a side is at most {MAX_SIDE}"
+        )));
+    }
+    if views > MAX_VIEWS {
+        return Err(ExportError::TooLarge(format!(
+            "{views} views; at most {MAX_VIEWS}"
+        )));
+    }
+    let pixels = u64::from(width) * u64::from(height) * u64::from(views);
+    if pixels > MAX_PIXELS {
+        return Err(ExportError::TooLarge(format!(
+            "{views} views of {width} x {height} are {pixels} pixels; at most {MAX_PIXELS} in all"
+        )));
+    }
     let elevation = d.elevation.unwrap_or(trig::to_radians(25.0));
     if !(elevation > 0.0 && elevation <= trig::PI / 2.0) || !d.azimuth.is_finite() {
         return Err(ExportError::NotFinite("the preview's elevation".into()));

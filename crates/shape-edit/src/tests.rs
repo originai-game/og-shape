@@ -558,3 +558,34 @@ fn an_axis_inside_a_through_hole_is_reported_with_its_clearance() {
     .unwrap();
     closed(&p);
 }
+
+/// A ring's tube has radius 4. Hollowed 6 thick, the copy of each of its
+/// circles comes out through the tube's middle, a circle of radius 2 the
+/// right way round, and crosses nothing: it was cut as a hollow, and the
+/// ring came back with walls 2 thick. Refused now; 2 thick is a hollow.
+#[test]
+fn a_ring_hollowed_thicker_than_its_tube_is_refused() {
+    use shape_gen::solids::{TorusDesc, torus_desc};
+    let ring = torus_desc(&TorusDesc {
+        radius: 20.0,
+        tube_radius: 4.0,
+        ..Default::default()
+    })
+    .unwrap();
+    let hollow = |thickness: f64| {
+        shell_report(
+            &ring,
+            &Shell {
+                thickness,
+                open: Vec::new(),
+            },
+        )
+    };
+    assert!(matches!(hollow(6.0), Err(EditError::InsideOut { .. })));
+    let (o, r) = hollow(2.0).unwrap();
+    assert_eq!(r.crossing_pairs, 0);
+    let v = ring.measure().volume - closed(&o);
+    // A tube of radius 2 round the same ring, in chords.
+    let tube = 2.0 * trig::PI * trig::PI * 20.0 * 4.0;
+    assert!(v < tube && v > 0.9 * tube, "{v} {tube}");
+}

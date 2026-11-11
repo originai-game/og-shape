@@ -81,7 +81,12 @@ import → join → repair → decimate → place → unwrap → measure → pre
      are dropped (`pockets_dropped`).
    - `min_edge: 0.001` collapses the slivers a union leaves.
 4. **Decimate** to the budget (`decimate`, `target` or `ratio`), or make
-   LODs (`lods`). The report's `error` is how far the surface moved, in
+   LODs: `lods: 3` (level k keeps `ratio`^k), or the levels' own shares
+   of the input, `lod_ratios: [0.5, 0.2, 0.05]` (CLI `--lod-ratios
+   0.5,0.2,0.05`), each level from the one before. A level may stop
+   above what was asked: read each level's `decimate.triangles`, never
+   the ratio. `process` takes `budget` or `ratio` (a share of what the
+   repair leaves). The report's `error` is how far the surface moved, in
    mm. No collapse makes the surface pass through itself; where the
    budget cannot be met, `triangles` is above `target` and `blocked`
    counts the edges left by what stops each: `fixed` (corners, and
@@ -141,8 +146,10 @@ import → join → repair → decimate → place → unwrap → measure → pre
    look along chart borders for lines in the shading. Its `undrawn` lists a map it could not
    draw (WebP, KTX2, progressive JPEG, no UVs). `--uv` (MCP `uv`) shows
    the UV layout over the map: dark lines are chart outlines, dimmed
-   texels are unused. For a texturing step: `--each --fov 0.7` gives one
-   PNG a view with its camera (position, target, up, field of view; in
+   texels are unused. For a texturing step or a turntable: `--each
+   --fov 0.7` gives one PNG a view (`out.00.png` … `out.11.png`: the
+   index padded to the last one's width, so the names sort) with its
+   camera (position, target, up, field of view; in
    the scene's frame and the GLB's), `--unlit --no-edges --no-ground` the
    colour alone, and `--uv --uv-size PX` the layout to paint into (pixel
    (x, y) is u = uv_min[0] + tiles (x + 0.5) / size, v = uv_min[1] +
