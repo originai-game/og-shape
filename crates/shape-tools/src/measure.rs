@@ -364,12 +364,12 @@ fn color_borders(s: &Solid, c: &[shape_mesh::CornerColors]) -> usize {
 
 /// A texel centre on a triangle's edge belongs to it when the edge runs up,
 /// or flat and left: opposite edges of neighbours never both take it.
-fn takes(a: DVec2, b: DVec2) -> bool {
+pub(crate) fn takes(a: DVec2, b: DVec2) -> bool {
     let d = b - a;
     d.y > 0.0 || (d.y == 0.0 && d.x < 0.0)
 }
 
-fn uv_measures(uv: &[[DVec2; 3]], res: u32) -> UvMeasures {
+pub(crate) fn uv_measures(uv: &[[DVec2; 3]], res: u32) -> UvMeasures {
     let mut m = UvMeasures::default();
     let r = res as usize;
     let mut hits = vec![0u8; r * r];

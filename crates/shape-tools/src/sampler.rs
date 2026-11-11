@@ -60,12 +60,12 @@ pub(crate) fn to_srgb(l: f64) -> f64 {
 }
 
 impl Linear {
-    fn get(&self, b: u8) -> u32 {
+    pub(crate) fn get(&self, b: u8) -> u32 {
         u32::from(self.0[usize::from(b)])
     }
 
     /// The byte whose linear value is nearest `l`; ties to the lower.
-    fn encode(&self, l: u32) -> u8 {
+    pub(crate) fn encode(&self, l: u32) -> u8 {
         // The last byte whose value is at most l.
         let k = self.0.partition_point(|&v| u32::from(v) <= l);
         if k == 0 {

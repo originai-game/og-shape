@@ -32,6 +32,10 @@ pub struct PlainGlb<'a> {
     /// solid with UVs); `None` is three.js's default material. Its name
     /// is not written: the material takes `name`, as the mesh does.
     pub material: Option<&'a Material>,
+    /// Write `TANGENT` (on a solid with UVs): each vertex's unit tangent
+    /// along +u and its handedness, as [`crate::bake()`] computes them, so a
+    /// viewer shades a baked normal map in the frame it was baked in.
+    pub tangents: bool,
 }
 
 /// Why a plain GLB could not be written.
@@ -125,6 +129,8 @@ pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
             *normal.entry((v, s.surfaces[i])).or_default() += n;
         }
     }
+    let frames = (d.tangents && uvs.is_some()).then(|| crate::surface::corner_frames(s));
+    let mut tan: Vec<[f32; 4]> = Vec::new();
     type Key = (u32, u32, u64, u64, [u32; 4]);
     let mut ids: BTreeMap<Key, u32> = BTreeMap::new();
     let mut pos: Vec<[f32; 3]> = Vec::new();
@@ -154,6 +160,11 @@ pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
                 nrm.push([n.x as f32, n.y as f32, n.z as f32]);
                 tex.push(uv);
                 col.push(rgba);
+                if let Some(f) = &frames {
+                    let f = f[i][k];
+                    let t = y_up(f.tangent);
+                    tan.push([t.x as f32, t.y as f32, t.z as f32, f.w as f32]);
+                }
             }
             indices.push(id);
         }
@@ -226,6 +237,20 @@ pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
                 ],
             );
             attributes.push(("TEXCOORD_0", Json::Int(a)));
+        }
+        if frames.is_some() {
+            let flat: Vec<f32> = tan.iter().flatten().copied().collect();
+            let a = add(
+                &mut bin,
+                floats(&flat),
+                34962,
+                vec![
+                    ("componentType", Json::Int(5126)),
+                    ("count", Json::Int(tan.len() as u64)),
+                    ("type", Json::Str("VEC4".into())),
+                ],
+            );
+            attributes.push(("TANGENT", Json::Int(a)));
         }
         if colors.is_some() {
             let flat: Vec<f32> = col.iter().flatten().copied().collect();

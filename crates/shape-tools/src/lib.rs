@@ -53,6 +53,8 @@
 //! - [`interference()`]: which parts of a posed scene pass through,
 //!   touch, or hold each other wholly inside ([`Interfering`]).
 
+mod atlas;
+mod bake;
 mod decimate;
 mod decode;
 mod export;
@@ -77,6 +79,11 @@ mod texture;
 mod unwrap;
 mod uvview;
 
+pub use atlas::{
+    Atlas, AtlasError, AtlasMeasures, AtlasReport, ChartPlace, Packing, atlas_measures, pack,
+    repack, unwrap_atlas,
+};
+pub use bake::{Bake, BakeError, BakeReport, BakeSource, Baked, BakedMap, NormalMeasures, bake};
 pub use decimate::{
     Blocked, Decimate, DecimateError, DecimateReport, Rigid, collapse_short_edges, decimate, lods,
     merge_charts,

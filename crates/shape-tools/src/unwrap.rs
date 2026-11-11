@@ -127,7 +127,9 @@ pub fn unwrap(s: &mut Solid, d: &Unwrap) -> Result<Uvs, UnwrapError> {
     Ok(u)
 }
 
-fn charts(s: &Solid, d: &Unwrap) -> Result<Uvs, UnwrapError> {
+/// The desc with its defaults (angle aside): resolution and padding; or
+/// why it cannot unwrap `s`.
+pub(crate) fn check(s: &Solid, d: &Unwrap) -> Result<(u32, f64), UnwrapError> {
     let angle = if d.angle == 0.0 { 66.0 } else { d.angle };
     if !(angle > 0.0 && angle < 90.0) {
         return Err(UnwrapError::BadDesc(
@@ -143,10 +145,19 @@ fn charts(s: &Solid, d: &Unwrap) -> Result<Uvs, UnwrapError> {
     if !(padding > 0.0 && padding.is_finite()) {
         return Err(UnwrapError::BadDesc("padding must be positive".into()));
     }
-    let n = s.triangles.len();
-    if n == 0 {
+    if s.triangles.is_empty() {
         return Err(UnwrapError::Empty);
     }
+    Ok((resolution, padding))
+}
+
+/// The charts of `s` (largest triangle first as seeds, grown while the
+/// normal stays within the angle and the projection does not fold): each
+/// chart's triangles, each triangle's chart, and each triangle projected
+/// on its chart's plane (millimetres).
+pub(crate) fn form(s: &Solid, d: &Unwrap) -> (Vec<Vec<u32>>, Vec<u32>, Vec<[DVec2; 3]>) {
+    let angle = if d.angle == 0.0 { 66.0 } else { d.angle };
+    let n = s.triangles.len();
     let cos_limit = trig::cos(trig::to_radians(angle));
     let corner = |i: usize| s.triangles[i].map(|v| s.positions[v as usize]);
     let mut normals = Vec::with_capacity(n);
@@ -235,6 +246,13 @@ fn charts(s: &Solid, d: &Unwrap) -> Result<Uvs, UnwrapError> {
         }
         charts.push(members);
     }
+    (charts, chart_of, flat)
+}
+
+fn charts(s: &Solid, d: &Unwrap) -> Result<Uvs, UnwrapError> {
+    let (resolution, padding) = check(s, d)?;
+    let (mut charts, mut chart_of, flat) = form(s, d);
+    let n = s.triangles.len();
     // Each chart turned to its smallest box, laid wide, from the origin;
     // packed; then checked exactly in its final coordinates. Rounding in
     // the turn and the scale can push two triangles that only touched
@@ -306,7 +324,7 @@ fn charts(s: &Solid, d: &Unwrap) -> Result<Uvs, UnwrapError> {
 
 /// Turns a chart to its smallest box, laid wide, from the origin; writes
 /// its triangles' coordinates into `local` and returns the box's size.
-fn lay(members: &[u32], projected: &[[DVec2; 3]], local: &mut [[DVec2; 3]]) -> DVec2 {
+pub(crate) fn lay(members: &[u32], projected: &[[DVec2; 3]], local: &mut [[DVec2; 3]]) -> DVec2 {
     let pts: Vec<DVec2> = members
         .iter()
         .flat_map(|&i| projected[i as usize])
@@ -376,7 +394,7 @@ fn pack_all(sizes: &[DVec2], pad: f64) -> Option<(Vec<DVec2>, f64)> {
 
 /// Pairs of triangles of one chart that overlap, by a sweep along u with
 /// exact tests.
-fn overlapping(members: &[u32], uv: &[[DVec2; 3]]) -> Vec<(u32, u32)> {
+pub(crate) fn overlapping(members: &[u32], uv: &[[DVec2; 3]]) -> Vec<(u32, u32)> {
     let bounds = |i: u32| {
         let t = uv[i as usize];
         (t[0].min(t[1]).min(t[2]), t[0].max(t[1]).max(t[2]))
