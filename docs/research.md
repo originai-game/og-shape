@@ -8090,3 +8090,121 @@ lower means a smaller `Solid` (face names shared per surface instead of
 a `Vec` per triangle, colours as 8-bit when they were read as 8-bit):
 a change to `shape-mesh`, not made. Only the bear was fetched here; the
 other 53 files were not rerun.
+
+## 37. Shells of solids that are not convex, and a fillet as wide as its corner (2026-11-11)
+
+§35 left two things: a solid that is not convex was shelled from the
+folded copy (a case with a pocket answered 177 crossing pairs), and one
+solid of the sweep was not convex only because of its bevel.
+
+### 37.1 Turned faces are collapsed (`shape-edit`, `collapse.rs`)
+
+Why `self_union` did not mend the copy: where a rounded corner is
+narrower than the wall, the copy's corner is a swallowtail of facets a
+few hundredths wide lying on each other, and the union comes back open
+("13 unmatched edges"). The fold itself is simple: a face narrower than
+the wall comes out of the copy facing the other way.
+
+So, when the copy crosses itself and neither its outside (§27.1) nor the
+planes (§35, convex only) give a clean hollow:
+
+1. A triangle of the copy whose normal is against its own is **turned**.
+   Turned triangles joined through vertices are a patch.
+2. Each vertex of a patch drops the turned faces' planes. It keeps the
+   planes of its faces that are left, moved by the wall, and is then held
+   inside the moved planes of every face left round its patch: the plane
+   it is furthest outside of joins its planes, until it is outside none
+   or three planes fix it (one plane: along it; two: onto their line;
+   three: their point).
+3. Vertices closer than 10⁻⁹ of the solid's size are made one, so the
+   turned faces have no area and are dropped. Faces turned only now are
+   taken out in the next round (16 at most).
+
+The corner's facets land on the line where the two walls beside them
+meet; a chamfer's on the line of its wall and its cap. Nothing here asks
+for convexity. What comes back is checked exactly (`crossing_pairs` on
+the hollow and on the result, no touching edges) and taken only if
+clean; otherwise the result is as before, with its count.
+
+Measured: the case 80 × 50 × 80, corners of radius 5, a pocket 6 × 6 × 6
+in its top, 10 thick: 0 pairs (177), the hollow 60 × 30 × 60 less
+26 × 26 × 6 = 103 944 mm³ to the last digit. A pocket 4 × 4 × 20: the
+same, 96 480.
+
+**Not mended, and why.**
+
+- **A hollow that pinches off.** A pocket 30 wide in that case, 6 thick:
+  the pocket's own wall reaches through the case's walls, the hollow is
+  two chambers. No face turns over; a face is cut in two. The copy is
+  returned with its count (198). `self_union` on the collapsed copy was
+  tried and comes back open there; not kept.
+- **Walls exactly twice the thickness.** A pocket 10 wide, 10 thick, in
+  a case 50 deep: the hollow's sides lie on each other. Returned with
+  its count; `edits_answer_the_crossing_pairs_they_leave` keeps it.
+
+### 37.2 A fillet as wide as the round corner it follows (`shape-bevel`)
+
+The solid: a rounded rectangle of radius 5, its bottom edge filleted 5.
+The corner is a polygon: its chords are 4.957 from the corner's centre,
+so on the bottom the fillet's offset line passes the centre by 0.043 and
+the points where consecutive chords' offset lines meet come out in the
+opposite order. The classic layout builds a bottom that folds, and is
+refused (`TooLarge`). The wide bevel then fitted it by sliding the
+bottom rim's vertices along the rim (its pass 1), within its tenth of
+the offset: 5 points a corner where the wall above has 7 columns, so
+the wall's facets were twisted over them, 0.21 off their planes, 150 of
+388 triangles (§35).
+
+**Changed.** Before the wide bevel, the classic layout is tried once
+more with each such run shrunk to a point (`swallowed_runs`): on a face,
+a run of bevelled edges whose offset points come out reversed takes one
+point, where the offset lines of the two edges beside the run meet, and
+the profiles at its vertices are drawn again to that point. The strips
+along the run end in it, as a fan; the wall keeps its columns. This is
+the inset's edge collapse, and here the exact inset: the bottom keeps
+the straight sides and each corner's first and last chord (three points
+a corner), the four chords between gone.
+
+Only where all of these hold, so nothing else changes:
+
+- every edge from the one before the run to the one after it has the
+  same face across it (one smooth wall). Two fillets whose offsets meet
+  across a face (`too_large_is_an_error_never_a_clipped_result`) are
+  still `TooLarge`;
+- the boundary turns the same way, by more than 10⁻⁶, at every vertex of
+  the run (it bulges out of the face). A hole's rim in pieces, whose
+  points in a line turn by rounding only, is left to the wide bevel
+  (`bevel.wide` moved until this was asked for, and does not now);
+- the run is longer than 10⁻⁹ of the offset;
+- the run does not go all the way round and its neighbours' lines meet.
+
+Measured: the fillet is convex to 10⁻⁹ (0.21 before), 412 triangles
+(388), volume 316 847.4 (316 783.9: the slid rim cut the corners
+short). **No golden line moved.**
+
+### 37.3 The sweep with both
+
+§27.1's sweep. Three bottoms the bevel refused build now (a rounded
+rectangle of radius 5 chamfered 10 or 25, or filleted 15: 7 refused
+bottoms to 4), so 7 280 shells, not 7 220.
+
+| | §35 | now |
+|---|---|---|
+| built clean | 5 641 | 5 700 |
+| built, crossing themselves | 3 | 1 |
+| refused: walls meet (`NoRoom`) | 149 | 165 |
+| refused otherwise | 17 | 4 |
+| `NotFlat` | 1 410 | 1 410 |
+| crossing pairs, summed | 1 854 | 182 |
+
+Of the 7 220: the 3 crossing are 2 clean and 1 `NoRoom`; of the 17
+refused, 13 are clean, 3 `NoRoom`, 1 still refused. 4 that were clean
+are `NoRoom` (a rounded rectangle of radius 15 filleted 15, 30 thick,
+50 deep: its fillet is convex now and the walls do meet). 18 clean
+results changed volume, all on the two bottoms whose fillet changed.
+Of the 60 new shells 48 are clean, 8 `NoRoom`, 3 refused, 1 crossing.
+
+Left: a triangle chamfered 10, 10 thick, open at the bottom (the cut
+comes back open, a limit of the boolean); a rounded rectangle of radius
+5 chamfered 25 at 20 or 30 thick (3 refused, 1 with 182 pairs), not
+read.

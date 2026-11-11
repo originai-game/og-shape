@@ -264,27 +264,49 @@ fn text_names_a_font_the_caller_supplies() {
 
 #[test]
 fn edits_answer_the_crossing_pairs_they_leave() {
-    let shell = |thickness: f64, pocket: bool| {
+    // A case 80 × 50 × 80 with corners of radius 5, a square pocket of
+    // side `pocket` 6 deep in its top (0: none), hollowed.
+    let shell = |thickness: f64, pocket: f64| {
         let mut s = Session::new("t");
         s.apply_value(&json!({"op": "extrude", "name": "case", "height": 80,
             "profile": {"rect": {"width": 80, "height": 50, "radius": 5}}}))
             .unwrap();
-        if pocket {
+        if pocket > 0.0 {
             s.apply_value(&json!({"op": "pocket", "id": 0, "depth": 6,
-                "profile": {"rect": {"width": 10, "height": 10}},
+                "profile": {"rect": {"width": pocket, "height": pocket}},
                 "at": {"origin": [0, 0, 80], "x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}}))
                 .unwrap();
         }
-        s.apply_value(&json!({"op": "shell", "id": 0, "thickness": thickness}))
-            .unwrap()
+        let answer = s
+            .apply_value(&json!({"op": "shell", "id": 0, "thickness": thickness}))
+            .unwrap();
+        let built = s.model().build().unwrap();
+        (answer, built.scene().parts[0].solid.measure().volume)
     };
-    assert_eq!(shell(3.0, false), json!({"crossingPairs": 0}));
-    // A wall thicker than the corners' radius folds the inner copy
-    // (`docs/research.md` §27.1). A convex case's hollow is cut from its
-    // planes instead; one with a pocket is not convex: the part comes
-    // back, and the answer says it passes through itself.
-    assert_eq!(shell(10.0, false), json!({"crossingPairs": 0}));
-    let folded = shell(10.0, true);
+    assert_eq!(shell(3.0, 0.0).0, json!({"crossingPairs": 0}));
+    // A wall thicker than the corners' radius folds the inner copy at the
+    // corners (`docs/research.md` §27.1, §35, §37). Convex, the hollow is
+    // cut from the planes; with a pocket the case is not convex, and the
+    // faces that turned over are collapsed: the hollow is the box 10 in,
+    // 60 × 30 × 60, less the pocket's own wall, 26 × 26 × 6.
+    assert_eq!(shell(10.0, 0.0).0, json!({"crossingPairs": 0}));
+    let (answer, volume) = shell(10.0, 6.0);
+    assert_eq!(answer, json!({"crossingPairs": 0}));
+    let (_, solid) = shell(3.0, 6.0);
+    let hollow3 = 74.0 * 44.0 * 74.0 - 12.0 * 12.0 * 6.0;
+    let hollow10 = 60.0 * 30.0 * 60.0 - 26.0 * 26.0 * 6.0;
+    // Against the 3 mm shell of the same case (its hollow has corners of
+    // radius 2: 74 × 44 less (4 − π)·2², 74 tall, less the pocket's wall).
+    let hollow3 = hollow3 - (4.0 - trig::PI) * 4.0 * 74.0;
+    let chord = 0.02 * hollow3;
+    assert!(
+        ((volume - solid) - (hollow3 - hollow10)).abs() < chord,
+        "{volume} {solid}"
+    );
+    // A pocket 10 wide leaves walls exactly twice the thickness beside it:
+    // the hollow's sides lie on each other there. The part comes back,
+    // and the answer says it passes through itself.
+    let (folded, _) = shell(10.0, 10.0);
     assert!(folded["crossingPairs"].as_u64().unwrap() > 0, "{folded}");
 }
 

@@ -1346,3 +1346,23 @@
   `meshtools.repair.non_manifold` and `meshtools.repair.pockets` its
   debug text; with the field left out of the JSON the first four are
   as they were, and every case that hashes a mesh alone is unmoved.
+- `shell` on a solid that is not convex: when the copied inner solid
+  folds and neither its outside nor the planes give a clean hollow, the
+  faces that turned over are collapsed (`shape-edit`'s `collapse`): each
+  of their vertices is held inside the moved planes of the faces left
+  round them, so a rounded corner, chamfer or fillet narrower than the
+  wall is gone from the hollow and its neighbours meet. A case with a
+  pocket, 10 thick with corners of radius 5, answered 177 crossing
+  pairs and answers 0, its hollow exact. A hollow that pinches off (a
+  pocket's wall reaching through the part's) is still returned with its
+  count. `docs/research.md` §37.
+- `fillet` and `chamfer` along a round corner no wider than the offset
+  (a rounded rectangle of radius 5 filleted 5): the corner's chords
+  that the offset line swallows on a face are shrunk to one point, and
+  the strips end there as a fan. Before, the rim's vertices were slid
+  along it and the wall's facets above were twisted 0.21 off their
+  planes; now the wall is untouched and the result convex. Three such
+  bevels that were refused (`TooLarge`) build. Two fillets whose
+  offsets meet across a face are refused as before. No golden line
+  moved. The shell sweep with both: 1 of 7 280 crossing (3 of 7 220),
+  4 refused (17).

@@ -2370,3 +2370,87 @@ fn a_wall_whose_rows_are_shallower_than_the_bevel_is_cut_across_them() {
         assert!(matches!(e, BevelError::TooLarge(_)), "{kind}: {e:?}");
     }
 }
+
+/// A round corner of the fillet's own radius: on the bottom the offset
+/// line swallows the corner's chords (a polygon of radius 5 is 4.96 to
+/// its sides), and the classic layout is refused. The wide bevel fitted
+/// by sliding the bottom's vertices along the rim, which twisted the
+/// wall's facets over them by 0.21 (`docs/research.md` §37). The run is
+/// shrunk to one point instead: the wall keeps its columns.
+#[test]
+fn a_fillet_as_wide_as_the_round_corner_it_follows_ends_in_a_point() {
+    let plate = extrude(
+        &shape_2d::rect(&shape_2d::Rect {
+            width: 80.0,
+            height: 50.0,
+            radius: 5.0,
+        })
+        .unwrap(),
+        &Extrude {
+            height: 80.0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let s = fillet(
+        &plate,
+        &Fillet {
+            radius: 5.0,
+            edges: names(&["bottom"]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    check_closed(&s);
+    uncrossed(&s);
+    // Convex still: no vertex outside any triangle's plane.
+    for t in &s.triangles {
+        let [a, b, c] = t.map(|v| s.positions[v as usize]);
+        let n = (b - a).cross(c - a).normalize();
+        let out = s
+            .positions
+            .iter()
+            .map(|&q| n.dot(q - a))
+            .fold(0.0, f64::max);
+        assert!(out < 1e-9, "{out} at {a:?}");
+    }
+    // The bottom is the rectangle between the corners' centres, less what
+    // each corner's first and last chords still cut off it (a chord of
+    // this polygon is 4.96 from the centre, so its offset line passes
+    // 0.04 beyond): three points a corner, the chords between gone.
+    let low: Vec<DVec3> = s.positions.iter().copied().filter(|p| p.z == 0.0).collect();
+    assert_eq!(low.len(), 12, "{low:?}");
+    assert!(low.iter().all(|p| {
+        let d = DVec2::new(p.x.abs() - 35.0, p.y.abs() - 20.0);
+        d.x < 1e-9 && d.y < 1e-9 && d.length() < 0.33
+    }));
+    // The wall's columns stand where they stood: its rim at z = 5 is on
+    // the corner's own vertices.
+    let rim = s
+        .positions
+        .iter()
+        .filter(|p| (p.z - 5.0).abs() < 1e-9 && p.x > 35.0 && p.y > 20.0)
+        .count();
+    let top = s
+        .positions
+        .iter()
+        .filter(|p| p.z == 80.0 && p.x > 35.0 && p.y > 20.0)
+        .count();
+    assert_eq!(rim, top);
+    assert!(s.positions.iter().all(|p| {
+        p.z != 5.0 || p.x.abs() < 35.0 || p.y.abs() < 20.0 || {
+            let r = DVec2::new(p.x.abs() - 35.0, p.y.abs() - 20.0).length();
+            (r - 5.0).abs() < 1e-9
+        }
+    }));
+    // Two fillets whose offsets meet across a face are still too large.
+    let e = fillet(
+        &block(),
+        &Fillet {
+            radius: 15.0,
+            edges: names(&["top"]),
+            ..Default::default()
+        },
+    );
+    assert!(matches!(e, Err(BevelError::TooLarge(_))), "{e:?}");
+}

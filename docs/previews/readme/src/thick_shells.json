@@ -1,0 +1,146 @@
+{
+ "name": "thick_shells",
+ "ops": [
+  {
+   "op": "extrude",
+   "name": "case",
+   "height": 60,
+   "profile": {
+    "rect": {
+     "width": 80,
+     "height": 50,
+     "radius": 5
+    }
+   }
+  },
+  {
+   "op": "pocket",
+   "id": 0,
+   "depth": 6,
+   "profile": {
+    "rect": {
+     "width": 6,
+     "height": 6
+    }
+   },
+   "at": {
+    "origin": [
+     0,
+     0,
+     60
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "z": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "op": "shell",
+   "id": 0,
+   "thickness": 10
+  },
+  {
+   "op": "split",
+   "id": 0,
+   "frame": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     0,
+     -1
+    ],
+    "z": [
+     0,
+     1,
+     0
+    ]
+   },
+   "keep": "above"
+  },
+  {
+   "op": "material",
+   "ids": [
+    0
+   ],
+   "name": "grey",
+   "color": "#9aa3ad",
+   "roughness": 0.6
+  },
+  {
+   "op": "extrude",
+   "name": "tray",
+   "height": 40,
+   "profile": {
+    "rect": {
+     "width": 80,
+     "height": 50,
+     "radius": 5
+    }
+   },
+   "on": {
+    "origin": [
+     110,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "z": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "op": "fillet",
+   "id": 1,
+   "radius": 5,
+   "edges": "bottom"
+  },
+  {
+   "op": "shell",
+   "id": 1,
+   "thickness": 8,
+   "open": "top"
+  },
+  {
+   "op": "material",
+   "ids": [
+    1
+   ],
+   "name": "blue",
+   "color": "#4f7fb8",
+   "roughness": 0.5
+  }
+ ]
+}

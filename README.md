@@ -37,6 +37,14 @@ get convex colliders:
 | ![subdivided](docs/previews/readme/subdivide.png) | ![colliders](docs/previews/readme/cup_colliders.png) |
 | An L with sharp caps, a 12-sided can with a sharp base, a box rounded all over and one on a sharp base. | A cup and its handle covered by 16 convex hulls (`shape collide`): the hollow stays open. |
 
+A loft bends through space and closes into a loop; a shell may be
+thicker than the part's rounded corners, fillets or chamfers:
+
+| | |
+|---|---|
+| ![loft along a path](docs/previews/readme/loft_along.png) | ![thick shells](docs/previews/readme/thick_shells.png) |
+| `loft` through sections placed by frames (`docs/previews/readme/src/loft_along.json`): a bangle, twelve ellipses round a ring with `closed`, and a horn from a rounded square to a circle along a quarter bend. | `docs/previews/readme/src/thick_shells.json`. Left, cut open: a case with corners of radius 5 and a pocket in its top, hollowed 10 thick; the corners are gone from the hollow, the pocket's wall is kept. Right: a tray whose bottom fillet is as wide as its corners (5), hollowed 8 thick, open at the top. |
+
 Joints move by clips, written to the GLB as animations:
 
 ![washing machine clip](docs/previews/readme/washing_machine_clip.png)
@@ -50,6 +58,11 @@ Meshes from elsewhere go through the same kernel:
 |---|---|---|
 | ![duck](docs/previews/uv/duck-full-half.png) | ![defects before](docs/previews/readme/mesh_before.png) | ![defects after](docs/previews/readme/mesh_after.png) |
 | Khronos's Duck, as imported and decimated to half, its texture kept (three.js render, `docs/research.md` §17). | `golden/meshes/ball_defects.obj` as it comes: open, in 2 pieces, 79 faces flipped. | After `shape process --budget 1500`: closed, 1 piece, 1 500 triangles, 6 UV charts with no overlap (the lines are chart seams). |
+
+| | |
+|---|---|
+| ![open leaf](docs/previews/readme/leaf_open.png) | ![thickened leaf](docs/previews/readme/leaf_thick.png) |
+| An open sheet (`docs/previews/readme/src/leaf.obj`, 756 triangles, 56 open edges): no inside, no volume. | After `shape repair --thicken 1.2`: a second sheet under it and a rim along its edge, closed, 1 780 mm³, no triangle pair crossing. |
 
 | | |
 |---|---|
@@ -72,12 +85,12 @@ chain with their look and placement, and sixteen kept and baked at
 
 ## What has been checked
 
-Run on `main` on 2026-11-10; each line says where the numbers come from.
+Run on `main` on 2026-11-10 and 11; each line says where the numbers come from.
 
 | Check | Result | How |
 |---|---|---|
-| The same bytes on every host | 159 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 354 pass | `scripts/check.sh test` |
+| The same bytes on every host | 165 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
+| Tests | 355 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -87,6 +100,9 @@ Run on `main` on 2026-11-10; each line says where the numbers come from.
 | Real generated meshes | 54 files from 8 image- and text-to-3D generators (Hunyuan3D-2, TRELLIS, SPAR3D, TripoSR, InstantMesh, CRM, Unique3D, Meshy): within budget and closed keeping their UVs and texture 39, 51 and 52 at 2 000, 10 000 and 50 000 triangles, 51, 52 and 52 with fresh UVs (the 2 open ones are TRELLIS meshes; Unique3D's chair keeps its vertex-colour borders and misses 2 000, which `--cross-color-borders` reaches at 7.4 mm); decimation folds none through itself (outputs crossing themselves at 10k: 2, both inputs that crossed); 143 of 154 booleans on the results closed, 7 refused with a cause, 4 missed; at 10 000 triangles all 54 keep their material factors, the 40 textured ones every map and the 14 vertex-coloured ones their colours, and `--texture-max 1024` brings the 16 files over 16 MiB of texture under 11 MiB | `bench/generated` (`docs/research.md` §28, §29, §32, §33) |
 | Baking generated meshes to a game's budget | `process --bake 1024`: all 54 within 2 000 and 10 000 triangles (52 closed; the 2 TRELLIS meshes open after repair), every one with a baked base-colour and normal map (15 with metallic-roughness), 1 texel without a source in 108 runs; keeping UVs, 39 and 53. Colour error against the source (unlit, 256², 0–255) where both reach 2 000: 3.6 baked, 5.6 kept (median); 3–4 s and about 50 MiB for a 1024² bake | `bench/generated/bake.ts` (`docs/research.md` §34) |
 | Generated meshes placed for a game | all 54 stand on z = 0 with the origin at the base's centre, at the size asked to 4e-8, facing front, with each generator's frame given as `up` and `front` (TripoSR `+z`/`+x`, InstantMesh `-z`/`+x`, SPAR3D and CRM `+y`/`-z`); no simple reading of the axis measures stands more than 22 up | `bench/generated/place.ts` (`docs/research.md` §31) |
+| Shells thicker than the part's small faces | 7 280 shells of extruded polygons, rounded rectangles and circles with plain, tapered, chamfered and filleted bottoms, 1 to 30 thick, open or closed: 5 700 clean, 1 crossing itself (950 at first), 165 refused because the walls would meet, 4 refused otherwise, 1 410 asked to open a face that is not flat. A case with a pocket (not convex), 10 thick with corners of radius 5: no crossing pair, the hollow's volume exact | `cargo run --release -p shape-edit --example shell_sweep` (`docs/research.md` §27, §35, §37) |
+| Repair's memory | `process` on a 619 000-triangle vertex-coloured mesh (Unique3D's bear) peaks at 879 MiB (2 663 before), 1 497 MiB with `--fuse` (3 366), in the same time, with byte-identical output | `docs/research.md` §36 |
+| A loft along a path | a loop of twelve squares round a ring, straight between: its volume to 1e-9 of the closed form; on a curve, within 1 % of the torus; a bend tighter than its sections is refused | `crates/shape-gen/src/loft.rs`, `crates/shape-model/tests/rest.rs` |
 | Clips | a clip read back from its GLB with an independent glTF reader: a rotation channel on the joint's node and a translation on its follower's, a turn of 3 radians in steps of a quarter turn at most, the last key equal to the node of the scene posed there. The washing machine's `open` (hinge and drawer) and `spin` (the drum's full turn, 5 keys) export as two animations | `crates/shape-tools/tests/export.rs`; `golden/programs/washing_machine_clips.json` |
 | Colliders | the washing machine's 7 parts covered by 19 convex hulls of at most 16 vertices in 4 s; an octagonal cup's hollow kept by 16 hulls (41 mm bridged, against 310 mm by one) | `shape collide` (`guides/meshtools.md`) |
 | The mesh chain on a damaged mesh | open, 2 pieces, 79 flipped faces → closed, 1 piece, on budget, unwrapped with no UV overlap | `shape process golden/meshes/ball_defects.obj` |
@@ -101,10 +117,10 @@ silent returns a result with no error:
   its report (`crossingPairs`, `BoolReport::crossing_pairs`,
   `shape_edit::EditReport`). No committed program, golden case other than
   `selfunion.check` (its inputs cross by design), bench case, or swept
-  `hole`, `pocket`, `seat` or `dent` leaves any; 76 of 4 920 swept
-  shells do (950 before), where a rounded corner, chamfer or fillet
-  narrower than the wall folds the inner solid beyond what `self_union`
-  untangles (`docs/research.md` §27).
+  `hole`, `pocket`, `seat` or `dent` leaves any; 1 of 5 701 swept shells
+  does (950 at first). A shell still answers pairs where its hollow
+  pinches off: a pocket or hole whose own wall reaches through the
+  part's (`docs/research.md` §37).
 - 1 300 of the scan's bevels are refused: too large for the faces (426),
   a lone piece of a crease that does not fit (226), a twisted face (340),
   an edge with more than two faces (308).
@@ -112,9 +128,11 @@ silent returns a result with no error:
   draws base-colour and normal maps (PNG, baseline JPEG), vertex colours
   and the emissive colour, but no metallic-roughness or emissive maps,
   and no metalness or roughness factors.
-- Carrying vertex colours through the fuse step costs memory: `process`
-  on Unique3D's 620 000- and 820 000-triangle files peaks at 3.0–3.3 GiB
-  (1.8 GiB for the bear without its colours, `docs/research.md` §33).
+- A mesh of 600 000 triangles with colours is about 300 MiB in memory
+  as a `Solid`, and `process` holds the file and two of them at its
+  peak: 0.9 GiB on Unique3D's 620 000-triangle bear, 1.5 GiB with
+  `--fuse` (`docs/research.md` §36). Only that file was measured after
+  the change.
 - Keeping a file's UVs, decimation stops at about three triangles a UV
   island: 14 of 54 generated meshes miss 2 000 triangles (the report's
   `blocked` says why); merging rigidly matching islands lowers that
@@ -128,7 +146,9 @@ silent returns a result with no error:
   their faces separates and holes over 64 edges that no flat clear fill
   closes: 2 of TRELLIS's 6 meshes (`docs/research.md` §32).
 - Not read: Draco and meshopt-compressed glTF, morph targets, a second
-  UV set. No USD or URDF export.
+  UV set. No USD or URDF export. `thicken` gives an open sheet one
+  thickness everywhere; where the sheet curves tighter than that its
+  second sheet folds (counted by `--intersections`).
 - An imported mesh's normals are recomputed, smooth within a surface: a
   normal map baked against the file's normals shades a median 1–1.6°
   differently after repair alone. The texture budget writes PNG only (no
@@ -165,6 +185,8 @@ shape export  model.json -o model.glb        # or .obj, .stl
 shape process scan.glb --budget 40000 --weld 0.001 --floaters 0.05 \
               --non-manifold --holes 64 --fuse -o asset.glb
                                              # repair, decimate, unwrap
+shape repair  leaf.obj --thicken 1.2 -o leaf.glb   # an open sheet made solid
+shape collide model.json --hulls 8 -o colliders.glb  # convex colliders
 ```
 
 ## Read

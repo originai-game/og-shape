@@ -15,6 +15,9 @@
 //! a tip at both ends, and a corner on a face whose triangles are not one
 //! plane is cut on its folds (§7.8). A band deeper than the rows of a
 //! smooth wall (a loft's top rim) is cut across them (§7.9).
+//! A run of edges the offset line swallows on a face (a round corner no
+//! wider than the offset) is shrunk to a point, where its strips end as
+//! a fan (§37).
 //!
 //! Names (`docs/design.md` §4):
 //! - New faces carry only `fillet` or `chamfer`.

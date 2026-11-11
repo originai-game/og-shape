@@ -223,6 +223,9 @@ struct Build<'a> {
     /// Whether a fold (two triangles of one surface not in one plane)
     /// counts as a real edge (`docs/research.md` §7.8).
     folds: bool,
+    /// Per point of a run of edges the offset line swallows on a face
+    /// (`swallowed_runs`, `docs/research.md` §37), the run's one point.
+    poles: BTreeMap<u32, u32>,
     /// The checked input's triangles, for the final check (`check.rs`).
     checked: Option<std::sync::Arc<Vec<[DVec3; 3]>>>,
 }
@@ -307,6 +310,196 @@ impl Build<'_> {
         match self.snap(f, i, key) {
             Some(id) => id,
             None => self.push(p),
+        }
+    }
+
+    /// Runs of bevelled edges that the offset line on a face swallows,
+    /// each shrunk to a point (`docs/research.md` §37).
+    ///
+    /// On a face, a vertex between two bevelled edges gets the point where
+    /// their two offset lines meet. Round a corner no wider than the
+    /// offset (a round corner of the fillet's own radius, as a polygon)
+    /// those points come out in the opposite order: the edges between
+    /// them have no room, the event an inset calls an edge collapse. Here
+    /// every vertex of such a run takes one point instead, where the
+    /// offset lines of the two edges beside the run meet, and its profile
+    /// is drawn again to that point. The strips along the run then end in
+    /// it, as a fan, and the faces on the run's other side are untouched.
+    ///
+    /// A run that ends at an unbevelled edge, goes all the way round, or
+    /// whose neighbours' lines do not meet is left as it is (the layout
+    /// then fails as before).
+    fn swallowed_runs(&mut self) {
+        let s = self.s;
+        // The one point that replaces `v` in the triangle on the left of
+        // the directed edge `x → y`, when it is one.
+        let rail = |b: &Self, x: u32, y: u32, v: u32| -> Option<u32> {
+            let t = *b.topo.dir.get(&(x, y))?;
+            match b.repl.get(&(t, v)).map(Vec::as_slice) {
+                Some([one]) => Some(*one),
+                _ => None,
+            }
+        };
+        // Per surface: swallowed directed edges, by their start.
+        let mut next: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+        let mut bevelled: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+        for &(lo, hi) in self.edges.keys() {
+            for (x, y) in [(lo, hi), (hi, lo)] {
+                let Some(&t) = self.topo.dir.get(&(x, y)) else {
+                    continue;
+                };
+                let face = s.surfaces[t];
+                bevelled.insert((face, x), y);
+                let (Some(rx), Some(ry)) = (rail(self, x, y, x), rail(self, x, y, y)) else {
+                    continue;
+                };
+                let along = s.positions[y as usize] - s.positions[x as usize];
+                if (self.pos[ry as usize] - self.pos[rx as usize]).dot(along) <= 0.0 {
+                    next.insert((face, x), y);
+                }
+            }
+        }
+        // The bevelled edge of `face` that ends at `v`.
+        let before = |face: u32, v: u32| {
+            bevelled
+                .iter()
+                .find(|&(&(f, _), &y)| f == face && y == v)
+                .map(|(&(_, x), _)| x)
+        };
+        let ends: BTreeSet<(u32, u32)> = next.iter().map(|(&(f, _), &y)| (f, y)).collect();
+        let starts: Vec<(u32, u32)> = next.keys().copied().filter(|k| !ends.contains(k)).collect();
+        let mut moves: Vec<(u32, DVec3)> = Vec::new();
+        let mut redraw: BTreeSet<u32> = BTreeSet::new();
+        for (face, a) in starts {
+            let mut run = vec![a];
+            let mut at = a;
+            while let Some(&y) = next.get(&(face, at)) {
+                run.push(y);
+                at = y;
+            }
+            let b = at;
+            let (Some(u), Some(&w)) = (before(face, a), bevelled.get(&(face, b))) else {
+                continue;
+            };
+            if next.contains_key(&(face, u)) {
+                continue;
+            }
+            let p = |v: u32| s.positions[v as usize];
+            // Only along one smooth wall: every edge from the one before
+            // the run to the one after it has the same face across it (a
+            // round corner in chords). Two walls meeting at a real corner
+            // whose offsets meet have swallowed the face itself, which is
+            // too large and stays so.
+            let across = |x: u32, y: u32| self.topo.dir.get(&(y, x)).map(|&t| s.surfaces[t]);
+            let wall = across(u, a);
+            let mut path = vec![u];
+            path.extend(&run);
+            path.push(w);
+            if wall.is_none() || path.windows(2).any(|e| across(e[0], e[1]) != wall) {
+                continue;
+            }
+            // And only round a corner that bulges out of the face (the
+            // boundary turns the same way at every vertex of the run, as
+            // the face's own outline does): there the offset shrinks the
+            // run. Along a hollow (a hole's rim seen from the face round
+            // it) the offset lengthens the edges, and a piece swallowed
+            // there is a short piece among long ones, the wide bevel's.
+            let Some(&t) = self.topo.dir.get(&(a, run[1])) else {
+                continue;
+            };
+            let n = tri_normal(s, t);
+            let bulges = path.windows(3).all(|e| {
+                let (d0, d1) = (p(e[1]) - p(e[0]), p(e[2]) - p(e[1]));
+                // A real turn, not the rounding of points in a line.
+                d0.cross(d1).dot(n) > 1e-6 * d0.length() * d1.length()
+            });
+            if !bulges {
+                continue;
+            }
+            // Pieces shorter than a billionth of the offset are a boolean's
+            // leftovers, welded by the wide bevel's first pass instead.
+            let largest = self
+                .edges
+                .values()
+                .flat_map(|e| e.off)
+                .fold(0.0f64, f64::max);
+            let length: f64 = run
+                .windows(2)
+                .map(|e| (s.positions[e[1] as usize] - s.positions[e[0] as usize]).length())
+                .sum();
+            if length <= 1e-9 * largest {
+                continue;
+            }
+            // The offset lines of the edges beside the run: each through
+            // its end's own point, along the edge.
+            let (Some(ra), Some(rb)) = (rail(self, u, a, a), rail(self, b, w, b)) else {
+                continue;
+            };
+            let (p1, d1) = (self.pos[ra as usize], p(a) - p(u));
+            let (p2, d2) = (self.pos[rb as usize], p(w) - p(b));
+            let (aa, bb, cc) = (d1.dot(d1), d1.dot(d2), d2.dot(d2));
+            let det = aa * cc - bb * bb;
+            if det <= 1e-12 * aa * cc {
+                continue;
+            }
+            let gap = p1 - p2;
+            let k = (bb * d2.dot(gap) - cc * d1.dot(gap)) / det;
+            let pole = p1 + d1 * k;
+            let mut ids = Vec::new();
+            for (i, &v) in run.iter().enumerate() {
+                let (x, y) = if i + 1 < run.len() {
+                    (v, run[i + 1])
+                } else {
+                    (run[i - 1], v)
+                };
+                match rail(self, x, y, v) {
+                    Some(id) => ids.push(id),
+                    None => {
+                        ids.clear();
+                        break;
+                    }
+                }
+            }
+            if ids.is_empty() {
+                continue;
+            }
+            let first = ids.iter().copied().min().unwrap_or(0);
+            for &id in &ids {
+                self.poles.insert(id, first);
+            }
+            moves.extend(ids.into_iter().map(|id| (id, pole)));
+            redraw.extend(run);
+        }
+        for (id, pole) in moves {
+            self.pos[id as usize] = pole;
+        }
+        // The profiles at the run's vertices, drawn again between their
+        // ends as they now stand.
+        let samples = self.samples(self.n);
+        for v in redraw {
+            let Some(chain) = self
+                .chains
+                .iter()
+                .find(|(k, _)| k.0 == v)
+                .map(|(_, c)| c.clone())
+            else {
+                continue;
+            };
+            if chain.len() != samples.len() {
+                continue;
+            }
+            let (a, b) = (chain[0], chain[chain.len() - 1]);
+            let pts = profile::chain(
+                self.pos[a as usize],
+                self.pos[b as usize],
+                s.positions[v as usize],
+                &samples,
+            );
+            for (k, &id) in chain.iter().enumerate() {
+                if k != 0 && k + 1 != chain.len() {
+                    self.pos[id as usize] = pts[k];
+                }
+            }
         }
     }
 
@@ -1022,6 +1215,10 @@ fn bevel_runs(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
                     return Ok(out);
                 }
             }
+            // An offset line that shrinks a run of edges to a point.
+            if let Ok(out) = bevel_poles(s, spec) {
+                return Ok(out);
+            }
             // A bevel wider than the faces' own segments.
             let first = wide::bevel(s, spec);
             if first.is_ok() {
@@ -1038,7 +1235,7 @@ fn bevel_runs(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
             }
             if tilted {
                 // Cut every corner on its folds, in each triangle's plane.
-                match layout(s, spec, None, TILT_EXACT, true) {
+                match layout(s, spec, None, TILT_EXACT, true, false) {
                     Ok(out) => Ok(out),
                     Err(Fail::Error(e @ BevelError::LonePiece(..))) => Err(e),
                     Err(_) => match rows::bevel(s, spec) {
@@ -1125,7 +1322,15 @@ pub(crate) fn bevel_once(
     wide: Option<&wide::Wide>,
     tilt: f64,
 ) -> Result<Solid, Fail> {
-    layout(s, spec, wide, tilt, false)
+    layout(s, spec, wide, tilt, false, false)
+}
+
+/// The classic layout with each run of edges that the offset line
+/// swallows on a face shrunk to a point (a round corner of the fillet's
+/// own radius): the strips along it end in that point, as fans, and the
+/// faces beside keep their planes.
+fn bevel_poles(s: &Solid, spec: &Spec) -> Result<Solid, Fail> {
+    layout(s, spec, None, TILT_EXACT, false, true)
 }
 
 /// One layout attempt; with `folds`, every fold of a face counts as a
@@ -1137,6 +1342,7 @@ fn layout(
     wide: Option<&wide::Wide>,
     tilt: f64,
     folds: bool,
+    weld: bool,
 ) -> Result<Solid, Fail> {
     if !s.measure().closed {
         return Err(BevelError::NotClosed.into());
@@ -1163,6 +1369,7 @@ fn layout(
         wide,
         tilt,
         folds,
+        poles: BTreeMap::new(),
         checked: spec.checked.clone(),
     };
     let verts: BTreeSet<u32> = b.edges.keys().flat_map(|&(x, y)| [x, y]).collect();
@@ -1171,6 +1378,9 @@ fn layout(
     }
     for &v in &verts {
         b.vertex(v)?;
+    }
+    if weld {
+        b.swallowed_runs();
     }
     // Strips.
     let mut strip_of: BTreeMap<EdgeKey, usize> = BTreeMap::new();
@@ -1228,8 +1438,37 @@ fn layout(
     finish(b, &inserts)
 }
 
-fn finish(b: Build<'_>, inserts: &BTreeMap<(usize, u32), Vec<u32>>) -> Result<Solid, Fail> {
+fn finish(mut b: Build<'_>, inserts: &BTreeMap<(usize, u32), Vec<u32>>) -> Result<Solid, Fail> {
     let s = b.s;
+    let mut welded_inserts = None;
+    if !b.poles.is_empty() {
+        // The points of each swallowed run are one point now.
+        let to: Vec<u32> = (0..b.pos.len() as u32)
+            .map(|v| b.poles.get(&v).copied().unwrap_or(v))
+            .collect();
+        let map = |ids: &[u32]| {
+            let mut out: Vec<u32> = ids.iter().map(|&v| to[v as usize]).collect();
+            out.dedup();
+            out
+        };
+        for ids in b.repl.values_mut() {
+            *ids = map(ids);
+        }
+        b.new_tris = b
+            .new_tris
+            .iter()
+            .map(|&(t, u)| (t.map(|v| to[v as usize]), u))
+            .filter(|(t, _)| t[0] != t[1] && t[1] != t[2] && t[2] != t[0])
+            .collect();
+        welded_inserts = Some(
+            inserts
+                .iter()
+                .map(|(k, ids)| (*k, map(ids)))
+                .collect::<BTreeMap<_, _>>(),
+        );
+    }
+    let inserts = welded_inserts.as_ref().unwrap_or(inserts);
+    let weld = !b.poles.is_empty();
     let kind = b.kind.name();
     let seq = |t: usize, x: u32| -> Vec<u32> { b.repl.get(&(t, x)).cloned().unwrap_or(vec![x]) };
     // A rebuilt triangle's outline: each corner's replacement, then the
@@ -1301,7 +1540,7 @@ fn finish(b: Build<'_>, inserts: &BTreeMap<(usize, u32), Vec<u32>>) -> Result<So
             continue;
         }
         let poly = poly(i);
-        if b.wide.is_some() && wide::collapsed(&poly) {
+        if (b.wide.is_some() || weld) && wide::collapsed(&poly) {
             // A band triangle whose corners all landed on the cut.
             pieces[i] = Some(Vec::new());
             continue;

@@ -711,6 +711,13 @@ fn offset(planes: &[(DVec3, f64)]) -> DVec3 {
         }
     }
     let cs: Vec<(DVec3, f64)> = clusters.iter().map(|c| (c.0.normalize(), c.1)).collect();
+    fit(&cs)
+}
+
+/// The displacement `d` with `n·d = target` for the distinct unit normals
+/// given: along the one, in the plane of the two, the point of the three,
+/// or the least squares fit of more.
+fn fit(cs: &[(DVec3, f64)]) -> DVec3 {
     match cs.len() {
         0 => DVec3::ZERO,
         1 => cs[0].0 * cs[0].1,
@@ -730,7 +737,7 @@ fn offset(planes: &[(DVec3, f64)]) -> DVec3 {
             // Normal equations (Σ n nᵀ) d = Σ t n, by Cramer's rule.
             let mut m = [[0.0f64; 3]; 3];
             let mut r = [0.0f64; 3];
-            for &(n, t) in &cs {
+            for &(n, t) in cs {
                 let n = n.to_array();
                 for i in 0..3 {
                     r[i] += t * n[i];
@@ -766,10 +773,13 @@ fn offset(planes: &[(DVec3, f64)]) -> DVec3 {
 /// the cut opens them); then the inner solid is cut away. Inner faces get
 /// `cut` and `shell.*`.
 ///
-/// Where that inner solid folds through itself and the solid is convex,
-/// the inner solid is built from the solid's planes instead (`inset`,
-/// `docs/research.md` §35). A convex solid whose walls would meet is
-/// refused ([`EditError::NoRoom`]).
+/// Where that inner solid folds through itself (a face narrower than the
+/// wall turns over), a clean one is looked for in turn: its outside
+/// (`self_union`, `docs/research.md` §27); for a convex solid, the space
+/// inside its planes (`inset`, §35); the copy with the turned faces
+/// collapsed (`collapse`, §37). If none is clean the result comes back
+/// with its crossing pairs counted. A convex solid whose walls would meet
+/// is refused ([`EditError::NoRoom`]).
 pub fn shell(s: &Solid, d: &Shell) -> Result<Solid, EditError> {
     shell_report(s, d).map(|(s, _)| s)
 }
@@ -858,6 +868,20 @@ pub fn shell_report(s: &Solid, d: &Shell) -> Result<(Solid, EditReport), EditErr
         u => u,
     };
     if let Some(i) = &exact {
+        let e = cut(i)
+            .ok()
+            .filter(|(_, r)| r.touching_edges == 0)
+            .map(|(out, _)| counted(out));
+        if let Some(e) = e
+            && e.1.crossing_pairs == 0
+        {
+            return Ok(e);
+        }
+    }
+    // The faces that turned over taken out, their neighbours run on
+    // (`collapse`): no convexity needed.
+    let collapsed = collapse::collapsed(s, &open, t, size(s)).filter(|i| crossing_pairs(i) == 0);
+    if let Some(i) = &collapsed {
         let e = cut(i)
             .ok()
             .filter(|(_, r)| r.touching_edges == 0)
@@ -1067,6 +1091,7 @@ pub fn merge(solids: &[&Solid]) -> Solid {
     out
 }
 
+mod collapse;
 mod inset;
 pub mod subdivide;
 pub use subdivide::{MAX_LEVELS, Subdivide, subdivide};
