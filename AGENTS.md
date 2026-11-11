@@ -5,11 +5,12 @@ Design: `docs/design.md`. Plan and status: `docs/plan.md`. Verified research:
 
 ## What this is
 
-- A Rust kernel that origin-engine will absorb (`docs/plan.md` §M). Write it
-  so that the merge only vendors crates and translates the API into the
-  engine's IDL. Nothing in the design should need to change at the merge.
-- It depends on no engine crate and no platform code. The engine's
-  conventions still apply (origin-engine `AGENTS.md`):
+- A Rust kernel for 3D modeling, its own project (MIT). It is not being
+  merged into origin-engine (the owner, 2026-11-11; `docs/plan.md` §M
+  records what that merge would have been). It ships as crates, the
+  `shape` command line, the MCP server and the wasm binding.
+- It depends on no engine crate and no platform code. Its conventions are
+  the engine's, kept as its own:
   - zero-value desc structs;
   - errors as values;
   - no hidden state;
@@ -17,8 +18,8 @@ Design: `docs/design.md`. Plan and status: `docs/plan.md`. Verified research:
   - three.js vocabulary where it fits;
   - no taste verdicts: tools report measurements and findings, and the
     agent judges.
-- The engine ships no skills. What an author needs beyond a signature goes
-  into guides that will become `og api` entries, under `guides/`.
+- It ships no skills. What an author needs beyond a signature goes into
+  guides, under `guides/` (the MCP server serves them as resources).
 
 ## Non-negotiable
 
@@ -40,18 +41,23 @@ Design: `docs/design.md`. Plan and status: `docs/plan.md`. Verified research:
     three targets. A claim that a crate is deterministic is checked by the
     gate, never assumed.
 - **Permissive licences only:** MIT, Apache-2.0, BSD, zlib, ISC, and
-  Unicode-3.0 (Unicode data tables). Never use
-  GPL, LGPL or MPL code, and never read GPL source to port it. Blender's
-  published design notes are fine; its source files are not. Vendored code
-  keeps its licence under `third_party/<name>/`.
+  Unicode-3.0 (Unicode data tables). This project is MIT, and code under
+  GPL, LGPL or MPL cannot be made part of an MIT work: never use it,
+  whether copied, ported, translated or rewritten to its structure.
+  Vendored code keeps its licence under `third_party/<name>/`.
+  - GPL source (Blender's) may be read to understand what a tool does and
+    to compare results (the owner, 2026-11-11). What is then written here
+    is written from the published idea (a paper, design notes, the
+    behaviour seen), in this project's own structure and names, and its
+    commit says which source was read and what was taken from it: an
+    idea, never code.
 - **Names survive operations.** Faces and edges are reached by name, never
   by computed coordinates. Every operation states how it carries names
   through (`docs/design.md` §4).
 
 ## Building and testing
 
-- Toolchain: `rust-toolchain.toml`, pinned to the same nightly as
-  origin-engine. A move changes both repositories together.
+- Toolchain: `rust-toolchain.toml`, a pinned nightly.
 - No GPU is needed for anything here. The preview renderer is a CPU
   rasterizer.
 - Tests run in seconds. Golden fixtures are output hashes, not images.

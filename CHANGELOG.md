@@ -1381,3 +1381,9 @@
   Not mended: holes that cross inside the part, and a pocket mouth
   rounded narrower than the wall. `docs/research.md` §38. No golden
   line moved.
+- og-shape is its own project and is not being merged into origin-engine
+  (the owner, 2026-11-11): `AGENTS.md`, `README.md` and `docs/plan.md`
+  §M say so. Licence rule: still no GPL, LGPL or MPL code in any form
+  (this project is MIT); GPL source may now be read to understand a tool
+  and compare results, with what is written here taken from the idea
+  and the commit saying what was read.

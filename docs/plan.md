@@ -1,7 +1,8 @@
 # og-shape plan
 
 Each phase ends when its acceptance is met, with the gate green. Phases run
-in order. Phase M (the merge) needs the owner's go-ahead.
+in order. Phase M (the merge into origin-engine) is dropped: og-shape is its
+own project (the owner, 2026-11-11).
 
 ## Where it runs
 
@@ -139,7 +140,9 @@ A change that moves a hash says why in its commit and changelog.
   the token counts.
 - **Acceptance:** the evaluation results are recorded in `docs/research.md`.
 
-## Phase M: merge into origin-engine (needs the owner's go-ahead)
+## Phase M: merge into origin-engine (dropped, 2026-11-11)
+
+Not going ahead: og-shape stays its own project. What it would have been:
 
 As in `docs/design.md` §8. It runs as one origin-engine stream from
 origin/main, landed through `scripts/land.sh`, and draws the platform ask to

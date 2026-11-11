@@ -200,7 +200,11 @@ The rules are in `AGENTS.md`. The design consequences:
   sand3d writes (`docs/research.md` §1.5), so outside tools can read them.
   OBJ and STL hold meshes only.
 
-## 8. The merge into origin-engine
+## 8. The merge into origin-engine (dropped)
+
+Not going ahead (the owner, 2026-11-11): og-shape is its own project.
+This section, and what §2 and §3 say of the engine's IDL, `og cook` and
+`og model`, record what the merge would have been.
 
 Done once, at plan phase M:
 1. Vendor the crates under `crates/og-shape*` in origin-engine and replace

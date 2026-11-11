@@ -9,16 +9,14 @@ builds it into a mesh that is identical bit for bit on x86-64, aarch64 and
 wasm32. The same kernel repairs, decimates, unwraps, measures, previews and
 exports any mesh, wherever it came from.
 
-og-shape is developed here, outside the engine, so that its work never
-touches the engine's gate, landing queue or lanes. When its plan's merge
-phase is reached (`docs/plan.md` §M), it moves into origin-engine. There its
-Rust crates are vendored, its API becomes the IDL module `og.shape`, and its
-tools become `og model` commands. The platform uses it only through a
-released engine.
+og-shape is its own project, MIT licensed. It ships as Rust crates, the
+`shape` command line, an MCP server and a wasm binding with a TypeScript
+API. It was planned as a kernel for origin-engine to absorb; that merge
+is not going ahead (`docs/plan.md` §M).
 
-Status: every phase of `docs/plan.md` but the merge is done; the table in
-its §Status is the record. The merge (phase M) waits for the owner. Run
-the gate with `scripts/check.sh` (needs cargo-deny and wasmtime).
+Status: every phase of `docs/plan.md` is done but the merge, which is
+dropped; the table in its §Status is the record. Run the gate with
+`scripts/check.sh` (needs cargo-deny and wasmtime).
 
 ## What it makes
 
@@ -170,7 +168,8 @@ silent returns a result with no error:
   choose its up or front: the author says them, per generator
   (`guides/meshtools.md`). A program's export has no pivot option; the
   program places its own parts.
-- The declarative `.ogt` source and `og cook` belong to the merge.
+- The declarative `.ogt` source and `og cook` belonged to the merge into
+  origin-engine, which is dropped: a program is JSON or TypeScript.
 
 ## Use it
 
@@ -203,7 +202,7 @@ shape collide model.json --hulls 8 -o colliders.glb  # convex colliders
 ## Read
 
 - `docs/design.md`: goals, scope, API, architecture, determinism.
-- `docs/plan.md`: phases, acceptance and the merge into the engine.
+- `docs/plan.md`: phases, acceptance and status.
 - `docs/research.md`: what has been verified so far: sand3d's real Blender
   dependencies, the library survey, the platform's current 3D pipeline,
   and what the engine already covers.
