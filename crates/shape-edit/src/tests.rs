@@ -316,6 +316,71 @@ fn a_chamfer_narrower_than_the_wall_does_not_fold_the_hollow() {
     );
 }
 
+/// Open at the chamfered bottom, the copy's fold cannot be untangled (4
+/// crossing pairs before). A convex solid's hollow is the space inside
+/// its planes moved by the wall (`inset`): a triangle of apothem 15 above
+/// the chamfer's plane, which narrows it to 15 − 10√2 at the bottom.
+#[test]
+fn a_convex_solid_s_hollow_is_cut_from_its_planes_when_the_copy_folds() {
+    use shape_bevel::{Chamfer, chamfer};
+    use shape_gen::solids::{Generator, textured};
+    let triangle = shape_2d::polygon(&shape_2d::Polygon {
+        sides: 3,
+        radius: 50.0,
+        ..Default::default()
+    })
+    .unwrap();
+    let d = Extrude {
+        height: 80.0,
+        ..Default::default()
+    };
+    let bottom = Chamfer {
+        distance: 10.0,
+        edges: vec!["bottom".into()],
+        ..Default::default()
+    };
+    let open = Shell {
+        thickness: 10.0,
+        open: vec!["bottom".into()],
+    };
+    let solid = chamfer(&extrude(&triangle, &d).unwrap(), &bottom).unwrap();
+    let (o, r) = shell_report(&solid, &open).unwrap();
+    assert_eq!(r.crossing_pairs, 0);
+    assert_eq!(shape_bool::crossing_pairs(&o), 0);
+    let k = 15.0 - 10.0 * 2.0f64.sqrt();
+    let root3 = 3.0f64.sqrt();
+    let hollow = root3 * (3375.0 - k * k * k) + 3.0 * root3 * 225.0 * (70.0 - (15.0 - k));
+    let expected = solid.measure().volume - hollow;
+    let v = closed(&o);
+    assert!(
+        (v - expected).abs() < 1e-9 * expected,
+        "{v} against {expected}"
+    );
+    assert!(!o.faces(&["wall"]).unwrap().is_empty());
+    // With UVs, the walls carry the outer faces' along their planes.
+    let solid = chamfer(
+        &textured(&Generator::Extrude(&triangle, d)).unwrap(),
+        &bottom,
+    )
+    .unwrap();
+    assert!(solid.uvs.is_some());
+    let (o, r) = shell_report(&solid, &open).unwrap();
+    assert!(o.uvs.is_some() && r.crossing_pairs == 0);
+    assert!((closed(&o) - expected).abs() < 1e-9 * expected);
+    // Walls thicker than the triangle's apothem (25) meet: refused, with
+    // how much thinner they must be. (The copy turned inside out without
+    // crossing itself, and was cut as a hollow.)
+    let prism = extrude(&triangle, &d).unwrap();
+    let thick = Shell {
+        thickness: 30.0,
+        open: Vec::new(),
+    };
+    match shell_report(&prism, &thick) {
+        Err(EditError::NoRoom { short, .. }) => assert!((short - 5.0).abs() < 1e-3, "{short}"),
+        other => panic!("{other:?}"),
+    }
+}
+
 #[test]
 fn split_seat_merge_dent() {
     let b = boxed(20.0, 20.0, 20.0);

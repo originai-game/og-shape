@@ -7971,3 +7971,77 @@ in full: native and wasm32 equal.
 - Not done: baking to a size other than square, a walk from the previous
   texel's hit (not needed for time), KTX2 output, ray hits weighted by
   distance across several candidates (one is taken).
+
+## 35. A convex solid's hollow, from its planes (2026-11-11)
+
+§27.1 left 76 of the sweep's shells crossing themselves: the inner solid
+is a copy with each vertex moved, and a face narrower than the wall
+turns over in it. `self_union` drops the fold only where the fold winds
+the right way.
+
+**What is done now.** For a convex solid the inner solid needs no copy:
+it is the space inside every face's plane moved by the wall (in, or out
+through an open face). `shape-edit`'s `inset` gathers the planes, finds
+the point deepest inside them (steps away from the nearest plane, ever
+shorter, in five rounds down to 10⁻⁸ of the solid's size), takes each
+plane `n · x = h` about that point to its dual point `n / h`, and builds
+their convex hull (`shape_gen::hull`, exact on the points given). A plane
+that bounds nothing is no corner of the hull; each flat side of the hull
+is one corner of the inner solid, where its planes meet (three planes
+solved directly, more by least squares). Corners closer than 10⁻⁹ of the
+solid's size are one. Maths: `+ − × ÷` and `sqrt` only.
+
+- **Convex is tested to rounding** (no vertex more than 10⁻⁹ of the
+  size outside any face's plane), not exactly: a bevel's corners are
+  rounded, and an exact test refuses every chamfered prism. What is
+  built is checked exactly afterwards (`crossing_pairs`, touching edges,
+  closed), and taken only if clean.
+- **Only when the copy folds.** `shell` tries, in order: the copy; its
+  outside (`self_union`); the planes. So a shell that was clean is byte
+  for byte what it was: no golden line moved, and the 18 programs under
+  `eval/` that shell a part build as before.
+- **No room is refused.** If the deepest point is not `thickness` inside
+  every kept plane (to 10⁻⁶ of the size), the walls meet:
+  `EditError::NoRoom { thickness, short }`. Before, a triangular prism of
+  apothem 25 hollowed 30 thick gave a copy turned through its own middle
+  that did not cross itself; it was cut as a hollow and reported 0 pairs.
+- At most 8 000 triangles (planes are gathered pairwise); above, as
+  before.
+
+**The sweep** (§27.1's, 7 220 shells, 1 410 of them `NotFlat` before and
+after):
+
+| | before | after |
+|---|---|---|
+| built clean | 4 844 | 5 641 |
+| built, crossing themselves | 75 | 3 |
+| built open | 1 | 0 |
+| refused: walls meet (`NoRoom`) | — | 149 |
+| refused otherwise | 890 | 17 |
+| crossing pairs, summed | 24 496 | 1 854 |
+
+(§27.1 counted 76 crossing; one of them is the open result.) Of the 890
+refused before, 817 build clean and 56 are `NoRoom`. Of the 75 crossing,
+42 are clean and 30 are `NoRoom`. All 149 `NoRoom` are the triangle
+(apothem 25) at 30 thick; 63 of them were reported clean before, with a
+hollow that was not one. No shell that was clean changed volume.
+
+**What is left.**
+
+- The 3 crossing and 12 of the 17 refused are one solid: a rounded
+  rectangle of radius 5 with its bottom filleted 5. The fillet's corner
+  patch there is 0.21 mm off convex (150 of 388 triangles have a vertex
+  outside their plane), so it is not taken as convex. The bevel's patch
+  where the fillet's radius equals the corner's is the thing to look at.
+- 5 more refusals: two triangles open at a chamfered bottom, three
+  rounded rectangles (radius 15, fillet 15) open at the bottom or `+x`
+  at 1 or 3 thick. Not read yet.
+- **A solid that is not convex is shelled as before.** A case 80 × 50
+  with a 10 × 10 pocket, hollowed 10 thick with corners of radius 5,
+  answers 177 crossing pairs (`edits_answer_the_crossing_pairs_they_leave`).
+  The general fix is an exact offset (the wall as a union of prisms and
+  wedges, or a straight skeleton in 3D); not started.
+- The deepest point is found by search, not by a linear program: a
+  solid with room for less than 10⁻⁶ of its size is refused as `NoRoom`.
+- The walls' UVs are the outer face's carried along its plane, not the
+  copy's corner for corner: the texture does not shrink with the hollow.

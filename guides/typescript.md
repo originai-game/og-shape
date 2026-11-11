@@ -141,6 +141,7 @@ Edits (a tool must be a part; it is used up; the target keeps its name):
   `depth` measured from it along −z. `shell(part, { thickness, open? })`:
   inward; `open` names the faces left open (none: a sealed hollow), or
   `"+z"`… for the face furthest along the part's own axis, as built.
+  Walls that would meet inside a convex part are refused.
   `split(part, { frame, keep? })`, `dent(part, { at, radius, depth })`.
 - `fillet(part, { radius, edges?, segments? })`, `chamfer(part, {
   distance, distance2?, angle?, edges? })`, `soften(part, { radius,

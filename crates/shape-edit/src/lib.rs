@@ -68,6 +68,16 @@ pub enum EditError {
     NoSuchEdge(Vec<String>, Vec<String>),
     /// What the edit does not do, and what to do instead.
     Unsupported(&'static str),
+    /// A convex solid has no point `thickness` from every face it keeps:
+    /// walls that thick meet, and nothing would be hollowed. `short` is
+    /// how far the deepest point is from being that far in (0 when the
+    /// walls just meet).
+    NoRoom {
+        /// The wall asked for.
+        thickness: f64,
+        /// How far short the deepest point is.
+        short: f64,
+    },
 }
 
 impl From<BoolError> for EditError {
@@ -120,6 +130,11 @@ impl std::fmt::Display for EditError {
                 have.join(", ")
             ),
             EditError::Unsupported(what) => f.write_str(what),
+            EditError::NoRoom { thickness, short } => write!(
+                f,
+                "walls {thickness} thick meet inside the solid and leave no hollow: \
+                 its deepest point is {short:.3} short of that far in"
+            ),
             EditError::NoUvs(what) => write!(
                 f,
                 "the solid has UVs and {what} has none, so the faces it cuts would have none: \
@@ -750,6 +765,11 @@ fn offset(planes: &[(DVec3, f64)]) -> DVec3 {
 /// `thickness` in from kept faces, `thickness` out through opened ones (so
 /// the cut opens them); then the inner solid is cut away. Inner faces get
 /// `cut` and `shell.*`.
+///
+/// Where that inner solid folds through itself and the solid is convex,
+/// the inner solid is built from the solid's planes instead (`inset`,
+/// `docs/research.md` §35). A convex solid whose walls would meet is
+/// refused ([`EditError::NoRoom`]).
 pub fn shell(s: &Solid, d: &Shell) -> Result<Solid, EditError> {
     shell_report(s, d).map(|(s, _)| s)
 }
@@ -771,6 +791,20 @@ pub fn shell_report(s: &Solid, d: &Shell) -> Result<(Solid, EditReport), EditErr
             planes[v as usize].push((area_n.normalize_or_zero(), target));
         }
     }
+    // A convex solid's inner solid is known without a copy to fold: the
+    // space inside its planes, each moved by the wall (`inset`). With no
+    // such space the walls meet, and a copy turned inside out would be
+    // cut as if it were a hollow.
+    let exact = match inset::inset(s, &open, t, size(s)) {
+        inset::Inset::NoRoom(short) => {
+            return Err(EditError::NoRoom {
+                thickness: t,
+                short,
+            });
+        }
+        inset::Inset::Inner(i) => Some(*i),
+        inset::Inset::Unknown => None,
+    };
     let mut inner = Solid::default();
     for (v, p) in s.positions.iter().enumerate() {
         inner.push_vertex(*p + offset(&planes[v]));
@@ -823,6 +857,17 @@ pub fn shell_report(s: &Solid, d: &Shell) -> Result<(Solid, EditReport), EditErr
         Some(u) if u.1.crossing_pairs == 0 => return Ok(u),
         u => u,
     };
+    if let Some(i) = &exact {
+        let e = cut(i)
+            .ok()
+            .filter(|(_, r)| r.touching_edges == 0)
+            .map(|(out, _)| counted(out));
+        if let Some(e) = e
+            && e.1.crossing_pairs == 0
+        {
+            return Ok(e);
+        }
+    }
     match (untangled, cut(&inner).map(|(out, _)| counted(out))) {
         (Some(u), Ok(f)) if u.1.crossing_pairs < f.1.crossing_pairs => Ok(u),
         (Some(u), Err(_)) => Ok(u),
@@ -1022,6 +1067,7 @@ pub fn merge(solids: &[&Solid]) -> Solid {
     out
 }
 
+mod inset;
 pub mod subdivide;
 pub use subdivide::{MAX_LEVELS, Subdivide, subdivide};
 

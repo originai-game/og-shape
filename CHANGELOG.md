@@ -1295,3 +1295,17 @@
   baked or imported normal map shows its detail. Read as data (plain
   mip averages, no sRGB). Unlit views and parts without a normal map are
   drawn as before: no golden line moved.
+- `shell` on a convex solid: when the copied inner solid folds through
+  itself (a chamfer, fillet or rounded corner narrower than the wall)
+  and its outside cannot be cut clean, the hollow is built from the
+  solid's planes, each moved by the wall (`shape-edit`'s `inset`: the
+  planes' dual points, their exact convex hull, one corner per flat
+  side). Faces that shrink to nothing bound none of it, so nothing
+  folds; the walls keep `wall`, the outer face's surface and, with UVs,
+  its texture carried along the plane. A convex solid with no point
+  `thickness` from every kept face is refused (`EditError::NoRoom`,
+  with how far short the deepest point is): before, a copy turned
+  inside out without crossing itself was cut as a hollow and reported
+  clean. Solids that are not convex are shelled as before and can still
+  answer `crossingPairs`. Sweep and numbers: `docs/research.md` §35. No
+  golden line moved.

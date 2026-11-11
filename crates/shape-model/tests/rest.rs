@@ -264,19 +264,27 @@ fn text_names_a_font_the_caller_supplies() {
 
 #[test]
 fn edits_answer_the_crossing_pairs_they_leave() {
-    let shell = |radius: f64, thickness: f64| {
+    let shell = |thickness: f64, pocket: bool| {
         let mut s = Session::new("t");
         s.apply_value(&json!({"op": "extrude", "name": "case", "height": 80,
-            "profile": {"rect": {"width": 80, "height": 50, "radius": radius}}}))
+            "profile": {"rect": {"width": 80, "height": 50, "radius": 5}}}))
             .unwrap();
+        if pocket {
+            s.apply_value(&json!({"op": "pocket", "id": 0, "depth": 6,
+                "profile": {"rect": {"width": 10, "height": 10}},
+                "at": {"origin": [0, 0, 80], "x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}}))
+                .unwrap();
+        }
         s.apply_value(&json!({"op": "shell", "id": 0, "thickness": thickness}))
             .unwrap()
     };
-    assert_eq!(shell(15.0, 3.0), json!({"crossingPairs": 0}));
-    // A wall thicker than the corners' radius folds the inner solid
-    // (`docs/research.md` §27.1): the part comes back, and the answer says
-    // it passes through itself.
-    let folded = shell(5.0, 10.0);
+    assert_eq!(shell(3.0, false), json!({"crossingPairs": 0}));
+    // A wall thicker than the corners' radius folds the inner copy
+    // (`docs/research.md` §27.1). A convex case's hollow is cut from its
+    // planes instead; one with a pocket is not convex: the part comes
+    // back, and the answer says it passes through itself.
+    assert_eq!(shell(10.0, false), json!({"crossingPairs": 0}));
+    let folded = shell(10.0, true);
     assert!(folded["crossingPairs"].as_u64().unwrap() > 0, "{folded}");
 }
 

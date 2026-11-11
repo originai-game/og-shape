@@ -189,7 +189,11 @@ where its operands touch (`touchingEdges` > 0: not closed there;
 `crossingPairs` > 0: the result passes through itself there).
 `seat`, `hole`, `pocket`, `shell` and `dent` answer `crossingPairs` too:
 want 0. A `shell` thicker than a rounded corner, chamfer or fillet of
-the part can fold its inner wall through itself.
+the part folds a copied inner wall through itself; a convex part's
+hollow is cut from its faces' planes instead and comes out clean, a part
+that is not convex (a pocket, a hole, an L) can still answer pairs.
+A convex part whose walls would meet (thicker than half its width) is
+refused, with how far short its deepest point is.
 A part with UVs adds `uv`: `coverage` and `overlap` (shares of the
 image, after `mapSize`), `flipped` and `zeroArea` (triangles mirrored or
 flat in UV), `outside`, `overlappingPairs`, `area`; the model,
