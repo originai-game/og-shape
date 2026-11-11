@@ -97,6 +97,10 @@ pub struct Repair {
     pub non_manifold: bool,
     /// Closes holes whose rim has at most this many edges (0: none).
     pub max_hole_edges: usize,
+    /// Gives every piece still open after the holes are closed a second
+    /// sheet this far under it, in mm, and a rim along its open edges
+    /// ([`crate::thicken`]; 0: none), so a sheet encloses a volume.
+    pub thicken: f64,
     /// Joins closed, interpenetrating shells into one by self-union
     /// (`shape_bool::fuse`) once the rest is done, and untangles a shell
     /// that passes through itself. A union that is not closed (shells
@@ -163,6 +167,8 @@ pub struct RepairReport {
     /// fan across the seam would span the atlas. 0 on a solid without
     /// UVs.
     pub uv_seam_fills: usize,
+    /// What thickening the open pieces did, if it was asked for.
+    pub thickened: Option<crate::thicken::Thickened>,
 }
 
 /// Why repair could not run.
@@ -1733,7 +1739,8 @@ fn fuse_shells(s: &Solid, floaters: &Floaters, r: &mut RepairReport) -> Result<S
 }
 
 /// Runs the repair steps in order (weld, degenerate and duplicate
-/// triangles, floaters, orientation, holes, fuse, short edges) and reports
+/// triangles, floaters, orientation, holes, thickening, fuse, short edges)
+/// and reports
 /// what each changed. The result is in canonical order.
 pub fn repair(s: &Solid, d: &Repair) -> Result<(Solid, RepairReport), RepairError> {
     repair_owned(s.clone(), d)
@@ -1792,6 +1799,11 @@ pub fn repair_owned(s: Solid, d: &Repair) -> Result<(Solid, RepairReport), Repai
         let (next, more) = orient_owned(s)?;
         s = next;
         r.flipped += more;
+    }
+    if d.thicken > 0.0 {
+        let (next, t) = crate::thicken::thicken(&s, d.thicken)?;
+        s = next;
+        r.thickened = Some(t);
     }
     let s = if d.fuse {
         let n = pieces(&s).1;

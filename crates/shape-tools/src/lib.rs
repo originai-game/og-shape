@@ -77,6 +77,7 @@ mod sampler;
 mod skin;
 mod surface;
 mod texture;
+mod thicken;
 mod unwrap;
 mod uvview;
 
@@ -114,5 +115,6 @@ pub use repair::{
     repair_owned, split_non_manifold, weld,
 };
 pub use texture::{Downsize, TextureError, decode, downsize};
+pub use thicken::{Thickened, thicken};
 pub use unwrap::{Unwrap, UnwrapError, Uvs, unwrap};
 pub use uvview::{UvImage, UvView, uv_view};

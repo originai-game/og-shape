@@ -54,6 +54,16 @@ pub fn repair(r: &RepairReport) -> String {
         ("fill_triangles", r.fill_triangles.to_string()),
         ("uv_seam_fills", r.uv_seam_fills.to_string()),
         ("holes_left", r.holes_left.to_string()),
+        (
+            "thickened",
+            r.thickened.map_or("null".into(), |t| {
+                object(&[
+                    ("pieces", t.pieces.to_string()),
+                    ("skipped", t.skipped.to_string()),
+                    ("triangles", t.triangles.to_string()),
+                ])
+            }),
+        ),
         ("fused", fused.to_string()),
         ("pockets", r.pockets.to_string()),
         ("pockets_dropped", r.pockets_dropped.to_string()),

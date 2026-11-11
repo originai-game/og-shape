@@ -1329,3 +1329,20 @@
   `shape-model` refuses a surface that passes through itself. The
   binding's `loft` takes the same. Golden case `gen2.loft.along`; no
   existing line moved.
+- `shape_tools::thicken(solid, thickness)`: every piece with an open
+  edge gets a second sheet under it and a rim along its open edges, so
+  a sheet (a leaf, a cape, half a shell) encloses a volume; closed
+  pieces are left. The second sheet lies against each vertex's
+  area-weighted normal, further where the faces turn away from it, so a
+  crease keeps its faces the thickness apart. Faces keep their names
+  (`inner` and `rim` added); UVs, colours and skins are carried. In
+  `repair` after the holes: `Repair::thicken`, `shape repair --thicken
+  MM` (and `process`), the MCP `repair` tool's `thicken`; the report's
+  `thickened` gives `pieces`, `skipped` (an edge with more than two
+  faces) and `triangles`. Golden case `meshtools.thicken`. **Six golden
+  lines moved, for the report's new field only**: `mcp.process.bake`,
+  `mcp.process.ball_defects`, `mcp.process.look` and `place.process`
+  hash the report's JSON (now with `"thickened": null`),
+  `meshtools.repair.non_manifold` and `meshtools.repair.pockets` its
+  debug text; with the field left out of the JSON the first four are
+  as they were, and every case that hashes a mesh alone is unmoved.

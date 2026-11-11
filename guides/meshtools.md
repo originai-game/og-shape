@@ -65,6 +65,14 @@ import → join → repair → decimate → place → unwrap → measure → pre
      named `fill`; preview them. A fill whose rim crosses a UV seam
      takes one UV (`uv_seam_fills`): one colour, the rim's, instead of a
      fan across the texture.
+   - `thicken: 1.5` (CLI `--thicken MM`): a piece still open after
+     that (a leaf, a cape, a single-sided wall) gets a second sheet
+     that far under it and a rim along its open edges, so it encloses a
+     volume and can be cut, measured and printed. Faces keep their
+     names; the second sheet adds `inner`, the rim `rim`. Read
+     `thickened`: `pieces` done, `skipped` (an edge with more than two
+     faces: use `non_manifold` too). A sheet curved tighter than the
+     thickness folds its second sheet: check `intersections`.
    - `fuse: true` joins interpenetrating closed parts and untangles a
      shell that passes through itself; the report says when it could
      not (always on a skinned mesh: booleans carry no skin). Untangling

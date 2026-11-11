@@ -46,6 +46,10 @@ pub fn cases() -> Vec<Case> {
             run: repair_case,
         },
         Case {
+            name: "meshtools.thicken",
+            run: thicken_case,
+        },
+        Case {
             name: "meshtools.decimate.lods",
             run: decimate_case,
         },
@@ -302,6 +306,40 @@ fn repaired() -> Result<Solid, HashError> {
         ..Default::default()
     };
     Ok(repair(&broken()?, &d).map_err(fail)?.0)
+}
+
+/// An open sheet given a thickness (`shape_tools::thicken`): a ball's
+/// upper half (its faces with a corner below the middle dropped), 1.5
+/// thick, beside a closed box that is left as it is.
+fn thicken_case(h: &mut OutputHash) -> Result<(), HashError> {
+    let ball = sphere(20.0).map_err(fail)?;
+    let mut s = Solid::default();
+    for p in &ball.positions {
+        s.push_vertex(*p);
+    }
+    for t in &ball.triangles {
+        if t.iter().all(|&v| ball.positions[v as usize].z >= 0.0) {
+            s.push_triangle(*t, 0, &["cap"]);
+        }
+    }
+    let side = cuboid(&BoxDesc {
+        width: 5.0,
+        height: 5.0,
+        depth: 5.0,
+    })
+    .map_err(fail)?;
+    let mut side = side;
+    side.map_positions(|p| p + DVec3::new(40.0, 0.0, 0.0), false);
+    s.append(&side);
+    let (o, r) = shape_tools::thicken(&s, 1.5).map_err(fail)?;
+    for v in [r.pieces, r.skipped, r.triangles] {
+        h.u64(v as u64);
+    }
+    let m = o.measure();
+    if !m.closed {
+        eprintln!("meshtools.thicken: not closed: {m:?}");
+    }
+    o.hash_into(h)
 }
 
 fn repair_case(h: &mut OutputHash) -> Result<(), HashError> {

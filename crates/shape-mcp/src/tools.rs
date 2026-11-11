@@ -400,6 +400,7 @@ impl Args<'_> {
             floaters,
             non_manifold: self.flag("non_manifold")?,
             max_hole_edges: self.uint("max_hole_edges")? as usize,
+            thicken: self.num("thicken")?,
             fuse: self.flag("fuse")?,
             min_edge: self.num("min_edge")?,
             check_intersections: self.flag("check_intersections")?,
@@ -599,6 +600,13 @@ fn repair_props() -> Vec<(&'static str, Value)> {
         (
             "max_hole_edges",
             int("Close holes whose rim has at most this many edges (0: none)."),
+        ),
+        (
+            "thicken",
+            num(
+                "Give every piece still open a second sheet this far under it, mm, and a rim \
+                 along its open edges, so a sheet (a leaf, a cape) encloses a volume (0: none).",
+            ),
         ),
         (
             "fuse",

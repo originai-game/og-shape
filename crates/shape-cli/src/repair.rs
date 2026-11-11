@@ -47,13 +47,14 @@ pub fn repair(files: &dyn Files, d: &RepairDesc) -> Result<String, Failure> {
 }
 
 /// The repair options of the command line.
-pub const OPTIONS: [&str; 8] = [
+pub const OPTIONS: [&str; 9] = [
     "--weld",
     "--weld-all",
     "--floaters",
     "--floater-size",
     "--non-manifold",
     "--holes",
+    "--thicken",
     "--fuse",
     "--min-edge",
 ];
@@ -69,6 +70,7 @@ pub fn options(a: &Args) -> Result<Repair, Failure> {
         },
         non_manifold: a.switch("--non-manifold"),
         max_hole_edges: a.number("--holes")?.unwrap_or(0),
+        thicken: a.number("--thicken")?.unwrap_or(0.0),
         fuse: a.switch("--fuse"),
         min_edge: a.number("--min-edge")?.unwrap_or(0.0),
         check_intersections: a.switch("--intersections"),
