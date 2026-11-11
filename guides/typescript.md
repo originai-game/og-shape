@@ -164,6 +164,15 @@ Materials, joints, pose:
   and `measure` tools' `pose: { joint: value }` instead, which leaves the
   program at rest. Read frames before posing: `face`, `bbox`, `edge`,
   `snap` of a part a posed joint moves throw.
+- `clip({ name, keys: [{ time, pose: { joint: value } }] })`: a motion
+  over time, written to the GLB as an animation a game or three.js plays
+  (`open`, `spin`, `press`). Times are seconds, rising from 0; each joint
+  moves between the keys that name it and holds its first and last value
+  outside them, so one clip can open a door and then slide a drawer.
+  Values are checked as `pose` checks them. `poseAt(clip, time)` poses
+  the model as the clip has it at that second: preview two or three
+  moments of every clip, and `measure({ posed: true })` them for parts
+  that pass through each other on the way.
 
 Output: `measure()` (per solid part, at rest; `{ posed: true }` at the
 pose, with `joints`: each pivot's distance to its parent and child, and

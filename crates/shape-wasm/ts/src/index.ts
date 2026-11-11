@@ -529,6 +529,18 @@ export class Shape {
   pose(joint: string, value: number): void {
     this.call("pose", { joint, value });
   }
+  /**
+   * A clip: a named motion of joints over time, written to the GLB as an animation.
+   * Each key is a time in seconds (rising from 0 or more) and the values of the joints it moves,
+   * as `pose` takes them. A joint a key leaves out keeps its own track.
+   */
+  clip(d: { name: string; keys: { time: number; pose: Record<string, number> }[] }): void {
+    this.call("clip", d);
+  }
+  /** Poses the model as clip `name` has it at `time` seconds (to preview or measure a moment of it). */
+  poseAt(clip: string, time: number): void {
+    this.call("pose", { clip, time });
+  }
 
   // ── output ──
 

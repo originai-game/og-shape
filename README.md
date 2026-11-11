@@ -37,6 +37,13 @@ get convex colliders:
 | ![subdivided](docs/previews/readme/subdivide.png) | ![colliders](docs/previews/readme/cup_colliders.png) |
 | An L with sharp caps, a 12-sided can with a sharp base, a box rounded all over and one on a sharp base. | A cup and its handle covered by 16 convex hulls (`shape collide`): the hollow stays open. |
 
+Joints move by clips, written to the GLB as animations:
+
+![washing machine clip](docs/previews/readme/washing_machine_clip.png)
+
+The clip `open` of `golden/programs/washing_machine_clips.json` at 0, 0.4,
+0.8 and 1.4 s: the door swings on its hinge, then the drawer slides out.
+
 Meshes from elsewhere go through the same kernel:
 
 | | | |
@@ -70,7 +77,7 @@ Run on `main` on 2026-11-10; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 159 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 344 pass | `scripts/check.sh test` |
+| Tests | 347 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -80,6 +87,7 @@ Run on `main` on 2026-11-10; each line says where the numbers come from.
 | Real generated meshes | 54 files from 8 image- and text-to-3D generators (Hunyuan3D-2, TRELLIS, SPAR3D, TripoSR, InstantMesh, CRM, Unique3D, Meshy): within budget and closed keeping their UVs and texture 39, 51 and 52 at 2 000, 10 000 and 50 000 triangles, 51, 52 and 52 with fresh UVs (the 2 open ones are TRELLIS meshes; Unique3D's chair keeps its vertex-colour borders and misses 2 000, which `--cross-color-borders` reaches at 7.4 mm); decimation folds none through itself (outputs crossing themselves at 10k: 2, both inputs that crossed); 143 of 154 booleans on the results closed, 7 refused with a cause, 4 missed; at 10 000 triangles all 54 keep their material factors, the 40 textured ones every map and the 14 vertex-coloured ones their colours, and `--texture-max 1024` brings the 16 files over 16 MiB of texture under 11 MiB | `bench/generated` (`docs/research.md` §28, §29, §32, §33) |
 | Baking generated meshes to a game's budget | `process --bake 1024`: all 54 within 2 000 and 10 000 triangles (52 closed; the 2 TRELLIS meshes open after repair), every one with a baked base-colour and normal map (15 with metallic-roughness), 1 texel without a source in 108 runs; keeping UVs, 39 and 53. Colour error against the source (unlit, 256², 0–255) where both reach 2 000: 3.6 baked, 5.6 kept (median); 3–4 s and about 50 MiB for a 1024² bake | `bench/generated/bake.ts` (`docs/research.md` §34) |
 | Generated meshes placed for a game | all 54 stand on z = 0 with the origin at the base's centre, at the size asked to 4e-8, facing front, with each generator's frame given as `up` and `front` (TripoSR `+z`/`+x`, InstantMesh `-z`/`+x`, SPAR3D and CRM `+y`/`-z`); no simple reading of the axis measures stands more than 22 up | `bench/generated/place.ts` (`docs/research.md` §31) |
+| Clips | a clip read back from its GLB with an independent glTF reader: a rotation channel on the joint's node and a translation on its follower's, a turn of 3 radians in steps of a quarter turn at most, the last key equal to the node of the scene posed there. The washing machine's `open` (hinge and drawer) and `spin` (the drum's full turn, 5 keys) export as two animations | `crates/shape-tools/tests/export.rs`; `golden/programs/washing_machine_clips.json` |
 | Colliders | the washing machine's 7 parts covered by 19 convex hulls of at most 16 vertices in 4 s; an octagonal cup's hollow kept by 16 hulls (41 mm bridged, against 310 mm by one) | `shape collide` (`guides/meshtools.md`) |
 | The mesh chain on a damaged mesh | open, 2 pieces, 79 flipped faces → closed, 1 piece, on budget, unwrapped with no UV overlap | `shape process golden/meshes/ball_defects.obj` |
 | Outside files | glTF, OBJ and FBX from three.js's and Khronos's samples import; textured and skinned ones keep UVs, bones and weights through repair and decimation to half | `docs/research.md` §9, §11.5, §17 |

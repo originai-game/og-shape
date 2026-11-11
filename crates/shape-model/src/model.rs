@@ -208,6 +208,19 @@ pub struct Model {
     joints: Vec<JointRec>,
     booleans: Vec<BoolRecord>,
     uvs: bool,
+    clips: Vec<Clip>,
+}
+
+/// One keyframe of a clip ([`Model::clip`]): a time in seconds and the
+/// joints' values then, as [`Model::pose`] takes them (radians, or the
+/// model's unit for a slide).
+pub type Key = (f64, Vec<(String, f64)>);
+
+/// A named motion of the model's joints over time.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Clip {
+    name: String,
+    keys: Vec<Key>,
 }
 
 /// How [`Model::combine`] runs a boolean: a zero-value desc (a join, not
@@ -1648,6 +1661,99 @@ impl Model {
         self.joints.iter().any(|j| j.value != 0.0)
     }
 
+    /// Declares a clip: a named motion of joints over time, written to
+    /// the GLB as an animation (`shape_tools::glb_clips`). Each key is a
+    /// time in seconds and the values of the joints it moves; times rise
+    /// from 0 or more. A joint a key leaves out keeps its own track: only
+    /// the keys that name it move it, and it holds its first and last
+    /// value outside them. Every value is checked as [`Model::pose`]
+    /// checks it (the joint exists, is not a follower, fixed or floating,
+    /// and the value is in its range); the model's pose is not changed.
+    pub fn clip(&mut self, name: &str, keys: &[Key]) -> Result<(), ModelError> {
+        let bad = |why: String| ModelError::Clip(name.into(), why);
+        if name.is_empty() {
+            return Err(bad("it needs a name".into()));
+        }
+        if self.clips.iter().any(|c| c.name == name) {
+            return Err(bad("another clip has this name".into()));
+        }
+        if keys.is_empty() {
+            return Err(bad("it needs a key".into()));
+        }
+        let mut last = -1.0;
+        let before = self.pose_values();
+        let mut check = || -> Result<(), ModelError> {
+            for (time, pose) in keys {
+                if !(time.is_finite() && *time >= 0.0 && *time > last) {
+                    return Err(bad(format!(
+                        "its times must be 0 or more and rise: {time} after {}",
+                        if last < 0.0 { 0.0 } else { last }
+                    )));
+                }
+                last = *time;
+                if pose.is_empty() {
+                    return Err(bad(format!("its key at {time} moves no joint")));
+                }
+                for (joint, value) in pose {
+                    self.pose(joint, *value)?;
+                }
+            }
+            Ok(())
+        };
+        let checked = check();
+        // The checks posed the joints; put them back.
+        for (joint, value) in before {
+            let k = self.joint_index(&joint)?;
+            self.joints[k].value = value;
+        }
+        checked?;
+        self.clips.push(Clip {
+            name: name.into(),
+            keys: keys.to_vec(),
+        });
+        Ok(())
+    }
+
+    /// The clips' names, in declaration order.
+    pub fn clips(&self) -> Vec<&str> {
+        self.clips.iter().map(|c| c.name.as_str()).collect()
+    }
+
+    /// Poses the model as clip `name` has it at `time` seconds: each
+    /// joint the clip moves, between the keys that name it (linear), and
+    /// at its first or last value outside them. Joints the clip does not
+    /// move keep their values.
+    pub fn pose_at(&mut self, name: &str, time: f64) -> Result<(), ModelError> {
+        if !time.is_finite() {
+            return Err(ModelError::BadValue(format!("clip {name:?}'s time")));
+        }
+        let Some(clip) = self.clips.iter().find(|c| c.name == name).cloned() else {
+            return Err(ModelError::Clip(
+                name.into(),
+                format!("no such clip; clips: {}", self.clips().join(", ")),
+            ));
+        };
+        let mut tracks: BTreeMap<&str, Vec<(f64, f64)>> = BTreeMap::new();
+        for (t, pose) in &clip.keys {
+            for (joint, value) in pose {
+                tracks.entry(joint.as_str()).or_default().push((*t, *value));
+            }
+        }
+        for (joint, track) in tracks {
+            let after = track.partition_point(|&(t, _)| t <= time);
+            let value = if after == 0 {
+                track[0].1
+            } else if after == track.len() {
+                track[after - 1].1
+            } else {
+                let ((t0, v0), (t1, v1)) = (track[after - 1], track[after]);
+                v0 + (v1 - v0) * ((time - t0) / (t1 - t0))
+            };
+            self.pose(joint, value)?;
+        }
+        Ok(())
+    }
+
     /// The first joint (nearest the node, then up through its parents)
     /// with a non-zero value that moves node `id`.
     fn moved_by(&self, id: Id) -> Option<usize> {
@@ -1978,7 +2084,37 @@ impl Model {
     /// The model as GLB, posed (`shape_tools::glb`): metres, Y up, joints
     /// as `s3d_joint` extras.
     pub fn glb(&self) -> Result<Vec<u8>, ModelError> {
-        Ok(shape_tools::glb(&self.build()?.scene())?)
+        Ok(shape_tools::glb_clips(
+            &self.build()?.scene(),
+            &self.scene_clips(),
+        )?)
+    }
+
+    /// The clips in the scene's units: millimetres for a slide.
+    fn scene_clips(&self) -> Vec<shape_tools::Clip> {
+        let k = self.unit.millimetres();
+        self.clips
+            .iter()
+            .map(|c| shape_tools::Clip {
+                name: c.name.clone(),
+                keys: c
+                    .keys
+                    .iter()
+                    .map(|(time, pose)| shape_tools::ClipKey {
+                        time: *time,
+                        pose: pose
+                            .iter()
+                            .map(|(joint, value)| {
+                                let slides = self.joints.iter().any(|j| {
+                                    j.desc.name == *joint && j.desc.kind == JointKind::Prismatic
+                                });
+                                (joint.clone(), if slides { value * k } else { *value })
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            })
+            .collect()
     }
 
     /// The model as GLB ([`Model::glb`]) with its parts' UVs packed into

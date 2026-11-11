@@ -162,7 +162,8 @@ walls by arc length round and along).
 | `soften` | `id`, `radius`, `angle`? (30° by default), `edges`?, `segments`? | rounds every edge sharper than `angle` |
 | `material` | `ids`, `name`?, `color`? (`"#rrggbb"` or `[r, g, b]`), `metalness`?, `roughness`?, `emissive`?, `opacity`?, `map`? (an image's file name, PNG or JPEG, read beside the program; the parts need UVs), `mapSize`? (units the image spans; 1) | glTF metallic-roughness |
 | `joint` | `child`, `parent`, `name`, `kind`? (`revolute`, `continuous`, `prismatic`, `fixed`, `floating`), `on` (the pivot frame), `axis`? (`"+X"`… or `[x, y, z]`; `on`'s z by default), `range`? `[lo, hi]`, `mimic`? `{"joint", "multiplier"}` | revolute and prismatic need a range containing 0 |
-| `pose` | `joint`, `value` | posed in export, preview and `measure` with `posed`; the MCP tools also take `pose` for one call |
+| `pose` | `joint`, `value`; or `clip`, `time` | posed in export, preview and `measure` with `posed`; the MCP tools also take `pose` for one call. With `clip` and `time`: the pose that clip has at that second |
+| `clip` | `name`, `keys`: `[{"time", "pose": {joint: value}}]` | a motion over time, written to the GLB as an animation; times in seconds, rising from 0 or more; each joint moves between the keys that name it and holds outside them; values checked as `pose` checks them. The pose is not changed |
 
 ## What comes back
 

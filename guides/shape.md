@@ -151,6 +151,11 @@ before joining: after a join, `edges: "top"` takes every operand's.
   `mirror` bring the joints along (`hinge.001`); a mirrored door opens
   the mirror way for the same value.
 
+A joint says how a part can move; a **clip** says how it does move:
+name each motion the game will play (`open`, `close`, `spin`) and key
+its joints over seconds. Keep a clip to one action; the game blends and
+orders them.
+
 ## 7. Materials and budgets
 
 - Give every part `s.material(part, { color: "#rrggbb", metalness?,

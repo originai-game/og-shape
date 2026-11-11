@@ -14,6 +14,8 @@ use shape_model::{
 use crate::cases::Case;
 
 const WASHING_MACHINE: &str = include_str!("../../../golden/programs/washing_machine.json");
+const WASHING_MACHINE_CLIPS: &str =
+    include_str!("../../../golden/programs/washing_machine_clips.json");
 const PLACED_SLOT: &str = include_str!("../../../golden/programs/placed_slot.json");
 
 pub fn cases() -> Vec<Case> {
@@ -86,6 +88,22 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "model.washing_machine.measure",
             run: |h| washing_machine(h, |m| program::measures_json(m).map(String::into_bytes)),
+        },
+        Case {
+            name: "model.washing_machine.clips",
+            run: |h| {
+                // Its two clips as glTF animations, and the model posed
+                // by one at a moment of it.
+                let mut m = program::run(WASHING_MACHINE_CLIPS).map_err(fail)?;
+                h.bytes(&m.glb().map_err(fail)?);
+                m.pose_at("open", 0.4).map_err(fail)?;
+                h.bytes(
+                    &program::posed_json(&m)
+                        .map(String::into_bytes)
+                        .map_err(fail)?,
+                );
+                Ok(())
+            },
         },
         Case {
             name: "model.washing_machine.posed",

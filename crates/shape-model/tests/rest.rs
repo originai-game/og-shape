@@ -325,3 +325,47 @@ fn subdivide_rounds_a_cage_and_keeps_a_sharp_base() {
     let e = err(p(json!("rim")));
     assert!(e.contains("op 1 subdivide") && e.contains("bottom"), "{e}");
 }
+
+#[test]
+fn a_clip_is_checked_as_poses_are_and_poses_the_model_at_a_time() {
+    let lid = json!({"origin": [0, 20, 10], "x": [1, 0, 0], "y": [0, 0, 1], "z": [0, -1, 0]});
+    let base = |extra: Vec<Value>| {
+        let mut ops = vec![
+            json!({"op": "box", "name": "chest", "width": 60, "depth": 40, "height": 10}),
+            json!({"op": "box", "name": "lid", "width": 60, "depth": 40, "height": 2,
+                "on": {"origin": [0, 0, 10], "x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}}),
+            json!({"op": "joint", "child": 1, "parent": 0, "name": "hinge", "on": lid,
+                "range": [0, 1.5]}),
+        ];
+        ops.extend(extra);
+        json!({"name": "t", "ops": ops})
+    };
+    let open = json!({"op": "clip", "name": "open", "keys": [
+        {"time": 0, "pose": {"hinge": 0}},
+        {"time": 2, "pose": {"hinge": 1.5}},
+    ]});
+    // Declaring a clip leaves the pose alone; posing at a time moves it.
+    let m = run(&base(vec![open.clone()]).to_string()).unwrap();
+    assert!(!m.posed() && m.clips() == ["open"]);
+    let glb = m.glb().unwrap();
+    let text = String::from_utf8_lossy(&glb);
+    assert!(text.contains("\"animations\":[{\"name\":\"open\""));
+    let half = base(vec![
+        open.clone(),
+        json!({"op": "pose", "clip": "open", "time": 1}),
+    ]);
+    let m = run(&half.to_string()).unwrap();
+    assert_eq!(m.pose_values(), [("hinge".to_string(), 0.75)]);
+    // Past its last key a clip holds its last value.
+    let late = base(vec![open, json!({"op": "pose", "clip": "open", "time": 9})]);
+    assert_eq!(run(&late.to_string()).unwrap().pose_values()[0].1, 1.5);
+    // A value out of range, a joint that is not there, times that do not
+    // rise: refused where the clip is declared.
+    let bad = |keys: Value| err(base(vec![json!({"op": "clip", "name": "c", "keys": keys})]));
+    let e = bad(json!([{"time": 0, "pose": {"hinge": 2}}]));
+    assert!(e.contains("op 3 clip") && e.contains("range"), "{e}");
+    let e = bad(json!([{"time": 0, "pose": {"latch": 0}}]));
+    assert!(e.contains("hinge"), "{e}");
+    let e = bad(json!([{"time": 1, "pose": {"hinge": 0}}, {"time": 1, "pose": {"hinge": 1}}]));
+    assert!(e.contains("rise"), "{e}");
+}

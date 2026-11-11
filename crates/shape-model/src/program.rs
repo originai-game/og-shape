@@ -65,7 +65,8 @@
 //! | `soften` | `id`, `radius`, `angle`?, `edges`?, `segments`? | |
 //! | `material` | `ids`, `name`?, `color`?, `metalness`?, `roughness`?, `emissive`?, `opacity`?, `map`?, `mapSize`? | |
 //! | `joint` | `child`, `parent`, `name`, `kind`?, `on`, `axis`?, `range`?, `mimic`? (`{joint, multiplier}`) | |
-//! | `pose` | `joint`, `value` | |
+//! | `pose` | `joint`, `value`; or `clip`, `time` (the pose a clip has then) | |
+//! | `clip` | `name`, `keys`: `[{time, pose: {joint: value}}]` (seconds, rising) | |
 //!
 //! Readers, not recorded: `frame` (`origin`, `normal`, `up`?: a frame with
 //! [`Frame::facing`]'s axes, or with Y toward `up`), `offset` (`frame`,
@@ -742,7 +743,52 @@ fn dispatch(m: &mut Model, a: &Args) -> Result<(Value, bool), ModelError> {
                 Ok((none(), true))
             }
             "pose" => {
-                m.pose(a.str("joint")?, a.num("value")?)?;
+                match a.opt("clip") {
+                    Some(_) => {
+                        if a.opt("joint").is_some() || a.opt("value").is_some() {
+                            return Err(a.bad("clip", "with time, or joint with value: not both"));
+                        }
+                        m.pose_at(a.str("clip")?, a.num("time")?)?;
+                    }
+                    None => {
+                        if a.opt("time").is_some() {
+                            return Err(a.bad("time", "goes with clip"));
+                        }
+                        m.pose(a.str("joint")?, a.num("value")?)?;
+                    }
+                }
+                Ok((none(), true))
+            }
+            "clip" => {
+                let keys = a
+                    .get("keys")?
+                    .as_array()
+                    .ok_or_else(|| a.bad("keys", "a list of {time, pose}"))?;
+                let mut out = Vec::with_capacity(keys.len());
+                for (i, key) in keys.iter().enumerate() {
+                    let what = format!("keys[{i}]");
+                    let o = key
+                        .as_object()
+                        .ok_or_else(|| a.bad(&what, "an object {time, pose}"))?;
+                    only(o, &what, &["time", "pose"])?;
+                    let time = o
+                        .get("time")
+                        .and_then(Value::as_f64)
+                        .ok_or_else(|| a.bad(&what, "a time in seconds"))?;
+                    let pose = o
+                        .get("pose")
+                        .and_then(Value::as_object)
+                        .ok_or_else(|| a.bad(&what, "a pose {joint: value}"))?;
+                    let mut values = Vec::with_capacity(pose.len());
+                    for (joint, v) in pose {
+                        let v = v
+                            .as_f64()
+                            .ok_or_else(|| a.bad(&what, "joint values are numbers"))?;
+                        values.push((joint.clone(), v));
+                    }
+                    out.push((time, values));
+                }
+                m.clip(a.str("name")?, &out)?;
                 Ok((none(), true))
             }
             other => Err(ModelError::Program(format!(
@@ -960,7 +1006,8 @@ const OPS: &[(&str, &[&str])] = &[
             "child", "parent", "name", "kind", "on", "axis", "range", "mimic",
         ],
     ),
-    ("pose", &["joint", "value"]),
+    ("pose", &["joint", "value", "clip", "time"]),
+    ("clip", &["name", "keys"]),
 ];
 
 /// Every field of `o` must be in `accepted`.

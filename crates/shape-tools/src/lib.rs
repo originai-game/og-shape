@@ -91,8 +91,8 @@ pub use decimate::{
     merge_charts,
 };
 pub use export::{
-    ColorSpace, ExportError, Joint, JointKind, MAP_KINDS, Material, Mimic, Part, Placement, Scene,
-    glb, glb_shared, obj, obj_at, posed, stl, stl_at,
+    Clip, ClipKey, ColorSpace, ExportError, Joint, JointKind, MAP_KINDS, Material, Mimic, Part,
+    Placement, Scene, glb, glb_clips, glb_shared, obj, obj_at, posed, stl, stl_at,
 };
 pub use fbx::import_fbx;
 pub use image::{ImageInfo, Texture};

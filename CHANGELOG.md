@@ -1278,3 +1278,15 @@
   Refuses an open solid, and one with a skin, UVs or vertex colours.
   New `EditError` variants `NotClosed`, `NoSuchEdge`, `Unsupported`.
   Golden case `edit.subdivide`; no existing line moved.
+- Clips: a named motion of a model's joints over time. The program
+  operation `clip` (`name`, `keys`: `[{time, pose}]`), the binding's
+  `clip({ name, keys })`, `Model::clip`. `Model::glb` writes each as a
+  glTF animation (`shape_tools::glb_clips`): a channel a joint on its
+  node, `rotation` for a turn (keys added so no step is over a quarter
+  turn), `translation` for a slide, a follower's from its leader's,
+  linear, in seconds. `pose` with `clip` and `time` (the binding's
+  `poseAt`, `Model::pose_at`) poses the model as a clip has it at a
+  moment, to preview and measure. A GLB of a model without clips is byte
+  for byte what it was. New `ExportError::BadClip`, `ModelError::Clip`.
+  Golden case `model.washing_machine.clips`
+  (`golden/programs/washing_machine_clips.json`); no existing line moved.

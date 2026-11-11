@@ -99,6 +99,8 @@ pub enum ModelError {
     Bevel(BevelError),
     /// The scene could not be written.
     Export(ExportError),
+    /// A clip is refused: its name, and why.
+    Clip(String, String),
     /// The parts' UVs could not be packed into one atlas.
     Atlas(shape_tools::AtlasError),
     /// A program could not be read (where, and what was wrong).
@@ -207,6 +209,7 @@ impl fmt::Display for ModelError {
             ModelError::Edit(e) => write!(f, "{e}"),
             ModelError::Bevel(e) => write!(f, "{e}"),
             ModelError::Export(e) => write!(f, "{e}"),
+            ModelError::Clip(name, why) => write!(f, "clip {name:?}: {why}"),
             ModelError::Atlas(e) => write!(f, "{e}"),
             ModelError::Program(w) => write!(f, "program: {w}"),
             ModelError::BadField(field, want) => write!(f, "{field}: {want}"),

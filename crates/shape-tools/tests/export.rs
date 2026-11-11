@@ -5,7 +5,8 @@ use shape_core::{DVec3, Frame};
 use shape_gen::solids::{BoxDesc, CylinderDesc, cuboid, cylinder};
 use shape_mesh::Solid;
 use shape_tools::{
-    Joint, JointKind, Material, Mimic, Part, Placement, Scene, glb, obj, obj_at, stl, stl_at,
+    Clip, ClipKey, ExportError, Joint, JointKind, Material, Mimic, Part, Placement, Scene, glb,
+    glb_clips, obj, obj_at, stl, stl_at,
 };
 
 fn solids() -> (Solid, Solid) {
@@ -285,4 +286,100 @@ fn a_posed_joint_turns_its_node_and_its_followers() {
         "\"value\":{}",
         core::f64::consts::FRAC_PI_2 * 10.0 * 0.001
     )));
+}
+
+/// A clip's keys as `(time, [(joint, value)])`.
+fn clip(name: &str, keys: &[(f64, &[(&str, f64)])]) -> Clip {
+    Clip {
+        name: name.into(),
+        keys: keys
+            .iter()
+            .map(|(time, pose)| ClipKey {
+                time: *time,
+                pose: pose.iter().map(|(j, v)| (String::from(*j), *v)).collect(),
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn a_clip_is_an_animation_that_ends_where_the_pose_would() {
+    let (base, wheel) = solids();
+    let s = scene(&base, &wheel);
+    // The wheel turns from −1 to 2 radians: more than a quarter, so keys
+    // are written between; the nub follows, sliding 10 mm a radian.
+    let clips = [clip(
+        "turn",
+        &[(0.0, &[("spin", -1.0)]), (1.5, &[("spin", 2.0)])],
+    )];
+    let bytes = glb_clips(&s, &clips).unwrap();
+    let doc = gltf::Gltf::from_slice(&bytes).unwrap();
+    let blob = doc.blob.clone().unwrap();
+    let anim = doc.animations().next().unwrap();
+    assert_eq!(anim.name(), Some("turn"));
+    let paths: Vec<(usize, gltf::animation::Property)> = anim
+        .channels()
+        .map(|c| (c.target().node().index(), c.target().property()))
+        .collect();
+    // In joint-name order: the follower's node (3) slides, the wheel's (1) turns.
+    assert_eq!(
+        paths,
+        [
+            (3, gltf::animation::Property::Translation),
+            (1, gltf::animation::Property::Rotation)
+        ]
+    );
+    let turn = anim.channels().nth(1).unwrap();
+    let reader = turn.reader(|_| Some(blob.as_slice()));
+    let times: Vec<f32> = reader.read_inputs().unwrap().collect();
+    assert_eq!(times, [0.0, 0.75, 1.5]);
+    let gltf::animation::util::ReadOutputs::Rotations(r) = reader.read_outputs().unwrap() else {
+        panic!("rotations");
+    };
+    let quats: Vec<[f32; 4]> = r.into_f32().collect();
+    // Each key is within a quarter turn of the one before, the short way.
+    for w in quats.windows(2) {
+        let dot: f32 = (0..4).map(|k| w[0][k] * w[1][k]).sum();
+        assert!(dot > core::f32::consts::FRAC_1_SQRT_2, "{quats:?}");
+    }
+    // The last key is the node of the scene posed at 2 radians, and the
+    // follower's last translation its node there.
+    let mut posed = scene(&base, &wheel);
+    posed.parts[1].joint.as_mut().unwrap().value = 2.0;
+    let at = gltf::Gltf::from_slice(&glb(&posed).unwrap()).unwrap();
+    let (_, r, _) = at.nodes().nth(1).unwrap().transform().decomposed();
+    let last = quats[quats.len() - 1];
+    let same: f32 = (0..4).map(|k| last[k] * r[k]).sum();
+    assert!(same.abs() > 1.0 - 1e-6, "{last:?} {r:?}");
+    let slide = anim.channels().next().unwrap();
+    let reader = slide.reader(|_| Some(blob.as_slice()));
+    let gltf::animation::util::ReadOutputs::Translations(t) = reader.read_outputs().unwrap() else {
+        panic!("translations");
+    };
+    let (want, _, _) = at.nodes().nth(3).unwrap().transform().decomposed();
+    assert_eq!(t.last().unwrap(), want);
+    // Without clips the bytes are glb's.
+    assert_eq!(glb_clips(&s, &[]).unwrap(), glb(&s).unwrap());
+}
+
+#[test]
+fn a_clip_that_cannot_be_written_says_why() {
+    let (base, wheel) = solids();
+    let s = scene(&base, &wheel);
+    let why = |c: Clip| match glb_clips(&s, &[c]) {
+        Err(ExportError::BadClip { why, .. }) => why,
+        r => panic!("{:?}", r.map(|b| b.len())),
+    };
+    assert!(why(clip("a", &[(0.0, &[("door", 1.0)])])).contains("no joint \"door\""));
+    assert!(why(clip("a", &[(0.0, &[("slide", 1.0)])])).contains("follows"));
+    assert!(why(clip("a", &[(0.0, &[("spin", 3.0)])])).contains("outside its range"));
+    assert!(
+        why(clip(
+            "a",
+            &[(1.0, &[("spin", 0.0)]), (1.0, &[("spin", 1.0)])]
+        ))
+        .contains("rise")
+    );
+    assert!(why(clip("a", &[])).contains("no key"));
+    assert!(why(clip("", &[(0.0, &[("spin", 0.0)])])).contains("no name"));
 }

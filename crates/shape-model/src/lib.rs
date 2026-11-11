@@ -32,7 +32,7 @@ pub mod program;
 pub use checked::loft;
 pub use error::ModelError;
 pub use model::{
-    AtlasExport, BoolRecord, Built, Combine, Id, JointDesc, Model, PartMeasures, Seating, Unit,
+    AtlasExport, BoolRecord, Built, Combine, Id, JointDesc, Key, Model, PartMeasures, Seating, Unit,
 };
 pub use place::Path;
 pub use shape_bool::{BoolOp, BoolReport};

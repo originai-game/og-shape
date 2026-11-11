@@ -1,6 +1,6 @@
 //! GLB, OBJ and STL from a [`Scene`] of named solids.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use shape_core::{DVec3, Frame, trig};
@@ -250,6 +250,13 @@ pub enum ExportError {
     BadRange(String),
     /// A joint's axis or pivot is degenerate.
     BadAxis(String),
+    /// A clip cannot be written: which, and why.
+    BadClip {
+        /// The clip's name.
+        clip: String,
+        /// What is wrong with it.
+        why: String,
+    },
     /// A floating joint was given an axis, a range or a mimic.
     FloatingConstrained(String),
     /// A fixed joint was given an axis, a range, a mimic or a value.
@@ -289,6 +296,7 @@ impl fmt::Display for ExportError {
                 f,
                 "joint {j:?}: its range must run from low to high and contain 0 (the rest pose)"
             ),
+            ExportError::BadClip { clip, why } => write!(f, "clip {clip:?}: {why}"),
             ExportError::BadAxis(j) => {
                 write!(f, "joint {j:?}: its axis or pivot frame is degenerate")
             }
@@ -330,6 +338,35 @@ struct Checked {
     value: f64,
     span: Option<(f64, f64)>,
     mimic: Option<(String, f64)>,
+    /// For clips, in kernel units: the pivot, the unit axis in the
+    /// pivot's own coordinates (none for fixed and floating), whether it
+    /// slides, its range, and the leader it follows with the multiplier.
+    pivot: Rigid,
+    local: Option<DVec3>,
+    slides: bool,
+    kernel_span: Option<(f64, f64)>,
+    follows: Option<(String, f64)>,
+}
+
+/// One keyframe of a [`Clip`]: a time and the joints' values then.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ClipKey {
+    /// Seconds from the clip's start; keys are in rising order.
+    pub time: f64,
+    /// Joint name and value (radians, or millimetres for a slide), as
+    /// [`Joint::value`]. A joint a key leaves out keeps its own track:
+    /// only the keys that name it move it.
+    pub pose: Vec<(String, f64)>,
+}
+
+/// A named motion of a scene's joints over time, written to the GLB as a
+/// glTF animation ([`glb_clips`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Clip {
+    /// Unique among the clips.
+    pub name: String,
+    /// The keyframes, by time.
+    pub keys: Vec<ClipKey>,
 }
 
 /// Metres per kernel unit of a joint's value: millimetres for a slide,
@@ -594,6 +631,11 @@ fn check_joints(scene: &Scene) -> Result<Vec<(Option<Checked>, Rigid)>, ExportEr
                 value: value * k,
                 span: span.map(|(lo, hi)| (lo * k, hi * k)),
                 mimic,
+                pivot,
+                local,
+                slides: j.kind == JointKind::Prismatic,
+                kernel_span: span,
+                follows: j.mimic.as_ref().map(|m| (m.joint.clone(), m.multiplier)),
             }),
             world,
         ));
@@ -786,18 +828,36 @@ type SkinOut = (Vec<u8>, Vec<usize>, Option<usize>);
 ///
 /// The bytes depend only on the scene.
 pub fn glb(scene: &Scene) -> Result<Vec<u8>, ExportError> {
-    glb_with(scene, false)
+    glb_with(scene, false, &[])
 }
 
 /// [`glb`], with parts whose materials are written alike (the same
 /// name, factors and maps) sharing one glTF material, as an atlas they
 /// share asks ([`crate::repack`]).
 pub fn glb_shared(scene: &Scene) -> Result<Vec<u8>, ExportError> {
-    glb_with(scene, true)
+    glb_with(scene, true, &[])
 }
 
-fn glb_with(scene: &Scene, share: bool) -> Result<Vec<u8>, ExportError> {
+/// [`glb`], with `clips` written as glTF animations: one a clip, a
+/// sampler and a channel per joint it moves (a follower's from its
+/// leader's), on the joint's node: `rotation` for a joint that turns,
+/// `translation` for one that slides, linear between keys, times in
+/// seconds. A turn of more than a quarter between two keys is written
+/// with keys between them, so a viewer's shortest-way rotation follows
+/// the joint round its axis. The nodes stand at the scene's pose, as
+/// [`glb`] writes them; a viewer playing a clip moves them from there.
+///
+/// A clip is refused, saying why, when its name is empty or used twice,
+/// it has no key, its times are not finite, not rising or negative, it
+/// names a joint the scene has not, one that is fixed, floating or a
+/// follower, or a value outside the joint's range.
+pub fn glb_clips(scene: &Scene, clips: &[Clip]) -> Result<Vec<u8>, ExportError> {
+    glb_with(scene, false, clips)
+}
+
+fn glb_with(scene: &Scene, share: bool, clips: &[Clip]) -> Result<Vec<u8>, ExportError> {
     let checked = check_joints(scene)?;
+    let mut joint_node: BTreeMap<&str, usize> = BTreeMap::new();
     let mut bin: Vec<u8> = Vec::new();
     let mut views: Vec<Json> = Vec::new();
     let mut accessors: Vec<Json> = Vec::new();
@@ -998,6 +1058,7 @@ fn glb_with(scene: &Scene, share: bool) -> Result<Vec<u8>, ExportError> {
                 // The joint's node at the pivot; the part's node undoes the
                 // pivot, so its mesh stays where it was built.
                 let jn = nodes.len();
+                joint_node.insert(j.name.as_str(), jn);
                 let (t, r) = j.node.gltf();
                 nodes.push(Json::Obj(vec![
                     ("name", Json::Str(j.name.clone())),
@@ -1071,6 +1132,14 @@ fn glb_with(scene: &Scene, share: bool) -> Result<Vec<u8>, ExportError> {
         ));
         skins_json.push(Json::Obj(fields));
     }
+    let animations = animations(
+        clips,
+        &checked,
+        &joint_node,
+        &mut bin,
+        &mut views,
+        &mut accessors,
+    )?;
     let texture_fields = texture_json(&textures, &mut bin, &mut views);
     // Children lists go in last, now that every node exists.
     for (n, kids) in nodes.iter_mut().zip(&children) {
@@ -1111,6 +1180,9 @@ fn glb_with(scene: &Scene, share: bool) -> Result<Vec<u8>, ExportError> {
         doc.push(("accessors", Json::Arr(accessors)));
         if !skins_json.is_empty() {
             doc.push(("skins", Json::Arr(skins_json)));
+        }
+        if !animations.is_empty() {
+            doc.push(("animations", Json::Arr(animations)));
         }
         doc.extend(texture_fields);
         doc.push(("bufferViews", Json::Arr(views)));
@@ -1230,6 +1302,219 @@ pub(crate) fn texture_json(
 /// left).
 pub(crate) fn gltf_uv(q: shape_core::DVec2) -> [f32; 2] {
     [q.x as f32, (1.0 - q.y) as f32]
+}
+
+/// The clips as glTF animations ([`glb_clips`]): their accessors and
+/// views are appended.
+fn animations(
+    clips: &[Clip],
+    checked: &[(Option<Checked>, Rigid)],
+    joint_node: &BTreeMap<&str, usize>,
+    bin: &mut Vec<u8>,
+    views: &mut Vec<Json>,
+    accessors: &mut Vec<Json>,
+) -> Result<Vec<Json>, ExportError> {
+    let joints: BTreeMap<&str, &Checked> = checked
+        .iter()
+        .filter_map(|(c, _)| c.as_ref())
+        .map(|c| (c.name.as_str(), c))
+        .collect();
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let mut out = Vec::new();
+    for clip in clips {
+        let bad = |why: String| ExportError::BadClip {
+            clip: clip.name.clone(),
+            why,
+        };
+        if clip.name.is_empty() {
+            return Err(bad("it has no name".into()));
+        }
+        if !seen.insert(clip.name.as_str()) {
+            return Err(bad("another clip has this name".into()));
+        }
+        if clip.keys.is_empty() {
+            return Err(bad("it has no key".into()));
+        }
+        let mut last = -1.0;
+        // Each leader's own keys, in kernel units.
+        let mut tracks: BTreeMap<&str, Vec<(f64, f64)>> = BTreeMap::new();
+        for key in &clip.keys {
+            if !(key.time.is_finite() && key.time >= 0.0 && key.time > last) {
+                return Err(bad(format!(
+                    "its times must be 0 or more and rise: {} after {}",
+                    key.time,
+                    if last < 0.0 { 0.0 } else { last }
+                )));
+            }
+            last = key.time;
+            for (name, value) in &key.pose {
+                let Some(j) = joints.get(name.as_str()) else {
+                    return Err(bad(format!(
+                        "no joint {name:?}; joints: {}",
+                        joints.keys().copied().collect::<Vec<_>>().join(", ")
+                    )));
+                };
+                if j.local.is_none() {
+                    return Err(bad(format!(
+                        "joint {name:?} is fixed or floating: it has no value"
+                    )));
+                }
+                if let Some((leader, _)) = &j.follows {
+                    return Err(bad(format!(
+                        "joint {name:?} follows {leader:?}: key that one"
+                    )));
+                }
+                if !value.is_finite() {
+                    return Err(bad(format!("joint {name:?}'s value is not finite")));
+                }
+                let track = tracks.entry(j.name.as_str()).or_default();
+                if track.last().is_some_and(|&(t, _)| t == key.time) {
+                    return Err(bad(format!(
+                        "joint {name:?} is keyed twice at {}",
+                        key.time
+                    )));
+                }
+                track.push((key.time, *value));
+            }
+        }
+        // Followers take their leader's keys.
+        let led: Vec<(&str, Vec<(f64, f64)>)> = joints
+            .values()
+            .filter_map(|j| {
+                let (leader, k) = j.follows.as_ref()?;
+                let track = tracks.get(leader.as_str())?;
+                Some((
+                    j.name.as_str(),
+                    track.iter().map(|&(t, v)| (t, v * k)).collect(),
+                ))
+            })
+            .collect();
+        tracks.extend(led);
+
+        let mut samplers = Vec::new();
+        let mut channels = Vec::new();
+        for (name, track) in &tracks {
+            let j = joints[name];
+            let (Some(axis), Some(&node)) = (j.local, joint_node.get(name)) else {
+                continue;
+            };
+            if let Some((lo, hi)) = j.kernel_span {
+                let slack = 1e-9 * lo.abs().max(hi.abs()).max(1.0);
+                if let Some(&(t, v)) = track
+                    .iter()
+                    .find(|&&(_, v)| !(lo - slack <= v && v <= hi + slack))
+                {
+                    return Err(bad(format!(
+                        "joint {name:?} at {t}: {v} is outside its range {lo} to {hi}"
+                    )));
+                }
+            }
+            // A turn is written a quarter at a time at most.
+            let mut keys: Vec<(f64, f64)> = Vec::with_capacity(track.len());
+            for &(t, v) in track {
+                if let (Some(&(t0, v0)), false) = (keys.last(), j.slides) {
+                    let steps = ((v - v0).abs() / core::f64::consts::FRAC_PI_2).ceil();
+                    let mut k = 1.0;
+                    while k < steps {
+                        let f = k / steps;
+                        keys.push((t0 + (t - t0) * f, v0 + (v - v0) * f));
+                        k += 1.0;
+                    }
+                }
+                keys.push((t, v));
+            }
+            let start = bin.len();
+            for &(t, _) in &keys {
+                push_f32(bin, t as f32);
+            }
+            let mut plain = |bin: &Vec<u8>, start: usize| {
+                views.push(Json::Obj(vec![
+                    ("buffer", Json::Int(0)),
+                    ("byteOffset", Json::Int(start as u64)),
+                    ("byteLength", Json::Int((bin.len() - start) as u64)),
+                ]));
+                (views.len() - 1) as u64
+            };
+            let tv = plain(bin, start);
+            accessors.push(Json::Obj(vec![
+                ("bufferView", Json::Int(tv)),
+                ("componentType", Json::Int(FLOAT)),
+                ("count", Json::Int(keys.len() as u64)),
+                ("type", Json::Str("SCALAR".into())),
+                ("min", Json::Arr(vec![f32n(keys[0].0 as f32)])),
+                ("max", Json::Arr(vec![f32n(keys[keys.len() - 1].0 as f32)])),
+            ]));
+            let input = (accessors.len() - 1) as u64;
+            let start = bin.len();
+            let mut before: Option<[f64; 4]> = None;
+            for &(_, v) in &keys {
+                let motion = if j.slides {
+                    Rigid {
+                        t: axis * v,
+                        ..Rigid::IDENTITY
+                    }
+                } else {
+                    Rigid::turn(axis, v)
+                };
+                let (t, mut q) = j.pivot.then(&motion).gltf();
+                if j.slides {
+                    for c in [t.x, t.y, t.z] {
+                        push_f32(bin, c as f32);
+                    }
+                } else {
+                    // The same rotation the short way from the last key.
+                    if let Some(b) = before {
+                        let dot: f64 = (0..4).map(|k| q[k] * b[k]).sum();
+                        if dot < 0.0 {
+                            q = q.map(|c| -c);
+                        }
+                    }
+                    before = Some(q);
+                    for c in q {
+                        push_f32(bin, c as f32);
+                    }
+                }
+            }
+            let ov = plain(bin, start);
+            accessors.push(Json::Obj(vec![
+                ("bufferView", Json::Int(ov)),
+                ("componentType", Json::Int(FLOAT)),
+                ("count", Json::Int(keys.len() as u64)),
+                (
+                    "type",
+                    Json::Str(if j.slides { "VEC3" } else { "VEC4" }.into()),
+                ),
+            ]));
+            let output = (accessors.len() - 1) as u64;
+            channels.push(Json::Obj(vec![
+                ("sampler", Json::Int(samplers.len() as u64)),
+                (
+                    "target",
+                    Json::Obj(vec![
+                        ("node", Json::Int(node as u64)),
+                        (
+                            "path",
+                            Json::Str(if j.slides { "translation" } else { "rotation" }.into()),
+                        ),
+                    ]),
+                ),
+            ]));
+            samplers.push(Json::Obj(vec![
+                ("input", Json::Int(input)),
+                ("interpolation", Json::Str("LINEAR".into())),
+                ("output", Json::Int(output)),
+            ]));
+        }
+        if channels.is_empty() {
+            return Err(bad("it moves no joint".into()));
+        }
+        out.push(Json::Obj(vec![
+            ("name", Json::Str(clip.name.clone())),
+            ("channels", Json::Arr(channels)),
+            ("samplers", Json::Arr(samplers)),
+        ]));
+    }
+    Ok(out)
 }
 
 fn vec3(v: DVec3) -> Json {
