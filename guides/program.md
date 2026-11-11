@@ -189,12 +189,14 @@ where its operands touch (`touchingEdges` > 0: not closed there;
 `touching`: faces lie on each other somewhere, not an error by itself;
 `crossingPairs` > 0: the result passes through itself there).
 `seat`, `hole`, `pocket`, `shell` and `dent` answer `crossingPairs` too:
-want 0. A `shell` thicker than a rounded corner, chamfer or fillet of
-the part is cut with those faces gone from the hollow (its walls run on
-until they meet), on any part. It can still answer pairs where the
-hollow pinches off: a pocket or hole whose own wall reaches through the
-part's (walls thicker than half a neck). A convex part whose walls
-would meet is refused, with how far short its deepest point is.
+want 0. A `shell` may be thicker than the part's rounded corners,
+chamfers and fillets (they are gone from the hollow), and than the
+necks beside its pockets and holes (the hollow is then cut through, in
+chambers); a boss or handle thinner than two walls stays solid. It can
+still answer pairs, or be refused, where holes cross each other inside
+the part or a pocket's mouth is rounded narrower than the wall. A
+convex part whose walls would meet is refused, with how far short its
+deepest point is.
 A part with UVs adds `uv`: `coverage` and `overlap` (shares of the
 image, after `mapSize`), `flipped` and `zeroArea` (triangles mirrored or
 flat in UV), `outside`, `overlappingPairs`, `area`; the model,

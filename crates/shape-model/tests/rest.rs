@@ -303,10 +303,23 @@ fn edits_answer_the_crossing_pairs_they_leave() {
         ((volume - solid) - (hollow3 - hollow10)).abs() < chord,
         "{volume} {solid}"
     );
-    // A pocket 10 wide leaves walls exactly twice the thickness beside it:
-    // the hollow's sides lie on each other there. The part comes back,
-    // and the answer says it passes through itself.
-    let (folded, _) = shell(10.0, 10.0);
+    // What is not mended comes back with its count: a pocket whose mouth
+    // is rounded 2, hollowed 6 thick (the round is narrower than the
+    // wall, on a piece that is not convex; `docs/research.md` §38).
+    let mut s = Session::new("t");
+    for op in [
+        json!({"op": "extrude", "name": "case", "height": 40,
+            "profile": {"rect": {"width": 80, "height": 50, "radius": 4}}}),
+        json!({"op": "pocket", "id": 0, "depth": 12,
+            "profile": {"rect": {"width": 30, "height": 20, "radius": 3}},
+            "at": {"origin": [0, 0, 40], "x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}}),
+        json!({"op": "fillet", "id": 0, "radius": 2, "edges": "top"}),
+    ] {
+        s.apply_value(&op).unwrap();
+    }
+    let folded = s
+        .apply_value(&json!({"op": "shell", "id": 0, "thickness": 6}))
+        .unwrap();
     assert!(folded["crossingPairs"].as_u64().unwrap() > 0, "{folded}");
 }
 
@@ -447,4 +460,99 @@ fn loft_sections_placed_by_frames_bend_and_close_into_a_loop() {
         e.contains("every section by z, or every section by at"),
         "{e}"
     );
+}
+
+/// A shell's hollow where it pinches off, or where a hole or a boss
+/// meets it: the part is taken apart at its holes, each piece's inner
+/// solid found, and the pockets' cut from the bodies' (`shape-edit`'s
+/// `pieces`, `docs/research.md` §38). The hollows are the closed forms.
+#[test]
+fn a_shell_is_hollowed_piece_by_piece_where_its_hollow_pinches_off() {
+    let up = |x: f64, y: f64, z: f64| json!({"origin": [x, y, z], "x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]});
+    // The hollow's volume, after the ops and a shell `t` thick.
+    let hollow = |ops: Vec<Value>, t: f64, open: Value| -> f64 {
+        let mut s = Session::new("t");
+        for op in ops {
+            s.apply_value(&op).unwrap();
+        }
+        let solid = s.model().build().unwrap().scene().parts[0]
+            .solid
+            .measure()
+            .volume;
+        let answer = s
+            .apply_value(&json!({"op": "shell", "id": 0, "thickness": t, "open": open}))
+            .unwrap();
+        assert_eq!(answer, json!({"crossingPairs": 0}));
+        let m = s.model().build().unwrap().scene().parts[0].solid.measure();
+        assert!(m.closed, "{m:?}");
+        solid - m.volume
+    };
+    let case = |height: f64, radius: f64| {
+        json!({"op": "extrude", "name": "case", "height": height,
+            "profile": {"rect": {"width": 80, "height": 50, "radius": radius}}})
+    };
+    let pocket = |side: f64, depth: f64, z: f64| {
+        json!({"op": "pocket", "id": 0, "depth": depth,
+            "profile": {"rect": {"width": side, "height": side}}, "at": up(0.0, 0.0, z)})
+    };
+    let near = |v: f64, want: f64| assert!((v - want).abs() < 1e-6 * want, "{v} {want}");
+    // A pocket 30 wide, 40 deep, walls 6: the pocket's own wall (42 wide)
+    // reaches through the hollow (38 deep), which is two chambers.
+    near(
+        hollow(
+            vec![case(80.0, 5.0), pocket(30.0, 40.0, 80.0)],
+            6.0,
+            json!([]),
+        ),
+        68.0 * 38.0 * 68.0 - 42.0 * 38.0 * 40.0,
+    );
+    // Walls exactly twice the thickness beside the pocket: cut through.
+    near(
+        hollow(
+            vec![case(80.0, 5.0), pocket(10.0, 6.0, 80.0)],
+            10.0,
+            json!([]),
+        ),
+        60.0 * 30.0 * 60.0 - 30.0 * 30.0 * 6.0,
+    );
+    // A boss thinner than two walls is solid through: the hollow is the
+    // case's alone.
+    let boss = vec![
+        case(40.0, 4.0),
+        json!({"op": "cylinder", "name": "boss", "radius": 8, "height": 15, "on": up(0.0, 0.0, 39.0)}),
+        json!({"op": "join", "target": 0, "tool": 1}),
+    ];
+    near(hollow(boss, 9.0, json!([])), 62.0 * 32.0 * 22.0);
+    // An L-shaped pocket 12 deep, walls 6: the L grown by 6, where it
+    // lies in the hollow.
+    let l = json!({"op": "pocket", "id": 0, "depth": 12, "at": up(0.0, 0.0, 40.0),
+        "profile": {"poly": {"points": [[-20, -10], [20, -10], [20, 0], [-8, 0], [-8, 14], [-20, 14]]}}});
+    near(
+        hollow(vec![case(40.0, 4.0), l], 6.0, json!([])),
+        68.0 * 38.0 * 28.0 - (52.0 * 22.0 + 24.0 * 13.0) * 12.0,
+    );
+    // A mug, walls 6: its handle (a tube of radius 4) is solid through,
+    // the hollow the can's (a 14 mm circle in chords, 44 tall).
+    let mug = vec![
+        json!({"op": "cylinder", "name": "mug", "radius": 20, "height": 50}),
+        json!({"op": "torus", "name": "handle", "radius": 12, "tube": 4, "axis": "+Y", "on": up(22.0, 0.0, 25.0)}),
+        json!({"op": "join", "target": 0, "tool": 1}),
+    ];
+    let v = hollow(mug, 6.0, json!(["top"]));
+    let round = trig::PI * 14.0 * 14.0 * 44.0;
+    assert!(v < round && v > 0.99 * round, "{v} {round}");
+    // A can with a hole through its side (a hole in a curved wall), and
+    // holes, blind and through, in an open face: clean.
+    let side = json!({"origin": [21, 0, 20], "x": [0, 1, 0], "y": [0, 0, 1], "z": [1, 0, 0]});
+    let can = vec![
+        json!({"op": "cylinder", "name": "can", "radius": 20, "height": 40}),
+        json!({"op": "hole", "id": 0, "diameter": 6, "at": [side]}),
+    ];
+    assert!(hollow(can, 8.0, json!([])) > 0.0);
+    let holes = vec![
+        case(40.0, 4.0),
+        json!({"op": "hole", "id": 0, "diameter": 8, "depth": 15, "at": [up(-20.0, 5.0, 40.0)]}),
+        json!({"op": "hole", "id": 0, "diameter": 5, "at": [up(20.0, -8.0, 40.0), up(0.0, 12.0, 40.0)]}),
+    ];
+    assert!(hollow(holes, 9.0, json!(["top"])) > 0.0);
 }

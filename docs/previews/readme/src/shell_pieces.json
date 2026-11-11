@@ -1,0 +1,293 @@
+{
+ "name": "shell_pieces",
+ "ops": [
+  {
+   "op": "cylinder",
+   "name": "mug",
+   "radius": 20,
+   "height": 50
+  },
+  {
+   "op": "torus",
+   "name": "handle",
+   "radius": 12,
+   "tube": 5,
+   "axis": "+Y",
+   "on": {
+    "origin": [
+     22,
+     0,
+     25
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "z": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "op": "join",
+   "target": 0,
+   "tool": 1
+  },
+  {
+   "op": "shell",
+   "id": 0,
+   "thickness": 2,
+   "open": "top"
+  },
+  {
+   "op": "split",
+   "id": 0,
+   "frame": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     0,
+     -1
+    ],
+    "z": [
+     0,
+     1,
+     0
+    ]
+   },
+   "keep": "above"
+  },
+  {
+   "op": "material",
+   "ids": [
+    0
+   ],
+   "name": "glaze",
+   "color": "#3f8f7a",
+   "roughness": 0.4
+  },
+  {
+   "op": "extrude",
+   "name": "case",
+   "height": 50,
+   "profile": {
+    "rect": {
+     "width": 70,
+     "height": 44,
+     "radius": 5
+    }
+   },
+   "on": {
+    "origin": [
+     85,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "z": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "op": "pocket",
+   "id": 2,
+   "depth": 24,
+   "profile": {
+    "rect": {
+     "width": 24,
+     "height": 24
+    }
+   },
+   "at": {
+    "origin": [
+     85,
+     0,
+     50
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "z": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "op": "shell",
+   "id": 2,
+   "thickness": 6
+  },
+  {
+   "op": "split",
+   "id": 2,
+   "frame": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     0,
+     -1
+    ],
+    "z": [
+     0,
+     1,
+     0
+    ]
+   },
+   "keep": "above"
+  },
+  {
+   "op": "material",
+   "ids": [
+    2
+   ],
+   "name": "grey",
+   "color": "#9aa3ad",
+   "roughness": 0.6
+  },
+  {
+   "op": "cylinder",
+   "name": "can",
+   "radius": 20,
+   "height": 40,
+   "on": {
+    "origin": [
+     165,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "z": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "op": "hole",
+   "id": 3,
+   "diameter": 10,
+   "at": [
+    {
+     "origin": [
+      186,
+      0,
+      22
+     ],
+     "x": [
+      0,
+      1,
+      0
+     ],
+     "y": [
+      0,
+      0,
+      1
+     ],
+     "z": [
+      1,
+      0,
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "op": "shell",
+   "id": 3,
+   "thickness": 4
+  },
+  {
+   "op": "split",
+   "id": 3,
+   "frame": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     0,
+     -1
+    ],
+    "z": [
+     0,
+     1,
+     0
+    ]
+   },
+   "keep": "above"
+  },
+  {
+   "op": "material",
+   "ids": [
+    3
+   ],
+   "name": "orange",
+   "color": "#d98a3d",
+   "roughness": 0.5
+  }
+ ]
+}

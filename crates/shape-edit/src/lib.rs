@@ -777,7 +777,9 @@ fn fit(cs: &[(DVec3, f64)]) -> DVec3 {
 /// wall turns over), a clean one is looked for in turn: its outside
 /// (`self_union`, `docs/research.md` §27); for a convex solid, the space
 /// inside its planes (`inset`, §35); the copy with the turned faces
-/// collapsed (`collapse`, §37). If none is clean the result comes back
+/// collapsed (`collapse`, §37); the solid taken apart at its holes, each
+/// piece hollowed and the pockets cut from the bodies (`pieces`, §38:
+/// a hollow that pinches off). If none is clean the result comes back
 /// with its crossing pairs counted. A convex solid whose walls would meet
 /// is refused ([`EditError::NoRoom`]).
 pub fn shell(s: &Solid, d: &Shell) -> Result<Solid, EditError> {
@@ -805,7 +807,8 @@ pub fn shell_report(s: &Solid, d: &Shell) -> Result<(Solid, EditReport), EditErr
     // space inside its planes, each moved by the wall (`inset`). With no
     // such space the walls meet, and a copy turned inside out would be
     // cut as if it were a hollow.
-    let exact = match inset::inset(s, &open, t, size(s)) {
+    let targets: Vec<f64> = open.iter().map(|&o| if o { t } else { -t }).collect();
+    let exact = match inset::inset(s, &targets, &[], &[], size(s)) {
         inset::Inset::NoRoom(short) => {
             return Err(EditError::NoRoom {
                 thickness: t,
@@ -880,9 +883,24 @@ pub fn shell_report(s: &Solid, d: &Shell) -> Result<(Solid, EditReport), EditErr
     }
     // The faces that turned over taken out, their neighbours run on
     // (`collapse`): no convexity needed.
-    let collapsed = collapse::collapsed(s, &open, t, size(s)).filter(|i| crossing_pairs(i) == 0);
+    let collapsed =
+        collapse::collapsed(s, &targets, &[], size(s)).filter(|i| crossing_pairs(i) == 0);
     if let Some(i) = &collapsed {
         let e = cut(i)
+            .ok()
+            .filter(|(_, r)| r.touching_edges == 0)
+            .map(|(out, _)| counted(out));
+        if let Some(e) = e
+            && e.1.crossing_pairs == 0
+        {
+            return Ok(e);
+        }
+    }
+    // A hollow that pinches off: the solid taken apart at its flat faces
+    // with holes, each piece's inner solid found, the pockets' cut from
+    // the body's (`pieces`).
+    if let Some(i) = pieces::pieced(s, &targets, t, size(s)) {
+        let e = cut(&i)
             .ok()
             .filter(|(_, r)| r.touching_edges == 0)
             .map(|(out, _)| counted(out));
@@ -1093,6 +1111,7 @@ pub fn merge(solids: &[&Solid]) -> Solid {
 
 mod collapse;
 mod inset;
+mod pieces;
 pub mod subdivide;
 pub use subdivide::{MAX_LEVELS, Subdivide, subdivide};
 

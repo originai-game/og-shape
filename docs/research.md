@@ -8208,3 +8208,132 @@ Left: a triangle chamfered 10, 10 thick, open at the bottom (the cut
 comes back open, a limit of the boolean); a rounded rectangle of radius
 5 chamfered 25 at 20 or 30 thick (3 refused, 1 with 182 pairs), not
 read.
+
+## 38. A hollow that pinches off: the shell piece by piece (2026-11-11)
+
+§37.1 left the hollow that pinches off: a pocket whose own wall reaches
+through the part's. No face of the copy turns over there; a face is cut
+in two, and its triangles, stretched between an outline that shrank and
+a hole that grew past it, lie over one another.
+
+### 38.1 What is done (`shape-edit`, `pieces.rs`)
+
+The last way `shell` tries, after the copy, its outside, the planes and
+the collapse:
+
+1. **Take the solid apart at its holes.** On each surface (triangles of
+   one surface id across edges), a loop of the boundary that the surface
+   lies outside of is a hole: with the surface on its left, the loop
+   turns against the surface's normal there (by more than half). A
+   pocket's or a hole's mouth is one; so is the foot of a boss or a
+   handle. A cylinder's rim is not (the loop turns across the wall's
+   normal). Each hole is closed twice, on its own points (ears cut one
+   at a time, sides by `orient2d`): a **patch** for the surface's side,
+   and the same triangles the other way round, a **lid**, for what lies
+   through the hole.
+2. The surface now falls into closed **pieces**: bodies (positive
+   volume) and pockets, holes and voids (negative; turned out).
+3. **Each piece's inner solid** is found as a shell's is. A body's walls
+   move in by the wall, a pocket's out. Patches and lids have no plane:
+   they follow their rim. In turn: the copy; for a convex piece its
+   planes (`inset`, with a cap plane across each lid's mouth, since a
+   through hole's walls alone bound nothing); the copy's outside
+   (`self_union`); the collapse. A piece whose copy has most of its
+   walls facing against their own (by area) is inside out: it has no
+   room and is solid through (a boss or a handle thinner than two
+   walls). So is a convex piece `inset` finds no room in.
+4. **The hollow** is the bodies' inner solids joined, less the pockets',
+   by the exact booleans, which cut a body in two where a pocket reaches
+   through it. It is taken only if it is closed and crosses itself
+   nowhere, and the cut of the solid by it has no touching edge and no
+   crossing pair.
+
+What had to be right for this to hold on real parts, each found on a
+failing case:
+
+- **Needles.** A boolean leaves triangles 10⁻¹⁵ wide on a hole's wall;
+  their normals are rounding. A triangle whose doubled area is under
+  10⁻⁹ of its longest side squared gives no plane (here and in `inset`,
+  which gave up on a zero-area triangle before). A vertex with needles
+  only keeps its place between the two vertices it lies between.
+- **Points in a line on a rim.** The faces beyond a rim were cut at
+  points along its straight sides. Each has one wall to move it; at a
+  hollow corner the wall shrinks and its corner slides past them (an L
+  pocket grown 6: a point 0.24 from the corner was left 5.8 beyond the
+  wall's new end). They keep their place between the rim's two corners.
+- **Closings are made again on the moved rim.** On a curved wall the
+  rim's points do not move alike and the first filling does not fit
+  them. The rim is filled again where it can be; where it folds by a
+  hair, a tent over it (its top half a wall out of the piece) closes it.
+- **No two faces in one plane.** A pocket's lid stays in the solid's
+  surface, a wall above the body's inner face. In an open face, whose
+  hollow reaches a wall beyond the surface, the lid is carried a wall
+  and a half out. A body's lid (a boss's foot) is carried a wall and a
+  half in, through the wall it stands on, so its hollow opens into the
+  one beyond.
+- **A convex piece's planes before its copy's outside.** `self_union` of
+  a folded copy can leave slivers the next boolean touches on.
+
+### 38.2 Measured
+
+Each with `crossingPairs` 0, closed, and the hollow's volume against the
+closed form (`a_shell_is_hollowed_piece_by_piece_where_its_hollow_pinches_off`):
+
+| part | wall | hollow | closed form |
+|---|---|---|---|
+| case 80 × 50 × 80, pocket 30 × 30 × 40 | 6 | 111 872 | 68·38·68 − 42·38·40 (two chambers) |
+| the same, pocket 10 × 10 × 6 (walls exactly twice the thickness beside it) | 10 | 102 600 | 60·30·60 − 30·30·6 |
+| case 80 × 50 × 40 with a boss of radius 8 | 9 | 43 648 | 62·32·22 (the boss solid) |
+| the same case, an L pocket 12 deep | 6 | 54 880 | 68·38·28 − (52·22 + 24·13)·12 |
+| a mug (can of radius 20, a torus handle of tube radius 4), open | 6 | 26 949 | the can's, π·14²·44 in chords (the handle solid) |
+
+Also clean, not checked against a closed form: the mug 2 and 4 thick (at
+2 the handle is hollow and opens into the can); a can with a hole
+through its side, 4 and 8 thick, hole 6, 16 and 20 across; two pockets
+side by side; blind and through holes in an open face, 3, 6 and 9
+thick; a pocket in a pocket's floor; a slot through a side wall. Before:
+177 to 2 459 crossing pairs, or refused ("the tool passes through
+itself"), including the can with a side hole at any thickness.
+
+The sweep (§27.1, all convex) is unchanged in kind; with needles now
+skipped by `inset`, more of its convex solids are taken by their planes
+(numbers in §38.4). No golden line moved.
+
+### 38.3 Not mended
+
+- **A piece that is not convex and folds.** Two holes drilled across
+  each other are one pocket piece, a cross: refused as before ("the
+  tool passes through itself"). A pocket whose mouth is rounded 2,
+  hollowed 6: the round is narrower than the wall on the pocket piece,
+  and the collapse does not mend it; returned with its count (741),
+  which `edits_answer_the_crossing_pairs_they_leave` keeps.
+- **The collapse is not exact.** Three swept shells it had returned
+  clean came out with other volumes once `inset` took them (a rounded
+  rectangle chamfered 25, open at `+x`: 66 759.6 against the planes'
+  61 842.5). It is the last resort before the pieces, and what it
+  returns is checked for crossings, not for volume.
+- **A solid that is not convex and has no room** (a torus hollowed
+  thicker than its tube) is still returned inside out when it is the
+  whole solid: the share-of-walls test is used on pieces only.
+- A hole whose rim is pinched at a vertex is not taken apart. A rim of
+  more than 2 000 points is not filled.
+
+### 38.4 The sweep after this
+
+| | §37.3 | now |
+|---|---|---|
+| built clean | 5 700 | 5 697 |
+| built, crossing themselves | 1 | 0 |
+| refused: walls meet (`NoRoom`) | 165 | 172 |
+| refused otherwise | 4 | 1 |
+| `NotFlat` | 1 410 | 1 410 |
+
+All from `inset` now passing over needles (the sweep's solids are
+convex and have no holes, so nothing reaches `pieces`): the one crossing
+and two of the refused are `NoRoom` (a rounded rectangle of radius 5
+chamfered 25, 30 thick; 50 deep), one refused is clean, and four that
+were returned clean are `NoRoom` (a triangle of apothem 25 chamfered 25,
+30 thick: its copy had come out through itself without crossing). Three
+clean results changed volume (§38.3). Left: a triangle chamfered 10,
+10 thick, open at the bottom, whose cut comes back open (a limit of the
+boolean).

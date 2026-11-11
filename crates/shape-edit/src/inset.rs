@@ -26,7 +26,9 @@ const MAX_TRIANGLES: usize = 8_000;
 struct Plane {
     n: DVec3,
     d: f64,
-    open: bool,
+    /// How far the plane moves along its normal (the furthest out of its
+    /// triangles').
+    target: f64,
     /// The largest triangle on it: its surface and UVs stand for the plane.
     rep: usize,
     area: f64,
@@ -43,22 +45,40 @@ pub(crate) enum Inset {
     Inner(Box<Solid>),
 }
 
-/// The inner solid of `s` hollowed `t` thick: `t` in from every plane, `t`
-/// out through those with an `open` triangle. Faces are tagged `wall`, on
+/// The inner solid of `s`: the space inside every plane moved along its
+/// normal by its triangles' `targets` (the wall in, for a kept face; out,
+/// for an open one). A `free` triangle (a patch over a hole, `pieces`)
+/// has no plane of its own and is left out; `caps` are planes that bound
+/// the space in its stead. Faces are tagged `wall`, on
 /// the surface of the outer face they follow, with its UVs carried along
 /// the plane if `s` has any.
-pub(crate) fn inset(s: &Solid, open: &[bool], t: f64, diag: f64) -> Inset {
+pub(crate) fn inset(
+    s: &Solid,
+    targets: &[f64],
+    free: &[bool],
+    caps: &[(DVec3, f64, usize)],
+    diag: f64,
+) -> Inset {
     if s.triangles.is_empty() || s.triangles.len() > MAX_TRIANGLES {
         return Inset::Unknown;
     }
     let tol = diag * 1e-9;
     let mut planes: Vec<Plane> = Vec::new();
     for (i, tri) in s.triangles.iter().enumerate() {
+        if free.get(i) == Some(&true) {
+            continue;
+        }
         let [a, b, c] = tri.map(|v| s.positions[v as usize]);
         let an = (b - a).cross(c - a);
         let area = an.length();
-        if area == 0.0 {
-            return Inset::Unknown;
+        // A needle (a boolean leaves triangles 1e-15 wide) has no plane
+        // to speak of; its corners lie on its neighbours'.
+        let longest = (b - a)
+            .length_squared()
+            .max((c - b).length_squared())
+            .max((a - c).length_squared());
+        if area <= 1e-9 * longest {
+            continue;
         }
         let n = an / area;
         let d = n.dot(a);
@@ -74,7 +94,7 @@ pub(crate) fn inset(s: &Solid, open: &[bool], t: f64, diag: f64) -> Inset {
             .find(|p| p.n.dot(n) > 1.0 - 1e-12 && (p.d - d).abs() <= tol)
         {
             Some(p) => {
-                p.open |= open[i];
+                p.target = p.target.max(targets[i]);
                 if area > p.area {
                     p.rep = i;
                     p.area = area;
@@ -83,16 +103,28 @@ pub(crate) fn inset(s: &Solid, open: &[bool], t: f64, diag: f64) -> Inset {
             None => planes.push(Plane {
                 n,
                 d,
-                open: open[i],
+                target: targets[i],
                 rep: i,
                 area,
             }),
         }
     }
-    let off: Vec<f64> = planes
-        .iter()
-        .map(|p| p.d + if p.open { t } else { -t })
-        .collect();
+    // Caps: planes that bound the space where free triangles stood (a
+    // pocket's mouth), as they are, each `n · x = d` with the triangle
+    // whose surface and UVs its face takes.
+    for &(n, d, rep) in caps {
+        if s.positions.iter().any(|&p| n.dot(p) - d > tol) {
+            return Inset::Unknown;
+        }
+        planes.push(Plane {
+            n,
+            d,
+            target: 0.0,
+            rep,
+            area: 0.0,
+        });
+    }
+    let off: Vec<f64> = planes.iter().map(|p| p.d + p.target).collect();
 
     // The point deepest inside every moved plane: from the middle of the
     // vertices, step away from the nearest plane, ever shorter, keeping
@@ -305,7 +337,7 @@ fn meet(rows: &[(DVec3, f64)]) -> Option<DVec3> {
 
 /// The texture coordinate at `p`, carried along the plane of the triangle
 /// `at` with corner coordinates `uv`.
-fn along(at: [DVec3; 3], uv: [DVec2; 3], p: DVec3) -> DVec2 {
+pub(crate) fn along(at: [DVec3; 3], uv: [DVec2; 3], p: DVec3) -> DVec2 {
     let (e1, e2, w) = (at[1] - at[0], at[2] - at[0], p - at[0]);
     let (d11, d12, d22) = (e1.dot(e1), e1.dot(e2), e2.dot(e2));
     let det = d11 * d22 - d12 * d12;

@@ -1366,3 +1366,18 @@
   offsets meet across a face are refused as before. No golden line
   moved. The shell sweep with both: 1 of 7 280 crossing (3 of 7 220),
   4 refused (17).
+- `shell` where the hollow pinches off, and on parts with holes, bosses
+  and handles: as its last way, the solid is taken apart at the holes
+  of its surfaces (a pocket's or hole's mouth, the foot of a boss), each
+  piece's inner solid is found, and the pockets' are cut from the
+  bodies' by the exact booleans (`shape-edit`'s `pieces`). A pocket
+  whose wall reaches through the part's cuts the hollow into chambers;
+  a boss or handle thinner than two walls is solid through. A case with
+  a pocket 30 wide, 6 thick (198 crossing pairs) and a can with a hole
+  through its side (refused at any thickness) are clean, the first with
+  its hollow exact. Needle triangles a boolean leaves no longer give a
+  plane (also in the convex planes method, which now takes more solids:
+  three swept shells the collapse had returned clean changed volume).
+  Not mended: holes that cross inside the part, and a pocket mouth
+  rounded narrower than the wall. `docs/research.md` §38. No golden
+  line moved.

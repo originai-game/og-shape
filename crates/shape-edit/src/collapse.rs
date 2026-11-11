@@ -31,12 +31,35 @@ use crate::{SAME_PLANE_COS, fit};
 /// Rounds of taking turned faces out before giving up.
 const ROUNDS: usize = 16;
 
-/// The copy of `s` with every vertex moved by the wall `t` (in from kept
-/// faces, out through `open` ones) and the faces that turn over
+/// The copy of `s` with every vertex moved to where its faces' planes
+/// meet, each moved along its normal by its triangle's `targets` (the
+/// wall in, for a kept face), and the faces that turn over
 /// collapsed. Triangles keep `s`'s surfaces and UVs and are tagged
 /// `wall`. `None` if no face turns over (there is nothing to collapse),
 /// or faces still turn after [`ROUNDS`].
-pub(crate) fn collapsed(s: &Solid, open: &[bool], t: f64, diag: f64) -> Option<Solid> {
+pub(crate) fn collapsed(s: &Solid, targets: &[f64], free: &[bool], diag: f64) -> Option<Solid> {
+    let at = collapsed_positions(s, targets, free, diag)?;
+    let mut inner = Solid::default();
+    for p in &at {
+        inner.push_vertex(*p);
+    }
+    for (i, tri) in s.triangles.iter().enumerate() {
+        inner.push_triangle(*tri, s.surfaces[i], &["wall"]);
+    }
+    inner.uvs.clone_from(&s.uvs);
+    inner.canonicalize().ok()?;
+    Some(inner)
+}
+
+/// [`collapsed`]'s vertices, where they end, for a caller that builds the
+/// copy itself (`pieces`). A vertex none of whose triangles holds it (all
+/// `free`) is where it was.
+pub(crate) fn collapsed_positions(
+    s: &Solid,
+    targets: &[f64],
+    free: &[bool],
+    diag: f64,
+) -> Option<Vec<DVec3>> {
     let nt = s.triangles.len();
     let nv = s.positions.len();
     let tol = diag * 1e-9;
@@ -47,10 +70,16 @@ pub(crate) fn collapsed(s: &Solid, open: &[bool], t: f64, diag: f64) -> Option<S
         let [a, b, c] = tri.map(|v| s.positions[v as usize]);
         let n = (b - a).cross(c - a).normalize_or_zero();
         normal.push(n);
-        moved.push(n.dot(a) + if open[i] { t } else { -t });
+        moved.push(n.dot(a) + targets[i]);
     }
     let mut around: Vec<Vec<u32>> = vec![Vec::new(); nv];
+    // A free triangle (a patch over a hole, `pieces`) holds no vertex: it
+    // follows its corners.
+    let is_free = |i: usize| free.get(i) == Some(&true);
     for (i, tri) in s.triangles.iter().enumerate() {
+        if is_free(i) {
+            continue;
+        }
         for &v in tri {
             around[v as usize].push(i as u32);
         }
@@ -82,7 +111,7 @@ pub(crate) fn collapsed(s: &Solid, open: &[bool], t: f64, diag: f64) -> Option<S
         (0..nt)
             .filter(|&i| {
                 let [a, b, c] = s.triangles[i].map(|v| at[v as usize]);
-                !gone[i] && (b - a).cross(c - a).dot(normal[i]) < -tol * tol
+                !gone[i] && !is_free(i) && (b - a).cross(c - a).dot(normal[i]) < -tol * tol
             })
             .collect()
     };
@@ -93,7 +122,7 @@ pub(crate) fn collapsed(s: &Solid, open: &[bool], t: f64, diag: f64) -> Option<S
             if !any {
                 return None;
             }
-            return finish(s, &at, tol);
+            return Some(snapped(&at, tol));
         }
         any = true;
         for i in new {
@@ -181,9 +210,10 @@ pub(crate) fn collapsed(s: &Solid, open: &[bool], t: f64, diag: f64) -> Option<S
     None
 }
 
-/// The copy at `at`, with vertices closer than `tol` made one (the first
-/// in order of position), so faces collapsed to a line or a point drop.
-fn finish(s: &Solid, at: &[DVec3], tol: f64) -> Option<Solid> {
+/// `at` with vertices closer than `tol` made one (the first in order of
+/// position), so faces collapsed to a line or a point have no area and
+/// are dropped when the copy is put in order.
+fn snapped(at: &[DVec3], tol: f64) -> Vec<DVec3> {
     let mut order: Vec<u32> = (0..at.len() as u32).collect();
     order.sort_by(|&a, &b| {
         let (p, q) = (at[a as usize], at[b as usize]);
@@ -221,14 +251,5 @@ fn finish(s: &Solid, at: &[DVec3], tol: f64) -> Option<Solid> {
             None => grid.entry((cx, cy, cz)).or_default().push(v),
         }
     }
-    let mut inner = Solid::default();
-    for p in &snapped {
-        inner.push_vertex(*p);
-    }
-    for (i, tri) in s.triangles.iter().enumerate() {
-        inner.push_triangle(*tri, s.surfaces[i], &["wall"]);
-    }
-    inner.uvs.clone_from(&s.uvs);
-    inner.canonicalize().ok()?;
-    Some(inner)
+    snapped
 }
