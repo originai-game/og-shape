@@ -499,6 +499,10 @@ export class Shape {
   dent(part: Part, d: { at: Vec3[]; radius: number; depth: number }): EditReport {
     return this.call("dent", { id: part, ...d });
   }
+  /** Rounds a part by subdivision (Catmull and Clark): its flat faces are the cage, each level about four times the faces; edges named in `sharp` stay sharp. Ask for all levels at once. */
+  subdivide(part: Part, d: { levels?: number; sharp?: string | string[] } = {}): void {
+    this.call("subdivide", { id: part, ...d });
+  }
   fillet(part: Part, d: { radius: number; edges?: string | string[]; segments?: number; profile?: number }): void {
     this.call("fillet", { id: part, ...d });
   }

@@ -1269,3 +1269,12 @@
   the part pokes out of a thinned hull; `-o` writes the hulls as
   `<part>.collider.<k>`. `shape-tools` now depends on `shape-gen` (the
   hull). Golden case `collide.hulls`; no existing line moved.
+- `subdivide`: Catmull and Clark's subdivision (`shape_edit::subdivide`,
+  the program operation `subdivide` with `levels` and `sharp`, the
+  binding's `subdivide(part, { levels?, sharp? })`). A solid's flat faces
+  are the cage (triangles of one surface in one plane are one face,
+  decided exactly); edges named in `sharp` stay sharp and keep their
+  names, smoothed edges lose theirs and their faces become one surface.
+  Refuses an open solid, and one with a skin, UVs or vertex colours.
+  New `EditError` variants `NotClosed`, `NoSuchEdge`, `Unsupported`.
+  Golden case `edit.subdivide`; no existing line moved.

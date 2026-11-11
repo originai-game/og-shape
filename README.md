@@ -29,6 +29,14 @@ Each image is the kernel's own CPU preview (`shape preview`), no GPU.
 | ![toaster](docs/previews/readme/sim3_toaster.png) | ![spectacles](docs/previews/readme/obj4_spectacles.png) | ![washing machine](docs/previews/readme/washing_machine.png) |
 | A toaster: a lofted housing with a filleted top, slots, a lever and a knob on joints. Written by an agent from a brief (`eval/phase6/Z/Z1/sim3_toaster`). | Spectacles with folding arms and lenses at opacity 0.4 (`…/obj4_spectacles`). | The washing machine of `golden/programs/`, posed: the door on a hinge, the drawer on a slide. |
 
+Soft forms are a blocky cage rounded by `subdivide`, and every part can
+get convex colliders:
+
+| | |
+|---|---|
+| ![subdivided](docs/previews/readme/subdivide.png) | ![colliders](docs/previews/readme/cup_colliders.png) |
+| An L with sharp caps, a 12-sided can with a sharp base, a box rounded all over and one on a sharp base. | A cup and its handle covered by 16 convex hulls (`shape collide`): the hollow stays open. |
+
 Meshes from elsewhere go through the same kernel:
 
 | | | |
@@ -62,7 +70,7 @@ Run on `main` on 2026-11-10; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 159 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 340 pass | `scripts/check.sh test` |
+| Tests | 344 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |

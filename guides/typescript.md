@@ -127,6 +127,13 @@ Edits (a tool must be a part; it is used up; the target keeps its name):
   z? })` along its own axes, about its own origin.
   `seat`, `hole`, `pocket`, `shell` and `dent` return `{ crossingPairs }`
   too: want 0.
+- `subdivide(part, { levels?, sharp? })`: rounds a blocky part into a
+  smooth one (Catmull and Clark). The part's flat faces are the cage: a
+  box becomes a pebble, with `sharp: "bottom"` a cushion on a flat base,
+  an extruded outline with `sharp: "bottom top"` a soft-walled slab.
+  Each level makes about four times the faces (3 is smooth to the eye;
+  a box at 3 is 768 triangles). The result is smaller than the cage: a
+  box of 10 rounds to about 8.5 across. Ask for all levels in one call.
 - `hole(part, { diameter, at, depth?, counterbore?, countersink? })`:
   `at` one frame or a list, +z out of the material; `depth` 0 goes
   through; `counterbore: [d, depth]`, `countersink: [d, full angle]`.

@@ -305,3 +305,23 @@ fn wrap_is_the_convex_hull_of_parts_where_they_stand() {
     let e = err(flat);
     assert!(e.contains("op 1 wrap"), "{e}");
 }
+
+#[test]
+fn subdivide_rounds_a_cage_and_keeps_a_sharp_base() {
+    let p = |sharp: Value| {
+        json!({"name": "t", "ops": [
+            {"op": "box", "name": "cushion", "width": 60, "depth": 60, "height": 20},
+            {"op": "subdivide", "id": 0, "levels": 2, "sharp": sharp},
+        ]})
+    };
+    let soft = part(&p(json!([])), "cushion");
+    let based = part(&p(json!("bottom")), "cushion");
+    assert_eq!((soft.triangles, based.triangles), (192, 192));
+    // Rounded all over, it lifts off the floor; with its base sharp it
+    // stands on it, and keeps more of the box.
+    assert!(soft.bounds_min.z > 1.0 && based.bounds_min.z == 0.0);
+    assert!(soft.volume < based.volume && based.volume < 60.0 * 60.0 * 20.0);
+    // A name no edge carries is refused, with the names there are.
+    let e = err(p(json!("rim")));
+    assert!(e.contains("op 1 subdivide") && e.contains("bottom"), "{e}");
+}

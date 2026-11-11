@@ -58,6 +58,10 @@ pub fn cases() -> Vec<Case> {
             name: "collide.hulls",
             run: colliders_case,
         },
+        Case {
+            name: "edit.subdivide",
+            run: subdivided,
+        },
     ]
 }
 
@@ -519,4 +523,55 @@ impl std::fmt::Display for GenErrorNever {
     fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match *self {}
     }
+}
+
+/// Subdivision (`shape_edit::subdivide`): a box rounded all over at
+/// three levels, the same with its base sharp, and an extruded L with
+/// both caps sharp.
+fn subdivided(h: &mut OutputHash) -> Result<(), HashError> {
+    use shape_edit::{Subdivide, subdivide};
+    let fail = |e: &dyn std::fmt::Display| {
+        eprintln!("edit.subdivide: {e}");
+        HashError::NaN
+    };
+    let cage = shape_gen::solids::cuboid(&shape_gen::solids::BoxDesc {
+        width: 60.0,
+        depth: 40.0,
+        height: 25.0,
+    })
+    .map_err(|e| fail(&e))?;
+    let corners = [
+        (-15.0, -5.0),
+        (15.0, -5.0),
+        (15.0, 5.0),
+        (-5.0, 5.0),
+        (-5.0, 25.0),
+        (-15.0, 25.0),
+    ];
+    let profile = shape_2d::poly(&shape_2d::Poly {
+        points: corners
+            .iter()
+            .map(|&(x, y)| shape_2d::PolyPoint {
+                x,
+                y,
+                ..Default::default()
+            })
+            .collect(),
+    })
+    .map_err(|e| fail(&e))?;
+    let ell = shape_gen::solids::extrude(
+        &profile,
+        &shape_gen::solids::Extrude {
+            height: 20.0,
+            ..Default::default()
+        },
+    )
+    .map_err(|e| fail(&e))?;
+    let sharp = |names: &[&str]| Subdivide {
+        levels: 3,
+        sharp: names.iter().map(|n| String::from(*n)).collect(),
+    };
+    solid(h, subdivide(&cage, &sharp(&[])))?;
+    solid(h, subdivide(&cage, &sharp(&["bottom"])))?;
+    solid(h, subdivide(&ell, &sharp(&["bottom", "top"])))
 }

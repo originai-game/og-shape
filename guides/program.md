@@ -156,6 +156,7 @@ walls by arc length round and along).
 | `split` | `id`, `frame`, `keep`? (`"above"`, `"below"`) | |
 | `shell` | `id`, `thickness`, `open`? (face names, or `"+z"`… along the part's own axes, as built) | hollows it |
 | `dent` | `id`, `at` (points), `radius`, `depth` | |
+| `subdivide` | `id`, `levels`? (1; at most 6), `sharp`? (edge names) | rounds the part: its flat faces are the cage, each level about four times the faces; edges named in `sharp` stay sharp. All levels at once |
 | `fillet` | `id`, `radius`, `edges`?, `segments`?, `profile`? | rounds edges |
 | `chamfer` | `id`, `distance`, `distance2`?, `angle`?, `edges`?, `segments`? | |
 | `soften` | `id`, `radius`, `angle`? (30° by default), `edges`?, `segments`? | rounds every edge sharper than `angle` |

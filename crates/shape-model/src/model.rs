@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use shape_bevel::{Chamfer, Fillet, Soften};
 use shape_bool::{BoolOp, BoolReport, Boolean};
 use shape_core::{DVec3, Frame};
-use shape_edit::{Dent, EditReport, Hole, Keep, Pocket, Shell};
+use shape_edit::{Dent, EditReport, Hole, Keep, Pocket, Shell, Subdivide};
 use shape_mesh::{Measures, Solid};
 use shape_tools::{
     Image, Interfering, JointKind, Material, Mimic, Part, Placement, Preview, Scene,
@@ -1405,6 +1405,12 @@ impl Model {
     /// Fillets on named edges ([`shape_bevel::fillet`]).
     pub fn fillet(&mut self, id: Id, d: &Fillet) -> Result<(), ModelError> {
         self.edit(id, |s, _| Ok(shape_bevel::fillet(s, d)?))
+    }
+
+    /// Rounds the part by subdivision ([`shape_edit::subdivide`]): its
+    /// flat faces are the cage, edges named in `d.sharp` stay sharp.
+    pub fn subdivide(&mut self, id: Id, d: &Subdivide) -> Result<(), ModelError> {
+        self.edit(id, |s, _| Ok(shape_edit::subdivide(s, d)?))
     }
 
     /// Chamfers on named edges ([`shape_bevel::chamfer`]).

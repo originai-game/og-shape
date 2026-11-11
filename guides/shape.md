@@ -21,6 +21,12 @@ Before writing code, write down from the description and the reference:
 5. **The details** (holes, fillets, chamfers) last, once the parts are
    the right size, in place, and move right.
 
+Soft, organic things (a cushion, a pebble, a handle's grip, a creature's
+body) are a blocky cage, then `subdivide`: build the cage from boxes and
+extrusions joined together, name the edges that must stay sharp (a base
+that stands on the floor), and round it. Hard, machined things are
+profiles, booleans and fillets.
+
 ## 2. The shape of a program
 
 ```ts

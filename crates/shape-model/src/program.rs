@@ -59,6 +59,7 @@
 //! | `split` | `id`, `frame`, `keep`? (`"above"`, `"below"`) | |
 //! | `shell` | `id`, `thickness`, `open`? | `crossingPairs` |
 //! | `dent` | `id`, `at` (points), `radius`, `depth` | `crossingPairs` |
+//! | `subdivide` | `id`, `levels`? (1), `sharp`? (edge names kept sharp) | |
 //! | `fillet` | `id`, `radius`, `edges`?, `segments`?, `profile`? | |
 //! | `chamfer` | `id`, `distance`, `distance2`?, `angle`?, `edges`?, `segments`? | |
 //! | `soften` | `id`, `radius`, `angle`?, `edges`?, `segments`? | |
@@ -112,7 +113,7 @@ use shape_2d::Profile;
 use shape_bevel::{Chamfer, Fillet, Soften};
 use shape_bool::BoolOp;
 use shape_core::{DVec2, DVec3, Frame};
-use shape_edit::{Dent, Hole, Keep, Pocket, Shell};
+use shape_edit::{Dent, Hole, Keep, Pocket, Shell, Subdivide};
 use shape_gen::body::{Body, View};
 use shape_gen::loft::LoftCurve;
 use shape_gen::parts::{GearDesc, Knurl};
@@ -607,6 +608,14 @@ fn dispatch(m: &mut Model, a: &Args) -> Result<(Value, bool), ModelError> {
                 let r = m.dent(a.id("id")?, &d)?;
                 Ok((json!({"crossingPairs": r.crossing_pairs}), true))
             }
+            "subdivide" => {
+                let d = Subdivide {
+                    levels: a.u32_or("levels", 0)?,
+                    sharp: a.names_or("sharp")?,
+                };
+                m.subdivide(a.id("id")?, &d)?;
+                Ok((none(), true))
+            }
             "fillet" => {
                 let d = Fillet {
                     radius: a.num("radius")?,
@@ -924,6 +933,7 @@ const OPS: &[(&str, &[&str])] = &[
     ("split", &["id", "frame", "keep"]),
     ("shell", &["id", "thickness", "open"]),
     ("dent", &["id", "at", "radius", "depth"]),
+    ("subdivide", &["id", "levels", "sharp"]),
     ("fillet", &["id", "radius", "edges", "segments", "profile"]),
     (
         "chamfer",

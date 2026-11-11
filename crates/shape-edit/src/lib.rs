@@ -60,6 +60,14 @@ pub enum EditError {
     /// named), so the cut's new faces would have none: give the part UVs
     /// too, or neither.
     NoUvs(String),
+    /// The solid is not closed and manifold: an edge is not between
+    /// exactly two faces.
+    NotClosed,
+    /// The names asked for that no edge carries, and the edge names that
+    /// exist.
+    NoSuchEdge(Vec<String>, Vec<String>),
+    /// What the edit does not do, and what to do instead.
+    Unsupported(&'static str),
 }
 
 impl From<BoolError> for EditError {
@@ -102,6 +110,16 @@ impl std::fmt::Display for EditError {
             EditError::Skinned => f.write_str(
                 "the solid is skinned; edits do not carry skins yet: edit first, then skin it",
             ),
+            EditError::NotClosed => f.write_str(
+                "the solid is not closed and manifold (an edge is not between exactly two faces)",
+            ),
+            EditError::NoSuchEdge(missing, have) => write!(
+                f,
+                "no edge is named {}; edges are named {}",
+                missing.join(", "),
+                have.join(", ")
+            ),
+            EditError::Unsupported(what) => f.write_str(what),
             EditError::NoUvs(what) => write!(
                 f,
                 "the solid has UVs and {what} has none, so the faces it cuts would have none: \
@@ -1003,6 +1021,9 @@ pub fn merge(solids: &[&Solid]) -> Solid {
     let _ = out.canonicalize();
     out
 }
+
+pub mod subdivide;
+pub use subdivide::{MAX_LEVELS, Subdivide, subdivide};
 
 #[cfg(test)]
 mod tests;
