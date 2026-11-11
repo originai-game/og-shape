@@ -21,6 +21,8 @@
 //! shape place    <mesh> [-o out] [--up AXIS] [--front AXIS] [--turn DEG]
 //!                [--longest L | --height L | --width L | --depth L | --scale F]
 //!                [--pivot base|center|X,Y,Z]
+//! shape collide  <input> [-o out] [--hulls N] [--concavity MM]
+//!                [--max-vertices N]
 //! shape process  <mesh> [--budget N] [--merge-charts UV]
 //!                [--cross-color-borders] [-o out.glb]
 //!                [repair, unwrap and place options] [--intersections]
@@ -77,6 +79,8 @@ const USAGE: &str = "usage: shape <command> <input> [options]
            [--longest L | --height L | --width L | --depth L | --scale F]
            [--pivot base|center|X,Y,Z]      turn, size (L with a unit: 1.2m, 90cm,
                                                 900mm) and origin, before and after
+  collide  <input> [-o out] [--hulls N] [--concavity MM] [--max-vertices N]
+                                                convex hulls over each part: colliders
   process  <mesh> [--budget N] [--merge-charts UV] [--cross-color-borders] [-o out.glb]
            [repair, unwrap and place options]
            [--intersections] [--unwrap] [--texture-max PX]
@@ -98,6 +102,7 @@ fn main() -> ExitCode {
                 "decimate" => shape_cli::decimate::run(&a),
                 "unwrap" => shape_cli::unwrap::run(&a),
                 "place" => shape_cli::place::run(&a),
+                "collide" => shape_cli::collide::run(&a),
                 "process" => shape_cli::process::run(&a),
                 "help" | "-h" | "--help" => {
                     println!("{USAGE}");

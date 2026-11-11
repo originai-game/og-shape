@@ -55,6 +55,7 @@
 
 mod atlas;
 mod bake;
+mod collide;
 mod decimate;
 mod decode;
 mod export;
@@ -84,6 +85,7 @@ pub use atlas::{
     repack, unwrap_atlas,
 };
 pub use bake::{Bake, BakeError, BakeReport, BakeSource, Baked, BakedMap, NormalMeasures, bake};
+pub use collide::{Collide, CollideError, ColliderReport, HullReport, colliders};
 pub use decimate::{
     Blocked, Decimate, DecimateError, DecimateReport, Rigid, collapse_short_edges, decimate, lods,
     merge_charts,

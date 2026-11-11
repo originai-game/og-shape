@@ -150,6 +150,7 @@ fn tools_resources_and_the_workspace() {
         "decimate",
         "unwrap",
         "place",
+        "collide",
         "process",
         "run_typescript",
     ] {

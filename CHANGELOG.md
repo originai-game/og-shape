@@ -1260,3 +1260,12 @@
   are one surface. The program operation `wrap` (`name`, `parts`) and the
   binding's `wrap({ name, parts })` make a new part, the hull of parts as
   they stand; faces and edges are named `hull`. Golden case `gen2.hull`.
+- Colliders: `shape_tools::colliders`, `shape collide` and the MCP tool
+  `collide` cover each part of a program or a mesh file with convex
+  hulls. One hull a part by default; `hulls` cuts a part with hollows
+  where they are deepest, `concavity` says when to stop, `max_vertices`
+  thins a hull a vertex at a time where the error is largest. The report
+  gives each hull's vertices, triangles, volume, concavity and how far
+  the part pokes out of a thinned hull; `-o` writes the hulls as
+  `<part>.collider.<k>`. `shape-tools` now depends on `shape-gen` (the
+  hull). Golden case `collide.hulls`; no existing line moved.

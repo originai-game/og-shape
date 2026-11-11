@@ -23,6 +23,7 @@
 
 pub mod args;
 pub mod build;
+pub mod collide;
 pub mod decimate;
 pub mod export;
 pub mod import;

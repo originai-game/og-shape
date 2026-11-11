@@ -54,6 +54,10 @@ pub fn cases() -> Vec<Case> {
             name: "gen2.hull",
             run: hulls,
         },
+        Case {
+            name: "collide.hulls",
+            run: colliders_case,
+        },
     ]
 }
 
@@ -424,4 +428,95 @@ fn hulls(h: &mut OutputHash) -> Result<(), HashError> {
         })
         .collect();
     solid(h, convex_hull(&scatter))
+}
+
+/// Colliders (`shape_tools::colliders`): an L cut at its inner corner, a
+/// ring covered by eight thinned hulls, a ball thinned to 14 vertices:
+/// every hull and each report.
+fn colliders_case(h: &mut OutputHash) -> Result<(), HashError> {
+    use shape_tools::{Collide, colliders};
+    let fail = |e: &dyn std::fmt::Display| {
+        eprintln!("collide.hulls: {e}");
+        HashError::NaN
+    };
+    let corners = [
+        (-15.0, -5.0),
+        (15.0, -5.0),
+        (15.0, 5.0),
+        (-5.0, 5.0),
+        (-5.0, 25.0),
+        (-15.0, 25.0),
+    ];
+    let profile = shape_2d::poly(&shape_2d::Poly {
+        points: corners
+            .iter()
+            .map(|&(x, y)| shape_2d::PolyPoint {
+                x,
+                y,
+                ..Default::default()
+            })
+            .collect(),
+    })
+    .map_err(|e| fail(&e))?;
+    let ell = shape_gen::solids::extrude(
+        &profile,
+        &shape_gen::solids::Extrude {
+            height: 10.0,
+            ..Default::default()
+        },
+    )
+    .map_err(|e| fail(&e))?;
+    let ring = torus_desc(&TorusDesc {
+        radius: 20.0,
+        tube_radius: 5.0,
+        ..Default::default()
+    })
+    .map_err(|e| fail(&e))?;
+    let ball = sphere_desc(&SphereDesc {
+        radius: 10.0,
+        ..Default::default()
+    })
+    .map_err(|e| fail(&e))?;
+    let cases = [
+        (
+            &ell,
+            Collide {
+                max_hulls: 4,
+                ..Default::default()
+            },
+        ),
+        (
+            &ring,
+            Collide {
+                max_hulls: 8,
+                max_vertices: 12,
+                ..Default::default()
+            },
+        ),
+        (
+            &ball,
+            Collide {
+                max_vertices: 14,
+                ..Default::default()
+            },
+        ),
+    ];
+    for (mesh, d) in cases {
+        let (hulls, report) = colliders(mesh, &d).map_err(|e| fail(&e))?;
+        for hull in hulls {
+            solid(h, Ok::<_, GenErrorNever>(hull))?;
+        }
+        h.str(&report.to_json());
+    }
+    Ok(())
+}
+
+/// An error that never happens, for [`solid`]'s `Result`.
+#[derive(Debug)]
+enum GenErrorNever {}
+
+impl std::fmt::Display for GenErrorNever {
+    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {}
+    }
 }

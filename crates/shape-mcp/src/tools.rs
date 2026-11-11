@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 use serde_json::{Map, Value, json};
 use shape_cli::build::report as build_report;
+use shape_cli::collide::{CollideDesc, collide};
 use shape_cli::decimate::{DecimateDesc, decimate};
 use shape_cli::export::{export, written};
 use shape_cli::import::{ImportDesc, import};
@@ -40,7 +41,7 @@ struct Tool {
     handler: Handler,
 }
 
-const TOOLS: [Tool; 11] = [
+const TOOLS: [Tool; 12] = [
     Tool {
         name: "build",
         description: "Build a model program (the JSON form of resource og-shape://guides/program.md) \
@@ -109,6 +110,19 @@ const TOOLS: [Tool; 11] = [
             packing). Reports the charts and the UV measures; `out` (.glb) gets the UVs.",
         schema: unwrap_schema,
         handler: unwrap_tool,
+    },
+    Tool {
+        name: "collide",
+        description: "Colliders: cover each part of a program or a mesh file with convex hulls, \
+            the shape a physics engine tests against. One hull a part by default; `hulls` cuts a \
+            part with hollows (a cup, an L, a chair) into up to that many pieces, each with its \
+            own hull, until every piece's concavity is within `concavity` (mm; how deep the \
+            part's surface lies under its hull). `max_vertices` thins each hull. Reports per \
+            part each hull's vertices, triangles, volume, concavity and `outside` (how far the \
+            part pokes out of a thinned hull); `out` gets the hulls alone, named \
+            <part>.collider.<k>. Decimate a dense mesh first: the cost grows with its points.",
+        schema: collide_schema,
+        handler: collide_tool,
     },
     Tool {
         name: "place",
@@ -773,6 +787,33 @@ fn unwrap_schema() -> Value {
     schema(p, &["path"])
 }
 
+fn collide_schema() -> Value {
+    let mut p = program_props();
+    p.push((
+        "out",
+        path("Write the hulls here, in the workspace: .glb, .obj or .stl."),
+    ));
+    p.extend(obj_props());
+    p.extend([
+        (
+            "hulls",
+            int("The most hulls a part gets; 0 and 1 make one (its convex hull)."),
+        ),
+        (
+            "concavity",
+            num(
+                "Stop cutting a part when its surface lies at most this deep under its hulls \
+                 (mm); 0 cuts until `hulls` is reached or every piece is convex.",
+            ),
+        ),
+        (
+            "max_vertices",
+            int("The most vertices a hull may have (at least 4); 0 keeps every corner."),
+        ),
+    ]);
+    schema(p, &[])
+}
+
 fn place_schema() -> Value {
     let mut p = mesh_props(
         "Write the parts placed here: .glb (skins, UVs and textures kept), .obj or .stl.",
@@ -1075,6 +1116,20 @@ fn unwrap_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<V
         out: a.path("out")?,
     };
     Ok(vec![text(unwrap(&server.ws, &d)?)])
+}
+
+fn collide_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
+    let d = CollideDesc {
+        input: a.input(server)?,
+        import: a.import()?,
+        collide: shape_tools::Collide {
+            max_hulls: a.uint("hulls")? as u32,
+            concavity: a.num("concavity")?,
+            max_vertices: a.uint("max_vertices")? as u32,
+        },
+        out: a.path("out")?,
+    };
+    Ok(vec![text(collide(&server.ws, &d)?)])
 }
 
 fn place_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {

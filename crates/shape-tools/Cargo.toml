@@ -11,12 +11,12 @@ publish.workspace = true
 shape-core.workspace = true
 shape-mesh.workspace = true
 shape-bool.workspace = true
+shape-gen.workspace = true
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 
 [dev-dependencies]
 gltf = { version = "1.4.1", default-features = false, features = ["utils", "names", "extras"] }
 shape-2d.workspace = true
-shape-gen.workspace = true
 shape-skin.workspace = true
 
 [lints]

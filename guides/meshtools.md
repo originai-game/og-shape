@@ -245,6 +245,37 @@ whose material has a map keeps its own UVs (`own_uvs`).
 | `texture.materials`, `texture.by_kind` | each material's maps and sizes; memory per kind of map | a normal or metallic-roughness map rarely needs the base colour's size |
 | `colors.borders` | edges where a vertex colour changes sharply (only on a mesh with colours) | what it was before decimation |
 
+## Colliders
+
+A physics engine tests against convex shapes, not the mesh. `collide`
+(`shape collide`, the MCP tool, `shape_tools::colliders`) covers each part
+of a program or a mesh file with convex hulls and reports, per hull, its
+vertices, triangles, volume, `concavity` (how deep the part's surface
+lies under the hull, mm) and `outside` (how far the part pokes out of a
+thinned hull, mm).
+
+- **One hull** (the default) is right for anything that is convex or
+  nearly so: a crate, a barrel, a rock. Its `concavity` says what it
+  bridges: 0 for a convex part.
+- **A part with a hollow something must enter** (a cup, a doorway, a
+  chair's seat, an L) needs `hulls`: the part is cut where the hollow is
+  deepest until every piece's concavity is within `concavity` or the
+  count is reached. An octagonal cup with a handle, 205 across: 1 hull
+  leaves a hollow 310 mm deep (4.3 times the cup's volume); 8 hulls
+  leave 125 mm; 16 leave 41 mm (1.5 times) and follow the wall. Ask for the depth the game can ignore (a hand's width for a
+  cup), not for 0.
+- **`max_vertices`** (16 to 32 is usual) thins each hull, a vertex at a
+  time where the error is largest. Read `outside`: a ball of radius 10
+  at 14 vertices pokes out by about 2.
+- Volumes: `volume` is the hulls' together (they overlap at the cuts);
+  against `mesh_volume` (a closed mesh's own) it says how much air the
+  colliders hold.
+- A program's parts are covered where they stand at rest, each on its
+  own, so a jointed part keeps its own colliders. A group has none.
+- The cost grows with the mesh's points and the hulls asked: decimate a
+  dense mesh first (a few thousand triangles are plenty for a collider).
+- A flat sheet has no hull: give it a thickness.
+
 ## Which way is up
 
 `measure --axes` (MCP `axes`) and `place`'s report give, for the mesh
