@@ -332,12 +332,18 @@ export class Shape {
   sweep(d: Placed & { profile: Profile; path: Route; up?: Vec3; twist?: number; scaleEnd?: number }): Part {
     return this.part("sweep", d);
   }
+  /**
+   * A surface through sections: stacked by `z`, or each placed by its own
+   * frame `at` (its z along the path, towards the next section) to bend
+   * through space; `closed` joins the last placed section to the first.
+   */
   loft(
     d: Placed & {
-      sections: { profile: Profile; z: number }[];
+      sections: { profile: Profile; z: number }[] | { profile: Profile; at: FrameData }[];
       samples?: number;
       steps?: number;
       curve?: "auto" | "straight" | "catmullRom" | "spline";
+      closed?: boolean;
     },
   ): Part {
     return this.part("loft", d);

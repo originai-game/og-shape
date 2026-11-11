@@ -126,6 +126,7 @@ the bytes under that name (`guides/typescript.md`).
 | `revolve` | `name`, `profile`, `angle`?, `axis`?, `segments`?, `on`? | profile x is the radius (x ≥ 0) |
 | `sweep` | `name`, `profile`, `path`, `up`?, `twist`?, `scaleEnd`?, `on`? | along a path (points, pieces or a helix) |
 | `loft` | `name`, `sections`: `[{"profile", "z"}]`, `samples`?, `steps`?, `curve`? (`"auto"`, `"straight"`, `"catmullRom"`, `"spline"`), `on`? | through sections; corners kept; refused if it folds through itself |
+| `loft` along a path | `name`, `sections`: `[{"profile", "at": frame}]`, `closed`?, `samples`?, `steps`? (6), `curve`? (`"catmullRom"`, `"straight"`), `on`? | each section in its own frame's x, y plane, the frame's z towards the next section: a horn, a bent duct, a handle. `closed`: the last runs on to the first, a ring with no ends (three sections or more). Faces `start`, `end`, `side`. The frames' x axes line the sections up; refused if it folds through itself |
 | `thread` | `name`, `radius`, `pitch`, `length`, `depth`, `on`? | |
 | `wire` | `name`, `path`, `diameter`, `fillet`?, `fillets`? (one a point; points-only paths), `closed`?, `segments`?, `on`? | a round rod; corners between pieces bent round `fillet`, else mitred |
 | `body` | `name`, `plan`, `top`, `bottom`, `n`?, `on`? | along +y from views: a number, `[[y, v], …]`, or `{"points", "smooth"}` |

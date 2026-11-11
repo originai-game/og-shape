@@ -1059,6 +1059,8 @@ pub enum Generator<'a> {
     Dome(DomeDesc),
     /// [`crate::loft::loft`].
     Loft(&'a crate::loft::Loft),
+    /// [`crate::loft::loft_along`].
+    LoftAlong(&'a crate::loft::LoftAlong),
     /// [`crate::paths::sweep`].
     Sweep(&'a Profile, &'a crate::paths::Sweep),
     /// [`crate::paths::thread`].
@@ -1090,6 +1092,7 @@ pub fn textured(g: &Generator) -> Result<Solid, GenError> {
         Generator::Torus(d) => torus_with(d, true),
         Generator::Dome(d) => dome_with(d, true),
         Generator::Loft(d) => crate::loft::loft_with(d, true),
+        Generator::LoftAlong(d) => crate::loft::loft_along_with(d, true),
         Generator::Sweep(p, d) => crate::paths::sweep_with(p, d, true),
         Generator::Thread(d) => crate::paths::thread_with(d, true),
         Generator::Wire(d) => crate::wire::wire_with(d, true),

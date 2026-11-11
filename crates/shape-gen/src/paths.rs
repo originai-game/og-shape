@@ -4,6 +4,7 @@
 //! |---|---|---|
 //! | [`sweep`] | `start`, `end`, `side` | `start`, `end`, `side` (along corners) |
 //! | [`loft`] | `bottom`, `top`, `side` | `bottom`, `top` |
+//! | [`loft_along`] | `start`, `end` (none in a loop), `side` | `start`, `end` |
 //! | [`thread`] | as [`sweep`], also `thread` | as [`sweep`] |
 
 use shape_2d::curve::segments;
@@ -13,7 +14,7 @@ use shape_mesh::Solid;
 
 use crate::solids::{GenError, RingUvs, finish, push};
 
-pub use crate::loft::{Loft, LoftCurve, loft};
+pub use crate::loft::{Loft, LoftAlong, LoftCurve, loft, loft_along};
 
 /// Rotation-minimizing frames along a polyline by double reflection
 /// (Wang, Jüttler, Zheng, Liu, TOG 2008): `(tangent, normal)` per point.

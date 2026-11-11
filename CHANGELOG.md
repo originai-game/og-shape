@@ -1316,3 +1316,16 @@
   vertex-coloured mesh the peak falls from 2.7 GiB to 0.9 GiB (3.4 to
   1.5 GiB with `--fuse`), in the same time, with byte-identical output
   (`docs/research.md` §36). No golden line moved.
+- `loft` through sections placed in space: a section may give `at` (a
+  frame: the section lies in its x, y plane, its z points towards the
+  next section) instead of `z`, so a loft can bend (a horn, a duct, a
+  handle), and `closed: true` runs the last section on to the first (a
+  ring with no ends). `shape_gen::paths::loft_along` (`LoftAlong`:
+  `sections`, `samples`, `steps`, `straight`, `closed`), on a
+  Catmull-Rom curve through the sections or straight between them;
+  contours are matched and resampled as the stacked loft's. Faces
+  `start`, `end` (none in a loop), `side`, `inner`; UVs with `uvs`. A
+  frame facing against the path is refused by its index, and
+  `shape-model` refuses a surface that passes through itself. The
+  binding's `loft` takes the same. Golden case `gen2.loft.along`; no
+  existing line moved.

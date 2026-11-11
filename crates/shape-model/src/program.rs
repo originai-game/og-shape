@@ -119,7 +119,7 @@ use shape_gen::body::{Body, View};
 use shape_gen::loft::LoftCurve;
 use shape_gen::parts::{GearDesc, Knurl};
 use shape_gen::path3::{Flat, Path3, Piece};
-use shape_gen::paths::{Helix, Loft, Sweep, Thread};
+use shape_gen::paths::{Helix, Loft, LoftAlong, Sweep, Thread};
 use shape_gen::solids::{
     Axis, BoxDesc, ConeDesc, CylinderDesc, DomeDesc, Extrude, Revolve, SphereDesc, TorusDesc,
     TubeDesc,
@@ -915,7 +915,9 @@ const OPS: &[(&str, &[&str])] = &[
     ),
     (
         "loft",
-        &["name", "sections", "samples", "steps", "curve", "uvs", "on"],
+        &[
+            "name", "sections", "samples", "steps", "curve", "closed", "uvs", "on",
+        ],
     ),
     (
         "thread",
@@ -1174,22 +1176,65 @@ fn generate(a: &Args, uvs: bool) -> Result<shape_mesh::Solid, ModelError> {
                 .as_array()
                 .ok_or_else(|| a.bad("sections", "a list of {profile, z}"))?;
             let mut sections = Vec::new();
+            let mut placed = Vec::new();
             for (i, sec) in list.iter().enumerate() {
                 let within = format!("sections[{i}]");
                 let o = sec
                     .as_object()
-                    .ok_or_else(|| a.bad(&within, "{profile, z}"))?;
-                only(o, &within, &["profile", "z"])?;
+                    .ok_or_else(|| a.bad(&within, "{profile, z} or {profile, at}"))?;
+                only(o, &within, &["profile", "z", "at"])?;
                 let p = o
                     .get("profile")
                     .ok_or_else(|| a.bad(&format!("{within}.profile"), "missing"))?;
-                let z = o
-                    .get("z")
-                    .and_then(Value::as_f64)
-                    .ok_or_else(|| a.bad(&format!("{within}.z"), "a number"))?;
-                sections.push((
-                    profile(p, a.fonts).map_err(|e| a.inside(&format!("{within}.profile"), e))?,
-                    z,
+                let p =
+                    profile(p, a.fonts).map_err(|e| a.inside(&format!("{within}.profile"), e))?;
+                match (o.get("z"), o.get("at")) {
+                    (Some(z), None) => {
+                        let z = z
+                            .as_f64()
+                            .ok_or_else(|| a.bad(&format!("{within}.z"), "a number"))?;
+                        sections.push((p, z));
+                    }
+                    (None, Some(at)) => {
+                        let f = frame_of(at).map_err(|w| a.bad(&format!("{within}.at"), &w))?;
+                        placed.push((p, f));
+                    }
+                    _ => {
+                        return Err(a.bad(&within, "one of z (a height) or at (a frame), not both"));
+                    }
+                }
+            }
+            let closed = a.bool_or("closed", false)?;
+            if !placed.is_empty() {
+                // Sections placed in space: every one by its frame.
+                if !sections.is_empty() {
+                    return Err(a.bad("sections", "every section by z, or every section by at"));
+                }
+                let straight = match a.opt("curve").map(|v| v.as_str()) {
+                    None | Some(Some("catmullRom")) => false,
+                    Some(Some("straight")) => true,
+                    Some(_) => {
+                        return Err(a.bad(
+                            "curve",
+                            "\"straight\" or \"catmullRom\" for sections placed by at",
+                        ));
+                    }
+                };
+                return crate::checked::loft_along_with(
+                    &LoftAlong {
+                        sections: placed,
+                        samples: a.u32_or("samples", 0)?,
+                        steps: a.u32_or("steps", 0)?,
+                        straight,
+                        closed,
+                    },
+                    uvs,
+                );
+            }
+            if closed {
+                return Err(a.bad(
+                    "closed",
+                    "a loop needs its sections placed by at (frames round the loop)",
                 ));
             }
             let curve = match a.opt("curve").map(|v| v.as_str()) {

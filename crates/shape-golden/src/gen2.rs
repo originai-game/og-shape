@@ -7,7 +7,7 @@ use shape_core::{DVec3, HashError, OutputHash, trig};
 use shape_gen::body::{Body, View, body};
 use shape_gen::parts::{GearDesc, Knurl, gear_solid, knurl};
 use shape_gen::path3::{Path3, Piece, flatten};
-use shape_gen::paths::{Helix, Loft, LoftCurve, Sweep, loft, sweep};
+use shape_gen::paths::{Helix, Loft, LoftAlong, LoftCurve, Sweep, loft, loft_along, sweep};
 use shape_gen::solids::{
     Axis, DomeDesc, Revolve, SphereDesc, TorusDesc, dome_desc, revolve, sphere_desc, torus_desc,
 };
@@ -53,6 +53,10 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "gen2.hull",
             run: hulls,
+        },
+        Case {
+            name: "gen2.loft.along",
+            run: lofts_along,
         },
         Case {
             name: "collide.hulls",
@@ -391,6 +395,68 @@ fn sweep_ends(h: &mut OutputHash) -> Result<(), HashError> {
             tangents: spring.tangents,
             ..Default::default()
         }),
+    )
+}
+
+/// Lofts through sections placed in space (`loft_along`): a loop of
+/// circles round a ring, on a curve and straight; an open quarter bend
+/// from a square with a hole to a circle with one, with UVs.
+fn lofts_along(h: &mut OutputHash) -> Result<(), HashError> {
+    use shape_core::Frame;
+    let on_ring = |r: f64, turn: f64| {
+        let (sin, cos) = trig::sin_cos(trig::TAU * turn);
+        Frame {
+            origin: DVec3::new(r * cos, r * sin, 0.0),
+            x: DVec3::new(cos, sin, 0.0),
+            y: DVec3::NEG_Z,
+            z: DVec3::new(-sin, cos, 0.0),
+        }
+    };
+    let round = |radius: f64| {
+        circle(&Circle {
+            radius,
+            segments: 16,
+        })
+    };
+    let fail = |e: &dyn std::fmt::Display| {
+        eprintln!("gen2.loft.along: {e}");
+        HashError::NaN
+    };
+    let disc = round(3.0).map_err(|e| fail(&e))?;
+    for straight in [false, true] {
+        solid(
+            h,
+            loft_along(&LoftAlong {
+                sections: (0..8)
+                    .map(|i| (disc.clone(), on_ring(20.0, f64::from(i) / 8.0)))
+                    .collect(),
+                straight,
+                closed: true,
+                ..Default::default()
+            }),
+        )?;
+    }
+    let square = rect(&Rect {
+        width: 8.0,
+        height: 8.0,
+        radius: 0.0,
+    })
+    .map_err(|e| fail(&e))?;
+    let bore = round(2.0).map_err(|e| fail(&e))?;
+    let pipe = round(4.0).map_err(|e| fail(&e))?;
+    let bend = LoftAlong {
+        sections: vec![
+            (square.subtract(&bore), on_ring(30.0, 0.0)),
+            (pipe.subtract(&bore), on_ring(30.0, 0.125)),
+            (pipe.subtract(&bore), on_ring(30.0, 0.25)),
+        ],
+        samples: 32,
+        ..Default::default()
+    };
+    solid(h, loft_along(&bend))?;
+    solid(
+        h,
+        shape_gen::solids::textured(&shape_gen::solids::Generator::LoftAlong(&bend)),
     )
 }
 

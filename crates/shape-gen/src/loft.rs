@@ -35,7 +35,7 @@
 //! does, with `shape-bool`'s exact check.
 
 use shape_2d::{Contour, Profile, ProfileError, Region};
-use shape_core::{DVec2, DVec3};
+use shape_core::{DVec2, DVec3, Frame};
 use shape_mesh::Solid;
 
 use crate::solids::{GenError, RingUvs, finish, push};
@@ -575,6 +575,262 @@ pub(crate) fn loft_with(d: &Loft, uvs: bool) -> Result<Solid, GenError> {
     finish(s)
 }
 
+/// A loft through sections placed in space: [`loft_along`].
+///
+/// Each section is a profile in the x, y plane of its own frame, and the
+/// surface runs from each to the next: a bent horn, a handle, a duct
+/// that turns. With `closed`, the last section runs on to the first and
+/// there are no ends: a ring.
+///
+/// | faces | edges |
+/// |---|---|
+/// | `start`, `end` (none when closed), `side` (`inner` on hole walls) | `start`, `end` |
+///
+/// Contours are matched and resampled as [`loft`]'s are, each section in
+/// its own plane, so point `j` of one section runs to point `j` of the
+/// next: the frames' x axes say how the sections line up (turn a frame
+/// about its z and the surface twists). Every frame's z must point along
+/// the path, towards the next section.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LoftAlong {
+    /// The sections in order: a profile of one region and the frame whose
+    /// x, y plane it lies in. Every section has as many holes.
+    pub sections: Vec<(Profile, Frame)>,
+    /// Points each contour is resampled to; 0 for the most any section
+    /// has for that contour.
+    pub samples: u32,
+    /// Rings between consecutive sections; 0 for six on a curve, one
+    /// when `straight`.
+    pub steps: u32,
+    /// Straight between consecutive sections, not on a Catmull-Rom curve
+    /// through them.
+    pub straight: bool,
+    /// The last section runs on to the first: a loop, with no ends.
+    pub closed: bool,
+}
+
+/// Rings a span on a curve with `steps` 0.
+const ALONG_STEPS: usize = 6;
+
+/// A surface through sections placed in space, capped `start` and `end`
+/// or closed into a loop. Like [`loft`], it does not test its surface for
+/// folds; `shape-model` does.
+pub fn loft_along(d: &LoftAlong) -> Result<Solid, GenError> {
+    loft_along_with(d, false)
+}
+
+/// [`loft_along`], with UVs when `uvs`: walls by [`RingUvs`] (u round
+/// each ring, v along the surface), ends planar (the section's x, y).
+pub(crate) fn loft_along_with(d: &LoftAlong, uvs: bool) -> Result<Solid, GenError> {
+    let k = d.sections.len();
+    let least = if d.closed { 3 } else { 2 };
+    if k < least {
+        return Err(GenError::Profile(ProfileError::TooFewPoints(k)));
+    }
+    for (p, f) in &d.sections {
+        if p.regions.len() != 1 {
+            return Err(GenError::Profile(ProfileError::Empty));
+        }
+        if ![f.origin, f.x, f.y, f.z].iter().all(|v| v.is_finite()) {
+            return Err(GenError::NotFinite("section frame"));
+        }
+    }
+    let frames: Vec<&Frame> = d.sections.iter().map(|s| &s.1).collect();
+    // Section i's neighbours along the path: wrapped in a loop, held at
+    // the ends otherwise.
+    let near = |i: isize| -> usize {
+        if d.closed {
+            i.rem_euclid(k as isize) as usize
+        } else {
+            i.clamp(0, k as isize - 1) as usize
+        }
+    };
+    for i in 0..k {
+        let along = frames[near(i as isize + 1)].origin - frames[near(i as isize - 1)].origin;
+        if frames[i].z.dot(along) <= 0.0 {
+            return Err(GenError::Invalid(format!(
+                "loft: section {i}'s frame faces against the path: its z must point \
+                 towards the next section"
+            )));
+        }
+    }
+    // The matching and resampling are the stacked loft's, on the profiles.
+    let flat = Loft {
+        sections: d
+            .sections
+            .iter()
+            .enumerate()
+            .map(|(i, (p, _))| (p.clone(), i as f64))
+            .collect(),
+        ..Default::default()
+    };
+    let slots = slots(&flat)?;
+    let rings2: Vec<Vec<Vec<DVec2>>> = slots
+        .iter()
+        .map(|cs| {
+            let n = if d.samples >= 3 {
+                d.samples as usize
+            } else {
+                cs.iter().map(|c| c.points.len()).max().unwrap_or(3)
+            };
+            if cs.iter().any(|c| !corners(c).is_empty()) {
+                resample_corners(cs, n)
+            } else {
+                cs.iter().map(|c| resample(c, n)).collect()
+            }
+        })
+        .collect();
+    let steps = match (d.steps, d.straight) {
+        (0, true) => 1,
+        (0, false) => ALONG_STEPS,
+        (n, _) => n as usize,
+    };
+    let spans = if d.closed { k } else { k - 1 };
+    let cr = |a: DVec3, b: DVec3, c: DVec3, e: DVec3, f: f64| {
+        let (f2, f3) = (f * f, f * f * f);
+        (b * 2.0
+            + (c - a) * f
+            + (a * 2.0 - b * 5.0 + c * 4.0 - e) * f2
+            + (b * 3.0 - a - c * 3.0 + e) * f3)
+            * 0.5
+    };
+    let mut s = Solid::default();
+    let mut ring_ids: Vec<Vec<Vec<u32>>> = Vec::with_capacity(slots.len());
+    for ring2 in &rings2 {
+        let n = ring2[0].len();
+        let world: Vec<Vec<DVec3>> = ring2
+            .iter()
+            .zip(&frames)
+            .map(|(r, f)| r.iter().map(|p| f.point_to_world(p.extend(0.0))).collect())
+            .collect();
+        let mut rings: Vec<Vec<u32>> = Vec::new();
+        for sec in 0..spans {
+            let i = sec as isize;
+            let (a, b, c, e) = (near(i - 1), near(i), near(i + 1), near(i + 2));
+            for st in 0..steps {
+                let f = st as f64 / steps as f64;
+                rings.push(
+                    (0..n)
+                        .map(|j| {
+                            let p = if st == 0 {
+                                world[b][j]
+                            } else if d.straight {
+                                world[b][j] + (world[c][j] - world[b][j]) * f
+                            } else {
+                                cr(world[a][j], world[b][j], world[c][j], world[e][j], f)
+                            };
+                            s.push_vertex(p)
+                        })
+                        .collect(),
+                );
+            }
+        }
+        if !d.closed {
+            rings.push(world[k - 1].iter().map(|&p| s.push_vertex(p)).collect());
+        }
+        ring_ids.push(rings);
+    }
+    // Walls: the outline on surface 2, each hole on its own.
+    for (slot, rings) in ring_ids.iter().enumerate() {
+        let tags: &[&str] = if slot == 0 {
+            &["side"]
+        } else {
+            &["side", "inner"]
+        };
+        let surface = 2 + slot as u32;
+        let grid = RingUvs::new(&s.positions, rings, d.closed);
+        let rows = if d.closed {
+            rings.len()
+        } else {
+            rings.len() - 1
+        };
+        for i in 0..rows {
+            let (lo, hi) = (&rings[i], &rings[(i + 1) % rings.len()]);
+            let n = lo.len();
+            for j in 0..n {
+                let j1 = (j + 1) % n;
+                let uv = |a: usize, b: usize| grid.at(i + a, j + b);
+                push(
+                    &mut s,
+                    uvs,
+                    [lo[j], lo[j1], hi[j1]],
+                    surface,
+                    tags,
+                    [uv(0, 0), uv(0, 1), uv(1, 1)],
+                );
+                push(
+                    &mut s,
+                    uvs,
+                    [lo[j], hi[j1], hi[j]],
+                    surface,
+                    tags,
+                    [uv(0, 0), uv(1, 1), uv(1, 0)],
+                );
+            }
+        }
+    }
+    if d.closed {
+        return finish(s);
+    }
+    // Ends from the end sections, holes and all, each in its own plane.
+    for (name, surface, at) in [("start", 0, 0), ("end", 1, k - 1)] {
+        let outer = Contour::smooth(rings2[0][at].clone());
+        let outer = if outer.signed_area2() < 0.0 {
+            outer.reversed()
+        } else {
+            outer
+        };
+        let holes = rings2[1..]
+            .iter()
+            .map(|r| {
+                let h = Contour::smooth(r[at].clone());
+                if h.signed_area2() > 0.0 {
+                    h.reversed()
+                } else {
+                    h
+                }
+            })
+            .collect();
+        let cap = Profile {
+            regions: vec![Region { outer, holes }],
+        };
+        let fill = cap.triangulate()?;
+        let ids: Vec<u32> = fill
+            .points
+            .iter()
+            .map(|p| s.push_vertex(frames[at].point_to_world(p.extend(0.0))))
+            .collect();
+        for t in &fill.triangles {
+            let t = if name == "start" {
+                [t[0], t[2], t[1]]
+            } else {
+                *t
+            };
+            let uv = t.map(|i| fill.points[i as usize]);
+            push(
+                &mut s,
+                uvs,
+                t.map(|i| ids[i as usize]),
+                surface,
+                &[name],
+                uv,
+            );
+        }
+        for rings in &ring_ids {
+            let ring = if at == 0 {
+                &rings[0]
+            } else {
+                &rings[rings.len() - 1]
+            };
+            let n = ring.len();
+            for j in 0..n {
+                s.tag_edge(ring[j], ring[(j + 1) % n], &[name]);
+            }
+        }
+    }
+    finish(s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -811,5 +1067,95 @@ mod tests {
         closed(&s);
         let m = s.measure();
         assert_eq!((m.bounds_min.z, m.bounds_max.z), (0.0, 21.0));
+    }
+    /// The frame of a section on a ring of radius `r` round z, at `turn`
+    /// of a turn: x outward, z along the ring.
+    fn on_ring(r: f64, turn: f64) -> Frame {
+        let (sin, cos) = shape_core::trig::sin_cos(shape_core::trig::TAU * turn);
+        Frame {
+            origin: DVec3::new(r * cos, r * sin, 0.0),
+            x: DVec3::new(cos, sin, 0.0),
+            y: DVec3::NEG_Z,
+            z: DVec3::new(-sin, cos, 0.0),
+        }
+    }
+
+    #[test]
+    fn sections_placed_round_a_ring_close_into_a_loop() {
+        // Twelve squares of side 4 on a ring of radius 20, straight
+        // between: seen from above each span is a trapezoid between two
+        // radii, of area R w sin(turn / n).
+        let n = 12;
+        let d = LoftAlong {
+            sections: (0..n)
+                .map(|i| (square(4.0), on_ring(20.0, i as f64 / n as f64)))
+                .collect(),
+            straight: true,
+            closed: true,
+            ..Default::default()
+        };
+        let s = loft_along(&d).unwrap();
+        let span = 20.0 * 4.0 * shape_core::trig::sin(shape_core::trig::TAU / n as f64);
+        let v = closed(&s);
+        assert!((v - n as f64 * 4.0 * span).abs() < 1e-9, "{v}");
+        // No ends in a loop, and four walls' worth of quads.
+        assert!(s.faces(&["start"]).is_err() && s.faces(&["end"]).is_err());
+        assert_eq!(s.triangles.len(), n * 4 * 2);
+        // On a curve the ring fills out towards the circle's volume.
+        let round = loft_along(&LoftAlong {
+            straight: false,
+            ..d.clone()
+        })
+        .unwrap();
+        let torus = 16.0 * shape_core::trig::TAU * 20.0;
+        let v = closed(&round);
+        assert!(
+            v > closed(&s) && (v - torus).abs() < 0.01 * torus,
+            "{v} {torus}"
+        );
+    }
+
+    #[test]
+    fn an_open_loft_along_a_bend_has_ends_in_its_sections_planes() {
+        // A quarter bend: a ringed square (a hole through it) at five
+        // sections from 0 to 1/4 of a turn.
+        let frame = square(6.0).subtract(&square(2.0));
+        let d = LoftAlong {
+            sections: [0.0, 0.0625, 0.125, 0.1875, 0.25]
+                .map(|t| (frame.clone(), on_ring(30.0, t)))
+                .to_vec(),
+            ..Default::default()
+        };
+        let s = loft_along(&d).unwrap();
+        let v = closed(&s);
+        let quarter = 32.0 * shape_core::trig::TAU * 30.0 / 4.0;
+        assert!((v - quarter).abs() < 0.01 * quarter, "{v} {quarter}");
+        // The start lies in y = 0 and the end in x = 0, both named, with
+        // their rims; the hole's wall is `inner`.
+        let lies = |name: &str, f: fn(DVec3) -> f64| {
+            s.faces(&[name]).unwrap().iter().all(|&t| {
+                s.triangles[t as usize]
+                    .iter()
+                    .all(|&v| f(s.positions[v as usize]).abs() < 1e-9)
+            })
+        };
+        assert!(lies("start", |p| p.y) && lies("end", |p| p.x));
+        assert_eq!(
+            s.edges(&["start"]).unwrap().len(),
+            s.edges(&["end"]).unwrap().len()
+        );
+        assert!(!s.faces(&["inner"]).unwrap().is_empty());
+        // A frame turned against the path is refused, by its index.
+        let mut back = d.clone();
+        back.sections[1].1.z = -back.sections[1].1.z;
+        back.sections[1].1.y = -back.sections[1].1.y;
+        match loft_along(&back) {
+            Err(GenError::Invalid(why)) => assert!(why.contains("section 1"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        // A loop needs three sections.
+        back.closed = true;
+        back.sections.truncate(2);
+        assert!(loft_along(&back).is_err());
     }
 }

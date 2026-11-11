@@ -377,3 +377,52 @@ fn a_clip_is_checked_as_poses_are_and_poses_the_model_at_a_time() {
     let e = bad(json!([{"time": 1, "pose": {"hinge": 0}}, {"time": 1, "pose": {"hinge": 1}}]));
     assert!(e.contains("rise"), "{e}");
 }
+
+#[test]
+fn loft_sections_placed_by_frames_bend_and_close_into_a_loop() {
+    // Sections round a ring of radius `r` about z: x outward, z along it.
+    let ring = |r: f64, n: usize, radius: f64| -> Vec<Value> {
+        (0..n)
+            .map(|i| {
+                let (s, c) = trig::sin_cos(trig::TAU * i as f64 / n as f64);
+                json!({"profile": {"circle": {"radius": radius}},
+                    "at": {"origin": [r * c, r * s, 0], "x": [c, s, 0], "y": [0, 0, -1], "z": [-s, c, 0]}})
+            })
+            .collect()
+    };
+    let p = |sections: Vec<Value>, closed: bool| {
+        json!({"name": "t", "ops": [
+            {"op": "loft", "name": "ring", "sections": sections, "closed": closed},
+        ]})
+    };
+    // A loop of eight circles is a torus, near enough: closed, no ends.
+    let m = part(&p(ring(20.0, 8, 3.0), true), "ring");
+    let torus = 2.0 * trig::PI * trig::PI * 20.0 * 9.0;
+    assert!(
+        m.closed && (m.volume - torus).abs() < 0.03 * torus,
+        "{}",
+        m.volume
+    );
+    // Open, the first three sections are a bend with two ends.
+    let bend = ring(20.0, 8, 3.0)[..3].to_vec();
+    let m = part(&p(bend, false), "ring");
+    assert!(m.closed && m.volume > 0.0 && m.volume < torus / 3.0);
+    // A bend tighter than the section is wide folds: refused.
+    let e = err(p(ring(2.0, 8, 3.0), true));
+    assert!(e.contains("passes through itself"), "{e}");
+    // A loop needs frames; heights and frames do not mix.
+    let stacked = json!([
+        {"profile": {"circle": {"radius": 3}}, "z": 0},
+        {"profile": {"circle": {"radius": 3}}, "z": 5},
+    ]);
+    let e = err(json!({"name": "t", "ops": [
+        {"op": "loft", "name": "l", "sections": stacked, "closed": true}]}));
+    assert!(e.contains("placed by at"), "{e}");
+    let mut mixed = ring(20.0, 8, 3.0);
+    mixed[0] = json!({"profile": {"circle": {"radius": 3}}, "z": 0});
+    let e = err(p(mixed, false));
+    assert!(
+        e.contains("every section by z, or every section by at"),
+        "{e}"
+    );
+}

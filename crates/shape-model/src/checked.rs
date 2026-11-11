@@ -8,7 +8,7 @@
 //! naming the sections it folds between.
 
 use shape_bool::selfcheck::self_crossings;
-use shape_gen::paths::Loft;
+use shape_gen::paths::{Loft, LoftAlong};
 use shape_gen::solids::GenError;
 use shape_mesh::Solid;
 
@@ -56,6 +56,28 @@ pub fn loft_with(d: &Loft, uvs: bool) -> Result<Solid, ModelError> {
         low + 1,
         heights[low],
         heights[low + 1],
+        pairs.len()
+    ))))
+}
+
+/// [`shape_gen::paths::loft_along`], with UVs when `uvs`, refused with
+/// [`GenError::Invalid`] when the surface passes through itself (a bend
+/// tighter than the sections are wide, or frames that twist against each
+/// other), with how many triangle pairs cross.
+pub fn loft_along_with(d: &LoftAlong, uvs: bool) -> Result<Solid, ModelError> {
+    let s = if uvs {
+        shape_gen::solids::textured(&shape_gen::solids::Generator::LoftAlong(d))?
+    } else {
+        shape_gen::paths::loft_along(d)?
+    };
+    let pairs = self_crossings(&s.positions, &s.triangles);
+    if pairs.is_empty() {
+        return Ok(s);
+    }
+    Err(ModelError::Gen(GenError::Invalid(format!(
+        "loft: the surface passes through itself ({} crossing triangle pairs): the path \
+         bends tighter than the sections are wide, or the frames' x axes turn against \
+         each other. Open the bend, add a section, or line the frames up",
         pairs.len()
     ))))
 }
