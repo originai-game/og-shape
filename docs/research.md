@@ -7706,3 +7706,268 @@ branch runs the gate on its five targets.
   (a `BLEND` material with opacity 1 draws opaque).
 - Progressive JPEG is still refused by the one decoder, in the budget
   (kept as it is, with the reason) and in the preview (`undrawn`).
+
+## 34. Atlas repacking and baking (stream AM, 2026-11-11)
+
+Base 89c427a. Keeping a file's UVs, decimation stops at about three
+triangles a UV island, so 14 of the 54 generated meshes miss 2 000
+triangles and one misses 10 000 (§28.3, §32.3, §33.4); a fresh unwrap
+reaches every budget but drops every map. This stream packs fresh charts
+on a texel grid and bakes the source's look into them. Numbers, no
+verdicts.
+
+### 34.1 Packing (`shape_tools::pack`, `unwrap_atlas`, `repack`)
+
+- **The rule.** Each chart is turned to its smallest box (the unwrap's
+  rotating calipers) and laid wide. One scale `s`, texels per surface
+  unit, holds for every chart (`s √w` for a chart of weight `w`); a
+  chart's rectangle is its box at that scale rounded up to whole texels
+  plus `padding` texels. Rectangles go tallest first, then widest, then
+  by chart id, each where a bottom-left skyline on the integer grid puts
+  it lowest, then leftmost; with turns allowed (the default) the chart is
+  also tried a quarter turn round. The largest `s` that fits is found by
+  40 bisections. Charts sit `⌊padding/2⌋` texels inside their rectangle,
+  so two charts are at least `padding` texels apart. Integer grid, f64
+  `+ − × /` only.
+- **Charts.** `unwrap_atlas` makes them as `unwrap` does (§9.2: grown
+  from the largest triangle within 66°, no fold, decided exactly) and
+  keeps `unwrap`'s rounding check: a triangle that rounding pushes into
+  an overlap leaves for a chart of its own and the charts are packed
+  again. `repack` takes the UV islands a solid already has (triangles
+  joined across edges whose two sides give both ends the same UVs),
+  scales each to millimetres by √(surface area / UV area), and packs
+  them; an island of no UV area is split into triangles laid flat.
+  `unwrap()` itself is unchanged (its golden lines did not move).
+- **Measures** (`AtlasMeasures`): coverage and overlap of texel centres
+  (exact, `measure`'s top-left rule, now shared), exact overlapping
+  pairs, triangles outside the square, charts, and texel density per
+  millimetre per triangle (√ of UV area in texels² over surface area):
+  min, area-weighted median, max.
+- **One atlas for a program's parts** (`Model::glb_atlas`, `shape export
+  --uvs --atlas PX`): every part with UVs and a material without maps is
+  repacked into one atlas at one density, and parts whose materials then
+  agree (names aside) share one glTF material (`glb_shared`; `glb` is
+  unchanged). A part with a map keeps its UVs and is listed (`own_uvs`).
+  The washing machine with `uvs`: 1 763 islands in one 512² atlas,
+  coverage 0.39, no overlap, density 0.116–0.135 texels/mm (median
+  0.133), 6 materials.
+- On the 54 (the bake runs below): 21–415 charts at 2k (median 108),
+  25–888 at 10k; coverage 0.32–0.70 (median 0.50); no overlapping pair
+  in any; the least density is 0.64–0.68 of the median (the planar
+  projection's shrinking within 66°). Packing takes 20–75 ms.
+
+### 34.2 Baking (`shape_tools::bake`)
+
+- **Texels.** A texel whose centre lies in a low triangle's UV triangle
+  belongs to it (exact, top-left rule; the lower index on an overlap). A
+  texel whose square a triangle overlaps but whose centre none holds
+  takes the triangle whose UV triangle comes nearest its centre, at that
+  point (conservative). On the 54 at 2k, 0.9–5.5 % of covered texels
+  are conservative.
+- **The source point.** From the low point along the low shading normal,
+  both ways, up to `distance` (0: 2 % of the source's diagonal): every
+  source triangle the segment crosses, decided by `orient3d` (the box
+  tree only prunes, with widened boxes). A crossing counts when the
+  source face's normal has a positive dot with the low normal; the
+  nearest such is taken. With none, the nearest point of the source
+  within the distance (a best-first walk of the box tree), whichever way
+  it faces. With neither, the texel has no source: counted, and filled by
+  dilation like the padding. The tree: median splits along the longest
+  axis of the centroids, leaves of 4, like `shape-bool`'s winding tree
+  (which is crate-private and carries moments the bake does not need).
+- **Sampling.** Bilinear with repeat wrap, the preview's integer weights;
+  base colour in linear light times the interpolated vertex colour (the
+  colour alone when there is no map); metallic-roughness and occlusion as
+  stored; emissive in linear light, since glTF stores it as sRGB (the
+  brief said data maps take no conversion; emissive is a colour). Where
+  the source triangles' materials differ (names and maps aside), each
+  texel takes its material's factors too and the baked material's are
+  neutral (`factors_baked`); otherwise the factors stay on the material.
+  None of the 54 needed it (one material each).
+- **Normals.** The source's shading normal (its smooth normal with its
+  normal map applied at its `normal_scale` in its frame) in the low
+  frame, written as bytes 255 (c + 1) / 2. With no normal map, the dense
+  source's own smooth normals: its shape survives as shading.
+- **The tangent convention** (`surface::corner_frames`, used by the bake
+  and by `PlainGlb::tangents`): per plain-GLB vertex (position, surface,
+  UV, colour), the sum over its triangles of ∂P/∂u and ∂P/∂v times their
+  UV area (signed by the UV winding), the tangent made square to the
+  vertex normal, `w` the side the summed ∂P/∂v falls on. Per texel the
+  normal and tangent are interpolated and normalised, the tangent made
+  square again, the bitangent `w · n × t`. This is the standard
+  accumulation, not MikkTSpace; `process --bake` writes `TANGENT`, so a
+  glTF viewer uses this frame instead of deriving its own (three.js and
+  glTF both read `TANGENT` when present). A viewer that interpolates the
+  bitangent per vertex rather than per pixel differs by a fraction of a
+  degree. The source's normal map is read in the same convention on the
+  repaired source, not in the frame its painter used (MikkTSpace on the
+  file's own normals): §29.4 measured that difference at 1–1.6° median.
+- **Measured shading.** Per texel, the angle between the source's
+  shading normal and the low mesh's with the baked map as a viewer
+  decodes its bytes in the written frame, and without the map (the low
+  mesh's own normal). On the 54: with the map 0.17° mean at 2k (0.17–0.32°
+  at 10k), the bytes' rounding; without it 3.4–29.3° (median 10.5°) at
+  2k and 0–27° (median 4.4°) at 10k. The difference is what the map
+  carries.
+- **Dilation.** Layer by layer, an empty texel next (8-neighbours) to a
+  filled one takes the rounded mean of its filled neighbours; by default
+  until every texel is filled, so no mip level reads background.
+- **Tests that fail on a plausible regression**: a dense bump under a
+  checker and vertex colours baked onto a flat square, each texel's
+  colour against the checker times the colour and its decoded normal
+  against the bump's analytic normal (< 3°; a flipped bitangent, a frame
+  from the wrong UVs or a swapped image row all fail it); a thin wall
+  (two sheets 1 mm apart facing away) whose low sheet must take the
+  near side facing its way (fails with the agreement test removed).
+
+### 34.3 In the chain
+
+`shape process --bake PX [--bake-distance MM]` (MCP `process` `bake`,
+`bake_distance`): the repaired mesh is the source; a copy without UVs or
+vertex colours is decimated to the budget (neither holds it back), its
+charts packed at PX² (`--padding`, default 4 texels), the source baked;
+before `place`, so the distances are the file's. The material is the
+source's factors with the baked maps (PNG) and the GLB gets `TANGENT`;
+the vertex colours are in the base-colour map, so the output has none.
+The report's `unwrap` is the atlas's report and `bake` is new: texels
+covered, conservative, hits, `nearest`, `no_source`, `facing_away`,
+`ambiguous` (agreeing crossings on both sides of the low surface),
+`largest_distance`, `dilated`, the maps and their bytes, `not_baked`,
+and the normal angles. Without `--bake` nothing changes (every existing
+golden line kept its value).
+
+### 34.4 The 54 (`bench/generated/bake.ts`)
+
+Per file: `shape repair` with the guide's repair (the bake's source),
+then `shape process` with that repair at 2 000 and 10 000 triangles,
+keeping UVs (`keep`) and with `--bake 1024`; then `bake_look`: the
+repaired source and both results rendered by the unlit preview from four
+fixed orthographic views, 256², every scene framed by the box of all
+three (a zero-area triangle across it), and per pixel both cover the
+colour difference √(ΔR² + ΔG² + ΔB²)/√3 in sRGB bytes (0–255).
+`bake-table.ts` prints the tables. x86-64, release; the runs shared four
+cores with builds, so times are not exact.
+
+| mode | budget | within budget | closed | within budget and closed | base-colour map out | normal map out | vertex colours out | look: mean, p95 (median over files) | texture out (median MiB) | time (median, max s) | peak memory (median, max MiB) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| keep | 2k | 39 | 52 | 39 | 40 | 6 | 14 | 5.5, 22.2 | 5.3 | 1.4, 56.6 | 127, 3 366 |
+| bake | 2k | 54 | 52 | 52 | 54 | 54 | 0 | 3.8, 14.2 | 10.7 | 4.7, 59.6 | 202, 3 366 |
+| keep | 10k | 53 | 52 | 51 | 40 | 6 | 14 | 1.6, 6.8 | 5.3 | 1.4, 57.5 | 128, 3 366 |
+| bake | 10k | 54 | 52 | 52 | 54 | 54 | 0 | 2.9, 12.0 | 10.7 | 4.6, 59.4 | 202, 3 366 |
+
+- **Within budget and closed with its look: 52 of 54 at both budgets**,
+  the target (every file a fresh unwrap brings within budget and closed;
+  the two left open are TRELLIS's house and cabinet, open after repair as
+  in §32.2). All 15 files that miss a budget keeping their UVs reach it
+  baked, with a base-colour and a normal map; Meshy's 15
+  metallic-roughness maps are baked too. Texels with no source: 1 in all
+  108 runs (CRM's cabinet at 2k). Nothing in `not_baked`.
+- **The look where both reach the budget** (the same files):
+
+  | budget | files | keep: mean, p95 | bake: mean, p95 | bake's mean lower (files) |
+  |---|---|---|---|---|
+  | 2k | 39 | 5.6, 22.0 | 3.6, 13.0 | 33 |
+  | 10k | 53 | 1.6, 6.8 | 2.9, 12.0 | 16 |
+
+  At 2k the bake's surface is better placed (decimation without seams
+  moves it less: Meshy's barn 28.5 → 12.5 mm) and its colours follow; at
+  10k keeping UVs keeps the file's own texels, and the bake is a
+  resampling. Baking at 2048 does not close that gap on six files (it
+  moves the mean by at most 0.1); rendering at 1024² does (Meshy's sword
+  6.6 → 3.0, CRM's mugs 3.4 → 0.9, SPAR3D's house 4.2 → 1.4; keep stays
+  at 0.1, 0.8, 0.6): at 256² the preview samples coarse mip levels, where
+  the bake's many small charts blend with their dilated borders. On the
+  files that miss 2k keeping UVs the keep column is over budget (up to
+  21 380 triangles) and is still compared.
+- **Where the source point came from**, median share of covered texels
+  at 2k per generator: `nearest` 0–0.11 % (TripoSR's house 2.3 %, CRM's
+  house 1.6 %), `facing_away` 0–0.66 % (TRELLIS's house 13.8 % and armchair
+  10.2 %: thin, folded sheets), `ambiguous` 0–0.77 %. The largest distance
+  used reaches the 2 % limit on most files: a few texels at thin parts
+  and corners take a far point. These are the places to look at in a
+  preview.
+- **Texture memory** out: base colour and normal at 1024², 10.7 MiB with
+  mips (16 MiB with Meshy's metallic-roughness), against the file's maps
+  kept (5.3 MiB median, Meshy's 4096² up to 85 MiB).
+- **Time and memory.** The bake run costs 2–4 s over keep at the median.
+  Peak memory does not rise past keep's on the large files (repair and
+  fuse set it: Unique3D's 3 366 MiB both ways); on small ones it rises
+  by 30–60 MiB, and by up to 340 MiB where the source's maps are 4096²
+  (Meshy's sword 50 → 394 MiB, palm tree 121 → 448 MiB: each such map
+  decodes to 64 MiB of RGBA).
+
+`bench/generated/src/bin/bake_cost.rs` times the bake alone on repaired
+sources (decimated to 2 000, packed, baked; one run each):
+
+| source | triangles | 1024²: texels covered, bake s, memory added MiB | 2048² |
+|---|---|---|---|
+| hunyuan-5 | 150 006 | 629k, 3.5, 51 | 2.69M, 12.1, 221 |
+| instantmesh-120 | 177 980 | 682k, 3.4, 42 | 2.79M, 10.6, 222 |
+| meshy-palm_tree (two 4096² maps) | 39 874 | 538k, 4.2, 348 | 2.16M, 13.4, 387 |
+| unique3d-480 | 613 412 | 540k, 3.8, 0 (under repair's peak) | 2.16M, 10.4, 152 |
+
+The time follows the texels (5–8 µs each), not the source's size: the
+box tree's depth grows with log n. Where the memory goes, at 1024²: the
+texel arrays (owner 4 MiB, barycentrics 32, nearest distance 8, slots
+4), each output map 4 MiB as RGBA plus its PNG, the dilation's levels
+4 MiB, the source's corner frames (56 bytes a corner: 25 MiB at 150k)
+and their two maps, and each decoded source map (4 MiB at 1024², 64 MiB
+at 4096²). §33.4's 3 GiB peaks on 600 000-triangle vertex-coloured
+meshes are the repair's fuse step and are unchanged. No walk from the
+previous texel's hit was needed to stay near 4 s.
+
+### 34.5 Seen
+
+`docs/previews/generated/bake-*.png`, 16 files, 480 × 480: rows of
+three lit views, the repaired source on top, keep 2k in the middle, bake
+2k at the bottom: the 14 that miss 2k keeping UVs, TripoSR's horse and
+Unique3D's chair. The bear, the house and the cabinets keep their
+lettering, windows and wood at 2 000 triangles; keeping UVs, the same
+files stop between 2 004 and 21 380. Meshy's robot keeping UVs loses
+its legs' shape at 3 384 triangles; baked at 2 000 it keeps both. The
+preview draws neither the baked normal map nor the source's.
+
+### 34.6 Golden
+
+No existing line moved. New: `atlas.pack` (six charts, weighted, packed
+with and without turns; a torus on a 256² grid; a sphere and a box
+repacked into one atlas: UVs, places, reports), `atlas.model` (the
+washing machine's parts in one 512² atlas: the GLB, the report, the
+shared materials), `bake.fixture` (a dense bump with a checker map,
+vertex colours and a metallic-roughness map baked onto a flat square at
+64²: the report, every PNG, the GLB with `TANGENT`), `mcp.process.bake`
+(`process --bake 64` on the coloured sphere with all five maps and on
+`golden/meshes/ball_defects.obj`: reports and GLBs). The gate ran here
+in full: native and wasm32 equal.
+
+### 34.7 Limits, and for the orchestrator
+
+- **Thin shells and touching sheets.** The facing test picks the
+  outside of a wall over its inside; where two sheets face the same way
+  on both sides (parts pressed together) the nearer is taken and the
+  texel counted `ambiguous`. A source that crosses itself bakes from
+  whichever crossing is nearest; nothing tells which sheet a viewer
+  sees.
+- **Mirrored source islands** are read correctly (each texel through
+  the source's own UVs; a mirrored normal-map island's frame follows its
+  `w`); the output has none.
+- **Seams in the baked normal map.** Each chart's frame is its own; the
+  normal at a chart border is the same on both sides, but its encoding
+  differs, so bilinear filtering and mips across the dilated border can
+  show a faint line in glancing light. Not measured (the preview does not
+  draw normal maps).
+- **The source's normal map** is applied in this kernel's tangent frame
+  on the repaired source, not MikkTSpace on the file's normals (§29.4:
+  1–1.6° median for SPAR3D).
+- **At 10k, keep UVs where they reach the budget**: the bake's look is a
+  resampling (2.9 against 1.6 at 256², mostly mip blending of small
+  charts). `guides/meshtools.md` says so; whether `process` should bake
+  only when keeping misses the budget is a choice for the owner (today
+  `--bake` always bakes when asked).
+- **Decide:** the baked base colour and normal maps double the texture
+  memory of a file that had one map (5.3 → 10.7 MiB). A `--bake` that
+  skips the normal map (`Bake::no_normals` exists in the library, no CLI
+  switch) or bakes it smaller would halve it.
+- Not done: baking to a size other than square, a walk from the previous
+  texel's hit (not needed for time), KTX2 output, ray hits weighted by
+  distance across several candidates (one is taken).

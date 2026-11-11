@@ -161,8 +161,11 @@ A textured or vertex-coloured mesh reaches a budget one of two ways
 - **Keep the UVs** (the default). The maps stay as the file made them,
   byte for byte, and nothing is resampled. Decimation stops at about
   three triangles a UV island (`blocked.fixed` in the report): on the 54
-  generated meshes, 14 miss 2 000 triangles this way and one misses
-  10 000 (`docs/research.md` §34). Keep the UVs when the budget is met:
+  generated meshes, 14 miss 2 000 triangles this way (and Unique3D's
+  chair by its colour borders) and one misses 10 000
+  (`docs/research.md` §34). Where it is met, keeping looks closer to the
+  file at small sizes: at 10 000 triangles the median colour error was
+  1.6 keeping and 2.9 baked (0–255, 256² views), since a bake resamples. Keep the UVs when the budget is met:
   `decimate.triangles` at most `budget`.
 - **Bake** (`--bake PX`, MCP `bake`) when it is not, or when the file's
   atlas is wasteful. The repaired mesh is the source. A copy without UVs
@@ -172,7 +175,11 @@ A textured or vertex-coloured mesh reaches a budget one of two ways
   metallic-roughness, emissive and occlusion maps and its shading normals
   are baked into new PNG maps in that layout. The GLB carries the baked
   maps, the material's factors and `TANGENT`. Bake at the texture size
-  the game uses (`--texture-max` then has nothing to shrink). The source's
+  the game uses (`--texture-max` then has nothing to shrink). On the 54
+  at 2 000 triangles, every file reached the budget baked (52 closed;
+  the 2 open were open after repair), with a lower colour error than
+  keeping on 33 of the 39 that keep reached it on. It costs 3–4 s at
+  1024² and a base-colour and a normal map (10.7 MiB with mips). The source's
   vertex colours are in the base-colour map, so the output has none.
 
 What to check in the report:

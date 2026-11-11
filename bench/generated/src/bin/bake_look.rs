@@ -4,14 +4,14 @@
 //! cover. Numbers, no verdict.
 //!
 //! ```text
-//! cargo run --release --bin bake_look -- SOURCE RESULT... [--sheet OUT.png]
+//! cargo run --release --bin bake_look -- SOURCE RESULT... [--size PX] [--sheet OUT.png]
 //! ```
 //!
 //! SOURCE and each RESULT are mesh files (the repaired source, written by
 //! `shape repair`, and `shape process` outputs). Every scene is framed by
 //! the box of all of them together (a zero-area triangle across it is
 //! added to each scene; it draws nothing), so a pixel sees the same place
-//! in each. Four orthographic views, 256², `unlit`, no edges, no ground.
+//! in each. Four orthographic views, 256² (`--size`), `unlit`, no edges, no ground.
 //! A pixel is covered where a black, unlit pass of the same scene draws
 //! black. Per RESULT one JSON line: `mean` and `p95` of the colour
 //! difference over pixels both cover (√(ΔR² + ΔG² + ΔB²) / √3 in sRGB
@@ -90,10 +90,13 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut files: Vec<String> = Vec::new();
     let mut sheet_out: Option<String> = None;
+    let mut px: u32 = 256;
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         if a == "--sheet" {
             sheet_out = it.next();
+        } else if a == "--size" {
+            px = it.next().and_then(|v| v.parse().ok()).unwrap_or(256);
         } else {
             files.push(a);
         }
@@ -110,8 +113,8 @@ fn main() {
         hi = hi.max(b);
     }
     let d = Preview {
-        width: 256,
-        height: 256,
+        width: px,
+        height: px,
         views: 4,
         no_edges: true,
         no_ground: true,
