@@ -144,6 +144,20 @@ pub fn encode_solid(
 ) -> Result<Vec<u8>, Failure> {
     let parts = [(name.to_string(), s.clone())];
     match extension(out).as_str() {
+        // A skinned solid goes out as a scene of one part: a mesh node,
+        // its bones as nodes and a skin, as a program's skinned part does
+        // (a plain GLB is one node and carries none).
+        "glb" if s.skin.is_some() => {
+            let mut part = shape_tools::Part::new(name, s);
+            if let Some(m) = material {
+                part.material = m.clone();
+            }
+            glb(&shape_tools::Scene {
+                name: name.to_string(),
+                parts: vec![part],
+            })
+            .map_err(failed)
+        }
         "glb" => glb_plain(
             s,
             &PlainGlb {

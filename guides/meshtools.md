@@ -17,8 +17,10 @@ import → join → repair → decimate → place → unwrap → measure → pre
    get an uncompressed one. A **skinned** mesh (bones and weights) is
    read whole, in its bind pose (`measure` says `skinned` and lists the
    bones), and every tool keeps the skin: weights follow the vertices
-   through repair, decimation blends them, and `glb` writes it back.
-   `glb_plain` alone refuses it (a plain GLB carries no skin). A
+   through repair, decimation blends them, and the commands write it
+   back as a GLB with its bones and skin (parts whose skins hold
+   different bones of one skeleton are joined on it). `process --bake`
+   is not done on a skinned mesh: keep its UVs. A
    skeleton under a uniformly scaled armature (centimetres)
    has the scale taken out; the import report (`skin_scales`) says so.
    UVs (the first set), vertex colours (glTF `COLOR_0`, OBJ

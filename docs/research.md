@@ -8340,3 +8340,42 @@ were returned clean are `NoRoom` (a triangle of apothem 25 chamfered 25,
 clean results changed volume (§38.3). Left: a triangle chamfered 10,
 10 thick, open at the bottom, whose cut comes back open (a limit of the
 boolean).
+
+## 39. Skinned files through the mesh commands (2026-11-11)
+
+Tried on two public skinned files from three.js's examples (r160):
+`Soldier.glb` (Mixamo's Vanguard: a body of 11 186 triangles on 49 bones
+and a visor of 190 on 2) and `Samba Dancing.fbx` (55 320 triangles).
+Neither is committed.
+
+**What refused the soldier, and is changed.**
+
+- `repair` and `process` stopped at the join: "bones [Neck] differ
+  between the parts". The visor's skin holds only the neck and head, so
+  its neck has no parent in it; the body's neck hangs on `Spine2`. The
+  rest frames and inverse bind matrices agree (to 1.5e-4 mm). A skin of
+  part of the skeleton is legal glTF: a bone without a parent in its
+  own skin now takes the one the fuller skin gives it (the part with
+  the most bones is read first); two named parents must still agree.
+- Then the output: "a plain GLB carries no skin". A skinned solid is
+  now written as a scene of one part (a mesh node, the bones as nodes,
+  a skin), as a program's skinned part is; read back it has its 49
+  bones, UVs and map.
+
+With those: `repair`, `process --ratio 0.5` (5 688 triangles),
+`process --ratio 0.3 --height 1m` (3 412, placed: `place` already turns
+and scales a skin with its mesh, §31) and `decimate --lod-ratios
+0.5,0.2,0.08` (5 688, 2 275, 911: each its share exactly) run on the
+soldier. `--bake` on a skinned mesh is refused with its reason (the
+baked file is a plain GLB with `TANGENT`).
+
+**Decimation targets on Samba.** `--lod-ratios 0.5,0.25,0.1`: 27 660,
+13 830, 5 532, each exact; `--target 5000`, alone and through `process`
+with the guide's repair: 5 000. The floor is 3 564 (`--target 2000`
+and `1000` both stop there: `fixed` 3 355, `uv` 1 095, `fold` 552,
+`link` 269, `turn` 66): UV seams and corners. Below that a skinned
+file has no way down here, since `--bake` is not done on skins.
+
+**Still so.** The preview draws a skinned file in its bind pose only;
+animations in a file are not imported; morph targets, Draco and meshopt
+compression are not read.

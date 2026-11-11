@@ -1402,3 +1402,11 @@
   crossing (a ring hollowed thicker than its tube) is refused
   (`EditError::InsideOut`): it was cut as a hollow before, and the ring
   came back with thinner walls than asked and no count.
+- Skinned mesh files through `repair`, `decimate` and `process`: a skin
+  that holds only part of the skeleton (a visor skinned to the neck and
+  head) joins the fuller one instead of being refused for a bone
+  without a parent; and a skinned solid is written as a GLB with its
+  bones and skin (it was refused: "a plain GLB carries no skin").
+  `process --bake` on a skinned mesh says why it is not done. Mixamo's
+  soldier and three.js's Samba run through, every level at its target
+  (`docs/research.md` §39).

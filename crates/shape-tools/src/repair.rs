@@ -281,8 +281,8 @@ type Merged = (Vec<Bone>, Vec<Vec<u32>>);
 
 /// The skeletons of `parts` merged by bone name, and each skinned part's
 /// bone indices in it. Bones of one name must agree: the same parent's
-/// name, rest frame and inverse bind matrix to rounding (1e-6 mm, 1e-9 in
-/// the axes).
+/// name (or none, in a skin that does not hold the parent), rest frame
+/// and inverse bind matrix to rounding (1e-6 mm, 1e-9 in the axes).
 fn merge_skeletons(parts: &[(&str, &Solid)]) -> Result<Option<Merged>, RepairError> {
     let skinned: Vec<&str> = parts
         .iter()
@@ -316,7 +316,19 @@ fn merge_skeletons(parts: &[(&str, &Solid)]) -> Result<Option<Merged>, RepairErr
                 .zip(&b.inverse_bind)
                 .all(|(x, y)| (x - y).abs() <= 1e-6 * x.abs().max(1.0))
     };
-    for (name, s) in parts {
+    // The part with the most bones first: a skin may hold only some of
+    // the skeleton (a visor skinned to the neck and head alone), and its
+    // first bones then have no parent in it. Such a bone takes the parent
+    // the fuller skin gives it; a bone with a parent on both sides must
+    // name the same one.
+    let mut order: Vec<usize> = (0..parts.len()).collect();
+    order.sort_by_key(|&i| {
+        let n = parts[i].1.skin.as_ref().map_or(0, |k| k.bones.len());
+        (core::cmp::Reverse(n), i)
+    });
+    maps.resize(parts.len(), Vec::new());
+    for at in order {
+        let (name, s) = &parts[at];
         let k = s.skin.as_ref().unwrap_or_else(|| unreachable!("{name}"));
         let mut map = Vec::with_capacity(k.bones.len());
         for b in &k.bones {
@@ -325,7 +337,22 @@ fn merge_skeletons(parts: &[(&str, &Solid)]) -> Result<Option<Merged>, RepairErr
             match bones.iter().position(|x| x.name == b.name) {
                 Some(i) => {
                     let had = bones[i].parent.map(|p| bones[p as usize].name.as_str());
-                    if had != parent_name || !near(&bones[i], b) {
+                    let same_parent = match (had, parent_name) {
+                        (_, None) => true,
+                        (None, Some(_)) => {
+                            // Known as a root so far: it may take this
+                            // parent if that comes before it.
+                            match parent {
+                                Some(p) if (p as usize) < i => {
+                                    bones[i].parent = Some(p);
+                                    true
+                                }
+                                _ => false,
+                            }
+                        }
+                        (Some(a), Some(b)) => a == b,
+                    };
+                    if !same_parent || !near(&bones[i], b) {
                         conflicts.push(b.name.clone());
                     }
                     map.push(i as u32);
@@ -339,7 +366,7 @@ fn merge_skeletons(parts: &[(&str, &Solid)]) -> Result<Option<Merged>, RepairErr
                 }
             }
         }
-        maps.push(map);
+        maps[at] = map;
     }
     if !conflicts.is_empty() {
         conflicts.sort();
@@ -2152,5 +2179,59 @@ mod tests {
         // Within the limit it is an ordinary fill.
         let (_, h) = close_holes(&s, 4).unwrap();
         assert_eq!((h.filled, h.large), (1, 0));
+    }
+
+    /// A skin may hold only part of the skeleton: Mixamo's soldier has a
+    /// body skinned to 49 bones and a visor skinned to the neck and head
+    /// alone, whose neck has no parent in its own skin. The two are one
+    /// skeleton; bones whose parents are named differently are not.
+    #[test]
+    fn a_skin_of_part_of_the_skeleton_joins_the_whole_one() {
+        use shape_core::Frame;
+        use shape_mesh::{Bone, Weights};
+        let at = |z: f64| Frame {
+            origin: DVec3::new(0.0, 0.0, z),
+            ..Frame::IDENTITY
+        };
+        let skinned = |bones: Vec<Bone>, offset: f64| {
+            let mut s = cube(DVec3::new(offset, 0.0, 0.0), 1.0);
+            let last = bones.len() as u32 - 1;
+            s.skin = Some(Skin {
+                bones,
+                weights: vec![Weights::single(last); s.positions.len()],
+            });
+            s
+        };
+        let body = skinned(
+            vec![
+                Bone::new("spine", None, at(0.0)),
+                Bone::new("neck", Some(0), at(5.0)),
+            ],
+            0.0,
+        );
+        let visor = skinned(vec![Bone::new("neck", None, at(5.0))], 3.0);
+        for parts in [
+            [("body", &body), ("visor", &visor)],
+            [("visor", &visor), ("body", &body)],
+        ] {
+            let (bones, maps) = merge_skeletons(&parts).unwrap().unwrap();
+            let names: Vec<&str> = bones.iter().map(|b| b.name.as_str()).collect();
+            assert_eq!(names, ["spine", "neck"]);
+            assert_eq!(bones[1].parent, Some(0));
+            // Each part's bones, by its own order, in the merged list.
+            let visor_at = usize::from(parts[0].0 == "body");
+            assert_eq!(maps[visor_at], [1]);
+            assert_eq!(maps[1 - visor_at], [0, 1]);
+        }
+        // A neck hung on another bone is another skeleton.
+        let other = skinned(
+            vec![
+                Bone::new("hips", None, at(0.0)),
+                Bone::new("neck", Some(0), at(5.0)),
+            ],
+            6.0,
+        );
+        let e = merge_skeletons(&[("body", &body), ("other", &other)]).unwrap_err();
+        assert!(e.to_string().contains("neck"), "{e}");
     }
 }

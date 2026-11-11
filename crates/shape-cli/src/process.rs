@@ -194,6 +194,14 @@ pub fn process_steps(
     let mesh = load_mesh(files, &d.input, &import)?;
     let imported = report::imported(&mesh.format, &mesh.imported);
     let joined = mesh.joined()?;
+    if d.bake > 0 && joined.skin.is_some() {
+        // The baked file is a plain GLB with TANGENT, one node: no skin.
+        return Err(Failure::Failed(
+            "--bake on a skinned mesh is not done: the baked file would lose its skin. Keep \
+             the file's UVs (no --bake), or bake the mesh without its skin"
+                .into(),
+        ));
+    }
     step(1)?;
     let (mut fixed, r) = shape_tools::repair_owned(joined, &d.repair).map_err(failed)?;
     // The bake's source: the repaired mesh with its UVs and colours.
