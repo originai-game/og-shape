@@ -52,6 +52,13 @@
 //!   blending: it glows the same in shade and in light. A part without it
 //!   is drawn as before, to the byte. The emissive map, `metalness` and
 //!   `roughness` do not change the picture (`docs/research.md` §30, §33).
+//! - A material's `normal_map` (with the part's UVs) bends the light per
+//!   pixel: the map is read as data, at its finest level, in the
+//!   triangle's own tangent frame (u along the tangent, v along the
+//!   bitangent, from its positions and UVs, round the interpolated
+//!   normal), times `normal_scale`. A baked normal map and a file's own
+//!   show their detail; a seam between charts shows as a line if the
+//!   frames disagree. Unlit views do not read it.
 //!
 //! No GPU, threads or SIMD; every step is integer arithmetic or f64
 //! `+ - * /`, `sqrt`, `floor` and `trig` in a fixed order, so the
@@ -377,7 +384,8 @@ pub fn preview(scene: &Scene, d: &Preview) -> Result<Vec<Image>, ExportError> {
 /// The decoded maps of a scene's parts, each distinct one once: the
 /// textures and their chains (or why not), in first-use order.
 pub(crate) struct Maps<'a> {
-    seen: Vec<(&'a Texture, Result<Mips, String>)>,
+    /// Each texture with whether it was read as data, and its chain.
+    seen: Vec<(&'a Texture, bool, Result<Mips, String>)>,
 }
 
 impl<'a> Maps<'a> {
@@ -387,22 +395,35 @@ impl<'a> Maps<'a> {
 
     /// The index of `t`'s chain, decoding it the first time.
     pub(crate) fn get(&mut self, t: &'a Texture) -> Result<usize, String> {
-        let k = match self.seen.iter().position(|(s, _)| *s == t) {
+        self.chain(t, false)
+    }
+
+    /// As [`Maps::get`], for a map of data (a normal map).
+    pub(crate) fn get_data(&mut self, t: &'a Texture) -> Result<usize, String> {
+        self.chain(t, true)
+    }
+
+    fn chain(&mut self, t: &'a Texture, data: bool) -> Result<usize, String> {
+        let k = match self.seen.iter().position(|(s, d, _)| *s == t && *d == data) {
             Some(k) => k,
             None => {
-                let m = crate::decode::decode(&t.bytes).map(Mips::new);
-                self.seen.push((t, m));
+                let m = crate::decode::decode(&t.bytes).map(if data {
+                    Mips::new_data
+                } else {
+                    Mips::new
+                });
+                self.seen.push((t, data, m));
                 self.seen.len() - 1
             }
         };
-        match &self.seen[k].1 {
+        match &self.seen[k].2 {
             Ok(_) => Ok(k),
             Err(e) => Err(format!("map {:?}: {e}", t.name)),
         }
     }
 
     pub(crate) fn mips(&self, k: usize) -> Option<&Mips> {
-        self.seen.get(k).and_then(|(_, m)| m.as_ref().ok())
+        self.seen.get(k).and_then(|(_, _, m)| m.as_ref().ok())
     }
 }
 
@@ -487,6 +508,10 @@ pub fn views(scene: &Scene, d: &Preview) -> Result<Views, ExportError> {
             p.name.as_str(),
             p.solid,
             p.material.map.as_ref(),
+            p.material
+                .normal_map
+                .as_ref()
+                .map(|t| (t, p.material.normal_scale.unwrap_or(1.0))),
             rgb,
             &mut maps,
             &mut undrawn,
@@ -624,6 +649,8 @@ pub fn views(scene: &Scene, d: &Preview) -> Result<Views, ExportError> {
 struct Paint {
     /// The map's chain in [`Maps`], with the part's UVs.
     map: Option<(usize, Vec<[DVec2; 3]>)>,
+    /// The normal map's chain, the part's UVs and the map's scale.
+    normal: Option<(usize, Vec<[DVec2; 3]>, f64)>,
     /// Linear RGBA per triangle corner.
     colors: Option<Vec<[[f64; 4]; 3]>>,
     /// The material's colour in linear light.
@@ -636,11 +663,24 @@ fn paint<'a>(
     name: &str,
     s: &Solid,
     map: Option<&'a Texture>,
+    normal: Option<(&'a Texture, f64)>,
     rgb: [f64; 3],
     maps: &mut Maps<'a>,
     undrawn: &mut Vec<(String, String)>,
 ) -> Option<Paint> {
     let n = s.triangles.len();
+    let normal = normal.and_then(|(t, scale)| {
+        let why = match &s.uvs {
+            None => "the part has no UVs to sample its normal map with".to_string(),
+            Some(uv) if uv.len() != n => "the part's UVs are not one per triangle".to_string(),
+            Some(uv) => match maps.get_data(t) {
+                Ok(k) => return Some((k, uv.clone(), scale)),
+                Err(e) => e,
+            },
+        };
+        undrawn.push((name.to_string(), why));
+        None
+    });
     let map = map.and_then(|t| {
         let why = match &s.uvs {
             None => "the part has no UVs to sample its map with".to_string(),
@@ -664,11 +704,12 @@ fn paint<'a>(
             None
         }
     });
-    if map.is_none() && colors.is_none() {
+    if map.is_none() && colors.is_none() && normal.is_none() {
         return None;
     }
     Some(Paint {
         map,
+        normal,
         colors,
         base: rgb.map(|c| to_linear(c.clamp(0.0, 1.0))),
     })
@@ -934,10 +975,55 @@ fn draw_triangle(t: &mut Target, look: &Look, p: &Drawn, k: usize) {
         .as_ref()
         .and_then(|(m, uvs)| Some((look.maps.mips(*m)?, &uvs[k])));
     let colors = paint.colors.as_ref().map(|c| &c[k]);
-    raster(dims, c, persp, map.is_some(), |f| {
-        let (i, z, l) = (f.i, f.z, f.light);
+    // A normal map bends the light per pixel: the triangle's tangent
+    // frame from its positions and UVs (u along the tangent, v along the
+    // bitangent, the image's green up), round the interpolated normal.
+    let bump = paint.normal.as_ref().and_then(|(m, uvs, scale)| {
+        if look.unlit {
+            return None;
+        }
+        let uv = &uvs[k];
+        let (e1, e2) = (q[1] - q[0], q[2] - q[0]);
+        let (d1, d2) = (uv[1] - uv[0], uv[2] - uv[0]);
+        let det = d1.x * d2.y - d2.x * d1.y;
+        if det == 0.0 || !det.is_finite() {
+            return None;
+        }
+        let tangent = (e1 * d2.y - e2 * d1.y) / det;
+        let bitangent = (e2 * d1.x - e1 * d2.x) / det;
+        Some((look.maps.mips(*m)?, uv, *scale, tangent, bitangent))
+    });
+    let corner_normals = p.normals[k].map(|n| n * flip);
+    raster(dims, c, persp, map.is_some() || bump.is_some(), |f| {
+        let (i, z, mut l) = (f.i, f.z, f.light);
         if z >= depth[i] {
             return;
+        }
+        if let Some((mips, uv, scale, tangent, bitangent)) = bump {
+            let at = mix2(f.w, uv);
+            let s = mips.sample(at, 0);
+            let n = corner_normals[0] * f.w[0]
+                + corner_normals[1] * f.w[1]
+                + corner_normals[2] * f.w[2];
+            if let (Some(n), true) = (n.try_normalize(), s.iter().all(|v| v.is_finite())) {
+                let t = tangent - n * n.dot(tangent);
+                if let Some(t) = t.try_normalize() {
+                    let hand = if n.cross(t).dot(bitangent) < 0.0 {
+                        -1.0
+                    } else {
+                        1.0
+                    };
+                    let b = n.cross(t) * hand;
+                    let (x, y, zz) = (
+                        (s[0] * 2.0 - 1.0) * scale,
+                        (s[1] * 2.0 - 1.0) * scale,
+                        s[2] * 2.0 - 1.0,
+                    );
+                    if let Some(bent) = (t * x + b * y + n * zz).try_normalize() {
+                        l = AMBIENT + DIFFUSE * bent.dot(look.light).max(0.0);
+                    }
+                }
+            }
         }
         let b = paint.base;
         let mut col = [b[0], b[1], b[2], 1.0];
@@ -1366,5 +1452,52 @@ mod tests {
         };
         let lit = rgb_at(&one_view(&s, warm, Preview::default()).images[0], 128, 128);
         assert!(lit[0] > plain[0] && lit[1] == plain[1] && lit[2] == plain[2]);
+    }
+
+    #[test]
+    fn a_normal_map_bends_the_light_per_pixel() {
+        // A flat floor whose map leans its left half toward −x and its
+        // right half toward +x: the light comes from −x, so the left half
+        // is brighter than a flat floor and the right half darker.
+        let s = floor_quad();
+        let grey = Material {
+            color: Some([0.5; 3]),
+            ..Default::default()
+        };
+        let lean = |x: u8| [x, 128, 200, 255];
+        let bumped = Material {
+            normal_map: Some(map(8, 8, |x, _| if x < 4 { lean(100) } else { lean(155) })),
+            ..grey.clone()
+        };
+        let plain = &one_view(&s, grey.clone(), Preview::default()).images[0];
+        let bent = &one_view(&s, bumped.clone(), Preview::default()).images[0];
+        let centre = plain.width / 2;
+        let row = plain.height / 2;
+        let flat = rgb_at(plain, centre, row)[0];
+        let (left, right) = (
+            rgb_at(bent, centre - 12, row)[0],
+            rgb_at(bent, centre + 12, row)[0],
+        );
+        assert!(left > flat && flat > right, "{left} {flat} {right}");
+        // A flat map (128, 128, 255) changes nothing but rounding.
+        let level = Material {
+            normal_map: Some(map(8, 8, |_, _| [128, 128, 255, 255])),
+            ..grey.clone()
+        };
+        let same = rgb_at(
+            &one_view(&s, level, Preview::default()).images[0],
+            centre,
+            row,
+        )[0];
+        assert!(same.abs_diff(flat) <= 2, "{same} {flat}");
+        // Unlit, the map is not read: colour only.
+        let unlit = Preview {
+            unlit: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            rgb_at(&one_view(&s, bumped, unlit).images[0], centre, row),
+            rgb_at(&one_view(&s, grey, unlit).images[0], centre, row)
+        );
     }
 }

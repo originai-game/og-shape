@@ -127,8 +127,10 @@ import → join → repair → decimate → place → unwrap → measure → pre
    `uv.flipped` should be what they were before (a file's own mirrored
    charts count as flipped).
 8. **Preview** and look at it. It draws the base-colour map (PNG or
-   JPEG), vertex colours and the material's colour and emissive colour
-   (not its other maps, metalness or roughness); its `undrawn` lists a map it could not
+   JPEG), the normal map's detail in the light, vertex colours and the
+   material's colour and emissive colour (not its metallic-roughness,
+   emissive or occlusion maps, metalness or roughness); after a bake,
+   look along chart borders for lines in the shading. Its `undrawn` lists a map it could not
    draw (WebP, KTX2, progressive JPEG, no UVs). `--uv` (MCP `uv`) shows
    the UV layout over the map: dark lines are chart outlines, dimmed
    texels are unused. For a texturing step: `--each --fov 0.7` gives one

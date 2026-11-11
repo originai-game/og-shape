@@ -88,11 +88,24 @@ impl Linear {
 pub(crate) struct Mips {
     levels: Vec<Image>,
     lin: Linear,
+    /// Whether the bytes are data (a normal map), averaged and read as
+    /// they are, not colour in sRGB.
+    data: bool,
 }
 
 impl Mips {
     /// The chain of an image (§ the module's rule).
     pub(crate) fn new(image: Image) -> Mips {
+        Mips::build(image, false)
+    }
+
+    /// The chain of a data image (a normal map): each level the plain
+    /// mean of the one before, and samples the bytes as they are.
+    pub(crate) fn new_data(image: Image) -> Mips {
+        Mips::build(image, true)
+    }
+
+    fn build(image: Image, data: bool) -> Mips {
         let lin = linear_table();
         let mut levels = vec![image];
         loop {
@@ -113,8 +126,13 @@ impl Mips {
                         at(2 * x + 1, 2 * y + 1),
                     ];
                     for c in 0..3 {
-                        let s: u32 = q.iter().map(|&i| lin.get(last.rgba[i + c])).sum();
-                        rgba.push(lin.encode((s + 2) / 4));
+                        if data {
+                            let s: u32 = q.iter().map(|&i| u32::from(last.rgba[i + c])).sum();
+                            rgba.push(((s + 2) / 4) as u8);
+                        } else {
+                            let s: u32 = q.iter().map(|&i| lin.get(last.rgba[i + c])).sum();
+                            rgba.push(lin.encode((s + 2) / 4));
+                        }
                     }
                     let a: u32 = q.iter().map(|&i| u32::from(last.rgba[i + 3])).sum();
                     rgba.push(((a + 2) / 4) as u8);
@@ -126,7 +144,7 @@ impl Mips {
                 rgba,
             });
         }
-        Mips { levels, lin }
+        Mips { levels, lin, data }
     }
 
     /// Level 0's size.
@@ -180,7 +198,7 @@ impl Mips {
                 .iter()
                 .map(|&(i, wt)| {
                     let b = l.rgba[i + c];
-                    let v = if c < 3 {
+                    let v = if c < 3 && !self.data {
                         u64::from(self.lin.get(b))
                     } else {
                         u64::from(b) * 257

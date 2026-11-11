@@ -1290,3 +1290,8 @@
   for byte what it was. New `ExportError::BadClip`, `ModelError::Clip`.
   Golden case `model.washing_machine.clips`
   (`golden/programs/washing_machine_clips.json`); no existing line moved.
+- The preview reads a material's `normal_map`: the light is bent per
+  pixel in each triangle's tangent frame, times `normal_scale`, so a
+  baked or imported normal map shows its detail. Read as data (plain
+  mip averages, no sRGB). Unlit views and parts without a normal map are
+  drawn as before: no golden line moved.

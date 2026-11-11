@@ -77,7 +77,7 @@ Run on `main` on 2026-11-10; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 159 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 347 pass | `scripts/check.sh test` |
+| Tests | 348 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -109,8 +109,8 @@ silent returns a result with no error:
   a lone piece of a crease that does not fit (226), a twisted face (340),
   an edge with more than two faces (308).
 - The unwrap is planar per chart. The preview
-  draws base-colour maps (PNG, baseline JPEG), vertex colours and the
-  emissive colour, but no normal, metallic-roughness or emissive maps,
+  draws base-colour and normal maps (PNG, baseline JPEG), vertex colours
+  and the emissive colour, but no metallic-roughness or emissive maps,
   and no metalness or roughness factors.
 - Carrying vertex colours through the fuse step costs memory: `process`
   on Unique3D's 620 000- and 820 000-triangle files peaks at 3.0–3.3 GiB
