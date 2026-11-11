@@ -107,7 +107,8 @@ Placement (readers answer frames and are not recorded):
   per point (the nearest spot, or where a ray along `direction` meets
   it), +z out toward the point; `names(part)`.
 
-Structure: `group({ name, children })`, `assembly({ name, children,
+Structure: `wrap({ name, parts })` (a new part, the parts' convex hull;
+the parts stay), `group({ name, children })`, `assembly({ name, children,
 anchors? })`, `attach(assembly, { name, children })`, `copy(part, name)`,
 `mirror(part, { plane, name })` (`plane` a frame; across its xy). Both
 bring the joints of what they copy (`hinge.001`…); a mirrored joint moves

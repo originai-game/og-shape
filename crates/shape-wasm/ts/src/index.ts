@@ -435,6 +435,10 @@ export class Shape {
   group(d: { name: string; children: Part[] }): Part {
     return this.part("group", d);
   }
+  /** A new part: the convex hull of `parts` as they stand in the world (the parts stay). Faces and edges are named `hull`. */
+  wrap(d: { name: string; parts: Part[] }): Part {
+    return this.part("wrap", d);
+  }
   assembly(d: { name: string; children: Part[]; anchors?: Record<string, FrameData> }): Part {
     return this.part("assembly", d);
   }

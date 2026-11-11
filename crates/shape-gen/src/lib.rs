@@ -25,6 +25,7 @@ pub mod body;
 pub mod earcut;
 pub mod extrude;
 pub mod frames;
+pub mod hull;
 pub mod lathe;
 pub mod loft;
 pub mod merge;

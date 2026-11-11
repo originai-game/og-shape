@@ -718,6 +718,18 @@ impl Model {
         Ok(placed(s, &n.placement))
     }
 
+    /// A new part, the convex hull of the parts under `ids` as they stand
+    /// in the world, at rest (`shape_gen::hull::convex_hull`, exact: the
+    /// smallest convex solid holding them). The parts stay as they are.
+    /// Its faces and edges are named `hull`. Refused when the parts' points
+    /// all lie in one plane.
+    pub fn wrap(&mut self, name: &str, ids: &[Id]) -> Result<Id, ModelError> {
+        self.check_name(name)?;
+        let points = self.points(ids)?;
+        let hull = shape_gen::hull::convex_hull(&points)?;
+        self.add(name, hull)
+    }
+
     /// Every world position of the parts under `ids`.
     fn points(&self, ids: &[Id]) -> Result<Vec<DVec3>, ModelError> {
         let mut out = Vec::new();

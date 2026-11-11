@@ -1255,3 +1255,8 @@
   and `bake` is new. Without it nothing changes. Golden: new
   `atlas.pack`, `atlas.model`, `bake.fixture`, `mcp.process.bake`; no
   existing line moved.
+- `shape_gen::hull::convex_hull`: the convex hull of points in space, by
+  exact predicates, with no vertex but its corners; faces in one plane
+  are one surface. The program operation `wrap` (`name`, `parts`) and the
+  binding's `wrap({ name, parts })` make a new part, the hull of parts as
+  they stand; faces and edges are named `hull`. Golden case `gen2.hull`.

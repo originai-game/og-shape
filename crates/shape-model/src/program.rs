@@ -44,6 +44,7 @@
 //! | `gear` | `name`, `teeth`, `module`, `width`, `pressureAngle`?, `bore`?, `hub`?, `hubHeight`?, `on`? | `id` |
 //! | `at`, `transform` | `id`, `frame` | |
 //! | `group` | `name`, `children` | `id` |
+//! | `wrap` | `name`, `parts` (ids) | `id`: the parts' convex hull, a new part; faces and edges `hull` |
 //! | `assembly` | `name`, `children`, `anchors`? (`{name: frame}`) | `id` |
 //! | `attach` | `to`, `name`, `children` | `id` |
 //! | `copy` | `id`, `name` | `id` |
@@ -475,6 +476,7 @@ fn dispatch(m: &mut Model, a: &Args) -> Result<(Value, bool), ModelError> {
                 Ok((none(), true))
             }
             "group" => Ok((id(m.group(a.str("name")?, &a.ids("children")?)?), true)),
+            "wrap" => Ok((id(m.wrap(a.str("name")?, &a.ids("parts")?)?), true)),
             "assembly" => {
                 let mut anchors = Vec::new();
                 if let Some(v) = a.opt("anchors") {
@@ -895,6 +897,7 @@ const OPS: &[(&str, &[&str])] = &[
     ("at", &["id", "frame"]),
     ("transform", &["id", "frame"]),
     ("group", &["name", "children"]),
+    ("wrap", &["name", "parts"]),
     ("assembly", &["name", "children", "anchors"]),
     ("attach", &["to", "name", "children"]),
     ("copy", &["id", "name"]),

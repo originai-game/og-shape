@@ -37,7 +37,8 @@ A shelf on a leg built up to it, and a spring:
 - **Units:** millimetres (`units` changes it, before the first part);
   angles in radians. Z is up; the front looks −Y.
 - **Ids:** every operation that makes a part or a group (generators,
-  `group`, `assembly`, `attach`, `copy`, `mirror`) gets the next id: 0, 1,
+  `group`, `assembly`, `attach`, `copy`, `mirror`, `wrap`) gets the next
+  id: 0, 1,
   2… in order. A boolean's tool is used up but keeps its id.
 - **Frames:** `{"origin": [x, y, z], "x": […], "y": […], "z": […]}`,
   orthonormal and right-handed, in the world at rest. A generator's `on`
@@ -140,6 +141,7 @@ walls by arc length round and along).
 | `at` | `id`, `frame` | puts the part's own space on `frame` |
 | `transform` | `id`, `frame` | moves it by a rigid motion of the world |
 | `group` | `name`, `children` (ids) | |
+| `wrap` | `name`, `parts` (ids) | a new part: the convex hull of the parts as they stand (they stay); faces and edges `hull`. A collider, or a skin drawn round posts |
 | `assembly` | `name`, `children`, `anchors`? (`{name: frame}`) | |
 | `attach` | `to`, `name`, `children` | |
 | `copy` | `id`, `name` | its joints come too, renamed `hinge.001`…, at the same pose |

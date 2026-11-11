@@ -50,6 +50,10 @@ pub fn cases() -> Vec<Case> {
             name: "gen2.sweep.ends",
             run: sweep_ends,
         },
+        Case {
+            name: "gen2.hull",
+            run: hulls,
+        },
     ]
 }
 
@@ -380,4 +384,44 @@ fn sweep_ends(h: &mut OutputHash) -> Result<(), HashError> {
             ..Default::default()
         }),
     )
+}
+
+/// Convex hulls (`shape_gen::hull`): a grid of points on and inside a
+/// box (every degenerate place), a torus's vertices, and a scatter.
+fn hulls(h: &mut OutputHash) -> Result<(), HashError> {
+    use shape_gen::hull::convex_hull;
+    let mut grid = Vec::new();
+    for x in 0..=4 {
+        for y in 0..=4 {
+            for z in 0..=4 {
+                grid.push(DVec3::new(
+                    f64::from(x),
+                    f64::from(y) * 0.5,
+                    f64::from(z) * 0.25,
+                ));
+            }
+        }
+    }
+    solid(h, convex_hull(&grid))?;
+    let ring = torus_desc(&TorusDesc {
+        radius: 20.0,
+        tube_radius: 5.0,
+        ..Default::default()
+    })
+    .map_err(|e| {
+        eprintln!("gen2.hull: {e}");
+        HashError::NaN
+    })?;
+    solid(h, convex_hull(&ring.positions))?;
+    let scatter: Vec<DVec3> = (0..500)
+        .map(|i| {
+            let f = f64::from(i);
+            DVec3::new(
+                (f * 0.731).fract() - 0.5,
+                (f * 0.419).fract() - 0.5,
+                (f * 0.277).fract() - 0.5,
+            ) * 40.0
+        })
+        .collect();
+    solid(h, convex_hull(&scatter))
 }

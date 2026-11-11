@@ -279,3 +279,29 @@ fn edits_answer_the_crossing_pairs_they_leave() {
     let folded = shell(5.0, 10.0);
     assert!(folded["crossingPairs"].as_u64().unwrap() > 0, "{folded}");
 }
+
+#[test]
+fn wrap_is_the_convex_hull_of_parts_where_they_stand() {
+    // Two posts 40 apart, wrapped: a slab 50 long, 10 wide, 30 tall, with
+    // eight corners and no vertex of the posts' inner faces.
+    let post = |name: &str, x: f64| {
+        json!({"op": "box", "name": name, "width": 10, "depth": 10, "height": 30,
+            "on": {"origin": [x, 0, 0], "x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}})
+    };
+    let p = json!({"name": "t", "ops": [
+        post("a", -20.0), post("b", 20.0),
+        {"op": "wrap", "name": "skin", "parts": [0, 1]},
+    ]});
+    let m = part(&p, "skin");
+    assert!((m.volume - 50.0 * 10.0 * 30.0).abs() < 1e-9, "{}", m.volume);
+    assert_eq!((m.vertices, m.triangles), (8, 12));
+    // The posts stay.
+    assert!((part(&p, "a").volume - 3000.0).abs() < 1e-9);
+    // Flat input is refused with the reason, located.
+    let flat = json!({"name": "t", "ops": [
+        {"op": "extrude", "name": "sheet", "height": 1, "profile": {"rect": {"width": 4, "height": 4}}},
+        {"op": "wrap", "name": "w", "parts": [5]},
+    ]});
+    let e = err(flat);
+    assert!(e.contains("op 1 wrap"), "{e}");
+}
