@@ -21,7 +21,9 @@
 
 use shape_core::DVec3;
 use shape_mesh::Solid;
-use shape_tools::{Image, Import, Material, Part, Preview, Scene, apply_transform, import, png, preview, sheet};
+use shape_tools::{
+    Image, Import, Material, Part, Preview, Scene, apply_transform, import, png, preview, sheet,
+};
 
 fn read(path: &str) -> Vec<(Solid, Material)> {
     let p = std::path::Path::new(path);
@@ -52,7 +54,12 @@ fn bounds(parts: &[(Solid, Material)]) -> (DVec3, DVec3) {
     (lo, hi)
 }
 
-fn render(parts: &[(Solid, Material)], frame: (DVec3, DVec3), d: &Preview, black: bool) -> Vec<Image> {
+fn render(
+    parts: &[(Solid, Material)],
+    frame: (DVec3, DVec3),
+    d: &Preview,
+    black: bool,
+) -> Vec<Image> {
     let mut pin = Solid::default();
     pin.positions = vec![frame.0, frame.1, (frame.0 + frame.1) * 0.5];
     pin.push_triangle([0, 1, 2], 0, &[]);
@@ -91,7 +98,10 @@ fn main() {
             files.push(a);
         }
     }
-    assert!(files.len() >= 2, "usage: bake_look SOURCE RESULT... [--sheet OUT.png]");
+    assert!(
+        files.len() >= 2,
+        "usage: bake_look SOURCE RESULT... [--sheet OUT.png]"
+    );
     let meshes: Vec<Vec<(Solid, Material)>> = files.iter().map(|f| read(f)).collect();
     let (mut lo, mut hi) = (DVec3::INFINITY, DVec3::NEG_INFINITY);
     for m in &meshes {
@@ -108,8 +118,14 @@ fn main() {
         unlit: true,
         ..Default::default()
     };
-    let colour: Vec<Vec<Image>> = meshes.iter().map(|m| render(m, (lo, hi), &d, false)).collect();
-    let mask: Vec<Vec<Image>> = meshes.iter().map(|m| render(m, (lo, hi), &d, true)).collect();
+    let colour: Vec<Vec<Image>> = meshes
+        .iter()
+        .map(|m| render(m, (lo, hi), &d, false))
+        .collect();
+    let mask: Vec<Vec<Image>> = meshes
+        .iter()
+        .map(|m| render(m, (lo, hi), &d, true))
+        .collect();
     let covered = |img: &Image, k: usize| img.rgba[k * 4..k * 4 + 3] == [0, 0, 0];
     for r in 1..meshes.len() {
         let mut diffs: Vec<f64> = Vec::new();
@@ -124,14 +140,22 @@ fn main() {
                 if !(a && b) {
                     continue;
                 }
-                let (p, q) = (&colour[0][v].rgba[k * 4..k * 4 + 3], &colour[r][v].rgba[k * 4..k * 4 + 3]);
-                let s: f64 = (0..3).map(|c| (f64::from(p[c]) - f64::from(q[c])).powi(2)).sum();
+                let (p, q) = (
+                    &colour[0][v].rgba[k * 4..k * 4 + 3],
+                    &colour[r][v].rgba[k * 4..k * 4 + 3],
+                );
+                let s: f64 = (0..3)
+                    .map(|c| (f64::from(p[c]) - f64::from(q[c])).powi(2))
+                    .sum();
                 diffs.push((s / 3.0).sqrt());
             }
         }
         diffs.sort_by(f64::total_cmp);
         let mean = diffs.iter().sum::<f64>() / diffs.len().max(1) as f64;
-        let p95 = diffs.get((diffs.len() * 95).div_ceil(100).saturating_sub(1)).copied().unwrap_or(0.0);
+        let p95 = diffs
+            .get((diffs.len() * 95).div_ceil(100).saturating_sub(1))
+            .copied()
+            .unwrap_or(0.0);
         println!(
             "{{\"result\": {:?}, \"mean\": {mean:.3}, \"p95\": {p95:.3}, \"both\": {}, \"one\": {one}}}",
             files[r],
