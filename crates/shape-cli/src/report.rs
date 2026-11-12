@@ -163,6 +163,20 @@ pub fn imported(format: &str, m: &Imported) -> String {
             object(&fields)
         })
         .collect();
+    // The file's clips, each once (parts skinned to one skeleton share
+    // them): its name, length and keys.
+    let mut clips: Vec<String> = Vec::new();
+    let mut seen: Vec<&str> = Vec::new();
+    for c in m.parts.iter().flat_map(|p| &p.clips) {
+        if !seen.contains(&c.name.as_str()) {
+            seen.push(&c.name);
+            clips.push(object(&[
+                ("name", string(&c.name)),
+                ("duration", format!("{}", c.duration())),
+                ("keys", c.times.len().to_string()),
+            ]));
+        }
+    }
     let images: Vec<String> = m
         .images
         .iter()
@@ -178,7 +192,7 @@ pub fn imported(format: &str, m: &Imported) -> String {
         })
         .collect();
     let triangles: usize = m.parts.iter().map(|p| p.solid.triangles.len()).sum();
-    object(&[
+    let mut fields = vec![
         ("format", string(format)),
         ("parts", array(&parts)),
         ("triangles", triangles.to_string()),
@@ -186,13 +200,20 @@ pub fn imported(format: &str, m: &Imported) -> String {
             "skinned",
             m.parts.iter().any(|p| p.solid.skin.is_some()).to_string(),
         ),
+    ];
+    // `clips` only on a file that has some.
+    if !clips.is_empty() {
+        fields.push(("clips", array(&clips)));
+    }
+    fields.extend([
         ("images", array(&images)),
         ("polygons_triangulated", m.polygons_triangulated.to_string()),
         (
             "skipped",
             array(&m.skipped.iter().map(|s| string(s)).collect::<Vec<_>>()),
         ),
-    ])
+    ]);
+    object(&fields)
 }
 
 /// A material's factors and maps, with the glTF factors its file left

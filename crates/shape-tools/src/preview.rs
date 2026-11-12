@@ -112,6 +112,10 @@ pub struct Preview {
     /// times its map and vertex colour. Edges and the ground stay unless
     /// [`Preview::no_edges`] and [`Preview::no_ground`] leave them out.
     pub unlit: bool,
+    /// The box the camera frames and the ground lies under, corner to
+    /// corner; `None` is the scene's own. One box for every frame of a
+    /// motion keeps the camera still while the scene moves in it.
+    pub frame: Option<(DVec3, DVec3)>,
 }
 
 /// Where a view looks from, in the scene's frame (kernel units, +Z up).
@@ -566,6 +570,13 @@ pub fn views(scene: &Scene, d: &Preview) -> Result<Views, ExportError> {
         // Nothing to draw: the background only.
         lo = DVec3::ZERO;
         hi = DVec3::ZERO;
+    }
+    if let Some((a, b)) = d.frame {
+        if !(a.is_finite() && b.is_finite()) {
+            return Err(ExportError::NotFinite("the preview's frame".into()));
+        }
+        lo = a.min(b);
+        hi = a.max(b);
     }
     let centre = (lo + hi) * 0.5;
     let radius = ((hi - lo) * 0.5).length().max(1e-9);

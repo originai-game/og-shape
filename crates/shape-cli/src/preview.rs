@@ -23,7 +23,7 @@ use crate::{Failure, Files, failed};
 
 /// The views and how to lay them out. The zero value is the kernel's
 /// default turntable (`shape_tools::Preview`) in one row.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PreviewDesc {
     /// The views.
     pub preview: Preview,
@@ -33,7 +33,20 @@ pub struct PreviewDesc {
     pub each: bool,
     /// The UV layout of each material instead of views.
     pub uv: Option<UvView>,
+    /// A skinned mesh file's clip to pose it by, by name; `""` with a
+    /// `time` or `frames` is the file's first. `None` draws the bind pose.
+    pub clip: Option<String>,
+    /// The time in the clip, seconds from its first key (held past its
+    /// ends).
+    pub time: f64,
+    /// This many frames of the clip, evenly from its start to its end
+    /// (the end left out, so a loop does not repeat a frame), one image
+    /// each, the camera still; 0 draws one pose at `time`.
+    pub frames: u32,
 }
+
+/// The most frames of one clip drawn at once.
+pub const MAX_FRAMES: u32 = 720;
 
 /// What [`render`] made.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -82,10 +95,18 @@ pub fn camera(c: &ViewCamera) -> String {
 /// placed, welded and each with its map.
 fn with_scene<T>(
     source: &Source,
+    pose: Option<(&str, f64)>,
     run: impl FnOnce(&Scene) -> Result<T, Failure>,
 ) -> Result<T, Failure> {
     match source {
         Source::Program(m) => {
+            if pose.is_some() {
+                return Err(Failure::Usage(
+                    "--clip, --time and --frames pose a skinned mesh file; a program is posed \
+                     by its own pose and clip ops"
+                        .into(),
+                ));
+            }
             let built = m.build().map_err(failed)?;
             run(&built.scene())
         }
@@ -94,6 +115,26 @@ fn with_scene<T>(
             // by exact position, a seam is no open edge (drawn as a line)
             // and no crease (shaded flat).
             let mut placed = mesh.placed()?;
+            if let Some((clip, time)) = pose {
+                // Each skinned part by the clip of that name among its own.
+                let mut any = false;
+                for ((_, s), p) in placed.iter_mut().zip(&mesh.imported.parts) {
+                    let found = match clip {
+                        "" => p.clips.first(),
+                        name => p.clips.iter().find(|c| c.name == name),
+                    };
+                    if let Some(m) = found.and_then(|c| c.at(time)) {
+                        *s = shape_skin::pose_by(s, &m).map_err(failed)?;
+                        any = true;
+                    }
+                }
+                if !any {
+                    return Err(Failure::Failed(format!(
+                        "no clip {clip:?}; the file's clips: {:?}",
+                        clip_names(mesh)
+                    )));
+                }
+            }
             for (_, s) in &mut placed {
                 s.canonicalize().map_err(failed)?;
             }
@@ -113,9 +154,95 @@ fn with_scene<T>(
     }
 }
 
-/// The turntable, its views, or the UV layouts, as PNG bytes.
+/// The names of a mesh file's clips, each once, in file order.
+fn clip_names(mesh: &crate::source::Mesh) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for c in mesh.imported.parts.iter().flat_map(|p| &p.clips) {
+        if !names.contains(&c.name) {
+            names.push(c.name.clone());
+        }
+    }
+    names
+}
+
+/// The turntable, its views, or the UV layouts, as PNG bytes; with
+/// `frames`, a clip's frames, each as [`render`] draws one pose.
 pub fn render(source: &Source, d: &PreviewDesc) -> Result<Rendered, Failure> {
-    with_scene(source, |scene| {
+    if d.frames == 0 {
+        return render_pose(source, d, d.clip.as_deref().map(|c| (c, d.time)));
+    }
+    if d.frames > MAX_FRAMES {
+        return Err(Failure::Usage(format!(
+            "--frames {}: at most {MAX_FRAMES}",
+            d.frames
+        )));
+    }
+    let Source::Mesh(mesh) = source else {
+        return Err(Failure::Usage(
+            "--frames draws a skinned mesh file's clip".into(),
+        ));
+    };
+    let name = d.clip.as_deref().unwrap_or("");
+    let clip = mesh
+        .imported
+        .parts
+        .iter()
+        .flat_map(|p| &p.clips)
+        .find(|c| name.is_empty() || c.name == name)
+        .ok_or_else(|| {
+            Failure::Failed(format!(
+                "no clip {name:?}; the file's clips: {:?}",
+                clip_names(mesh)
+            ))
+        })?;
+    let (name, duration) = (clip.name.clone(), clip.duration());
+    let times: Vec<f64> = (0..d.frames)
+        .map(|k| duration * (f64::from(k) / f64::from(d.frames)))
+        .collect();
+    // One box for all the frames: the camera stands still.
+    let mut frame: Option<(shape_core::DVec3, shape_core::DVec3)> = None;
+    for &t in &times {
+        with_scene(source, Some((&name, t)), |scene| {
+            for p in scene.parts.iter().flat_map(|p| &p.solid.positions) {
+                frame = Some(match frame {
+                    None => (*p, *p),
+                    Some((lo, hi)) => (lo.min(*p), hi.max(*p)),
+                });
+            }
+            Ok(())
+        })?;
+    }
+    let mut one = d.clone();
+    one.preview.frame = frame;
+    if one.preview.views == 0 {
+        one.preview.views = 1;
+    }
+    // A frame is one image: its views side by side.
+    one.each = false;
+    let mut out = Rendered::default();
+    for (k, &t) in times.iter().enumerate() {
+        let r = render_pose(source, &one, Some((&name, t)))?;
+        for (png, about) in r.images {
+            let about = object(&[
+                ("clip", string(&name)),
+                ("frame", k.to_string()),
+                ("time", num(t)),
+                ("shows", about),
+            ]);
+            out.images.push((png, about));
+        }
+        out.undrawn = r.undrawn;
+    }
+    Ok(out)
+}
+
+/// [`render`] of one pose: the bind pose, or a clip at a time.
+fn render_pose(
+    source: &Source,
+    d: &PreviewDesc,
+    pose: Option<(&str, f64)>,
+) -> Result<Rendered, Failure> {
+    with_scene(source, pose, |scene| {
         if let Some(uv) = &d.uv {
             let layouts = uv_view(scene, uv).map_err(failed)?;
             if layouts.is_empty() {
@@ -244,6 +371,9 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         "--uv",
         "--uv-size",
         "--uvs",
+        "--clip",
+        "--time",
+        "--frames",
         IMPORT_OPTIONS[0],
         IMPORT_OPTIONS[1],
         IMPORT_OPTIONS[2],
@@ -264,6 +394,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
             no_ground: a.switch("--no-ground"),
             fov: a.number("--fov")?,
             unlit: a.switch("--unlit"),
+            frame: None,
         },
         columns: a.number("--columns")?.unwrap_or(0),
         each: a.switch("--each"),
@@ -274,6 +405,16 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         } else {
             None
         },
+        // `--time` or `--frames` alone take the file's first clip.
+        clip: match a.value(&["--clip"])? {
+            Some(c) => Some(c.to_string()),
+            None if a.value(&["--time"])?.is_some() || a.value(&["--frames"])?.is_some() => {
+                Some(String::new())
+            }
+            None => None,
+        },
+        time: a.number("--time")?.unwrap_or(0.0),
+        frames: a.number("--frames")?.unwrap_or(0),
     };
     let source = load_uvs(&Local, &a.input()?, &a.import()?, a.switch("--uvs"))?;
     write(&Local, &out, &render(&source, &d)?)

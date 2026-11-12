@@ -438,6 +438,32 @@ pub fn pose(s: &Solid, pose: &Pose) -> Result<Solid, RigError> {
     Ok(out)
 }
 
+/// The mesh moved by skinning matrices given outright, one a bone (a
+/// file's clip at a time, `SkinClip::at`), as [`pose`] moves it by a
+/// pose's: a snapshot without a skin.
+pub fn pose_by(s: &Solid, matrices: &[Mat4]) -> Result<Solid, RigError> {
+    let skin = s.skin.as_ref().ok_or(RigError::NotSkinned)?;
+    skin.check(s.positions.len())?;
+    if matrices.len() != skin.bones.len() {
+        return Err(RigError::NotFinite(format!(
+            "{} matrices for {} bones",
+            matrices.len(),
+            skin.bones.len()
+        )));
+    }
+    let mut out = s.clone();
+    out.skin = None;
+    for (p, w) in out.positions.iter_mut().zip(&skin.weights) {
+        let rest = *p;
+        let mut q = DVec3::ZERO;
+        for (b, x) in w.pairs() {
+            q += apply(&matrices[b as usize], rest) * x;
+        }
+        *p = q;
+    }
+    Ok(out)
+}
+
 /// How a pose deforms the triangles (`docs/design.md` §7: measurements,
 /// no thresholds).
 #[derive(Clone, Debug, Default, PartialEq)]

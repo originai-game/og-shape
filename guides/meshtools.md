@@ -20,7 +20,12 @@ import → join → repair → decimate → place → unwrap → measure → pre
    through repair, decimation blends them, and the commands write it
    back as a GLB with its bones and skin (parts whose skins hold
    different bones of one skeleton are joined on it). `process --bake`
-   is not done on a skinned mesh: keep its UVs. A
+   is not done on a skinned mesh: keep its UVs. The file's
+   animations are read too: `import` lists `clips` (name, seconds,
+   samples), and `preview` with `clip` and `time` (CLI `--clip NAME
+   --time T`) draws the mesh as the clip has it then; `frames: 24`
+   (`--frames 24`) draws that many frames over the clip, one PNG each
+   with the camera still. Clips are not written to the output yet. A
    skeleton under a uniformly scaled armature (centimetres)
    has the scale taken out; the import report (`skin_scales`) says so.
    UVs (the first set), vertex colours (glTF `COLOR_0`, OBJ

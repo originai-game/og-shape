@@ -184,6 +184,11 @@ pub struct ImportedPart {
     /// specification's defaults (`metallicFactor`: 1, a metal), by their
     /// glTF names; empty for OBJ and FBX.
     pub defaults: Vec<String>,
+    /// The file's animations of this part's skin, each sampled at its key
+    /// times (`shape_mesh::SkinClip`): glTF `animations` on the skin's
+    /// joints and the nodes above them. Empty for a part without a skin,
+    /// and for OBJ.
+    pub clips: Vec<shape_mesh::SkinClip>,
 }
 
 /// What an import read.
@@ -471,6 +476,104 @@ fn conjugate(m: &Affine, unit: f64) -> Affine {
         t: from_y_up(m.t) * unit,
     }
 }
+
+/// A translation, a rotation (a quaternion x, y, z, w, made unit) and a
+/// scale as one map: scale, then turn, then move (glTF's order).
+fn trs(t: DVec3, q: [f64; 4], s: DVec3) -> Affine {
+    let len = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
+    let (x, y, z, w) = if len > 0.0 {
+        (q[0] / len, q[1] / len, q[2] / len, q[3] / len)
+    } else {
+        (0.0, 0.0, 0.0, 1.0)
+    };
+    let cx = DVec3::new(
+        1.0 - 2.0 * (y * y + z * z),
+        2.0 * (x * y + z * w),
+        2.0 * (x * z - y * w),
+    );
+    let cy = DVec3::new(
+        2.0 * (x * y - z * w),
+        1.0 - 2.0 * (x * x + z * z),
+        2.0 * (y * z + x * w),
+    );
+    let cz = DVec3::new(
+        2.0 * (x * z + y * w),
+        2.0 * (y * z - x * w),
+        1.0 - 2.0 * (x * x + y * y),
+    );
+    Affine {
+        x: cx * s.x,
+        y: cy * s.y,
+        z: cz * s.z,
+        t,
+    }
+}
+
+/// A curve of one node's translation, rotation or scale: key times and
+/// 3 or 4 numbers a key.
+struct Track {
+    times: Vec<f64>,
+    values: Vec<f64>,
+    width: usize,
+    step: bool,
+}
+
+impl Track {
+    /// The value at `time`: held before the first key and after the last;
+    /// between two, straight (a rotation along the shorter way, made unit
+    /// by [`trs`]), or the earlier key's for a stepped curve.
+    fn at(&self, time: f64) -> [f64; 4] {
+        let w = self.width;
+        let key = |k: usize| {
+            let mut v = [0.0; 4];
+            v[..w].copy_from_slice(&self.values[k * w..k * w + w]);
+            v
+        };
+        let n = self.times.len();
+        let k = self.times.partition_point(|&t| t <= time);
+        if k == 0 {
+            return key(0);
+        }
+        if k >= n || self.step {
+            return key(k - 1);
+        }
+        let (t0, t1) = (self.times[k - 1], self.times[k]);
+        let f = if t1 > t0 {
+            (time - t0) / (t1 - t0)
+        } else {
+            0.0
+        };
+        let (a, mut b) = (key(k - 1), key(k));
+        if w == 4 && a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0.0 {
+            b = b.map(|x| -x);
+        }
+        let mut v = [0.0; 4];
+        for i in 0..w {
+            v[i] = a[i] + (b[i] - a[i]) * f;
+        }
+        v
+    }
+}
+
+/// The space a skin was read into: what a clip needs to follow it.
+pub(crate) struct SkinSpace {
+    /// Each bone's node in the file, in the skin's bone order.
+    nodes: Vec<usize>,
+    /// Each bone's inverse bind matrix as the file has it (glTF space).
+    ibms: Vec<Affine>,
+    /// Kernel space: from where the solid's vertices stand to where the
+    /// file's own mesh coordinates would put them (the identity unless a
+    /// scale was taken out of the bones, which moved the vertices to
+    /// their bind pose).
+    unbind: Affine,
+}
+
+/// More keys than this in one animation and it is sampled evenly instead
+/// of at every key time.
+pub(crate) const MAX_KEYS: usize = 4096;
+
+/// How densely an animation is sampled between its own keys.
+pub(crate) const SAMPLES_A_SECOND: f64 = 60.0;
 
 pub(crate) fn unique(name: &str, used: &mut BTreeMap<String, ()>) -> String {
     let base = if name.is_empty() { "part" } else { name };
@@ -818,34 +921,8 @@ impl Doc<'_> {
             .get("rotation")
             .nums()
             .filter(|v| v.len() == 4)
-            .unwrap_or_else(|| vec![0.0, 0.0, 0.0, 1.0]);
-        let len = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
-        let (x, y, z, w) = if len > 0.0 {
-            (q[0] / len, q[1] / len, q[2] / len, q[3] / len)
-        } else {
-            (0.0, 0.0, 0.0, 1.0)
-        };
-        let cx = DVec3::new(
-            1.0 - 2.0 * (y * y + z * z),
-            2.0 * (x * y + z * w),
-            2.0 * (x * z - y * w),
-        );
-        let cy = DVec3::new(
-            2.0 * (x * y - z * w),
-            1.0 - 2.0 * (x * x + z * z),
-            2.0 * (y * z + x * w),
-        );
-        let cz = DVec3::new(
-            2.0 * (x * z + y * w),
-            2.0 * (y * z - x * w),
-            1.0 - 2.0 * (x * x + y * y),
-        );
-        Affine {
-            x: cx * s.x,
-            y: cy * s.y,
-            z: cz * s.z,
-            t,
-        }
+            .map_or([0.0, 0.0, 0.0, 1.0], |v| [v[0], v[1], v[2], v[3]]);
+        trs(t, q, s)
     }
 
     fn read(&self) -> Result<Imported, ImportError> {
@@ -927,7 +1004,9 @@ impl Doc<'_> {
             let weighted = raw.iter().any(|r| r.iter().any(|p| p.1 > 0.0));
             match n.get("skin").index() {
                 Some(k) => {
-                    let (skin, scaled) = self.skin(k, &name, &raw, &part.solid.positions)?;
+                    let ((skin, scaled), space) =
+                        self.skin(k, &name, &raw, &part.solid.positions)?;
+                    part.clips = self.clips(&space)?;
                     if let Some((placed, info)) = scaled {
                         // Where the file's bind pose puts the vertices.
                         part.solid.positions = placed;
@@ -998,7 +1077,7 @@ impl Doc<'_> {
         name: &str,
         raw: &[Vec<(u32, f64)>],
         positions: &[DVec3],
-    ) -> Result<ReadSkin, ImportError> {
+    ) -> Result<(ReadSkin, SkinSpace), ImportError> {
         let skin = self.json.get("skins").at(k);
         let joints: Vec<usize> = skin
             .get("joints")
@@ -1126,6 +1205,7 @@ impl Doc<'_> {
         });
         let mut bones = Vec::with_capacity(joints.len());
         let mut scaled = None;
+        let mut unbind = Affine::IDENTITY;
         if rigid {
             // Rest frames are the world transforms; the file's inverse bind
             // matrices are kept as given.
@@ -1205,6 +1285,9 @@ impl Doc<'_> {
                 rests.push(conjugate(&rigid, 1000.0));
             }
             let kbind = conjugate(&bind, 1000.0);
+            unbind = affine_inverse(&kbind).ok_or_else(|| {
+                ImportError::Unsupported(format!("{name}: its bind pose flattens the mesh"))
+            })?;
             let placed: Vec<DVec3> = positions.iter().map(|p| kbind.apply(*p)).collect();
             // How far the file's own nodes stand from that bind pose, at the
             // vertices each bone weights: 0 to rounding when the file is
@@ -1278,7 +1361,194 @@ impl Doc<'_> {
         let skin = Skin { bones, weights };
         skin.check(raw.len())
             .map_err(|e| ImportError::Unsupported(format!("{name}: its skin: {e}")))?;
-        Ok((skin, scaled))
+        let space = SkinSpace {
+            nodes: order.iter().map(|&ji| joints[ji]).collect(),
+            ibms: order
+                .iter()
+                .enumerate()
+                .map(|(b, &ji)| ibm_of(ji, &names[b]))
+                .collect::<Result<_, _>>()?,
+            unbind,
+        };
+        Ok(((skin, scaled), space))
+    }
+
+    /// The file's animations as they move the skin read into `space`:
+    /// each sampled at its own key times and sixty times a second between
+    /// them (or evenly, past [`MAX_KEYS`]).
+    /// A channel on a node that is no ancestor of a bone moves nothing
+    /// here. A cubic-spline curve is read through its key values, straight
+    /// between them.
+    fn clips(&self, space: &SkinSpace) -> Result<Vec<shape_mesh::SkinClip>, ImportError> {
+        let nodes = self.json.get("nodes").items();
+        let parents = self.parents();
+        // The nodes that move a bone: the bones and all above them.
+        let mut above = vec![false; nodes.len()];
+        for &j in &space.nodes {
+            let mut at = Some(j);
+            let mut steps = 0;
+            while let Some(i) = at {
+                if above[i] || steps > nodes.len() {
+                    break;
+                }
+                above[i] = true;
+                at = parents[i];
+                steps += 1;
+            }
+        }
+        let mut out = Vec::new();
+        let mut used = BTreeMap::new();
+        for (ai, anim) in self.json.get("animations").items().iter().enumerate() {
+            // Per node: its translation, rotation and scale curves.
+            let mut tracks: BTreeMap<usize, [Option<Track>; 3]> = BTreeMap::new();
+            let mut times: Vec<f64> = Vec::new();
+            for ch in anim.get("channels").items() {
+                let target = ch.get("target");
+                let (Some(node), Some(path)) =
+                    (target.get("node").index(), target.get("path").str())
+                else {
+                    continue;
+                };
+                let (slot, width) = match path {
+                    "translation" => (0, 3),
+                    "rotation" => (1, 4),
+                    "scale" => (2, 3),
+                    _ => continue,
+                };
+                if !above.get(node).copied().unwrap_or(false)
+                    || !nodes[node].get("matrix").is_null()
+                {
+                    continue;
+                }
+                let sampler = anim
+                    .get("samplers")
+                    .at(ch.get("sampler").index().unwrap_or(usize::MAX));
+                let (Some(input), Some(output)) =
+                    (sampler.get("input").index(), sampler.get("output").index())
+                else {
+                    continue;
+                };
+                let (t, tw) = self.accessor(input)?;
+                let (mut v, vw) = self.accessor(output)?;
+                let interpolation = sampler.get("interpolation").str().unwrap_or("LINEAR");
+                if interpolation == "CUBICSPLINE" && v.len() == t.len() * width * 3 {
+                    // In-tangent, value, out-tangent a key: the value.
+                    v = (0..t.len())
+                        .flat_map(|k| v[(k * 3 + 1) * width..(k * 3 + 2) * width].to_vec())
+                        .collect();
+                }
+                if tw != 1 || vw != width || t.is_empty() || v.len() != t.len() * width {
+                    return Err(fmt_err(format!(
+                        "animation {ai}: a channel's times and values do not match"
+                    )));
+                }
+                if t.iter().any(|x| !x.is_finite()) || t.windows(2).any(|w| w[1] < w[0]) {
+                    return Err(fmt_err(format!(
+                        "animation {ai}: a channel's times do not rise"
+                    )));
+                }
+                times.extend(&t);
+                tracks.entry(node).or_insert([None, None, None])[slot] = Some(Track {
+                    times: t,
+                    values: v,
+                    width,
+                    step: interpolation == "STEP",
+                });
+            }
+            if tracks.is_empty() {
+                continue;
+            }
+            // Between samples the matrices run straight, which is not how
+            // a bone turns between two keys far apart: sixty samples a
+            // second go in beside the keys' own times.
+            let (start, end) = times
+                .iter()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &t| {
+                    (lo.min(t), hi.max(t))
+                });
+            let steps = ((end - start) * SAMPLES_A_SECOND).ceil();
+            if steps >= 1.0 && steps < MAX_KEYS as f64 {
+                times.extend(
+                    (1..steps as usize).map(|k| start + (end - start) * (k as f64 / steps)),
+                );
+            }
+            times.sort_by(f64::total_cmp);
+            times.dedup();
+            if times.len() > MAX_KEYS {
+                let (first, last) = (times[0], times[times.len() - 1]);
+                times = (0..MAX_KEYS)
+                    .map(|k| first + (last - first) * (k as f64 / (MAX_KEYS - 1) as f64))
+                    .collect();
+            }
+            let mut poses = Vec::with_capacity(times.len());
+            for &time in &times {
+                // Each node above a bone, in the world at this time.
+                let mut world: Vec<Option<Affine>> = vec![None; nodes.len()];
+                let local = |i: usize| -> Affine {
+                    let n = &nodes[i];
+                    let Some(tr) = tracks.get(&i) else {
+                        return self.local(n);
+                    };
+                    let rest = |key: &str, d: [f64; 4], w: usize| {
+                        n.get(key).nums().filter(|v| v.len() == w).map_or(d, |v| {
+                            let mut a = d;
+                            a[..w].copy_from_slice(&v);
+                            a
+                        })
+                    };
+                    let t = tr[0]
+                        .as_ref()
+                        .map_or(rest("translation", [0.0; 4], 3), |c| c.at(time));
+                    let q = tr[1]
+                        .as_ref()
+                        .map_or(rest("rotation", [0.0, 0.0, 0.0, 1.0], 4), |c| c.at(time));
+                    let s = tr[2]
+                        .as_ref()
+                        .map_or(rest("scale", [1.0, 1.0, 1.0, 0.0], 3), |c| c.at(time));
+                    trs(
+                        DVec3::new(t[0], t[1], t[2]),
+                        q,
+                        DVec3::new(s[0], s[1], s[2]),
+                    )
+                };
+                let mut pose = Vec::with_capacity(space.nodes.len());
+                for (b, &j) in space.nodes.iter().enumerate() {
+                    // Up from the bone to a node already placed, then down.
+                    let mut chain = Vec::new();
+                    let mut at = Some(j);
+                    while let Some(i) = at {
+                        if world[i].is_some() || chain.len() > nodes.len() {
+                            break;
+                        }
+                        chain.push(i);
+                        at = parents[i];
+                    }
+                    let mut m = at.and_then(|i| world[i]).unwrap_or(Affine::IDENTITY);
+                    for &i in chain.iter().rev() {
+                        m = m.then(&local(i));
+                        world[i] = Some(m);
+                    }
+                    let k = conjugate(&m.then(&space.ibms[b]), 1000.0).then(&space.unbind);
+                    pose.push([
+                        k.x.x, k.x.y, k.x.z, 0.0, k.y.x, k.y.y, k.y.z, 0.0, k.z.x, k.z.y, k.z.z,
+                        0.0, k.t.x, k.t.y, k.t.z, 1.0,
+                    ]);
+                }
+                poses.push(pose);
+            }
+            let name = anim
+                .get("name")
+                .str()
+                .map_or_else(|| format!("animation{ai}"), str::to_string);
+            // From 0: a clip's time is from its first key.
+            let first = times[0];
+            out.push(shape_mesh::SkinClip {
+                name: unique(&name, &mut used),
+                times: times.iter().map(|t| t - first).collect(),
+                poses,
+            });
+        }
+        Ok(out)
     }
 
     fn part(
@@ -1442,6 +1712,7 @@ impl Doc<'_> {
         };
         Ok((
             ImportedPart {
+                clips: Vec::new(),
                 name: name.to_string(),
                 transform: conjugate(world, 1000.0),
                 solid: Solid {
@@ -1691,6 +1962,7 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
             }
             globals.push(b.global);
             out.parts.push(ImportedPart {
+                clips: Vec::new(),
                 name: b.name,
                 solid: Solid {
                     uvs: if b.all_uv { Some(b.uvs) } else { None },

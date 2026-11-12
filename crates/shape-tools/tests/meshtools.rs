@@ -714,3 +714,59 @@ fn skinned_parts_join_by_bone_name() {
     bare.solid.skin = None;
     assert!(join(&[part("a", DVec3::ZERO), bare]).is_err());
 }
+
+/// A file's animation is read as a clip of the part's skin: at each time,
+/// the matrices that move the bind pose's vertices to where the file's
+/// own nodes, turned and moved by its curves, would. The same under an
+/// armature scaled for centimetres.
+#[test]
+fn a_file_s_animation_poses_its_skin() {
+    for armature in [None, Some([0.01f32; 3])] {
+        let imported = import(
+            &skinned::skinned_glb_animated(armature),
+            &Import::default(),
+            &no_files,
+        )
+        .unwrap();
+        let part = &imported.parts[0];
+        assert_eq!(part.clips.len(), 1);
+        let clip = &part.clips[0];
+        assert_eq!(clip.name, "bend");
+        assert_eq!(clip.duration(), 1.0);
+        // Sixty samples a second between the two keys a second apart.
+        assert_eq!(clip.times.len(), 61);
+        let posed = |time: f64| {
+            let s = shape_skin::pose_by(&part.solid, &clip.at(time).unwrap()).unwrap();
+            // The vertex that stands at (0, 0, 500) in the bind pose (the
+            // file's (0, 0.5, 0)), on the knee; and the one at the origin,
+            // on the hip.
+            let find = |rest: DVec3| {
+                let i = part
+                    .solid
+                    .positions
+                    .iter()
+                    .position(|p| (*p - rest).length() < 1e-6)
+                    .unwrap();
+                s.positions[i]
+            };
+            (find(DVec3::new(0.0, 0.0, 500.0)), find(DVec3::ZERO))
+        };
+        let near = |a: DVec3, b: DVec3| assert!((a - b).length() < 0.05, "{a:?} {b:?}");
+        // At the start nothing has moved.
+        let (top, foot) = posed(0.0);
+        near(top, DVec3::new(0.0, 0.0, 500.0));
+        near(foot, DVec3::ZERO);
+        // Halfway: the knee (at z = 250) has turned 45° about the file's
+        // z (the kernel's −y axis... the turn takes +z to −x), and the hip
+        // has stepped 100 along x, taking the knee with it.
+        let (top, foot) = posed(0.5);
+        let d = 250.0 * shape_core::trig::sin(shape_core::trig::PI / 4.0);
+        near(top, DVec3::new(100.0 - d, 0.0, 250.0 + d));
+        near(foot, DVec3::new(100.0, 0.0, 0.0));
+        // At the end, and held after it: a quarter turn.
+        for time in [1.0, 7.0] {
+            let (top, _) = posed(time);
+            near(top, DVec3::new(100.0 - 250.0, 0.0, 250.0));
+        }
+    }
+}

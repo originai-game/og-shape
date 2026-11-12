@@ -19,6 +19,7 @@ path = "src/main.rs"
 shape-core.workspace = true
 shape-mesh.workspace = true
 shape-model.workspace = true
+shape-skin.workspace = true
 shape-tools.workspace = true
 serde_json.workspace = true
 

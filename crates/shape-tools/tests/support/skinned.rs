@@ -152,3 +152,64 @@ pub fn skinned_tube() -> shape_mesh::Solid {
     s.canonicalize().unwrap();
     s
 }
+
+/// [`skinned_glb`] with one animation, `bend`: the knee turns a quarter
+/// turn about the file's z in one second (two keys, linear), and the hip
+/// has a stepped translation channel that moves it 0.1 along x at 0.5 s.
+/// With `armature`, under a scaled armature node as
+/// [`skinned_glb_under`] writes it.
+pub fn skinned_glb_animated(armature: Option<[f32; 3]>) -> Vec<u8> {
+    let glb = skinned_glb_under(true, armature);
+    let json_len = u32::from_le_bytes([glb[12], glb[13], glb[14], glb[15]]) as usize;
+    let json = String::from_utf8(glb[20..20 + json_len].to_vec()).unwrap();
+    let mut bin = glb[20 + json_len + 8..].to_vec();
+    let old_len = bin.len();
+    let unit = armature.map_or(1.0, |s| (1.0 / s[0]).round());
+    let mut f32s = |v: &[f32]| v.iter().for_each(|x| bin.extend(x.to_le_bytes()));
+    // Times 0, 1; rotations: none, a quarter turn about z.
+    f32s(&[0.0, 1.0]);
+    let h = std::f32::consts::FRAC_1_SQRT_2;
+    f32s(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, h, h]);
+    // Times 0, 0.5; translations of the hip: none, 0.1 along x.
+    f32s(&[0.0, 0.5]);
+    f32s(&[0.0, 0.0, 0.0, 0.1 * unit, 0.0, 0.0]);
+    let at = |k: usize| old_len + k;
+    let views = format!(
+        r#",{{"buffer":0,"byteOffset":{},"byteLength":8}},{{"buffer":0,"byteOffset":{},"byteLength":32}},{{"buffer":0,"byteOffset":{},"byteLength":8}},{{"buffer":0,"byteOffset":{},"byteLength":24}}],
+"accessors""#,
+        at(0),
+        at(8),
+        at(40),
+        at(48)
+    );
+    let accessors = r#",{"bufferView":5,"componentType":5126,"count":2,"type":"SCALAR"},
+{"bufferView":6,"componentType":5126,"count":2,"type":"VEC4"},
+{"bufferView":7,"componentType":5126,"count":2,"type":"SCALAR"},
+{"bufferView":8,"componentType":5126,"count":2,"type":"VEC3"}],
+"animations":[{"name":"bend","channels":[{"sampler":0,"target":{"node":2,"path":"rotation"}},
+{"sampler":1,"target":{"node":1,"path":"translation"}}],
+"samplers":[{"input":5,"output":6,"interpolation":"LINEAR"},{"input":7,"output":8,"interpolation":"STEP"}]}]}"#;
+    let json = json.trim_end();
+    let json = json
+        .replace(
+            &format!(r#""buffers":[{{"byteLength":{old_len}}}]"#),
+            &format!(r#""buffers":[{{"byteLength":{}}}]"#, bin.len()),
+        )
+        .replacen("],\n\"accessors\"", &views, 1);
+    let body = json.strip_suffix("]}").unwrap();
+    let mut json = format!("{body}{accessors}").into_bytes();
+    while json.len() % 4 != 0 {
+        json.push(b' ');
+    }
+    let total = 12 + 8 + json.len() + 8 + bin.len();
+    let mut out = b"glTF".to_vec();
+    out.extend(2u32.to_le_bytes());
+    out.extend((total as u32).to_le_bytes());
+    out.extend((json.len() as u32).to_le_bytes());
+    out.extend(b"JSON");
+    out.extend(json);
+    out.extend((bin.len() as u32).to_le_bytes());
+    out.extend(b"BIN\0");
+    out.extend(bin);
+    out
+}

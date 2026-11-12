@@ -382,6 +382,7 @@ dependencies = [
  "shape-core",
  "shape-mesh",
  "shape-model",
+ "shape-skin",
  "shape-tools",
 ]
 

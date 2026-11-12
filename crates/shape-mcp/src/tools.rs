@@ -680,6 +680,23 @@ fn preview_schema() -> Value {
             ),
         ),
         (
+            "clip",
+            json!({"type": "string", "description": "A skinned mesh file's clip to pose it by \
+                (its names are in `import`'s `clips`); with `time` or `frames` and no `clip`, \
+                the file's first. Without any of the three, the bind pose."}),
+        ),
+        (
+            "time",
+            num("Seconds into the clip, from its first key (held past its ends)."),
+        ),
+        (
+            "frames",
+            int(
+                "This many frames of the clip, evenly from its start to its end (the end left \
+                 out), one PNG each with the camera still; at most 720.",
+            ),
+        ),
+        (
             "uv",
             boolean(
                 "Draw the UV layout of each material instead: chart outlines over its map, \
@@ -1029,12 +1046,21 @@ fn preview_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<
             no_ground: a.flag("no_ground")?,
             fov,
             unlit: a.flag("unlit")?,
+            frame: None,
         },
         columns: a.u32("columns")?,
         each: a.flag("each")?,
         uv: uv.then(|| UvView {
             size: a.u32("uv_size").unwrap_or(0),
         }),
+        // `time` or `frames` alone take the file's first clip.
+        clip: match a.string("clip")? {
+            Some(c) => Some(c.to_string()),
+            None if a.opt_num("time")?.is_some() || a.u32("frames")? > 0 => Some(String::new()),
+            None => None,
+        },
+        time: a.num("time")?,
+        frames: a.u32("frames")?,
     };
     let rendered = render(&loaded(server, a)?, &d)?;
     let out = a.path("out")?;

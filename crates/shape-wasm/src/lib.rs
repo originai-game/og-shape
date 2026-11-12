@@ -120,6 +120,7 @@ impl Model {
             no_ground,
             fov: (fov > 0.0).then_some(fov),
             unlit,
+            frame: None,
         };
         let images = self.session.model().preview(&d).map_err(js)?;
         let columns = if columns == 0 {

@@ -295,6 +295,64 @@ impl Skin {
     }
 }
 
+/// A motion of a skin over time, as it was read from a file: at each key
+/// time, every bone's skinning matrix (solid coordinates at rest to
+/// solid coordinates then; what `Σ weight · matrix` moves a vertex by).
+///
+/// The file's curves are sampled at their own key times when it is read,
+/// so whatever drives a bone there (a chain of nodes, an easing curve) is
+/// in the samples, and between two keys the matrices run straight. The
+/// matrices need not be rigid: a bone the file scales is scaled.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SkinClip {
+    /// The clip's name in the file.
+    pub name: String,
+    /// The key times, in seconds, rising.
+    pub times: Vec<f64>,
+    /// Per key, per bone (in the skin's order): the skinning matrix.
+    pub poses: Vec<Vec<Mat4>>,
+}
+
+impl SkinClip {
+    /// The last key's time; 0 for a clip without keys.
+    pub fn duration(&self) -> f64 {
+        self.times.last().copied().unwrap_or(0.0)
+    }
+
+    /// Every bone's skinning matrix at `time`: the first key's before it,
+    /// the last key's after it, between two keys their matrices mixed
+    /// element by element. `None` for a clip without keys.
+    pub fn at(&self, time: f64) -> Option<Vec<Mat4>> {
+        let last = self.times.len().checked_sub(1)?;
+        let k = self.times.partition_point(|&t| t <= time);
+        if k == 0 {
+            return self.poses.first().cloned();
+        }
+        if k > last {
+            return self.poses.get(last).cloned();
+        }
+        let (t0, t1) = (self.times[k - 1], self.times[k]);
+        let f = if t1 > t0 {
+            (time - t0) / (t1 - t0)
+        } else {
+            0.0
+        };
+        let (a, b) = (self.poses.get(k - 1)?, self.poses.get(k)?);
+        Some(
+            a.iter()
+                .zip(b)
+                .map(|(x, y)| {
+                    let mut m = [0.0; 16];
+                    for i in 0..16 {
+                        m[i] = x[i] + (y[i] - x[i]) * f;
+                    }
+                    m
+                })
+                .collect(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

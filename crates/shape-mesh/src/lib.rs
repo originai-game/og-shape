@@ -10,7 +10,7 @@ pub mod skin;
 
 pub use measure::Measures;
 pub use names::{LookupError, Names, Tag};
-pub use skin::{Bone, Skin, SkinError, Weights};
+pub use skin::{Bone, Skin, SkinClip, SkinError, Weights};
 
 use std::collections::BTreeMap;
 

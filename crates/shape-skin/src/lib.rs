@@ -40,7 +40,8 @@ mod rig;
 
 pub use mat::{apply, apply_vector, mul, turn};
 pub use rig::{
-    Pose, PoseMeasures, Rig, RigBone, RigError, Turn, measure_pose, pose, skin, skin_matrices,
+    Pose, PoseMeasures, Rig, RigBone, RigError, Turn, measure_pose, pose, pose_by, skin,
+    skin_matrices,
 };
 
 #[cfg(test)]

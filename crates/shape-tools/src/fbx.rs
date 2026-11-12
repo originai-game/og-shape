@@ -17,7 +17,8 @@
 //! are listed as skipped), the first UV layer as `Solid::uvs`,
 //! and skins: a `Skin` deformer's clusters as bones, parents
 //! first, their rest frames and inverse bind matrices from the clusters'
-//! `Transform` and `TransformLink`, their `Indexes` and `Weights` as
+//! `TransformLink` (the bone at bind time) and `Transform` (the mesh
+//! then, in the bone's space), their `Indexes` and `Weights` as
 //! weights, on the part's `Solid::skin` in the mesh's own coordinates (a
 //! bone scaled at bind time is refused). Skipped and listed: blend
 //! shapes, NURBS and other geometry, vertex colours. FBX 6 and
@@ -522,6 +523,17 @@ fn transpose(m: &Affine) -> Affine {
 /// FBX's local transform of a model:
 /// `T · Roff · Rp · Rpre · R · Rpost⁻¹ · Rp⁻¹ · Soff · Sp · S · Sp⁻¹`.
 fn local(m: &Node) -> Affine {
+    local_with(
+        m,
+        m.p70_vec("Lcl Translation", DVec3::ZERO),
+        m.p70_vec("Lcl Rotation", DVec3::ZERO),
+        m.p70_vec("Lcl Scaling", DVec3::ONE),
+    )
+}
+
+/// [`local`] with the model's translation, rotation (Euler degrees, in
+/// its own order) and scaling given: what an animation curve changes.
+fn local_with(m: &Node, lcl_t: DVec3, lcl_r: DVec3, lcl_s: DVec3) -> Affine {
     let v = |k: &str| m.p70_vec(k, DVec3::ZERO);
     let order = m
         .p70("RotationOrder")
@@ -530,16 +542,16 @@ fn local(m: &Node) -> Affine {
         .unwrap_or(0);
     let (rp, sp) = (v("RotationPivot"), v("ScalingPivot"));
     let chain = [
-        translate(v("Lcl Translation")),
+        translate(lcl_t),
         translate(v("RotationOffset")),
         translate(rp),
         euler(v("PreRotation"), 0),
-        euler(v("Lcl Rotation"), order),
+        euler(lcl_r, order),
         transpose(&euler(v("PostRotation"), 0)),
         translate(-rp),
         translate(v("ScalingOffset")),
         translate(sp),
-        scale(m.p70_vec("Lcl Scaling", DVec3::ONE)),
+        scale(lcl_s),
         translate(-sp),
     ];
     chain
@@ -619,6 +631,8 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
     // Material → its textures, by the property each OP link names
     // (`DiffuseColor`, `NormalMap`, …), first link of each.
     let mut textures_of: BTreeMap<i64, BTreeMap<String, i64>> = BTreeMap::new();
+    // Every property link: (child, parent, the parent's property).
+    let mut op_links: Vec<(i64, i64, String)> = Vec::new();
     if let Some(c) = root.child("Connections") {
         for link in c.all("C") {
             let kind = link.props.first().and_then(Prop::str).unwrap_or("");
@@ -636,6 +650,7 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
                     .or_default()
                     .entry(prop.to_string())
                     .or_insert(child);
+                op_links.push((child, parent, prop.to_string()));
             }
             if kind == "OO" || kind == "OP" {
                 children_of.entry(parent).or_default().push(child);
@@ -706,7 +721,7 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
     let skin_of = |g: &Node,
                    name: &str,
                    positions: &[DVec3]|
-     -> Result<Option<FbxSkin>, ImportError> {
+     -> Result<Option<(FbxSkin, FbxSpace)>, ImportError> {
         let vertices = positions.len();
         let Some(gid) = g.props.first().and_then(Prop::int) else {
             return Ok(None);
@@ -802,10 +817,14 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
         for &k in &order {
             let (_, bname, cluster) = &clusters[k];
             names.push(unique(bname, &mut used));
-            binds.push((
-                matrix(cluster, "Transform")?,
-                matrix(cluster, "TransformLink")?,
-            ));
+            // `TransformLink` is the bone in the world at bind time.
+            // `Transform` is the mesh then, as the bone sees it (the bone's
+            // inverse times the mesh in the world): a file whose mesh
+            // stands at the origin has each cluster's `Transform` the
+            // inverse of its `TransformLink`. So the mesh in the world is
+            // their product.
+            let link = matrix(cluster, "TransformLink")?;
+            binds.push((link.then(&matrix(cluster, "Transform")?), link));
         }
         let mut bones = Vec::with_capacity(clusters.len());
         let mut scaled = None;
@@ -921,7 +940,30 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
         };
         skin.check(vertices)
             .map_err(|e| unsupported(e.to_string()))?;
-        Ok(Some((skin, scaled)))
+        // What a clip needs to follow this skin. The solid stands in the
+        // mesh's own coordinates (rigid bones) or where its bind pose puts
+        // it in the world (a scale taken out).
+        let in_world = scaled.is_some();
+        let mut unlink = Vec::with_capacity(order.len());
+        for (i, (_, bone_bind)) in binds.iter().enumerate() {
+            unlink.push(crate::import::affine_inverse(bone_bind).ok_or_else(|| {
+                unsupported(format!("bone {:?}'s bind transform is singular", names[i]))
+            })?);
+        }
+        let space = FbxSpace {
+            ids: order.iter().map(|&k| clusters[k].0).collect(),
+            unlink,
+            mesh: binds
+                .iter()
+                .map(|b| if in_world { Affine::IDENTITY } else { b.0 })
+                .collect(),
+            out: if in_world {
+                Affine::IDENTITY
+            } else {
+                inverse(&binds[0].0)
+            },
+        };
+        Ok(Some(((skin, scaled), space)))
     };
     // World transform of a model, by its parents.
     let world = |id: i64| -> Affine {
@@ -936,6 +978,190 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
             }
         }
         m
+    };
+    // The file's animation stacks as they move a skin: each sampled at
+    // its curves' key times and sixty times a second between them. A
+    // stack's first layer is read; a curve is straight between its keys
+    // (its easing is not read).
+    let kids = |id: i64, name: &str| -> Vec<i64> {
+        children_of
+            .get(&id)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|c| by_id.get(c).is_some_and(|n| n.name == name))
+            .collect()
+    };
+    let mut layered = Vec::new();
+    // Per stack: its name, and per model its (translation, rotation,
+    // scaling) curves, each axis as key times (seconds) and values.
+    type Curve = (Vec<f64>, Vec<f64>);
+    type Driven = BTreeMap<i64, [[Option<Curve>; 3]; 3]>;
+    let mut stacks: Vec<(String, Driven)> = Vec::new();
+    for o in objects.all("AnimationStack") {
+        let Some(sid) = o.props.first().and_then(Prop::int) else {
+            continue;
+        };
+        let sname = object_name(o.props.get(1).and_then(Prop::str).unwrap_or(""));
+        let layers = kids(sid, "AnimationLayer");
+        if layers.len() > 1 {
+            layered.push(format!(
+                "animation {sname:?}: {} layers, the first read",
+                layers.len()
+            ));
+        }
+        let Some(&layer) = layers.first() else {
+            continue;
+        };
+        let mut driven: Driven = BTreeMap::new();
+        for cn in kids(layer, "AnimationCurveNode") {
+            // The model property this curve node drives.
+            let Some((model, slot)) = op_links.iter().find_map(|(c, p, prop)| {
+                let slot = match prop.as_str() {
+                    "Lcl Translation" => 0,
+                    "Lcl Rotation" => 1,
+                    "Lcl Scaling" => 2,
+                    _ => return None,
+                };
+                (*c == cn && by_id.get(p).is_some_and(|n| n.name == "Model")).then_some((*p, slot))
+            }) else {
+                continue;
+            };
+            for (c, p, prop) in &op_links {
+                let axis = match prop.as_str() {
+                    "d|X" => 0,
+                    "d|Y" => 1,
+                    "d|Z" => 2,
+                    _ => continue,
+                };
+                if *p != cn {
+                    continue;
+                }
+                let Some(curve) = by_id.get(c).filter(|n| n.name == "AnimationCurve") else {
+                    continue;
+                };
+                let (Some(t), Some(v)) = (curve.array("KeyTime"), curve.array("KeyValueFloat"))
+                else {
+                    continue;
+                };
+                if t.is_empty() || t.len() != v.len() || t.windows(2).any(|w| w[1] < w[0]) {
+                    return Err(fmt_err(format!(
+                        "animation {sname:?}: a curve's times and values do not match or do not rise"
+                    )));
+                }
+                // FBX time: 46 186 158 000 ticks a second.
+                let seconds: Vec<f64> = t.iter().map(|x| x / 46_186_158_000.0).collect();
+                driven.entry(model).or_default()[slot][axis] = Some((seconds, v.to_vec()));
+            }
+        }
+        if !driven.is_empty() {
+            stacks.push((sname, driven));
+        }
+    }
+    out.skipped.extend(layered);
+    let value = |c: &Curve, time: f64| -> f64 {
+        let (t, v) = c;
+        let k = t.partition_point(|&x| x <= time);
+        if k == 0 {
+            return v[0];
+        }
+        if k >= t.len() {
+            return v[t.len() - 1];
+        }
+        let f = if t[k] > t[k - 1] {
+            (time - t[k - 1]) / (t[k] - t[k - 1])
+        } else {
+            0.0
+        };
+        v[k - 1] + (v[k] - v[k - 1]) * f
+    };
+    let clips_of = |space: &FbxSpace| -> Result<Vec<shape_mesh::SkinClip>, ImportError> {
+        let mut clips = Vec::new();
+        let mut used = BTreeMap::new();
+        for (sname, driven) in &stacks {
+            let mut times: Vec<f64> = driven
+                .values()
+                .flatten()
+                .flatten()
+                .flatten()
+                .flat_map(|c| c.0.iter().copied())
+                .collect();
+            if times.is_empty() {
+                continue;
+            }
+            let (start, end) = times
+                .iter()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &t| {
+                    (lo.min(t), hi.max(t))
+                });
+            let steps = ((end - start) * crate::import::SAMPLES_A_SECOND).ceil();
+            if steps >= 1.0 && steps < crate::import::MAX_KEYS as f64 {
+                times.extend(
+                    (1..steps as usize).map(|k| start + (end - start) * (k as f64 / steps)),
+                );
+            }
+            times.sort_by(f64::total_cmp);
+            times.dedup();
+            if times.len() > crate::import::MAX_KEYS {
+                let n = crate::import::MAX_KEYS;
+                times = (0..n)
+                    .map(|k| start + (end - start) * (k as f64 / (n - 1) as f64))
+                    .collect();
+            }
+            let mut poses = Vec::with_capacity(times.len());
+            for &time in &times {
+                // A model's local transform at this time.
+                let local_at = |id: i64, node: &Node| -> Affine {
+                    let Some(d) = driven.get(&id) else {
+                        return local(node);
+                    };
+                    let rest = [
+                        node.p70_vec("Lcl Translation", DVec3::ZERO),
+                        node.p70_vec("Lcl Rotation", DVec3::ZERO),
+                        node.p70_vec("Lcl Scaling", DVec3::ONE),
+                    ];
+                    let at = |slot: usize| {
+                        let mut v = rest[slot];
+                        for axis in 0..3 {
+                            if let Some(c) = &d[slot][axis] {
+                                v[axis] = value(c, time);
+                            }
+                        }
+                        v
+                    };
+                    local_with(node, at(0), at(1), at(2))
+                };
+                let mut pose = Vec::with_capacity(space.ids.len());
+                for (b, &id) in space.ids.iter().enumerate() {
+                    let mut m = Affine::IDENTITY;
+                    let mut at = id;
+                    for _ in 0..256 {
+                        let Some(node) = by_id.get(&at) else { break };
+                        m = local_at(at, node).then(&m);
+                        match parent_of.get(&at) {
+                            Some(&p) if p != 0 => at = p,
+                            _ => break,
+                        }
+                    }
+                    let k = space
+                        .out
+                        .then(&conj(&m))
+                        .then(&space.unlink[b])
+                        .then(&space.mesh[b]);
+                    pose.push([
+                        k.x.x, k.x.y, k.x.z, 0.0, k.y.x, k.y.y, k.y.z, 0.0, k.z.x, k.z.y, k.z.z,
+                        0.0, k.t.x, k.t.y, k.t.z, 1.0,
+                    ]);
+                }
+                poses.push(pose);
+            }
+            clips.push(shape_mesh::SkinClip {
+                name: unique(sname, &mut used),
+                times: times.iter().map(|t| t - start).collect(),
+                poses,
+            });
+        }
+        Ok(clips)
     };
     // A video's name and its bytes (embedded content, or the file).
     let video = |v: &Node| -> (String, Result<Vec<u8>, String>) {
@@ -1052,7 +1278,9 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
             }
             solid.uvs = uvs;
             let read = skin_of(g, &name, &solid.positions)?;
-            if let Some((skin, scaled)) = read {
+            let mut clips = Vec::new();
+            if let Some(((skin, scaled), space)) = read {
+                clips = clips_of(&space)?;
                 if let Some((placed, info)) = scaled {
                     // Where the file's bind pose puts the vertices.
                     solid.positions = placed;
@@ -1078,6 +1306,7 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
             }
             out.polygons_triangulated += polys;
             out.parts.push(ImportedPart {
+                clips,
                 name: name.clone(),
                 solid,
                 transform,
@@ -1131,6 +1360,21 @@ fn back(p: &impl Fn(DVec3) -> DVec3, v: DVec3) -> DVec3 {
 type Mesh = (Solid, Option<Vec<[DVec2; 3]>>, usize);
 
 use crate::import::ReadSkin as FbxSkin;
+
+/// The space a skin was read into: what a clip needs to follow it. Bone
+/// `b`'s skinning matrix when its model stands at `world` (kernel space)
+/// is `out · world · unlink[b] · mesh[b]`.
+struct FbxSpace {
+    /// Each bone's model, in the skin's bone order.
+    ids: Vec<i64>,
+    /// Each bone's bind transform (`TransformLink`), inverted.
+    unlink: Vec<Affine>,
+    /// Each cluster's mesh bind transform (`Transform`); the identity
+    /// where the vertices were placed by it already.
+    mesh: Vec<Affine>,
+    /// From the world back to where the solid's vertices stand.
+    out: Affine,
+}
 
 fn mesh(
     g: &Node,
@@ -1314,5 +1558,138 @@ Connections:  {
         let [a, b, c] = s.triangles[0].map(|v| s.positions[v as usize]);
         assert!((b - a).cross(c - a).z > 0.0);
         assert_eq!(p.solid.uvs.as_ref().map(Vec::len), Some(2));
+    }
+
+    /// Two legs' worth of FBX skin and animation, as exporters write it:
+    /// each cluster's `TransformLink` is its bone in the world at bind
+    /// time and its `Transform` the mesh in the bone's space (here the
+    /// bone's inverse, the mesh standing at the origin). The knee turns a
+    /// quarter turn about y in one second.
+    const LEGS: &str = r#"; FBX 7.4.0 project file
+FBXHeaderExtension:  {
+	FBXVersion: 7400
+}
+GlobalSettings:  {
+	Properties70:  {
+		P: "UpAxis", "int", "Integer", "",2
+		P: "UpAxisSign", "int", "Integer", "",1
+		P: "FrontAxis", "int", "Integer", "",1
+		P: "FrontAxisSign", "int", "Integer", "",-1
+		P: "CoordAxis", "int", "Integer", "",0
+		P: "CoordAxisSign", "int", "Integer", "",1
+		P: "UnitScaleFactor", "double", "Number", "",0.1
+	}
+}
+Objects:  {
+	Geometry: 10, "Geometry::Leg", "Mesh" {
+		Vertices: *12 {
+			a: 0,0,0,100,0,0,100,0,500,0,0,500
+		}
+		PolygonVertexIndex: *4 {
+			a: 0,1,2,-4
+		}
+	}
+	Model: 20, "Model::Legs", "Mesh" {
+	}
+	Model: 30, "Model::hip", "LimbNode" {
+	}
+	Model: 31, "Model::knee", "LimbNode" {
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,0,250
+		}
+	}
+	Deformer: 40, "Deformer::", "Skin" {
+	}
+	Deformer: 41, "SubDeformer::", "Cluster" {
+		Indexes: *2 {
+			a: 0,1
+		}
+		Weights: *2 {
+			a: 1,1
+		}
+		Transform: *16 {
+			a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1
+		}
+		TransformLink: *16 {
+			a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1
+		}
+	}
+	Deformer: 42, "SubDeformer::", "Cluster" {
+		Indexes: *2 {
+			a: 2,3
+		}
+		Weights: *2 {
+			a: 1,1
+		}
+		Transform: *16 {
+			a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,-250,1
+		}
+		TransformLink: *16 {
+			a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,250,1
+		}
+	}
+	AnimationStack: 50, "AnimStack::bend", "" {
+	}
+	AnimationLayer: 51, "AnimLayer::base", "" {
+	}
+	AnimationCurveNode: 52, "AnimCurveNode::R", "" {
+	}
+	AnimationCurve: 53, "AnimCurve::", "" {
+		KeyTime: *2 {
+			a: 0,46186158000
+		}
+		KeyValueFloat: *2 {
+			a: 0,90
+		}
+	}
+}
+Connections:  {
+	C: "OO",20,0
+	C: "OO",10,20
+	C: "OO",30,0
+	C: "OO",31,30
+	C: "OO",40,10
+	C: "OO",41,40
+	C: "OO",42,40
+	C: "OO",30,41
+	C: "OO",31,42
+	C: "OO",51,50
+	C: "OO",52,51
+	C: "OP",52,31, "Lcl Rotation"
+	C: "OP",53,52, "d|Y"
+}
+"#;
+
+    #[test]
+    fn reads_a_skin_s_bones_where_they_stand_and_its_animation() {
+        let imported = import_fbx(LEGS.as_bytes(), &no_files).unwrap();
+        let part = &imported.parts[0];
+        let skin = part.solid.skin.as_ref().expect("a skin");
+        let names: Vec<&str> = skin.bones.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(names, ["hip", "knee"]);
+        // The knee stands at its `TransformLink`, not at twice it (which
+        // reading `Transform` as the mesh in the world gave).
+        assert_eq!(skin.bones[0].rest.origin, DVec3::ZERO);
+        assert_eq!(skin.bones[1].rest.origin, DVec3::new(0.0, 0.0, 250.0));
+        assert_eq!(skin.bones[1].parent, Some(0));
+        assert_eq!(part.clips.len(), 1);
+        let clip = &part.clips[0];
+        assert_eq!((clip.name.as_str(), clip.duration()), ("bend", 1.0));
+        let top = |time: f64| {
+            let i = part
+                .solid
+                .positions
+                .iter()
+                .position(|p| (*p - DVec3::new(0.0, 0.0, 500.0)).length() < 1e-9)
+                .unwrap();
+            let s = shape_skin::pose_by(&part.solid, &clip.at(time).unwrap()).unwrap();
+            s.positions[i]
+        };
+        let near = |a: DVec3, b: DVec3| assert!((a - b).length() < 0.05, "{a:?} {b:?}");
+        near(top(0.0), DVec3::new(0.0, 0.0, 500.0));
+        // About +y, +z turns towards +x: 45° halfway, a quarter at the end.
+        let d = 250.0 * trig::sin(trig::PI / 4.0);
+        near(top(0.5), DVec3::new(d, 0.0, 250.0 + d));
+        near(top(1.0), DVec3::new(250.0, 0.0, 250.0));
     }
 }

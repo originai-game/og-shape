@@ -1410,3 +1410,17 @@
   `process --bake` on a skinned mesh says why it is not done. Mixamo's
   soldier and three.js's Samba run through, every level at its target
   (`docs/research.md` §39).
+- A mesh file's animations are read: `ImportedPart::clips`
+  (`shape_mesh::SkinClip`: per sampled time, every bone's skinning
+  matrix), from glTF `animations` and FBX animation stacks, sampled at
+  their key times and sixty times a second between. `shape import`
+  lists a file's `clips`. `shape_skin::pose_by` poses a skinned solid by
+  matrices.
+- `shape preview <file> --clip NAME --time T` draws a skinned mesh file
+  posed; `--frames N` draws N frames of the clip, the camera still
+  (`Preview::frame`: a box to frame instead of the scene's own). MCP
+  `preview`: `clip`, `time`, `frames`.
+- **Fixed:** an FBX skin's bones stood at twice their place when the
+  mesh was at the origin (Mixamo): a cluster's `Transform` is the mesh
+  in the bone's space, not in the world. The bind pose and weights were
+  right; a pose was not. `docs/research.md` §40.

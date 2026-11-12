@@ -8379,3 +8379,88 @@ file has no way down here, since `--bake` is not done on skins.
 **Still so.** The preview draws a skinned file in its bind pose only;
 animations in a file are not imported; morph targets, Draco and meshopt
 compression are not read.
+
+## 40. A file's animations, and a skinned file posed (2026-11-12)
+
+§39 left a skinned file drawn in its bind pose only, and its animations
+unread.
+
+### 40.1 What a clip is
+
+`shape_mesh::SkinClip`: a name, key times, and per key every bone's
+**skinning matrix** (the solid's coordinates at rest to its coordinates
+then). A clip is sampled when the file is read: at the curves' own key
+times and sixty times a second between them (4 096 samples at most,
+then evenly). So whatever drives a bone in the file is in the samples
+(a chain of nodes above it, a scaled armature, Euler orders and pivots,
+a stepped curve), and nothing downstream needs the file's node tree:
+repair and decimation keep the bones, so a clip read before them still
+fits after. Between two samples the matrices are mixed element by
+element; at sixty a second a quarter turn a second is 1.5° a step.
+
+`ImportedPart::clips` holds a part's (parts on one skeleton each have
+their own, over their own bones). `shape_skin::pose_by(solid,
+&clip.at(time))` is the posed mesh.
+
+- **glTF**: `animations` channels on the skin's joints and every node
+  above them; `LINEAR` (rotations along the shorter way), `STEP`, and
+  `CUBICSPLINE` read through its key values, straight between them.
+  A bone's matrix is `C(world(t) · inverse bind) · U`: `C` the change of
+  space the importer uses, `U` the identity, or, where a scale was taken
+  out of the bones (§11), the inverse of the bind transform the vertices
+  were placed by.
+- **FBX**: `AnimationStack` → its first `AnimationLayer` → the
+  `AnimationCurveNode`s on models' `Lcl Translation`, `Lcl Rotation`,
+  `Lcl Scaling` → `AnimationCurve`s per axis (`KeyTime` in ticks of
+  1/46 186 158 000 s, `KeyValueFloat`). Each model's local transform is
+  the importer's own (pivots, pre- and post-rotation, the Euler order)
+  with the curves' values in place of the rest ones. A curve is straight
+  between its keys: its easing is not read. More layers than one are
+  listed as skipped.
+
+### 40.2 A fault found on the way: FBX bones stood at twice their place
+
+A cluster's `TransformLink` is its bone in the world at bind time. Its
+`Transform` is the mesh then **as the bone sees it** (the bone's inverse
+times the mesh in the world). The importer read `Transform` as the mesh
+in the world. For a file whose mesh stands at the origin (Mixamo's),
+every `Transform` is the inverse of its `TransformLink`, and each bone's
+rest frame came out as its bind transform applied twice: Samba's hips at
+z = 1 993 mm on a figure 1 803 tall (they are at 997). The inverse bind
+matrices were those frames' inverses, so the bind pose and the weights
+were right and nothing showed until a bone was turned. The mesh in the
+world is now `TransformLink · Transform`.
+
+No test read an FBX skin. `reads_a_skin_s_bones_where_they_stand_and_its_animation`
+(an ASCII file written as exporters write it) does; with the old reading
+its knee stands at 500, not 250. No golden line moved: none had an FBX
+skin. (That `Transform` is in the bone's space is a fact of the format,
+known from exporters' behaviour; three.js's loader uses `TransformLink`
+alone.)
+
+### 40.3 Posed previews
+
+`shape preview <file> --clip NAME --time T` draws the file as the clip
+has it at `T` seconds (`--time` alone: the first clip). `--frames N`
+draws N frames evenly over the clip (the end left out, so a loop does
+not repeat a frame), one PNG each, names padded; the camera frames the
+box of all the frames, so it stands still (`Preview::frame`). MCP:
+`clip`, `time`, `frames`. `shape import` lists `clips` (name, duration,
+keys) on a file that has some.
+
+Seen on three.js's samples (r160, not committed): `Soldier.glb`'s four
+clips (`Idle` 1.97 s, `Run` 0.7 s, `TPose`, `Walk` 1.03 s), its visor
+following its head; `Samba Dancing.fbx`'s one (`mixamo.com`, 18.2 s,
+2 242 samples). `docs/previews/readme/clips_posed.png`.
+
+### 40.4 Not done
+
+- **Clips are not written back.** `repair`, `decimate` and `process`
+  write the skin without the file's animations.
+- A program's parts are posed by its own `pose` and `clip` ops; `--clip`
+  is for mesh files.
+- FBX easing, further animation layers, and glTF cubic-spline tangents
+  are read as straight lines between keys; an Euler curve that wraps
+  (179° to −179° between two keys) turns the long way for that step.
+- The Soldier's maps are progressive JPEGs, which the preview does not
+  decode (`undrawn` says so): it is drawn grey.

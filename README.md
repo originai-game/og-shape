@@ -65,6 +65,14 @@ Meshes from elsewhere go through the same kernel:
 | ![duck](docs/previews/uv/duck-full-half.png) | ![defects before](docs/previews/readme/mesh_before.png) | ![defects after](docs/previews/readme/mesh_after.png) |
 | Khronos's Duck, as imported and decimated to half, its texture kept (three.js render, `docs/research.md` §17). | `golden/meshes/ball_defects.obj` as it comes: open, in 2 pieces, 79 faces flipped. | After `shape process --budget 1500`: closed, 1 piece, 1 500 triangles, 6 UV charts with no overlap (the lines are chart seams). |
 
+![a skinned file posed by its clips](docs/previews/readme/clips_posed.png)
+
+Skinned files are read with their animations and drawn posed (`shape
+preview file --clip Run --frames 6`): three.js's Samba (FBX, 55 320
+triangles) over its 18 s, and Mixamo's soldier (GLB) running; grey
+because its maps are progressive JPEGs, which the preview does not
+decode.
+
 | | |
 |---|---|
 | ![open leaf](docs/previews/readme/leaf_open.png) | ![thickened leaf](docs/previews/readme/leaf_thick.png) |
@@ -96,7 +104,7 @@ Run on `main` on 2026-11-10 and 11; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 165 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 360 pass | `scripts/check.sh test` |
+| Tests | 362 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -109,6 +117,7 @@ Run on `main` on 2026-11-10 and 11; each line says where the numbers come from.
 | Shells thicker than the part's small faces | 7 280 shells of extruded polygons, rounded rectangles and circles with plain, tapered, chamfered and filleted bottoms, 1 to 30 thick, open or closed: 5 697 clean, none crossing itself (950 at first), 172 refused because the walls would meet, 1 refused otherwise, 1 410 asked to open a face that is not flat. A case with a pocket (not convex), 10 thick with corners of radius 5: no crossing pair, the hollow's volume exact | `cargo run --release -p shape-edit --example shell_sweep` (`docs/research.md` §27, §35, §37, §38) |
 | Shells of parts with pockets, holes, bosses and handles | a case whose pocket's wall reaches through its own (two chambers), walls exactly twice the thickness, a boss and a handle thinner than two walls (solid through), an L pocket: no crossing pair, each hollow's volume the closed form to 1e-6. A can with a hole through its side, holes in an open face, a pocket in a pocket: no crossing pair | `crates/shape-model/tests/rest.rs` (`docs/research.md` §38) |
 | Skinned files | Mixamo's soldier (two skinned parts, one on part of the skeleton) and three.js's Samba through `repair`, `process` (decimated, placed at 1 m) and `decimate`: written back with bones, skin, UVs and map; Samba's levels at 27 660, 13 830, 5 532 and 5 000 triangles each exact, its floor 3 564 | `docs/research.md` §39 |
+| A file's animations | glTF and FBX clips sampled into skinning matrices: a hand-written file of each kind posed at the start, the middle and the end of a quarter turn to 0.05 mm (also under an armature scaled 0.01); the soldier's four clips and Samba's one drawn posed | `crates/shape-tools/tests/meshtools.rs`, `crates/shape-tools/src/fbx.rs` (`docs/research.md` §40) |
 | Repair's memory | `process` on a 619 000-triangle vertex-coloured mesh (Unique3D's bear) peaks at 879 MiB (2 663 before), 1 497 MiB with `--fuse` (3 366), in the same time, with byte-identical output | `docs/research.md` §36 |
 | A loft along a path | a loop of twelve squares round a ring, straight between: its volume to 1e-9 of the closed form; on a curve, within 1 % of the torus; a bend tighter than its sections is refused | `crates/shape-gen/src/loft.rs`, `crates/shape-model/tests/rest.rs` |
 | Clips | a clip read back from its GLB with an independent glTF reader: a rotation channel on the joint's node and a translation on its follower's, a turn of 3 radians in steps of a quarter turn at most, the last key equal to the node of the scene posed there. The washing machine's `open` (hinge and drawer) and `spin` (the drum's full turn, 5 keys) export as two animations | `crates/shape-tools/tests/export.rs`; `golden/programs/washing_machine_clips.json` |
