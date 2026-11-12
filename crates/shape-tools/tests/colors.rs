@@ -358,12 +358,13 @@ fn baseline_jpeg_decodes_as_a_reference_decoder_does() {
             );
         }
     }
-    // A progressive JPEG is refused, saying so.
-    let mut prog = bytes.to_vec();
-    let sof = prog.windows(2).position(|w| w == [0xFF, 0xC0]).unwrap();
-    prog[sof + 1] = 0xC2;
+    // A lossless JPEG (SOF3) is refused, saying so. (A progressive one
+    // is decoded: `jpeg_progressive_in_ten_scans`.)
+    let mut lossless = bytes.to_vec();
+    let sof = lossless.windows(2).position(|w| w == [0xFF, 0xC0]).unwrap();
+    lossless[sof + 1] = 0xC3;
     assert!(matches!(
-        shape_tools::decode(&prog),
+        shape_tools::decode(&lossless),
         Err(shape_tools::TextureError::Unsupported(_))
     ));
 }

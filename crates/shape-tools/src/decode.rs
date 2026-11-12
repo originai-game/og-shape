@@ -3,11 +3,11 @@
 //!
 //! The decoding is the texture budget's ([`crate::texture::decode`],
 //! `docs/research.md` §29.1): PNG of every colour type and bit depth,
-//! Adam7, a palette's `tRNS` (16-bit samples rounded to 8 bits); baseline
-//! and extended sequential JPEG, one or three components, integer inverse
-//! DCT. Colour-space chunks (`gAMA`, `iCCP`, `sRGB`) are ignored: the
+//! Adam7, a palette's `tRNS` (16-bit samples rounded to 8 bits); baseline,
+//! extended sequential and progressive JPEG, one or three components,
+//! integer inverse DCT. Colour-space chunks (`gAMA`, `iCCP`, `sRGB`) are ignored: the
 //! bytes are taken as sRGB, as glTF says a base-colour image is.
-//! Progressive and arithmetic-coded JPEG, WebP and KTX2 are refused with
+//! Arithmetic-coded and lossless JPEG, WebP and KTX2 are refused with
 //! the reason, as is an image over [`MAX_PIXELS`] (read from its header,
 //! before anything is decoded).
 //!
@@ -167,6 +167,36 @@ mod tests {
         near(56, 6, [227, 24, 160]);
         near(6, 56, [24, 227, 160]);
         near(8, 40, [32, 162, 40]);
+    }
+
+    #[test]
+    fn jpeg_progressive_in_ten_scans() {
+        // The picture of the baseline file drawn again (red 4x, green 4y,
+        // blue 160 or 40 in 16-pixel squares) and saved progressive, 4:2:0:
+        // DC first, then bands of AC, then their refinements.
+        let bytes = include_bytes!("../../../golden/programs/label_progressive.jpg");
+        assert!(bytes.windows(2).any(|w| w == [0xFF, 0xC2]));
+        let scans = bytes.windows(2).filter(|w| *w == [0xFF, 0xDA]).count();
+        assert!(scans >= 8, "{scans}");
+        let im = decode(bytes).unwrap();
+        assert_eq!((im.width, im.height), (64, 64));
+        // Within the file's own loss of the picture everywhere away from
+        // the squares' borders (where 4:2:0 blurs the blue).
+        for y in 0..64u32 {
+            for x in 0..64u32 {
+                if x % 16 < 3 || x % 16 > 12 || y % 16 < 3 || y % 16 > 12 {
+                    continue;
+                }
+                let i = ((y * 64 + x) * 4) as usize;
+                let blue = if (x / 16 + y / 16) % 2 == 0 { 160 } else { 40 };
+                let want = [(x * 4) as i32, (y * 4) as i32, blue];
+                let got = [0, 1, 2].map(|k| i32::from(im.rgba[i + k]));
+                assert!(
+                    got.iter().zip(want).all(|(g, w)| (g - w).abs() <= 12),
+                    "({x}, {y}): {got:?}, not near {want:?}"
+                );
+            }
+        }
     }
 
     #[test]

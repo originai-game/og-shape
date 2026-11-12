@@ -8461,8 +8461,8 @@ following its head; `Samba Dancing.fbx`'s one (`mixamo.com`, 18.2 s,
 - FBX easing, further animation layers, and glTF cubic-spline tangents
   are read as straight lines between keys; an Euler curve that wraps
   (179° to −179° between two keys) turns the long way for that step.
-- The Soldier's maps are progressive JPEGs, which the preview does not
-  decode (`undrawn` says so): it is drawn grey.
+- ~~The Soldier's maps are progressive JPEGs, not decoded.~~ Decoded
+  since, §41.
 
 ### 40.5 Clips through the tools and into the output
 
@@ -8489,7 +8489,43 @@ keeps its four clips (1.5 MB), Samba through `decimate --target 5000`
 its one (3.6 MB, 2 242 samples of 52 bones); read back and drawn posed
 they move as the originals do.
 
-The written clips are the samples, not the file's curves: a clip of 60
-keys comes back as 296 (sixty a second, plus the keys). Thinning them
-to a tolerance is not done.
+The written clips are the samples, not the file's curves, **thinned**
+(`thin`): of each bone's translation, rotation and scale curves, a
+sample is left out when the straight line between the kept samples
+either side gives it back to 10⁻⁵ m (0.01 mm), 2 × 10⁻⁵ in each of a
+quaternion's components (about 0.002°: 0.04 mm at the end of a metre)
+or 10⁻⁵ of scale; kept by halving at the sample furthest off. A curve
+that never leaves its first value is one key; the first bone's
+translation keeps the clip's last time, so the clip is as long as it
+was. Samba at 5 000 triangles: 3.63 MB before thinning, 1.21 MB after;
+the soldier 1.50 to 1.40 MB (its mesh and maps are most of it). The
+round trip above holds to 0.1 mm with the thinning.
+
+## 41. Progressive JPEG (2026-11-12)
+
+The decoder (`texture.rs`, §29.1) read baseline and extended sequential
+JPEG. A progressive frame (SOF2) is now read too, in the same integer
+arithmetic: each component keeps its blocks' coefficients, every scan
+adds to them, and at the end each block is scaled by its quantization
+table and transformed as a baseline block is.
+
+A scan carries a band `Ss..Se` of the zigzag order and a bit position:
+- DC, first: the difference from the block before, shifted up by `Al`.
+- DC, refining: one bit a block.
+- AC, first (one component a scan): run and size codes; an end-of-band
+  code counts 2^r − 1 more blocks that end there, plus r bits.
+- AC, refining: each code gives a new coefficient of size one after a
+  run of coefficients still zero; every coefficient passed that is not
+  zero gets its next bit, towards its sign; an end-of-band run refines
+  the rest of each block's band.
+Restart intervals reset the DC predictions and the end-of-band run.
+From the JPEG standard (ITU T.81, G.1.2); no decoder's source was read.
+
+Checked: `golden/programs/label_progressive.jpg` (64 × 64, 4:2:0, ten
+scans, written by Pillow from the picture the baseline fixture shows)
+decodes to within 12 of the picture away from the 4:2:0 borders
+(`jpeg_progressive_in_ten_scans`); the soldier's two 1024² maps decode
+and the preview draws it with them (`docs/previews/readme/clips_posed.png`).
+Lossless (SOF3), hierarchical and arithmetic-coded frames are refused
+as before.
 

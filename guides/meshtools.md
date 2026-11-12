@@ -26,8 +26,8 @@ import → join → repair → decimate → place → unwrap → measure → pre
    --time T`) draws the mesh as the clip has it then; `frames: 24`
    (`--frames 24`) draws that many frames over the clip, one PNG each
    with the camera still. `repair`, `decimate` and `process` write the
-   clips with the skin (as samples sixty times a second, moved with the
-   mesh when it is placed). A
+   clips with the skin (moved with the mesh when it is placed; each
+   bone's curves thinned to 0.01 mm and a few thousandths of a degree). A
    skeleton under a uniformly scaled armature (centimetres)
    has the scale taken out; the import report (`skin_scales`) says so.
    UVs (the first set), vertex colours (glTF `COLOR_0`, OBJ
@@ -153,7 +153,7 @@ import → join → repair → decimate → place → unwrap → measure → pre
    material's colour and emissive colour (not its metallic-roughness,
    emissive or occlusion maps, metalness or roughness); after a bake,
    look along chart borders for lines in the shading. Its `undrawn` lists a map it could not
-   draw (WebP, KTX2, progressive JPEG, no UVs). `--uv` (MCP `uv`) shows
+   draw (WebP, KTX2, an arithmetic-coded JPEG, no UVs). `--uv` (MCP `uv`) shows
    the UV layout over the map: dark lines are chart outlines, dimmed
    texels are unused. For a texturing step or a turntable: `--each
    --fov 0.7` gives one PNG a view (`out.00.png` … `out.11.png`: the
@@ -169,8 +169,8 @@ import → join → repair → decimate → place → unwrap → measure → pre
    light, data maps as stored) and written as PNG; the report gives each
    map's size and decoded bytes before and after. A PNG of a photo
    texture is larger on disk than the JPEG it came from; the GPU memory
-   (`decoded_bytes_with_mips`) is what shrinks. A progressive JPEG is not
-   decoded and is kept as it is (the report's `error` says so).
+   (`decoded_bytes_with_mips`) is what shrinks. A map that is not
+   decoded (WebP, KTX2) is kept as it is (the report's `error` says so).
 10. **Export** `glb_plain` for texturing (with `material` to keep the
    file's look), or `glb` for parts, joints and skins (a part's
    `material`). OBJ and STL hold the mesh only: the output's
@@ -231,8 +231,8 @@ What to check in the report:
   95th percentile, with the baked map (the bytes' rounding: about 0.2°)
   and without it (`*_without_map`: what the low mesh shows by its own
   normals). The difference is the detail the map carries.
-- `bake.not_baked`: a map that could not be read (WebP, KTX2, a
-  progressive JPEG) is not baked and is named here.
+- `bake.not_baked`: a map that could not be read (WebP, KTX2) is not
+  baked and is named here.
 - `material.maps`: the baked maps (`baked_map.png`, …), `defaults` and
   the factors as the file had them.
 

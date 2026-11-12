@@ -2,9 +2,9 @@
 //! shrunk by a box filter and written again as PNG.
 //!
 //! Entry: [`downsize`]. Decoding reads PNG (every colour type and bit
-//! depth, interlaced or not) and baseline JPEG (Huffman, 8-bit, any
-//! sampling; a progressive or arithmetic-coded JPEG is
-//! [`TextureError::Unsupported`]). Everything after the file's bytes is
+//! depth, interlaced or not) and JPEG, baseline, extended sequential
+//! or progressive (Huffman, 8-bit, any sampling; a lossless, hierarchical
+//! or arithmetic-coded JPEG is [`TextureError::Unsupported`]). Everything after the file's bytes is
 //! integer arithmetic: the JPEG's inverse DCT in fixed point, the box
 //! filter with integer area weights, so the output is the same bytes on
 //! every host. The one table computed in f64 (sRGB to linear, by
@@ -495,6 +495,9 @@ struct Component {
     bh: usize,
     /// Decoded samples, `bw·8` × `bh·8`.
     samples: Vec<u8>,
+    /// A progressive frame's coefficients as its scans build them, 64 a
+    /// block (not yet scaled by the quantization table); empty otherwise.
+    coef: Vec<i32>,
 }
 
 /// The inverse DCT basis, × 2¹³: `T[x][u] = c(u)/2 · cos((2x+1)uπ/16)`.
@@ -550,6 +553,7 @@ fn decode_jpeg(b: &[u8]) -> Result<Image, TextureError> {
     let (mut width, mut height) = (0usize, 0usize);
     let (mut hmax, mut vmax) = (1usize, 1usize);
     let mut restart = 0usize;
+    let mut progressive = false;
     let mut adobe: Option<u8> = None;
     let mut jfif = false;
     let mut at = 2;
@@ -575,7 +579,8 @@ fn decode_jpeg(b: &[u8]) -> Result<Image, TextureError> {
             .get(at + 2..at + len)
             .ok_or_else(|| bad("a JPEG segment runs past the end"))?;
         match marker {
-            0xC0 | 0xC1 => {
+            0xC0..=0xC2 => {
+                progressive = marker == 0xC2;
                 if seg.first() != Some(&8) {
                     return Err(TextureError::Unsupported(
                         "a JPEG of other than 8-bit precision".into(),
@@ -603,6 +608,7 @@ fn decode_jpeg(b: &[u8]) -> Result<Image, TextureError> {
                         bw: 0,
                         bh: 0,
                         samples: Vec::new(),
+                        coef: Vec::new(),
                     });
                 }
                 hmax = comps.iter().map(|c| c.h).max().unwrap_or(1);
@@ -612,11 +618,14 @@ fn decode_jpeg(b: &[u8]) -> Result<Image, TextureError> {
                     c.bw = mx * c.h;
                     c.bh = my * c.v;
                     c.samples = vec![0; c.bw * 8 * c.bh * 8];
+                    if progressive {
+                        c.coef = vec![0; c.bw * c.bh * 64];
+                    }
                 }
             }
-            0xC2..=0xCF if marker != 0xC4 && marker != 0xC8 && marker != 0xCC => {
+            0xC3..=0xCF if marker != 0xC4 && marker != 0xC8 && marker != 0xCC => {
                 return Err(TextureError::Unsupported(
-                    "a progressive, lossless or arithmetic-coded JPEG".into(),
+                    "a lossless, hierarchical or arithmetic-coded JPEG".into(),
                 ));
             }
             0xC4 => {
@@ -710,17 +719,40 @@ fn decode_jpeg(b: &[u8]) -> Result<Image, TextureError> {
                     }
                     at += 1;
                 }
-                scan_data(
-                    &mut comps,
-                    &scan,
-                    &chunks,
-                    restart,
-                    &quant,
-                    &dc,
-                    &ac,
-                    &table,
-                    (hmax, vmax, width, height),
-                )?;
+                if progressive {
+                    // The band of coefficients this scan carries, and
+                    // which bit of them (G.1.1).
+                    let band = seg
+                        .get(1 + 2 * n..4 + 2 * n)
+                        .ok_or_else(|| bad("JPEG scan header"))?;
+                    scan_progressive(
+                        &mut comps,
+                        &scan,
+                        &chunks,
+                        restart,
+                        &dc,
+                        &ac,
+                        (
+                            usize::from(band[0]),
+                            usize::from(band[1]),
+                            u32::from(band[2] >> 4),
+                            u32::from(band[2] & 15),
+                        ),
+                        (hmax, vmax, width, height),
+                    )?;
+                } else {
+                    scan_data(
+                        &mut comps,
+                        &scan,
+                        &chunks,
+                        restart,
+                        &quant,
+                        &dc,
+                        &ac,
+                        &table,
+                        (hmax, vmax, width, height),
+                    )?;
+                }
                 continue;
             }
             _ => {}
@@ -729,6 +761,28 @@ fn decode_jpeg(b: &[u8]) -> Result<Image, TextureError> {
     }
     if comps.is_empty() {
         return Err(bad("JPEG has no frame"));
+    }
+    if progressive {
+        // Every scan is in: scale each block by its table and transform it.
+        let mut f = [0i32; 64];
+        for c in &mut comps {
+            let q = &quant[c.tq];
+            let stride = c.bw * 8;
+            for by in 0..c.bh {
+                for bx in 0..c.bw {
+                    let block = &c.coef[(by * c.bw + bx) * 64..][..64];
+                    for i in 0..64 {
+                        f[i] = block[i] * q[i];
+                    }
+                    idct(
+                        &table,
+                        &f,
+                        &mut c.samples[by * 8 * stride + bx * 8..],
+                        stride,
+                    );
+                }
+            }
+        }
     }
     let rgb_ids = comps.len() == 3 && comps.iter().map(|c| c.id).eq(*b"RGB");
     let ycc = comps.len() == 3 && !rgb_ids && (jfif || adobe != Some(0));
@@ -804,21 +858,16 @@ fn upsample(c: &Component, hmax: usize, vmax: usize, width: usize, height: usize
 }
 
 /// Decodes one scan's blocks into the components' samples.
-#[allow(clippy::too_many_arguments)]
-fn scan_data(
-    comps: &mut [Component],
+/// The blocks of a scan in coding order, as (scan component, block
+/// across, block down), and how many of them a restart interval holds:
+/// per MCU, each scan component's h × v blocks; a scan of one component
+/// goes block by block over its own size (A.2.2).
+fn block_order(
+    comps: &[Component],
     scan: &[(usize, usize, usize)],
-    chunks: &[Vec<u8>],
     restart: usize,
-    quant: &[[i32; 64]; 4],
-    dc: &[Huffman],
-    ac: &[Huffman],
-    table: &[[i64; 8]; 8],
     (hmax, vmax, width, height): (usize, usize, usize, usize),
-) -> Result<(), TextureError> {
-    // The blocks in coding order: per MCU, each scan component's h × v
-    // blocks; a scan of one component goes block by block over its own
-    // size (A.2.2).
+) -> (Vec<(usize, usize, usize)>, usize) {
     let mut order: Vec<(usize, usize, usize)> = Vec::new();
     if scan.len() == 1 {
         let c = &comps[scan[0].0];
@@ -858,6 +907,174 @@ fn scan_data(
     } else {
         usize::MAX
     };
+    (order, interval)
+}
+
+/// One scan of a progressive frame (G.1.2): a band `ss..=se` of each
+/// block's coefficients in zigzag order, either their bits from `al` up
+/// (`ah` 0) or one more bit, `al`, of what earlier scans sent. The DC
+/// coefficient has scans of its own, over any of the components; the
+/// others come one component a scan, with runs of blocks that end early
+/// counted across blocks.
+#[allow(clippy::too_many_arguments)]
+fn scan_progressive(
+    comps: &mut [Component],
+    scan: &[(usize, usize, usize)],
+    chunks: &[Vec<u8>],
+    restart: usize,
+    dc: &[Huffman],
+    ac: &[Huffman],
+    (ss, se, ah, al): (usize, usize, u32, u32),
+    dims: (usize, usize, usize, usize),
+) -> Result<(), TextureError> {
+    if ss > se || se > 63 || al > 13 || (ss == 0 && se != 0) || (ss > 0 && scan.len() != 1) {
+        return Err(bad("JPEG progressive scan"));
+    }
+    let (order, interval) = block_order(comps, scan, restart, dims);
+    let mut pred = vec![0i32; scan.len()];
+    let mut eobrun = 0u32;
+    let mut chunk = 0;
+    let mut bits = Bits {
+        data: chunks.first().map_or(&[][..], |c| c.as_slice()),
+        at: 0,
+        acc: 0,
+        n: 0,
+    };
+    let one = 1i32 << al;
+    for (k, &(si, bx, by)) in order.iter().enumerate() {
+        if k > 0 && k % interval == 0 {
+            chunk += 1;
+            bits = Bits {
+                data: chunks.get(chunk).map_or(&[][..], |c| c.as_slice()),
+                at: 0,
+                acc: 0,
+                n: 0,
+            };
+            pred.iter_mut().for_each(|p| *p = 0);
+            eobrun = 0;
+        }
+        let (ci, td, ta) = scan[si];
+        let c = &mut comps[ci];
+        if bx >= c.bw || by >= c.bh {
+            return Err(bad("JPEG block outside its component"));
+        }
+        let block = &mut c.coef[(by * c.bw + bx) * 64..][..64];
+        // One more bit of a coefficient already sent, towards its sign.
+        let refine = |v: &mut i32, bits: &mut Bits| {
+            if bits.bit() == 1 && (*v & one) == 0 {
+                *v += if *v >= 0 { one } else { -one };
+            }
+        };
+        if ss == 0 {
+            if ah == 0 {
+                let s = bits.decode(&dc[td])?;
+                pred[si] += bits.extend(u32::from(s));
+                block[0] = pred[si] << al;
+            } else if bits.bit() == 1 {
+                block[0] |= one;
+            }
+            continue;
+        }
+        if ah == 0 {
+            if eobrun > 0 {
+                eobrun -= 1;
+                continue;
+            }
+            let mut i = ss;
+            while i <= se {
+                let rs = bits.decode(&ac[ta])?;
+                let (r, s) = (u32::from(rs >> 4), u32::from(rs & 15));
+                if s == 0 {
+                    if r < 15 {
+                        // This block ends here, and 2^r − 1 + more after it.
+                        eobrun = (1 << r) - 1;
+                        if r > 0 {
+                            eobrun += bits.bits(r);
+                        }
+                        break;
+                    }
+                    i += 16;
+                    continue;
+                }
+                i += r as usize;
+                if i > se {
+                    return Err(bad("JPEG coefficient run past the band"));
+                }
+                block[ZIGZAG[i]] = bits.extend(s) << al;
+                i += 1;
+            }
+            continue;
+        }
+        // Refinement of the band: new coefficients of size one, each
+        // after a run of still-zero ones; every coefficient passed that
+        // is not zero gets its next bit.
+        let mut i = ss;
+        if eobrun == 0 {
+            while i <= se {
+                let rs = bits.decode(&ac[ta])?;
+                let (mut r, s) = (u32::from(rs >> 4), u32::from(rs & 15));
+                let mut new = 0;
+                match s {
+                    0 if r < 15 => {
+                        eobrun = 1 << r;
+                        if r > 0 {
+                            eobrun += bits.bits(r);
+                        }
+                        break;
+                    }
+                    0 => {}
+                    1 => new = if bits.bit() == 1 { one } else { -one },
+                    _ => return Err(bad("JPEG refinement of a size other than one")),
+                }
+                while i <= se {
+                    let v = &mut block[ZIGZAG[i]];
+                    if *v != 0 {
+                        refine(v, &mut bits);
+                    } else {
+                        if r == 0 {
+                            break;
+                        }
+                        r -= 1;
+                    }
+                    i += 1;
+                }
+                if new != 0 {
+                    if i > se {
+                        return Err(bad("JPEG coefficient run past the band"));
+                    }
+                    block[ZIGZAG[i]] = new;
+                }
+                i += 1;
+            }
+        }
+        if eobrun > 0 {
+            // The rest of the band has nothing new: only next bits.
+            while i <= se {
+                let v = &mut block[ZIGZAG[i]];
+                if *v != 0 {
+                    refine(v, &mut bits);
+                }
+                i += 1;
+            }
+            eobrun -= 1;
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_data(
+    comps: &mut [Component],
+    scan: &[(usize, usize, usize)],
+    chunks: &[Vec<u8>],
+    restart: usize,
+    quant: &[[i32; 64]; 4],
+    dc: &[Huffman],
+    ac: &[Huffman],
+    table: &[[i64; 8]; 8],
+    (hmax, vmax, width, height): (usize, usize, usize, usize),
+) -> Result<(), TextureError> {
+    let (order, interval) = block_order(comps, scan, restart, (hmax, vmax, width, height));
     let mut pred = vec![0i32; scan.len()];
     let mut chunk = 0;
     let mut bits = Bits {

@@ -1446,23 +1446,6 @@ fn skin_animations(
                 ]));
                 (views.len() - 1) as u64
             };
-            let start = bin.len();
-            for &t in &clip.times {
-                push_f32(bin, t as f32);
-            }
-            let tv = plain(bin, start);
-            accessors.push(Json::Obj(vec![
-                ("bufferView", Json::Int(tv)),
-                ("componentType", Json::Int(FLOAT)),
-                ("count", Json::Int(clip.times.len() as u64)),
-                ("type", Json::Str("SCALAR".into())),
-                ("min", Json::Arr(vec![f32n(clip.times[0] as f32)])),
-                (
-                    "max",
-                    Json::Arr(vec![f32n(clip.times[clip.times.len() - 1] as f32)]),
-                ),
-            ]));
-            let input = (accessors.len() - 1) as u64;
             for (b, track) in tracks.iter().enumerate() {
                 // A scale channel only for a bone the clip scales.
                 let scaled = track
@@ -1476,14 +1459,47 @@ fn skin_animations(
                     if !on {
                         continue;
                     }
+                    let values: Vec<[f64; 4]> = track
+                        .iter()
+                        .map(|k| match path {
+                            "translation" => [k.0[0], k.0[1], k.0[2], 0.0],
+                            "rotation" => k.1,
+                            _ => [k.2[0], k.2[1], k.2[2], 0.0],
+                        })
+                        .collect();
+                    let width = if path == "rotation" { 4 } else { 3 };
+                    // The samples a straight line between the kept ones
+                    // does not give back, to a hundredth of a millimetre
+                    // (a few thousandths of a degree).
+                    let tolerance = match path {
+                        "translation" => KEEP_METRES,
+                        "rotation" => KEEP_TURN,
+                        _ => KEEP_SCALE,
+                    };
+                    // The first bone's translation keeps the clip's last
+                    // time, so the clip is as long as it was.
+                    let whole = b == 0 && path == "translation";
+                    let kept = thin(&clip.times, &values, tolerance, whole);
                     let start = bin.len();
-                    for k in track {
-                        let values: &[f64] = match path {
-                            "translation" => &k.0,
-                            "rotation" => &k.1,
-                            _ => &k.2,
-                        };
-                        for &c in values {
+                    for &k in &kept {
+                        push_f32(bin, clip.times[k] as f32);
+                    }
+                    let tv = plain(bin, start);
+                    accessors.push(Json::Obj(vec![
+                        ("bufferView", Json::Int(tv)),
+                        ("componentType", Json::Int(FLOAT)),
+                        ("count", Json::Int(kept.len() as u64)),
+                        ("type", Json::Str("SCALAR".into())),
+                        ("min", Json::Arr(vec![f32n(clip.times[kept[0]] as f32)])),
+                        (
+                            "max",
+                            Json::Arr(vec![f32n(clip.times[kept[kept.len() - 1]] as f32)]),
+                        ),
+                    ]));
+                    let input = (accessors.len() - 1) as u64;
+                    let start = bin.len();
+                    for &k in &kept {
+                        for &c in &values[k][..width] {
                             push_f32(bin, c as f32);
                         }
                     }
@@ -1491,7 +1507,7 @@ fn skin_animations(
                     accessors.push(Json::Obj(vec![
                         ("bufferView", Json::Int(ov)),
                         ("componentType", Json::Int(FLOAT)),
-                        ("count", Json::Int(track.len() as u64)),
+                        ("count", Json::Int(kept.len() as u64)),
                         ("type", Json::Str(kind.into())),
                     ]));
                     let output = (accessors.len() - 1) as u64;
@@ -1522,6 +1538,61 @@ fn skin_animations(
         }
     }
     Ok(out)
+}
+
+/// How far a translation may be from the straight line between the keys
+/// kept round it, in metres (a hundredth of a millimetre).
+const KEEP_METRES: f64 = 1e-5;
+/// The same for a rotation's quaternion, by component: about two
+/// thousandths of a degree (0.04 mm at the end of a metre).
+const KEEP_TURN: f64 = 2e-5;
+/// The same for a scale.
+const KEEP_SCALE: f64 = 1e-5;
+
+/// The keys of a curve to keep (indices, rising, the first always): the
+/// fewest by halving such that every key left out is within `tolerance`,
+/// in each of its numbers, of the straight line between the kept keys
+/// either side of it. A curve that never leaves its first value keeps
+/// that one key, unless `whole` asks for its last too (so a clip keeps
+/// its length).
+fn thin(times: &[f64], values: &[[f64; 4]], tolerance: f64, whole: bool) -> Vec<usize> {
+    let n = values.len();
+    let off = |a: usize, b: usize, k: usize| {
+        let f = if times[b] > times[a] {
+            (times[k] - times[a]) / (times[b] - times[a])
+        } else {
+            0.0
+        };
+        (0..4)
+            .map(|i| (values[a][i] + (values[b][i] - values[a][i]) * f - values[k][i]).abs())
+            .fold(0.0, f64::max)
+    };
+    let mut keep = vec![false; n];
+    keep[0] = true;
+    if n > 1 {
+        keep[n - 1] = true;
+        // Spans still to check, each split at the key furthest off.
+        let mut spans = vec![(0usize, n - 1)];
+        while let Some((a, b)) = spans.pop() {
+            let mut worst = (tolerance, None);
+            for k in a + 1..b {
+                let d = off(a, b, k);
+                if d > worst.0 {
+                    worst = (d, Some(k));
+                }
+            }
+            if let Some(k) = worst.1 {
+                keep[k] = true;
+                spans.push((a, k));
+                spans.push((k, b));
+            }
+        }
+        // A curve that stays where it starts is one key.
+        if !whole && keep.iter().filter(|&&k| k).count() == 2 && off(0, 0, n - 1) <= tolerance {
+            keep[n - 1] = false;
+        }
+    }
+    (0..n).filter(|&k| keep[k]).collect()
 }
 
 /// A translation, a rotation (a unit quaternion x, y, z, w) and a scale.

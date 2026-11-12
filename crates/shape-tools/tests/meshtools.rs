@@ -774,7 +774,8 @@ fn a_file_s_animation_poses_its_skin() {
 /// A file's clip goes out with the skin and comes back the same motion:
 /// read, joined, placed (turned, scaled and moved), written as a GLB
 /// with the clip on its bones' nodes, and read again, the mesh stands at
-/// each time where the first reading, placed the same way, has it.
+/// each time where the first reading, placed the same way, has it (to
+/// a tenth of a millimetre: the written clip is thinned).
 #[test]
 fn a_clip_is_written_back_and_read_as_the_same_motion() {
     use shape_tools::{Part, Place, Scene, glb_skin_clips, join, join_clips, place};
@@ -826,7 +827,9 @@ fn a_clip_is_written_back_and_read_as_the_same_motion() {
                     .position(|p| (*p - *rest).length() < 1e-3)
                     .expect("the same vertex");
                 let d = (a.positions[i] - b.positions[j]).length();
-                assert!(d < 0.05, "at {time}: {d} mm");
+                // The clip is written thinned: to 0.01 mm in a bone's
+                // place and 0.04 mm a metre in its turn.
+                assert!(d < 0.1, "at {time}: {d} mm");
             }
         }
     }

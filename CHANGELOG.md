@@ -1431,3 +1431,12 @@
   translation, rotation and, where scaled, scale at every sample). The
   soldier at 4 550 triangles and 1 m keeps its four clips; Samba at
   5 000 its one (`docs/research.md` §40.5).
+- Progressive JPEG is decoded (the texture budget, the bake and the
+  preview): DC and AC scans by spectral selection and successive
+  approximation, any sampling. Mixamo's soldier is drawn with its maps.
+  Lossless, hierarchical and arithmetic-coded JPEG are still refused.
+- A clip written with a skin is thinned: of each bone's translation,
+  rotation and scale curves, only the samples a straight line between
+  the kept ones does not give back to 0.01 mm (2e-5 in a quaternion's
+  components). Samba's output at 5 000 triangles falls from 3.6 MB to
+  1.2 MB; a clip keeps its length.
