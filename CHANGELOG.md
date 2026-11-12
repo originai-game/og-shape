@@ -1518,3 +1518,15 @@
   animation drives is read as a skin of one bone (`<part>.node`), as a
   glTF mesh moved by its node is; such files had no clips. Checked
   against Maya's values on ufbx's `maya_interpolation_modes` cube.
+- `shell` builds parts whose holes cross inside them, and parts with a
+  rounded rim and a pocket: both were returned passing through
+  themselves or refused. A pocket piece that is not convex is grown
+  part by part (each hole's wall from its own planes, exactly) and each
+  part cut from the hollow; a rounded rim's edge round a flat face is
+  no longer taken for a hole in it; a surface's boundary is followed
+  through vertices where two of its loops touch; and a sliver that
+  leaves the inner copy without a place for a vertex no longer ends
+  the shell with "thickness must be positive". Of 126 swept shells of
+  crossing, offset and blind holes, rounded pockets and pockets that
+  meet, 120 build closed; the 7 280-shell and 2 434-edit sweeps are
+  unchanged line for line (`docs/research.md` §48).

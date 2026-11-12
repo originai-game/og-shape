@@ -192,9 +192,11 @@ where its operands touch (`touchingEdges` > 0: not closed there;
 want 0. A `shell` may be thicker than the part's rounded corners,
 chamfers and fillets (they are gone from the hollow), and than the
 necks beside its pockets and holes (the hollow is then cut through, in
-chambers); a boss or handle thinner than two walls stays solid. It can
-still answer pairs, or be refused, where holes cross each other inside
-the part or a pocket's mouth is rounded narrower than the wall. A
+chambers); a boss or handle thinner than two walls stays solid. Holes
+that cross inside the part each keep their tube of wall. It can still
+answer pairs, or be refused, where a boolean meets its limits (a blind
+hole that ends exactly at another hole's widest; a pocket whose floor,
+a wall on, lies in the plane of the hollow's): move one a little. A
 convex part whose walls would meet is refused, with how far short its
 deepest point is.
 A part with UVs adds `uv`: `coverage` and `overlap` (shares of the

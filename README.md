@@ -57,6 +57,12 @@ thicker than the part's rounded corners, fillets or chamfers:
 | ![loft along a path](docs/previews/readme/loft_along.png) | ![thick shells](docs/previews/readme/thick_shells.png) |
 | `loft` through sections placed by frames (`docs/previews/readme/src/loft_along.json`): a bangle, twelve ellipses round a ring with `closed`, and a horn from a rounded square to a circle along a quarter bend. | `docs/previews/readme/src/thick_shells.json`. Left, cut open: a case with corners of radius 5 and a pocket in its top, hollowed 10 thick; the corners are gone from the hollow, the pocket's wall is kept. Right: a tray whose bottom fillet is as wide as its corners (5), hollowed 8 thick, open at the top. |
 
+![a block with holes that cross, hollowed and cut open](docs/previews/readme/shell_crossing.png)
+
+`docs/previews/readme/src/shell_crossing.json`: a block with two holes
+that cross and a blind one, hollowed 3 thick and cut through the
+middle. Each hole keeps a tube of wall, and the hollow is four chambers.
+
 ![shells of parts with a handle, a pocket and a hole](docs/previews/readme/shell_pieces.png)
 
 `docs/previews/readme/src/shell_pieces.json`, each cut open. A mug 2
@@ -147,10 +153,12 @@ silent returns a result with no error:
   its report (`crossingPairs`, `BoolReport::crossing_pairs`,
   `shape_edit::EditReport`). No committed program, golden case other than
   `selfunion.check` (its inputs cross by design), bench case, or swept
-  `hole`, `pocket`, `seat` or `dent` leaves any. A shell still answers
-  pairs, or is refused, where holes cross each other inside the part or
-  a pocket's mouth is rounded narrower than the wall
-  (`docs/research.md` §38).
+  `hole`, `pocket`, `seat` or `dent` leaves any. A shell of a part
+  whose holes cross inside it, or whose rims are rounded narrower than
+  the wall, is built (`docs/research.md` §48); it is still refused, or
+  answers pairs, where the boolean meets its own limits: 6 of 126 swept
+  (a blind hole ending at another hole's widest, a hole's floor or
+  grown floor in the plane of another wall).
 - 1 300 of the scan's bevels are refused: too large for the faces (426),
   a lone piece of a crease that does not fit (226), a twisted face (340),
   an edge with more than two faces (308).

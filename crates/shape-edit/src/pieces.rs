@@ -95,9 +95,10 @@ pub(crate) fn pieced(s: &Solid, targets: &[f64], t: f64, diag: f64) -> Option<So
             }
         }
     }
+    let root_of: Vec<usize> = (0..nt).map(|i| find(&mut face, i)).collect();
     let mut faces: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for i in 0..nt {
-        faces.entry(find(&mut face, i)).or_default().push(i);
+    for (i, root) in root_of.iter().enumerate() {
+        faces.entry(*root).or_default().push(i);
     }
     let mut tris: Vec<Tri> = (0..nt)
         .map(|i| Tri {
@@ -118,28 +119,51 @@ pub(crate) fn pieced(s: &Solid, targets: &[f64], t: f64, diag: f64) -> Option<So
     let mut closes: Vec<Close> = Vec::new();
     for (&root, members) in &faces {
         // The surface's boundary: its edges with no twin in it, as loops.
-        let mut next: BTreeMap<u32, (u32, usize)> = BTreeMap::new();
+        // A loop goes on from an edge's end to the next boundary edge
+        // round that vertex within the surface, so where two loops touch
+        // at a vertex (a floor another hole cut to two crescents) each
+        // keeps to its own side.
+        let mut edges: BTreeMap<(u32, u32), usize> = BTreeMap::new();
         for &i in members {
             let tri = s.triangles[i];
             for k in 0..3 {
                 let (a, b) = (tri[k], tri[(k + 1) % 3]);
                 let j = *dir.get(&(b, a))?;
-                if find(&mut face, j) != root && next.insert(a, (b, i)).is_some() {
-                    // Pinched at a vertex: not taken apart.
-                    return None;
+                if root_of[j] != root {
+                    edges.insert((a, b), i);
                 }
             }
         }
-        while let Some((&start, _)) = next.iter().next() {
+        // From the boundary edge that ends at `at` in triangle `tri`: the
+        // boundary edge that leaves `at`, and its triangle.
+        let onward = |at: u32, tri: usize| -> Option<(u32, usize)> {
+            let mut t = tri;
+            for _ in 0..nt {
+                let v = s.triangles[t];
+                let k = (0..3).find(|&k| v[k] == at)?;
+                let c = v[(k + 1) % 3];
+                let j = *dir.get(&(c, at))?;
+                if root_of[j] != root {
+                    return Some((c, t));
+                }
+                t = j;
+            }
+            None
+        };
+        while let Some((&(start, second), &first)) = edges.iter().next() {
+            edges.remove(&(start, second));
             let mut ring = vec![start];
-            let mut beside = Vec::new();
-            let (mut at, i) = next.remove(&start)?;
-            beside.push(i);
-            while at != start {
+            let mut beside = vec![first];
+            let (mut at, mut tri) = (second, first);
+            loop {
+                let (c, t) = onward(at, tri)?;
+                if (at, c) == (start, second) {
+                    break;
+                }
+                edges.remove(&(at, c))?;
                 ring.push(at);
-                let (b, i) = next.remove(&at)?;
-                beside.push(i);
-                at = b;
+                beside.push(t);
+                (at, tri) = (c, t);
             }
             // A hole: the surface lies outside the loop, so the loop,
             // with the surface on its left, turns against the surface's
@@ -151,12 +175,29 @@ pub(crate) fn pieced(s: &Solid, targets: &[f64], t: f64, diag: f64) -> Option<So
                 turn += (p(ring[k]) - centre).cross(p(ring[(k + 1) % ring.len()]) - centre);
             }
             let turn = turn.normalize_or_zero();
-            let out = beside
-                .iter()
-                .map(|&i| normal[i])
-                .sum::<DVec3>()
-                .normalize_or_zero();
+            let sum = beside.iter().map(|&i| normal[i]).sum::<DVec3>();
+            // A wall round the loop (its normals all ways, their sum
+            // next to nothing) faces no way to lie outside of it.
+            if sum.length() < 0.5 * beside.len() as f64 {
+                continue;
+            }
+            let out = sum.normalize_or_zero();
             if turn.dot(out) > -0.5 {
+                continue;
+            }
+            // What lies across the rim fills the loop in its own plane
+            // (a flat face inside a rounded rim): the surface goes on
+            // there, and nothing lies through.
+            let mut across_flat = true;
+            for k in 0..ring.len() {
+                let (a, b) = (ring[k], ring[(k + 1) % ring.len()]);
+                let j = *dir.get(&(b, a))?;
+                if normal[j].dot(turn).abs() < 0.999 {
+                    across_flat = false;
+                    break;
+                }
+            }
+            if across_flat {
                 continue;
             }
             let at: Vec<DVec3> = ring.iter().map(|&v| p(v)).collect();
@@ -233,7 +274,7 @@ pub(crate) fn pieced(s: &Solid, targets: &[f64], t: f64, diag: f64) -> Option<So
         pieces.entry(find(&mut piece, i)).or_default().push(i);
     }
     let mut bodies: Vec<Solid> = Vec::new();
-    let mut pockets: Vec<Solid> = Vec::new();
+    let mut pockets: Vec<Vec<Solid>> = Vec::new();
     for members in pieces.values() {
         let mut c = Solid::default();
         let mut index: BTreeMap<u32, u32> = BTreeMap::new();
@@ -344,11 +385,12 @@ pub(crate) fn pieced(s: &Solid, targets: &[f64], t: f64, diag: f64) -> Option<So
                 });
             }
         }
-        match hollow_of(&c, &moves, &free, &refills, diag)? {
-            Some(inner) if body => bodies.push(inner),
-            Some(inner) => pockets.push(inner),
-            // Solid through: it adds nothing to the hollow.
-            None => {}
+        // Solid through (none): it adds nothing to the hollow.
+        let inner = hollow_of(&c, &moves, &free, &refills, diag)?;
+        if body {
+            bodies.extend(inner);
+        } else if !inner.is_empty() {
+            pockets.push(inner);
         }
     }
     let mut bodies = bodies.into_iter();
@@ -361,8 +403,24 @@ pub(crate) fn pieced(s: &Solid, targets: &[f64], t: f64, diag: f64) -> Option<So
     for b in bodies {
         hollow = boolean_report(&hollow, &b, &op(BoolOp::Join)).ok()?.0;
     }
-    for p in &pockets {
-        hollow = boolean_report(&hollow, p, &op(BoolOp::Cut)).ok()?.0;
+    // A pocket's solids are cut out one by one; where a cut does not
+    // come out (a limit of the boolean on those two), they are joined
+    // first and cut as one.
+    for group in &pockets {
+        let mut cut = Some(hollow.clone());
+        for p in group {
+            cut = cut.and_then(|h| boolean_report(&h, p, &op(BoolOp::Cut)).ok().map(|r| r.0));
+        }
+        hollow = match cut {
+            Some(h) => h,
+            None => {
+                let mut whole = group[0].clone();
+                for p in &group[1..] {
+                    whole = boolean_report(&whole, p, &op(BoolOp::Join)).ok()?.0;
+                }
+                boolean_report(&hollow, &whole, &op(BoolOp::Cut)).ok()?.0
+            }
+        };
     }
     clean(&hollow).then_some(hollow)
 }
@@ -468,8 +526,9 @@ fn clean(s: &Solid) -> bool {
     m.closed && m.volume > 0.0 && crossing_pairs(s) == 0
 }
 
-/// One piece's inner solid, or that it has none: a convex piece with no
-/// point a wall from every face (a boss thinner than two walls) is solid
+/// One piece's inner solid, as the solids that make it up joined (one,
+/// or a grown pocket's parts), or none: a convex piece with no point a
+/// wall from every face (a boss thinner than two walls) is solid
 /// through.
 fn hollow_of(
     c: &Solid,
@@ -477,15 +536,46 @@ fn hollow_of(
     free: &[bool],
     refills: &[Refill],
     diag: f64,
-) -> Option<Option<Solid>> {
+) -> Option<Vec<Solid>> {
     let caps: Vec<(DVec3, f64, usize)> = refills
         .iter()
         .filter_map(|r| r.cap.map(|(n, d)| (n, d, r.tri)))
         .collect();
     if let inset::Inset::NoRoom(_) = inset::inset(c, targets, free, &caps, diag) {
-        return Some(None);
+        return Some(Vec::new());
     }
-    inner_of(c, targets, free, refills, &caps, diag)
+    // The exact ways first; then a pocket's parts grown; the collapse,
+    // which is not exact, last.
+    if let Some(inner) = inner_of(c, targets, free, refills, &caps, diag, false) {
+        return Some(inner.into_iter().collect());
+    }
+    if let Some(parts) = grown_of(c, targets, free, refills, diag) {
+        return Some(parts);
+    }
+    inner_of(c, targets, free, refills, &caps, diag, true).map(|i| i.into_iter().collect())
+}
+
+/// A piece that grows by one move (a pocket, a hole), as its convex
+/// parts each grown from their planes, and itself (`faces`): they do
+/// not fold where the piece is hollow (two holes that cross). `None`
+/// for a piece that does not grow so.
+fn grown_of(
+    c: &Solid,
+    targets: &[f64],
+    free: &[bool],
+    refills: &[Refill],
+    diag: f64,
+) -> Option<Vec<Solid>> {
+    let mut moves = (0..c.triangles.len())
+        .filter(|&i| !free[i])
+        .map(|i| targets[i]);
+    let first = moves.next().filter(|m| *m > 0.0)?;
+    if !moves.all(|m| (m - first).abs() <= 1e-12 * first)
+        || refills.iter().any(|r| r.push != DVec3::ZERO)
+    {
+        return None;
+    }
+    crate::faces::grown(c, first, free, diag)
 }
 
 /// One piece's inner solid, the ways `shell` finds one, the first clean;
@@ -497,6 +587,7 @@ fn inner_of(
     refills: &[Refill],
     caps: &[(DVec3, f64, usize)],
     diag: f64,
+    collapse: bool,
 ) -> Option<Option<Solid>> {
     let nv = c.positions.len();
     let mut planes: Vec<Vec<(DVec3, f64)>> = vec![Vec::new(); nv];
@@ -706,6 +797,9 @@ fn inner_of(
     }
     if let Some(u) = self_union(&copy).ok().filter(clean) {
         return Some(Some(u));
+    }
+    if !collapse {
+        return None;
     }
     // The walls that turned over collapsed (`collapse`), the closings
     // made again on what that leaves.

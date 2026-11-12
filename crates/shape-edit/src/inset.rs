@@ -165,6 +165,30 @@ pub(crate) fn inset(
     }
 }
 
+/// The space inside the planes `n · x = h`, about a point `c` inside
+/// them all, as a closed solid of one surface; `None` if it does not
+/// come out one (the planes do not close a space).
+pub(crate) fn space(planes: &[(DVec3, f64)], c: DVec3, tol: f64) -> Option<Solid> {
+    // A triangle to stand for every plane's surface.
+    let mut stand = Solid::default();
+    for p in [DVec3::ZERO, DVec3::X, DVec3::Y] {
+        stand.push_vertex(p);
+    }
+    stand.push_triangle([0, 1, 2], 0, &["wall"]);
+    let list: Vec<Plane> = planes
+        .iter()
+        .map(|&(n, d)| Plane {
+            n,
+            d,
+            target: 0.0,
+            rep: 0,
+            area: 0.0,
+        })
+        .collect();
+    let off: Vec<f64> = planes.iter().map(|p| p.1).collect();
+    inner(&stand, &list, &off, c, tol)
+}
+
 /// The space inside the planes moved to `off`, about a point `c` inside
 /// them all. `None` if it does not come out a closed solid.
 fn inner(s: &Solid, planes: &[Plane], off: &[f64], c: DVec3, tol: f64) -> Option<Solid> {

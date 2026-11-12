@@ -8863,3 +8863,92 @@ and moving (`docs/previews/readme/node_animation.png`);
 `decimate --ratio 0.5` joins all 14 parts, and the file written (1 617
 triangles, 55 bones, 3 targets, 14 clips) rests and poses as the
 original does.
+
+## 48. Shells of pieces that are not convex (2026-11-12)
+
+§38.3 left two shells unbuilt: holes that cross inside a part, and
+"a pocket whose mouth is rounded 2, hollowed 6". They were four
+different faults.
+
+**48.1 A rounded rim is not a hole.** The second case's fillet was on
+the case's outer top rim, not on the pocket's mouth. `pieces` took the
+rim's upper loop for a hole in the fillet's surface (the surface lies
+outside the loop, by the test of §38), closed it, and got a piece of no
+volume: the flat top between a patch and a lid. A loop is now a hole
+only if what lies across it does not fill it in its own plane (a flat
+face inside a rounded rim does; a pocket's walls do not), and only if
+the triangles beside it face one way (a wall round the loop faces all
+ways, and the sum of its normals, next to nothing, was being
+normalized). With that the case comes apart at the pocket's mouth
+alone and builds.
+
+**48.2 Pieces that grow.** Two holes that cross are one pocket piece,
+a cross. Moved out by the wall, its vertices fold along the creases
+where the walls meet, and neither the planes (not convex), the outside
+of the copy (left open by the boolean) nor the collapse mends it.
+
+What growing means does not fold: every point within the wall of the
+piece. For a convex part of the piece's surface that is a convex
+solid, and the grown piece is the piece joined with one such solid a
+part (`shape-edit/src/faces.rs`):
+- **Parts.** Triangles are gathered across edges, from the largest
+  left, while every corner lies behind every other's plane (a hole's
+  wall with its floor is one part; two walls that meet in a crease are
+  two). Then parts that hold pieces of one surface and still lie
+  behind each other's planes are one: a hole's wall that the other
+  hole cut in two. Gathering without regard to edges or surfaces put
+  facets of both holes in one part, whose solid then filled the corner
+  between them.
+- **A part's solid** is the space inside its own planes, each moved
+  out by the wall (so a flat face moves exactly the wall, and a
+  faceted round wall keeps its facets), and inside 32 more planes
+  round a sphere (an icosahedron's corners and faces), each the wall
+  beyond the part: these close the part's open ends and round them,
+  their corners reaching 1.084 walls. It is
+  built as `inset` builds a convex inner solid (the planes' dual hull).
+  Each part's sphere is a thousandth of the wall larger than the
+  last's, so no two parts' solids have a plane in common.
+- **Why not a solid a triangle.** The first attempt joined one convex
+  hull a triangle (the triangle swept by the ball). Neighbours share
+  their corner's ball, so their hulls share faces, and the boolean
+  does not take operands that touch along coplanar faces: the joins
+  failed at once.
+- The hollow is cut by each part's solid in turn and then by the piece
+  itself; where one of those cuts does not come out, the solids are
+  joined first and cut as one.
+Where two parts meet in a crease the piece is hollow, each part's
+solid ends inside the piece or inside the other's, and the result is
+the two walls' own offsets and nothing more. A part's solid can reach
+past the piece only where its own convex hull does, which thickens a
+wall and never thins one. The way is taken for a piece that grows by
+one move with no lid to carry on, after the exact ways and before the
+collapse.
+
+**48.3 Loops that touch.** A blind hole ending inside another leaves
+its floor as two crescents whose tips lie on the other hole's rim: the
+floor's boundary passes twice through a vertex, and `pieces` gave up
+there. A loop now goes on, from the end of an edge, to the next
+boundary edge round that vertex within the surface, so each loop keeps
+to its side.
+
+**48.4 A copy with no place.** A sliver a boolean left has no plane,
+and a vertex only slivers hold has no place in the inner copy (NaN).
+`shell` answered "thickness must be positive" and stopped. It now goes
+to the planes and the pieces, which pass over slivers, and says what
+is wrong if they fail too.
+
+**48.5 Measured.** 126 shells: a blind hole of three diameters and
+eight depths into a through hole; two through holes of 6 to 14 across
+each other; a second hole offset by 1 to 7; a pocket with its mouth or
+floor rounded 1, 2 or 4; a hole through a pocket; two pockets that
+meet; each at two or three walls. 120 build closed with no crossing
+pair. Left: a blind hole of the through hole's diameter ending 1 past
+its axis (a rim of 161 points that does not fill; 3), ending at its
+axis with a wall of 5 (a cut the boolean leaves open; 1), and two
+where faces come to lie in one plane, which the boolean does not take:
+a blind hole's floor in the plane of the other hole's grown wall, and
+a blind hole's grown floor in the plane of the hollow's. Three holes through one point are refused by `hole` itself
+(three faces on one edge). The sweeps of §27.1 (7 280 shells) and of
+the edits (2 434) are unchanged line for line; no golden line moved.
+`edits_answer_the_crossing_pairs_they_leave` holds the rounded rim,
+the crossing holes and a blind hole ending in another.

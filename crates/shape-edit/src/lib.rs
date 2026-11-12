@@ -842,9 +842,7 @@ pub fn shell_report(s: &Solid, d: &Shell) -> Result<(Solid, EditReport), EditErr
     }
     // The inner walls take the outer ones' UVs, corner for corner.
     inner.uvs.clone_from(&s.uvs);
-    inner
-        .canonicalize()
-        .map_err(|_| EditError::NotPositive("thickness"))?;
+    let copied = inner.canonicalize().is_ok();
     let cut = |tool: &Solid| {
         uv_boolean(
             s,
@@ -857,6 +855,33 @@ pub fn shell_report(s: &Solid, d: &Shell) -> Result<(Solid, EditReport), EditErr
             "the shell",
         )
     };
+    if !copied {
+        // A vertex with no finite place (a sliver a boolean left has no
+        // plane to speak of): no copy. The planes and the pieces pass
+        // over slivers.
+        let clean = |i: &Solid| {
+            cut(i)
+                .ok()
+                .filter(|(_, r)| r.touching_edges == 0)
+                .map(|(out, _)| {
+                    let crossing_pairs = crossing_pairs(&out);
+                    (out, EditReport { crossing_pairs })
+                })
+                .filter(|e| e.1.crossing_pairs == 0)
+        };
+        if let Some(e) = exact.as_ref().and_then(clean) {
+            return Ok(e);
+        }
+        if let Some(e) = pieces::pieced(s, &targets, t, size(s))
+            .as_ref()
+            .and_then(clean)
+        {
+            return Ok(e);
+        }
+        return Err(EditError::Unsupported(
+            "a face of the solid is too thin to move in (a sliver a boolean left), and its hollow could not be made from its pieces",
+        ));
+    }
     if crossing_pairs(&inner) == 0 {
         // A copy that does not cross itself may still be inside out: a
         // ring hollowed thicker than its tube comes out through its own
@@ -1155,6 +1180,7 @@ pub fn merge(solids: &[&Solid]) -> Solid {
 }
 
 mod collapse;
+mod faces;
 mod inset;
 mod pieces;
 pub mod subdivide;

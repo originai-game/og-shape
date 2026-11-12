@@ -303,24 +303,61 @@ fn edits_answer_the_crossing_pairs_they_leave() {
         ((volume - solid) - (hollow3 - hollow10)).abs() < chord,
         "{volume} {solid}"
     );
-    // What is not mended comes back with its count: a pocket whose mouth
-    // is rounded 2, hollowed 6 thick (the round is narrower than the
-    // wall, on a piece that is not convex; `docs/research.md` §38).
-    let mut s = Session::new("t");
-    for op in [
+    // A case whose top rim is rounded 2, with a pocket, hollowed 6: the
+    // rounded rim's edge round the flat top is no hole in it, and the
+    // case comes apart at the pocket's mouth alone
+    // (`docs/research.md` §48).
+    let build = |ops: Vec<serde_json::Value>| {
+        let mut s = Session::new("t");
+        let mut last = json!(null);
+        for op in ops {
+            last = s.apply_value(&op).unwrap();
+        }
+        let built = s.model().build().unwrap();
+        let m = built.scene().parts[0].solid.measure();
+        (last, m.closed, m.volume)
+    };
+    let (answer, closed, volume) = build(vec![
         json!({"op": "extrude", "name": "case", "height": 40,
             "profile": {"rect": {"width": 80, "height": 50, "radius": 4}}}),
         json!({"op": "pocket", "id": 0, "depth": 12,
             "profile": {"rect": {"width": 30, "height": 20, "radius": 3}},
             "at": {"origin": [0, 0, 40], "x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}}),
         json!({"op": "fillet", "id": 0, "radius": 2, "edges": "top"}),
-    ] {
-        s.apply_value(&op).unwrap();
-    }
-    let folded = s
-        .apply_value(&json!({"op": "shell", "id": 0, "thickness": 6}))
-        .unwrap();
-    assert!(folded["crossingPairs"].as_u64().unwrap() > 0, "{folded}");
+        json!({"op": "shell", "id": 0, "thickness": 6}),
+    ]);
+    assert_eq!(answer, json!({"crossingPairs": 0}));
+    assert!(closed && (volume - 94_959.0).abs() < 100.0, "{volume}");
+    // Holes that cross inside the part are one pocket that is not
+    // convex: its walls, moved out, fold where they meet. Each hole's
+    // wall is grown by itself and the two cut from the hollow: a tube
+    // of wall round each hole, crossing in the middle.
+    let block = json!({"op": "extrude", "name": "block", "height": 40,
+        "profile": {"rect": {"width": 60, "height": 60}}});
+    let along_x = json!({"op": "hole", "id": 0, "diameter": 10,
+        "at": {"origin": [30, 0, 20], "x": [0, 1, 0], "y": [0, 0, 1], "z": [1, 0, 0]}});
+    let (answer, closed, volume) = build(vec![
+        block.clone(),
+        along_x.clone(),
+        json!({"op": "hole", "id": 0, "diameter": 10,
+            "at": {"origin": [0, 30, 20], "x": [1, 0, 0], "y": [0, 0, -1], "z": [0, 1, 0]}}),
+        json!({"op": "shell", "id": 0, "thickness": 3}),
+    ]);
+    assert_eq!(answer, json!({"crossingPairs": 0}));
+    // The walls: the box's (144 000 − 54 · 54 · 34), and two tubes of
+    // outer radius 8 through the hollow, less the holes themselves.
+    assert!(closed && (volume - 55_090.0).abs() < 60.0, "{volume}");
+    // A blind hole that ends inside the other: its floor is two
+    // crescents whose rims touch the other hole's at a point each.
+    let (answer, closed, volume) = build(vec![
+        block,
+        along_x,
+        json!({"op": "hole", "id": 0, "diameter": 8, "depth": 23,
+            "at": {"origin": [0, 0, 40], "x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}}),
+        json!({"op": "shell", "id": 0, "thickness": 3}),
+    ]);
+    assert_eq!(answer, json!({"crossingPairs": 0}));
+    assert!(closed && volume > 50_000.0 && volume < 56_000.0, "{volume}");
 }
 
 #[test]
