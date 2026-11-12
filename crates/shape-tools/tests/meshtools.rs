@@ -569,8 +569,9 @@ fn a_uniform_armature_scale_comes_out_of_the_bones() {
         assert_eq!(w.bones, kb.weights[i].bones);
     }
     // Saved posed (the knee node turned 90° about z): the bind pose comes
-    // from the inverse bind matrices, so the mesh and bones are as before,
-    // and how far the nodes stood from it is reported.
+    // from the inverse bind matrices, so the mesh and the inverse binds
+    // are as before; the knee rests where its node stands, and how far
+    // the nodes stood from the bind pose is reported.
     let q = std::f32::consts::FRAC_1_SQRT_2;
     let posed_file = skinned::skinned_glb_posed(true, Some([0.01; 3]), Some([0.0, 0.0, q, q]));
     let posed_import = import(&posed_file, &Import::default(), &no_files).unwrap();
@@ -579,7 +580,23 @@ fn a_uniform_armature_scale_comes_out_of_the_bones() {
         assert!((*p - *q).length() < 1e-6, "{p:?} {q:?}");
     }
     let kp = pb.skin.as_ref().unwrap();
-    assert!((kp.bones[1].rest.x - kb.bones[1].rest.x).length() < 1e-9);
+    for (x, y) in kp.bones.iter().zip(&kb.bones) {
+        for (m, n) in x.inverse_bind.iter().zip(&y.inverse_bind) {
+            assert!((m - n).abs() < 1e-9, "{}", x.name);
+        }
+    }
+    assert!((kp.bones[0].rest.x - kb.bones[0].rest.x).length() < 1e-9);
+    assert!((kp.bones[1].rest.x - kb.bones[1].rest.x).length() > 1.0);
+    // Posed by nothing, the mesh stands as the file shows it: the knee's
+    // far vertex as far from its bind place as the report says.
+    let rest = shape_skin::pose(pb, &Default::default()).unwrap();
+    let moved = rest
+        .positions
+        .iter()
+        .zip(&pb.positions)
+        .map(|(a, b)| (*a - *b).length())
+        .fold(0.0, f64::max);
+    assert!((moved - posed_import.skin_scales[0].node_offset).abs() < 1e-6, "{moved}");
     // The knee's far vertex, (10, 25) cm from the knee, turned 90° to
     // (−25, 10): √(35² + 15²) cm off.
     let off = posed_import.skin_scales[0].node_offset;
@@ -1243,4 +1260,59 @@ fn a_skinned_part_is_written_with_tangents() {
         .check(s.positions.len())
         .unwrap();
     assert_eq!(back.parts[0].clips.len(), clips.len());
+}
+
+/// A mesh with no skin that a clip moves by a node above it is read as
+/// a skin of one bone, so its motion goes where a skin's goes: its
+/// vertices stand where the node puts them at rest, and the clip moves
+/// them as the node does.
+#[test]
+fn a_mesh_its_node_s_animation_moves_is_a_skin_of_one_bone() {
+    // A triangle on `tip`, 1 m along x under `arm`, which a clip lifts
+    // 1 m (glTF's +y) over a second.
+    let mut bin: Vec<u8> = Vec::new();
+    let f32s = |bin: &mut Vec<u8>, v: &[f32]| v.iter().for_each(|x| bin.extend(x.to_le_bytes()));
+    f32s(&mut bin, &[0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.1, 0.0]);
+    f32s(&mut bin, &[0.0, 1.0]);
+    f32s(&mut bin, &[0.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+    let json = format!(
+        r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0]}}],
+        "nodes":[{{"name":"arm","children":[1]}},{{"name":"tip","mesh":0,"translation":[1,0,0]}}],
+        "meshes":[{{"primitives":[{{"attributes":{{"POSITION":0}}}}]}}],
+        "animations":[{{"name":"lift","channels":[{{"sampler":0,"target":{{"node":0,"path":"translation"}}}}],
+          "samplers":[{{"input":1,"output":2}}]}}],
+        "buffers":[{{"uri":"arm.bin","byteLength":{}}}],
+        "bufferViews":[{{"buffer":0,"byteLength":36}},{{"buffer":0,"byteOffset":36,"byteLength":8}},
+          {{"buffer":0,"byteOffset":44,"byteLength":24}}],
+        "accessors":[{{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"}},
+          {{"bufferView":1,"componentType":5126,"count":2,"type":"SCALAR"}},
+          {{"bufferView":2,"componentType":5126,"count":2,"type":"VEC3"}}]}}"#,
+        bin.len()
+    );
+    let files = move |uri: &str| match uri {
+        "arm.bin" => Ok(bin.clone()),
+        _ => Err(format!("no {uri}")),
+    };
+    let imported = import_gltf(json.as_bytes(), &files).unwrap();
+    let part = &imported.parts[0];
+    let skin = part.solid.skin.as_ref().expect("a skin of one bone");
+    assert_eq!(skin.bones.len(), 1);
+    assert_eq!(skin.bones[0].name, "tip.node");
+    skin.check(part.solid.positions.len()).unwrap();
+    // At rest: 1 m along x, where the node stands.
+    let lowest = |s: &Solid| {
+        s.positions
+            .iter()
+            .fold(DVec3::splat(f64::INFINITY), |lo, p| lo.min(*p))
+    };
+    assert_eq!(lowest(&part.solid), DVec3::new(1000.0, 0.0, 0.0));
+    assert_eq!(part.clips.len(), 1);
+    assert_eq!(part.clips[0].name, "lift");
+    // Half way through the clip: half a metre up.
+    let posed = shape_skin::pose_by(&part.solid, &part.clips[0].at(0.5).unwrap()).unwrap();
+    assert!((lowest(&posed) - DVec3::new(1000.0, 0.0, 500.0)).length() < 1e-6);
+    // Without the clip the mesh is as it was: no skin.
+    let still = json.replace(r#""animations""#, r#""extras""#);
+    let imported = import_gltf(still.as_bytes(), &files).unwrap();
+    assert!(imported.parts[0].solid.skin.is_none());
 }

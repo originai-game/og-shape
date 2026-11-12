@@ -1084,6 +1084,21 @@ impl Doc<'_> {
             }
         };
         let mut used = BTreeMap::new();
+        // The nodes a clip moves (translation, rotation or scale).
+        let parents = self.parents();
+        let mut animated = vec![false; self.json.get("nodes").items().len()];
+        for anim in self.json.get("animations").items() {
+            for ch in anim.get("channels").items() {
+                let target = ch.get("target");
+                if let (Some(node), Some("translation" | "rotation" | "scale")) =
+                    (target.get("node").index(), target.get("path").str())
+                    && let Some(slot) = animated.get_mut(node)
+                {
+                    *slot = true;
+                }
+            }
+        }
+        let mut pending = Vec::new();
         let mut stack: Vec<(usize, Affine, usize)> = roots
             .iter()
             .rev()
@@ -1122,6 +1137,10 @@ impl Doc<'_> {
                     t.weight = w;
                 }
             }
+            pending.push((i, world, name, part, raw));
+        }
+        for (i, world, name, mut part, raw) in pending {
+            let n = self.json.get("nodes").at(i);
             let morph_node =
                 |part: &ImportedPart| part.solid.morphs.as_ref().map(|m| (i, m.targets.len()));
             let weighted = raw.iter().any(|r| r.iter().any(|p| p.1 > 0.0));
@@ -1158,7 +1177,58 @@ impl Doc<'_> {
                         out.skipped
                             .push(format!("{name}: bone weights with no skin on its node"));
                     }
-                    if part.solid.morphs.is_some() {
+                    // A mesh a clip moves by its node (or a node above
+                    // it) is carried as a skin of one bone: its vertices
+                    // go to where the node puts them at rest, the bone
+                    // stands at the origin, and the clip's matrices are
+                    // the node's motion from there.
+                    let moved = {
+                        let mut at = Some(i);
+                        let mut steps = 0;
+                        let mut found = false;
+                        while let Some(k) = at {
+                            if animated.get(k).copied().unwrap_or(false) {
+                                found = true;
+                                break;
+                            }
+                            at = parents.get(k).copied().flatten();
+                            steps += 1;
+                            if steps > parents.len() {
+                                break;
+                            }
+                        }
+                        found
+                    };
+                    let rest = affine_inverse(&world).filter(|_| moved);
+                    let placed = match rest {
+                        Some(_) => crate::repair::apply_transform(&part).ok(),
+                        None => None,
+                    };
+                    if let (Some(inverse), Some(placed)) = (rest, placed) {
+                        let space = SkinSpace {
+                            nodes: vec![i],
+                            ibms: vec![inverse],
+                            unbind: Affine::IDENTITY,
+                        };
+                        let clips = self.clips(&space, morph_node(&part))?;
+                        if !clips.is_empty() {
+                            let vertices = placed.positions.len();
+                            part.solid = placed;
+                            part.solid.skin = Some(Skin {
+                                bones: vec![Bone::new(
+                                    &format!("{name}.node"),
+                                    None,
+                                    Frame::IDENTITY,
+                                )],
+                                weights: vec![Weights::single(0); vertices],
+                            });
+                            part.transform = Affine::IDENTITY;
+                            part.clips = clips;
+                            out.skipped.push(format!(
+                                "{name}: moved by its node's animation, so carried as a skin of one bone ({name}.node)"
+                            ));
+                        }
+                    } else if part.solid.morphs.is_some() {
                         // No bones: the clips drive the targets alone.
                         let none = SkinSpace {
                             nodes: Vec::new(),
@@ -1465,8 +1535,27 @@ impl Doc<'_> {
                     }
                 }
             }
+            // A bone rests where its node stands in the file, its scale
+            // divided out; its inverse bind matrix is its bind-time
+            // frame's inverse. In a file saved at its bind pose the two
+            // frames are one (to rounding), and the bind-time one is
+            // kept; in a file saved posed they differ, and the rest is
+            // the node's, so every mesh of the skeleton has the same
+            // bones and the file's rest pose is `rest · inverse bind`.
+            let at_bind = (0..order.len()).all(|b| {
+                let (n, r) = (conjugate(&worlds[b].1, 1000.0), &rests[b]);
+                (n.t - r.t).length() <= 1e-6 * r.t.length().max(1.0)
+                    && [(n.x, r.x), (n.y, r.y), (n.z, r.z)]
+                        .iter()
+                        .all(|(a, b)| (*a - *b).length() <= 1e-9)
+            });
             for (b, &ji) in order.iter().enumerate() {
-                let (rest, inverse_bind) = rest_and_inverse(&rests[b]);
+                let (bind_rest, inverse_bind) = rest_and_inverse(&rests[b]);
+                let rest = if at_bind {
+                    bind_rest
+                } else {
+                    rest_and_inverse(&conjugate(&worlds[b].1, 1000.0)).0
+                };
                 bones.push(Bone {
                     name: names[b].clone(),
                     parent: info[ji].1.map(|p| bone_of[p]),

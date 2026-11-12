@@ -1489,3 +1489,22 @@
   are). A channel's in-between shapes are noted and not read. Checked
   against Maya's values on ufbx's blend-shape cube
   (`docs/research.md` §46).
+- glTF: a mesh with no skin that a clip moves by its node, or by a node
+  above it, is read as a skin of one bone (`<part>.node`): its vertices
+  stand where the node puts them at rest and its clips are the node's
+  motion, so previews pose it and repair, decimate and process carry
+  and write its animation. `import` notes it. Such files had no clips
+  before (three.js's RobotExpressive: 14 clips over 12 rigid parts).
+- Parts skinned to one skeleton whose bones rest at the same places
+  and whose inverse bind matrices differ by one matrix for all the
+  bones they share (each mesh bound in its own space) are joined: the
+  later part's vertices and clips go to the first's space. They were
+  refused as bones that differ; a part placed with its bones still is.
+- glTF: in a skin with a scale taken out of its bones, saved away from
+  its bind pose, a bone rests where its node stands in the file (not
+  where the bind pose anchored by one bone puts it), so every mesh of
+  the skeleton has the same bones and a written GLB rests as the file
+  does. `preview` without a clip shows that rest. A file saved at its
+  bind pose is read as before.
+  RobotExpressive joins, decimates to half and is written with its 55
+  bones, 3 morph targets and 14 clips (`docs/research.md` §47).

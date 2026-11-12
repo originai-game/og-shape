@@ -8794,3 +8794,68 @@ and 53 (0.279, 0.670; 0.901, 0.168) to 2e-3:
 `maya_blend_inbetween` reads with a note for its two channels'
 in-between shapes, which are not read: between 0 and the full weight
 such a channel moves straight to its full shape.
+
+## 47. Meshes moved by their nodes, and skins bound apart (2026-11-12)
+
+**A node's animation.** A glTF mesh with no skin can still move: a
+clip animates its node or a node above it (a machine's parts, a prop
+parented to a bone). The importer read no clip for such a mesh, so a
+preview at a clip's time left it at rest and the tools wrote it still.
+
+It is now read as a skin of one bone. For a mesh whose node, or any
+node above it, has a translation, rotation or scale channel in some
+animation: its vertices are placed by the node's rest transform (as
+`apply_transform` places a part, a mirror reversing its triangles),
+its transform becomes the identity, and it gets one bone named
+`<part>.node` at the origin with an identity inverse bind and every
+vertex weighted to it. Its clips are read as a skin's are, with the
+node's inverse rest transform in the place of an inverse bind matrix:
+each sample is the node's world transform then, after its rest
+inverted. The matrices need not be rigid. `import` lists a line for
+each such part. A mesh no clip moves is read as before.
+
+What follows: `preview --clip` poses it; `repair`, `decimate` and
+`process` carry the bone and write the clips (as the bone's
+translation, rotation and scale from the origin, which is the same
+motion, not the file's own node tree). FBX models moved by their own
+curves are not read this way yet.
+
+**Skins bound apart.** Two meshes skinned to one skeleton may each be
+bound in its own space: their bones rest at the same places, and their
+inverse bind matrices for a bone differ, by the same matrix
+`M = A⁻¹ · B` for every bone they share. `join` refused them (bones
+that differ). `merge_skeletons` now finds `M` for a part against the
+bones already merged; when the bones rest where the merged ones do and
+`M` is one matrix (to 1e-5), not a mirror and not the identity, the
+part's vertices and morph offsets are moved by `M`, its inverse binds
+become `B · M⁻¹` (the first's), and its clips' matrices are multiplied
+by `M⁻¹` on the right. The skinned result is unchanged:
+`B · v = A · (M v)`. Bones that rest at different places are another
+skeleton (a part placed with its bones) and stay a conflict, as do
+bones that differ by different matrices.
+
+**A file saved posed.** With a scale taken out of its bones (§11.4), a
+skin's bones were given the rest frames of its bind pose, anchored by
+the bone that weights the most of that mesh. Two meshes of one
+skeleton in a file saved away from its bind pose then had bones at
+different places, anchored by different bones. A bone now rests where
+its node stands in the file (its scale divided out) whenever the nodes
+stand away from the bind pose; its inverse bind matrix is still its
+bind-time frame's inverse. So every mesh of a skeleton has the same
+bones, the file's rest pose is `rest · inverse bind` (which the GLB
+writers write as the bones' nodes), and a file saved at its bind pose
+is read as before, bit for bit. `preview` without a clip poses such a
+mesh by its bones' rest, so it shows what the file shows; the solid
+itself stays in its bind pose.
+
+Checked: `a_mesh_its_node_s_animation_moves_is_a_skin_of_one_bone`
+(a triangle under an animated node: at rest where the node stands,
+half way up half way through, no skin without the clip);
+`parts_bound_in_different_spaces_join_on_one_skeleton`. three.js
+r160's RobotExpressive (12 rigid parts under bones, two hands skinned
+to 43 bones each in its own space, a head with three targets): 14
+clips read where none were; previews show the parts at the file's rest
+and moving (`docs/previews/readme/node_animation.png`);
+`decimate --ratio 0.5` joins all 14 parts, and the file written (1 617
+triangles, 55 bones, 3 targets, 14 clips) rests and poses as the
+original does.

@@ -156,6 +156,24 @@ fn with_scene<T>(
             if pose.is_none() {
                 for (_, s) in &mut placed {
                     *s = s.morphed(&weights_of(s, None));
+                    // A file saved posed: its bones rest away from where
+                    // they were bound, and the file's own look is the
+                    // mesh at that rest.
+                    let posed = s.skin.as_ref().is_some_and(|k| {
+                        k.bones.iter().any(|b| {
+                            let m = shape_mesh::skin::mat_mul(
+                                &shape_mesh::skin::frame_matrix(&b.rest),
+                                &b.inverse_bind,
+                            );
+                            (0..16).any(|i| {
+                                let id = if i % 5 == 0 { 1.0 } else { 0.0 };
+                                (m[i] - id).abs() > 1e-6 * if i >= 12 { 1000.0 } else { 1.0 }
+                            })
+                        })
+                    });
+                    if posed {
+                        *s = shape_skin::pose(s, &Default::default()).map_err(failed)?;
+                    }
                 }
             }
             if let Some((clip, time)) = pose {

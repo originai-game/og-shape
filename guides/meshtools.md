@@ -31,7 +31,12 @@ import → join → repair → decimate → place → unwrap → measure → pre
    bones), and every tool keeps the skin: weights follow the vertices
    through repair, decimation blends them, and the commands write it
    back as a GLB with its bones and skin (parts whose skins hold
-   different bones of one skeleton are joined on it). `process --bake`
+   different bones of one skeleton are joined on it). A mesh with no skin that a
+   clip moves by its node (a machine's rigid parts, a prop on a bone)
+   is read as a skin of one bone named `<part>.node`, standing where
+   the node puts it at rest: `import` says so, and it is then a skinned
+   part like any other. Parts skinned to one skeleton but bound in
+   different spaces are joined on it. `process --bake`
    works on a skinned mesh too: the baked GLB keeps the bones, the
    morph targets and the clips, with `TANGENT`. The file's
    animations are read too: `import` lists `clips` (name, seconds,

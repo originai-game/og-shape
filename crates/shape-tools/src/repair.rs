@@ -277,12 +277,23 @@ fn mat_mul(a: &Mat4, b: &Mat4) -> Mat4 {
 }
 
 /// A merged skeleton, and each skinned part's bone indices in it.
-type Merged = (Vec<Bone>, Vec<Vec<u32>>);
+/// A merged skeleton, each skinned part's bone indices in it, and for a
+/// part bound in another space than the first with its bones, the
+/// matrix that takes its vertices there.
+type Merged = (Vec<Bone>, Vec<Vec<u32>>, Vec<Option<Mat4>>);
 
 /// The skeletons of `parts` merged by bone name, and each skinned part's
 /// bone indices in it. Bones of one name must agree: the same parent's
 /// name (or none, in a skin that does not hold the parent), rest frame
 /// and inverse bind matrix to rounding (1e-6 mm, 1e-9 in the axes).
+///
+/// A part whose bones rest where those already merged do, and whose
+/// inverse bind matrices differ from theirs by one matrix for all the
+/// bones they share (two meshes skinned to one skeleton, each bound in
+/// its own space), is not a conflict: `M = first's inverse bind⁻¹ · its
+/// own` takes its vertices to the first's space, where the first's
+/// matrices move them as its own did. Bones that rest elsewhere are
+/// another skeleton (a part placed with its bones), and stay one.
 fn merge_skeletons(parts: &[(&str, &Solid)]) -> Result<Option<Merged>, RepairError> {
     let skinned: Vec<&str> = parts
         .iter()
@@ -305,17 +316,22 @@ fn merge_skeletons(parts: &[(&str, &Solid)]) -> Result<Option<Merged>, RepairErr
     let mut bones: Vec<Bone> = Vec::new();
     let mut maps = Vec::new();
     let mut conflicts: Vec<String> = Vec::new();
-    let near = |a: &Bone, b: &Bone| {
+    // `slack`: 1 for parts in one bind space; a part taken to another's
+    // was moved by a matrix read from f32 inverse binds.
+    let same_rest = |a: &Bone, b: &Bone, slack: f64| {
         let f = (&a.rest, &b.rest);
-        (f.0.origin - f.1.origin).length() <= 1e-6 * f.0.origin.length().max(1.0)
-            && (f.0.x - f.1.x).length() <= 1e-9
-            && (f.0.y - f.1.y).length() <= 1e-9
-            && (f.0.z - f.1.z).length() <= 1e-9
-            && a.inverse_bind
-                .iter()
-                .zip(&b.inverse_bind)
-                .all(|(x, y)| (x - y).abs() <= 1e-6 * x.abs().max(1.0))
+        (f.0.origin - f.1.origin).length() <= 1e-6 * slack * f.0.origin.length().max(1.0)
+            && (f.0.x - f.1.x).length() <= 1e-9 * slack
+            && (f.0.y - f.1.y).length() <= 1e-9 * slack
+            && (f.0.z - f.1.z).length() <= 1e-9 * slack
     };
+    let same_matrix = |a: &Mat4, b: &Mat4, slack: f64| {
+        a.iter()
+            .zip(b)
+            .all(|(x, y)| (x - y).abs() <= slack * x.abs().max(1.0))
+    };
+    let identity = shape_mesh::skin::frame_matrix(&shape_core::Frame::IDENTITY);
+    let mut fixes: Vec<Option<Mat4>> = vec![None; parts.len()];
     // The part with the most bones first: a skin may hold only some of
     // the skeleton (a visor skinned to the neck and head alone), and its
     // first bones then have no parent in it. Such a bone takes the parent
@@ -331,7 +347,50 @@ fn merge_skeletons(parts: &[(&str, &Solid)]) -> Result<Option<Merged>, RepairErr
         let (name, s) = &parts[at];
         let k = s.skin.as_ref().unwrap_or_else(|| unreachable!("{name}"));
         let mut map = Vec::with_capacity(k.bones.len());
+        // The one matrix from this part's bind space to that of the
+        // bones it shares with those merged, if their inverse binds
+        // differ by one.
+        let mut fix: Option<Mat4> = None;
+        let mut one_space = true;
         for b in &k.bones {
+            let Some(had) = bones.iter().find(|x| x.name == b.name) else {
+                continue;
+            };
+            // Only bones that stand at one place can be one skeleton
+            // bound in two spaces; a skeleton moved is another.
+            if !same_rest(had, b, 1.0) {
+                one_space = false;
+            }
+            let m = shape_mesh::skin::affine_inverse(&had.inverse_bind)
+                .map(|inv| mat_mul(&inv, &b.inverse_bind));
+            match (m, &fix) {
+                (Some(m), None) => fix = Some(m),
+                (Some(m), Some(f)) if same_matrix(f, &m, 1e-5) => {}
+                _ => one_space = false,
+            }
+        }
+        let fix = fix.filter(|f| {
+            // Not a mirror, and not the identity.
+            let det = f[0] * (f[5] * f[10] - f[9] * f[6]) - f[4] * (f[1] * f[10] - f[9] * f[2])
+                + f[8] * (f[1] * f[6] - f[5] * f[2]);
+            one_space && det > 0.0 && !same_matrix(&identity, f, 1e-6)
+        });
+        let unfix = fix.and_then(|f| shape_mesh::skin::affine_inverse(&f));
+        fixes[at] = fix.filter(|_| unfix.is_some());
+        for b in &k.bones {
+            // In the merged space, this part's inverse binds are theirs
+            // undone of the matrix.
+            let moved;
+            let b = match &unfix {
+                Some(u) if fixes[at].is_some() => {
+                    moved = Bone {
+                        inverse_bind: mat_mul(&b.inverse_bind, u),
+                        ..b.clone()
+                    };
+                    &moved
+                }
+                _ => b,
+            };
             let parent_name = b.parent.map(|p| k.bones[p as usize].name.as_str());
             let parent = b.parent.map(|p| map[p as usize]);
             match bones.iter().position(|x| x.name == b.name) {
@@ -352,7 +411,11 @@ fn merge_skeletons(parts: &[(&str, &Solid)]) -> Result<Option<Merged>, RepairErr
                         }
                         (Some(a), Some(b)) => a == b,
                     };
-                    if !same_parent || !near(&bones[i], b) {
+                    let slack = if fixes[at].is_some() { 1e4 } else { 1.0 };
+                    if !same_parent
+                        || !same_rest(&bones[i], b, slack)
+                        || !same_matrix(&bones[i].inverse_bind, &b.inverse_bind, 1e-6 * slack)
+                    {
                         conflicts.push(b.name.clone());
                     }
                     map.push(i as u32);
@@ -375,7 +438,7 @@ fn merge_skeletons(parts: &[(&str, &Solid)]) -> Result<Option<Merged>, RepairErr
             "bones {conflicts:?} differ between the parts (parent, rest frame or inverse bind)"
         )));
     }
-    Ok(Some((bones, maps)))
+    Ok(Some((bones, maps, fixes)))
 }
 
 /// The clips of [`join`]'s solid: the parts' clips on the joined
@@ -392,10 +455,14 @@ pub fn join_clips(parts: &[ImportedPart]) -> Result<Vec<shape_mesh::SkinClip>, R
         .map(apply_transform)
         .collect::<Result<_, _>>()?;
     let named: Vec<(&str, &Solid)> = parts.iter().map(|p| p.name.as_str()).zip(&placed).collect();
-    let (bones, maps) = match merge_skeletons(&named)? {
+    let (bones, maps, fixes) = match merge_skeletons(&named)? {
         Some(merged) => merged,
         // No skin: the clips drive morph targets alone.
-        None => (Vec::new(), vec![Vec::new(); parts.len()]),
+        None => (
+            Vec::new(),
+            vec![Vec::new(); parts.len()],
+            vec![None; parts.len()],
+        ),
     };
     // The joined solid's targets, in `Solid::append`'s order, and each
     // one's weight at rest.
@@ -416,13 +483,24 @@ pub fn join_clips(parts: &[ImportedPart]) -> Result<Vec<shape_mesh::SkinClip>, R
             t.t.y, t.t.z, 1.0,
         ];
         let mut clips = Vec::with_capacity(p.clips.len());
+        // A part taken to the merged bind space: its matrices take its
+        // vertices back first.
+        let back = fixes[moved.len()]
+            .as_ref()
+            .and_then(shape_mesh::skin::affine_inverse);
         for c in &p.clips {
-            clips.push(c.moved(&m).ok_or_else(|| {
+            let mut c = c.moved(&m).ok_or_else(|| {
                 RepairError::Skinned(format!(
                     "part {:?} is placed by a singular transform",
                     p.name
                 ))
-            })?);
+            })?;
+            if let Some(back) = &back {
+                for s in c.poses.iter_mut().flatten() {
+                    *s = mat_mul(s, back);
+                }
+            }
+            clips.push(c);
         }
         moved.push(clips);
     }
@@ -519,8 +597,23 @@ pub fn join(parts: &[ImportedPart]) -> Result<Solid, RepairError> {
     let mut out = Solid::default();
     for (i, s) in placed.into_iter().enumerate() {
         let mut s = s;
-        if let (Some((bones, maps)), Some(k)) = (&merged, &s.skin) {
+        if let (Some((bones, maps, fixes)), true) = (&merged, s.skin.is_some()) {
             let map = &maps[i];
+            // To the merged bind space, where the merged inverse binds
+            // move the vertices as the part's own did.
+            if let Some(f) = fixes[i] {
+                s.map_positions(
+                    |p| {
+                        DVec3::new(
+                            f[0] * p.x + f[4] * p.y + f[8] * p.z + f[12],
+                            f[1] * p.x + f[5] * p.y + f[9] * p.z + f[13],
+                            f[2] * p.x + f[6] * p.y + f[10] * p.z + f[14],
+                        )
+                    },
+                    false,
+                );
+            }
+            let Some(k) = &s.skin else { continue };
             let weights = k
                 .weights
                 .iter()
@@ -2346,7 +2439,7 @@ mod tests {
             [("body", &body), ("visor", &visor)],
             [("visor", &visor), ("body", &body)],
         ] {
-            let (bones, maps) = merge_skeletons(&parts).unwrap().unwrap();
+            let (bones, maps, _) = merge_skeletons(&parts).unwrap().unwrap();
             let names: Vec<&str> = bones.iter().map(|b| b.name.as_str()).collect();
             assert_eq!(names, ["spine", "neck"]);
             assert_eq!(bones[1].parent, Some(0));
@@ -2365,5 +2458,59 @@ mod tests {
         );
         let e = merge_skeletons(&[("body", &body), ("other", &other)]).unwrap_err();
         assert!(e.to_string().contains("neck"), "{e}");
+    }
+
+    /// Two meshes skinned to one skeleton, each bound in its own space
+    /// (their inverse bind matrices differ by one matrix for every bone),
+    /// are one skeleton: the second's vertices go to the first's space.
+    /// Bones that differ by different matrices are a conflict.
+    #[test]
+    fn parts_bound_in_different_spaces_join_on_one_skeleton() {
+        use shape_core::Frame;
+        use shape_mesh::{Bone, Weights};
+        let frame = |x: f64, z: f64| Frame {
+            origin: DVec3::new(x, 0.0, z),
+            ..Frame::IDENTITY
+        };
+        let part = |shift: f64, twist: f64| {
+            // The same two bones where they stand, and the same cube in
+            // the world, its mesh written `shift` along x away: the
+            // inverse binds take it back.
+            let mut s = cube(DVec3::new(-shift, 0.0, 0.0), 4.0);
+            let mut bones = vec![
+                Bone::new("hip", None, frame(0.0, 0.0)),
+                Bone::new("knee", Some(0), frame(0.0, 5.0)),
+            ];
+            for (k, b) in bones.iter_mut().enumerate() {
+                b.inverse_bind[12] += shift + if k == 1 { twist } else { 0.0 };
+            }
+            s.skin = Some(Skin {
+                bones,
+                weights: vec![Weights::single(1); s.positions.len()],
+            });
+            s
+        };
+        let (a, b) = (part(0.0, 0.0), part(10.0, 0.0));
+        let (bones, maps, fixes) = merge_skeletons(&[("a", &a), ("b", &b)]).unwrap().unwrap();
+        assert_eq!(bones.len(), 2);
+        assert_eq!(maps, [vec![0, 1], vec![0, 1]]);
+        assert_eq!(fixes[0], None);
+        let f = fixes[1].expect("a matrix for the second part");
+        assert!((f[12] - 10.0).abs() < 1e-9 && f[13] == 0.0 && (f[0] - 1.0).abs() < 1e-12);
+        // Joined, the two cubes stand on each other: 8 vertices, not 16.
+        let named = |name: &str, solid: &Solid| ImportedPart {
+            clips: Vec::new(),
+            name: name.into(),
+            solid: solid.clone(),
+            transform: Affine::IDENTITY,
+            material: Default::default(),
+            defaults: Vec::new(),
+        };
+        let joined = join(&[named("a", &a), named("b", &b)]).unwrap();
+        assert_eq!(joined.positions.len(), 8);
+        joined.skin.as_ref().unwrap().check(8).unwrap();
+        // One bone off by another matrix than the other: not one space.
+        let e = merge_skeletons(&[("a", &a), ("c", &part(10.0, 3.0))]).unwrap_err();
+        assert!(e.to_string().contains("knee"), "{e}");
     }
 }
