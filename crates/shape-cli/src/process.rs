@@ -194,14 +194,6 @@ pub fn process_steps(
     let imported = report::imported(&mesh.format, &mesh.imported);
     let joined = mesh.joined()?;
     let mut clips = mesh.clips()?;
-    if d.bake > 0 && (joined.skin.is_some() || joined.morphs.is_some()) {
-        // The baked file is a plain GLB with TANGENT, one node: no skin.
-        return Err(Failure::Failed(
-            "--bake on a skinned mesh is not done: the baked file would lose its skin. Keep \
-             the file's UVs (no --bake), or bake the mesh without its skin"
-                .into(),
-        ));
-    }
     step(1)?;
     let (mut fixed, r) = shape_tools::repair_owned(joined, &d.repair).map_err(failed)?;
     // The bake's source: the repaired mesh with its UVs and colours.
@@ -297,7 +289,14 @@ pub fn process_steps(
     );
     step(6)?;
     let output = if baked.is_some() {
-        crate::export::write_solid_tangents(files, &mesh.name, &low, &material, d.out.as_deref())?
+        crate::export::write_solid_tangents(
+            files,
+            &mesh.name,
+            &low,
+            &material,
+            &clips,
+            d.out.as_deref(),
+        )?
     } else {
         crate::export::write_solid_clips(
             files,

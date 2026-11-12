@@ -200,6 +200,9 @@ pub struct Part<'a> {
     pub parent: String,
     /// How it moves on its parent; `None` is welded to it.
     pub joint: Option<Joint>,
+    /// Write `TANGENT` (on a solid with UVs), as [`crate::PlainGlb`]
+    /// does: the frame a baked normal map was baked in.
+    pub tangents: bool,
 }
 
 impl<'a> Part<'a> {
@@ -211,6 +214,7 @@ impl<'a> Part<'a> {
             material: Material::default(),
             parent: String::new(),
             joint: None,
+            tangents: false,
         }
     }
 }
@@ -1005,6 +1009,26 @@ fn glb_all(
                     ("type", Json::Str("VEC4".into())),
                 ]));
                 attributes.push(("COLOR_0", Json::Int((accessors.len() - 1) as u64)));
+            }
+            if part.tangents && !s.uvs.is_empty() {
+                // Each vertex's frame as the plain GLB has it.
+                let frames = crate::surface::corner_frames(part.solid);
+                let start = bin.len();
+                for &(i, k) in &s.corners {
+                    let f = frames[i as usize][usize::from(k)];
+                    let t = y_up(f.tangent);
+                    for c in [t.x, t.y, t.z, f.w] {
+                        push_f32(&mut bin, c as f32);
+                    }
+                }
+                let tv = view(&mut bin, start, ARRAY_BUFFER);
+                accessors.push(Json::Obj(vec![
+                    ("bufferView", Json::Int(tv)),
+                    ("componentType", Json::Int(FLOAT)),
+                    ("count", Json::Int(s.corners.len() as u64)),
+                    ("type", Json::Str("VEC4".into())),
+                ]));
+                attributes.push(("TANGENT", Json::Int((accessors.len() - 1) as u64)));
             }
             if let Some(sk) = skin {
                 let (j, w) = crate::skin::vertex_data(sk, &s.sources);

@@ -1202,3 +1202,45 @@ fn a_draco_primitive_is_read() {
         .sum();
     assert!((area - 6.0e6).abs() < 1.0e4, "{area}");
 }
+
+/// A part asked for tangents is written with `TANGENT` beside its skin
+/// and clips (what `process --bake` writes for a skinned file), and
+/// reads back with both.
+#[test]
+fn a_skinned_part_is_written_with_tangents() {
+    use shape_tools::{glb_skin_clips, join_clips};
+    let first = import(
+        &skinned::skinned_glb_animated(None),
+        &Import::default(),
+        &no_files,
+    )
+    .unwrap();
+    let mut solid = join(&first.parts).unwrap();
+    let clips = join_clips(&first.parts).unwrap();
+    unwrap(&mut solid, &Unwrap::default()).unwrap();
+    let write = |tangents: bool| {
+        let mut part = Part::new("legs", &solid);
+        part.tangents = tangents;
+        glb_skin_clips(
+            &Scene {
+                name: "legs".into(),
+                parts: vec![part],
+            },
+            &[("legs", &clips)],
+        )
+        .unwrap()
+    };
+    let has = |bytes: &[u8]| bytes.windows(9).any(|w| w == b"\"TANGENT\"");
+    assert!(!has(&write(false)));
+    let bytes = write(true);
+    assert!(has(&bytes));
+    let back = import(&bytes, &Import::default(), &no_files).unwrap();
+    let s = &back.parts[0].solid;
+    assert!(s.uvs.is_some());
+    s.skin
+        .as_ref()
+        .expect("a skin")
+        .check(s.positions.len())
+        .unwrap();
+    assert_eq!(back.parts[0].clips.len(), clips.len());
+}

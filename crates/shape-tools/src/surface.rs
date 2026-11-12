@@ -15,6 +15,8 @@ pub(crate) struct Split {
     pub indices: Vec<u32>,
     /// Per split vertex, the solid's vertex it copies.
     pub sources: Vec<u32>,
+    /// Per split vertex, the triangle and corner it was first met at.
+    pub corners: Vec<(u32, u8)>,
     /// Per split vertex, its texture coordinates, if the solid has UVs
     /// (kernel convention: v up).
     pub uvs: Vec<DVec2>,
@@ -50,6 +52,7 @@ pub(crate) fn split(s: &Solid) -> Split {
         normals: Vec::new(),
         indices: Vec::with_capacity(s.triangles.len() * 3),
         sources: Vec::new(),
+        corners: Vec::new(),
         uvs: Vec::new(),
         colors: Vec::new(),
     };
@@ -65,6 +68,7 @@ pub(crate) fn split(s: &Solid) -> Split {
             if id == next {
                 out.positions.push(s.positions[v as usize]);
                 out.sources.push(v);
+                out.corners.push((i as u32, k as u8));
                 normal_of.push((v, s.surfaces[i]));
                 if let Some(u) = &s.uvs {
                     out.uvs.push(u[i][k]);

@@ -225,13 +225,15 @@ pub fn write_solid_clips(
     }
 }
 
-/// [`write_solid`] as a plain GLB with `TANGENT` (the frame a baked
-/// normal map was baked in); OBJ and STL as [`write_solid`].
+/// [`write_solid`] as a GLB with `TANGENT` (the frame a baked normal
+/// map was baked in): plain, or with its skin, morph targets and clips;
+/// OBJ and STL as [`write_solid`].
 pub fn write_solid_tangents(
     files: &dyn Files,
     name: &str,
     s: &Solid,
     material: &Material,
+    clips: &[shape_mesh::SkinClip],
     out: Option<&Path>,
 ) -> Result<String, Failure> {
     let Some(out) = out else {
@@ -239,6 +241,27 @@ pub fn write_solid_tangents(
     };
     if extension(out) != "glb" {
         return write_solid(files, name, s, Some(material), Some(out));
+    }
+    if s.skin.is_some() || s.morphs.is_some() {
+        // With bones or morph targets: a scene of one part, as
+        // [`encode_solid_clips`] writes it, with `TANGENT`.
+        let mut part = shape_tools::Part::new(name, s);
+        part.material = material.clone();
+        part.tangents = true;
+        let bytes = shape_tools::glb_skin_clips(
+            &shape_tools::Scene {
+                name: name.to_string(),
+                parts: vec![part],
+            },
+            &[(name, clips)],
+        )
+        .map_err(failed)?;
+        files.write(out, &bytes)?;
+        return Ok(written_lost(
+            out,
+            bytes.len(),
+            &not_written(s, Some(material), out),
+        ));
     }
     let bytes = glb_plain(
         s,

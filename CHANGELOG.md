@@ -1477,3 +1477,8 @@
   passthrough), weight, and rotation and scaling accumulation, where
   only the first layer was read (`docs/research.md` §45;
   `third_party/ufbx/`).
+- `process --bake` works on a skinned mesh and on one with morph
+  targets: the baked GLB is written with its bones, targets and clips
+  and with `TANGENT` (`Part::tangents`: the scene writer writes the
+  frame the plain GLB writes). Mixamo's soldier at 4 000 triangles,
+  freshly unwrapped and baked at 1024, runs as the original does.

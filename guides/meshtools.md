@@ -21,8 +21,8 @@ import → join → repair → decimate → place → unwrap → measure → pre
    rest weights, a clip's at `time`, or the ones you set (`morph`, CLI
    `--morph NAME=WEIGHT[,NAME=WEIGHT…]`). Where `import` says vertices
    that coincide move apart in a target, a weld joins them: look at
-   that target after `repair`. `process --bake` and the kernel's edits
-   (booleans, bevels, shell) refuse a mesh with targets. A meshopt-compressed glTF (`EXT_` or
+   that target after `repair`. The kernel's edits (booleans, bevels,
+   shell) refuse a mesh with targets. A meshopt-compressed glTF (`EXT_` or
    `KHR_meshopt_compression`, as gltfpack writes) or a Draco-compressed
    one (`KHR_draco_mesh_compression`, bitstream 2.2) is read as the
    plain file is; Draco quantizes positions, so they stand a little off
@@ -32,7 +32,8 @@ import → join → repair → decimate → place → unwrap → measure → pre
    through repair, decimation blends them, and the commands write it
    back as a GLB with its bones and skin (parts whose skins hold
    different bones of one skeleton are joined on it). `process --bake`
-   is not done on a skinned mesh: keep its UVs. The file's
+   works on a skinned mesh too: the baked GLB keeps the bones, the
+   morph targets and the clips, with `TANGENT`. The file's
    animations are read too: `import` lists `clips` (name, seconds,
    samples), and `preview` with `clip` and `time` (CLI `--clip NAME
    --time T`) draws the mesh as the clip has it then; `frames: 24`

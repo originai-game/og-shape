@@ -106,6 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 material: Material::default(),
                 parent: String::new(),
                 joint: None,
+                tangents: false,
             }],
         };
         let views = preview(
@@ -131,6 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 material: Material::default(),
                 parent: String::new(),
                 joint: None,
+                tangents: false,
             }],
         },
         &Preview {
