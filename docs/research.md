@@ -8529,3 +8529,60 @@ and the preview draws it with them (`docs/previews/readme/clips_posed.png`).
 Lossless (SOF3), hierarchical and arithmetic-coded frames are refused
 as before.
 
+
+## 42. Meshopt-compressed glTF (2026-11-12)
+
+`shape-tools/src/meshopt.rs` decodes the buffer views that glTF's
+`EXT_meshopt_compression` and `KHR_meshopt_compression` compress. It
+is written from the two specifications' text (Khronos' glTF
+repository, `extensions/2.0/Vendor/EXT_meshopt_compression` and
+`extensions/2.0/Khronos/KHR_meshopt_compression`); meshoptimizer's
+source was not read. The importer decodes every such view before it
+reads anything, and an accessor then reads the decoded bytes as it
+reads a plain view's.
+
+- **Attributes** (`0xa0`, `0xa1`): for each byte of the element, the
+  deltas of up to 256 elements in groups of sixteen, each group at 0,
+  1, 2, 4 or 8 bits a delta with whole bytes after it for the deltas
+  that do not fit. Version 1 gives each byte of a block a control mode
+  (which widths its groups choose from, all zero, or literal) and each
+  four bytes a delta kind in the tail: byte deltas, 2-byte deltas, or
+  4-byte XOR turned by some bits.
+- **Triangles** (`0xe1`): a byte a triangle naming one of the last 16
+  edges and a vertex (the next new one, one of the last 16, one beside
+  the last index, or one written out), or three vertices.
+- **Indices** (`0xd1`): each index a delta from one of two running
+  values.
+- **Filters**, after an attribute stream: octahedral unit vectors,
+  quaternions from their three smaller parts, floats from an exponent
+  and a 24-bit mantissa, colours from luma and two chroma differences.
+  They are f64 `+ - * /` and `sqrt` and a rounding cast; the
+  specifications allow one unit in the last place, and what is written
+  here is the same on every host.
+
+A stream must end where its tail begins, and a count is believed only
+as far as the bytes behind it go (an attribute stream gives at most
+1 024 bytes a byte), so a file cannot ask for more than that.
+
+Found on the way: both specifications give `ff a0 05 => 0x1fd005` as a
+varint example. Read low bits first, as their other example
+(`81 04 => 0x201`) and the files are, it is `0x1507f`.
+
+Checked against files of gltfpack's (fetched, not kept in the
+repository):
+- three.js r160's `coffeemat.glb` (gltfpack 0.15, EXT, version 0
+  attributes, octahedral normals, triangle streams of u16 and u32):
+  332 258 triangles read, every stream ending at its tail, and the
+  preview shows the machine.
+- Khronos' `BrainStem` (`glTF-Meshopt`, gltfpack 1.0, KHR, version 1
+  attributes, exponential positions, quaternion rotations, 64-byte
+  matrices): 61 666 triangles and 18 bones as its `glTF-Binary` twin
+  has, and the two drawn posed at 10 s of the clip are the same
+  figure.
+Neither file has an index stream or the colour filter. Those, and
+every control and channel mode, are checked by
+`meshopt_compressed_views_read_as_the_plain_file` against an encoder
+the test owns (`tests/support/meshopt.rs`), written from the same
+text: that test shows the decoder and the encoder agree, not that
+either agrees with gltfpack there. gltfpack could not be run in this
+environment to make such a file.

@@ -1440,3 +1440,10 @@
   the kept ones does not give back to 0.01 mm (2e-5 in a quaternion's
   components). Samba's output at 5 000 triangles falls from 3.6 MB to
   1.2 MB; a clip keeps its length.
+- Meshopt-compressed glTF is read: buffer views under
+  `EXT_meshopt_compression` or `KHR_meshopt_compression` are decoded
+  (attribute streams of both versions, triangle and index streams, and
+  the octahedral, quaternion, exponential and colour filters), so a file
+  gltfpack compressed reads as the plain file does, skin and clips
+  included. A fallback or placeholder buffer is not asked for. Draco is
+  still refused (`docs/research.md` §42).

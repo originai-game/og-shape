@@ -68,6 +68,7 @@ mod json;
 mod jsonread;
 mod measure;
 mod meshglb;
+mod meshopt;
 mod place;
 mod png;
 mod polygon;

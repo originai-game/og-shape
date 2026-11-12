@@ -4,6 +4,8 @@
 
 #[path = "support/hausdorff.rs"]
 mod hausdorff;
+#[path = "support/meshopt.rs"]
+mod meshopt;
 #[path = "support/skinned.rs"]
 mod skinned;
 #[path = "support/fbx.rs"]
@@ -833,4 +835,190 @@ fn a_clip_is_written_back_and_read_as_the_same_motion() {
             }
         }
     }
+}
+
+/// A file whose buffer views are meshopt-compressed reads as the same
+/// file uncompressed: both extensions, both attribute versions, every
+/// control and channel mode, both index streams, and the exponential
+/// and colour filters. The encoder is the test's own
+/// (`support/meshopt.rs`); `docs/research.md` §42 has the files of
+/// others' encoders that were read.
+#[test]
+fn meshopt_compressed_views_read_as_the_plain_file() {
+    // A 20 × 20 sheet, heights in 1/1024 m so 24 bits of mantissa hold
+    // them, and a colour a vertex.
+    let n = 20u32;
+    let mut pos: Vec<f32> = Vec::new();
+    let mut yco: Vec<u8> = Vec::new();
+    let mut rgba: Vec<u8> = Vec::new();
+    for i in 0..n * n {
+        let (x, z) = (i % n, i / n);
+        let h = (x * 37 + z * 91) % 64;
+        pos.extend([x as f32 / 16.0, h as f32 / 1024.0, z as f32 / 16.0]);
+        let (y, co, cg, a) = (
+            100 + (i % 50) as i32,
+            (i % 7) as i32 - 3,
+            (i % 5) as i32 - 2,
+            i % 128,
+        );
+        yco.extend([y as u8, co as i8 as u8, cg as i8 as u8, 0x80 | a as u8]);
+        rgba.extend([
+            (y + co - cg) as u8,
+            (y + cg) as u8,
+            (y - co - cg) as u8,
+            ((a << 1) | (a & 1)) as u8,
+        ]);
+    }
+    let mut tris: Vec<[u32; 3]> = Vec::new();
+    for z in 0..n - 1 {
+        for x in 0..n - 1 {
+            let a = z * n + x;
+            tris.push([a, a + 1, a + n]);
+            tris.push([a + 1, a + n + 1, a + n]);
+        }
+    }
+    let flat: Vec<u32> = tris.iter().flatten().copied().collect();
+    let pos_bytes: Vec<u8> = pos.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let exp_bytes: Vec<u8> = pos
+        .iter()
+        .flat_map(|v| ((-10i32 << 24) | ((v * 1024.0) as i32 & 0x00ff_ffff)).to_le_bytes())
+        .collect();
+    let (count, corners) = (n * n, flat.len());
+    let file = |views: &str, buffers: &str, required: &str, index_type: u32| {
+        format!(
+            r#"{{"asset":{{"version":"2.0"}},{required}"scene":0,"scenes":[{{"nodes":[0]}}],
+            "nodes":[{{"name":"sheet","mesh":0}}],
+            "meshes":[{{"primitives":[{{"attributes":{{"POSITION":0,"COLOR_0":2}},"indices":1}}]}}],
+            "buffers":[{buffers}],"bufferViews":[{views}],
+            "accessors":[{{"bufferView":0,"componentType":5126,"count":{count},"type":"VEC3"}},
+              {{"bufferView":1,"componentType":{index_type},"count":{corners},"type":"SCALAR"}},
+              {{"bufferView":2,"componentType":5121,"normalized":true,"count":{count},"type":"VEC4"}}]}}"#
+        )
+    };
+    let read = |json: &str, bin: Vec<u8>| {
+        let files = move |uri: &str| match uri {
+            "sheet.bin" => Ok(bin.clone()),
+            _ => Err(format!("no {uri}")),
+        };
+        import_gltf(json.as_bytes(), &files).map(|i| i.parts[0].solid.clone())
+    };
+    let turned = |s: &Solid| -> Vec<[u32; 3]> {
+        s.triangles
+            .iter()
+            .map(|t| {
+                let k = (0..3).min_by_key(|k| t[*k]).unwrap();
+                [t[k], t[(k + 1) % 3], t[(k + 2) % 3]]
+            })
+            .collect()
+    };
+
+    // Uncompressed: positions, u32 indices, colours.
+    let mut bin = pos_bytes.clone();
+    bin.extend(flat.iter().flat_map(|i| i.to_le_bytes()));
+    bin.extend(&rgba);
+    let (p, i, c) = (pos_bytes.len(), corners * 4, rgba.len());
+    let plain = read(
+        &file(
+            &format!(
+                r#"{{"buffer":0,"byteLength":{p}}},{{"buffer":0,"byteOffset":{p},"byteLength":{i}}},
+                {{"buffer":0,"byteOffset":{},"byteLength":{c}}}"#,
+                p + i
+            ),
+            &format!(r#"{{"uri":"sheet.bin","byteLength":{}}}"#, bin.len()),
+            "",
+            5125,
+        ),
+        bin,
+    )
+    .unwrap();
+    assert_eq!(plain.triangles.len(), tris.len());
+
+    // EXT: version 0 attributes under the exponential filter, a
+    // triangle stream of u16, and a fallback buffer that is not there.
+    let streams = [
+        meshopt::attributes(&exp_bytes, 12, None),
+        meshopt::triangles(&tris),
+        meshopt::attributes(&rgba, 4, None),
+    ];
+    let packed = |name: &str, streams: &[Vec<u8>], extra: [&str; 3], strides: [usize; 3]| {
+        let mut at = 0;
+        let counts = [count as usize, corners, count as usize];
+        let views: Vec<String> = (0..3)
+            .map(|k| {
+                let v = format!(
+                    r#"{{"buffer":1,"byteLength":{},"extensions":{{"{name}":{{"buffer":0,"byteOffset":{at},
+                    "byteLength":{},"byteStride":{},"count":{}{}}}}}}}"#,
+                    counts[k] * strides[k],
+                    streams[k].len(),
+                    strides[k],
+                    counts[k],
+                    extra[k]
+                );
+                at += streams[k].len();
+                v
+            })
+            .collect();
+        (views.join(","), streams.concat())
+    };
+    let (views, bin) = packed(
+        "EXT_meshopt_compression",
+        &streams,
+        [
+            r#","mode":"ATTRIBUTES","filter":"EXPONENTIAL""#,
+            r#","mode":"TRIANGLES""#,
+            r#","mode":"ATTRIBUTES""#,
+        ],
+        [12, 2, 4],
+    );
+    let ext = file(
+        &views,
+        &format!(
+            r#"{{"uri":"sheet.bin","byteLength":{}}},
+            {{"byteLength":9999,"extensions":{{"EXT_meshopt_compression":{{"fallback":true}}}}}}"#,
+            bin.len()
+        ),
+        r#""extensionsRequired":["EXT_meshopt_compression"],"#,
+        5123,
+    );
+    let got = read(&ext, bin.clone()).unwrap();
+    assert_eq!(got.positions, plain.positions);
+    assert_eq!(turned(&got), turned(&plain));
+    // A stream that is not one is an error that names the view.
+    let mut broken = bin;
+    broken[streams[0].len()] = 0xe0;
+    let err = read(&ext, broken).unwrap_err().to_string();
+    assert!(err.contains("bufferView 1's meshopt data"), "{err}");
+
+    // KHR: version 1 attributes (XOR deltas turned 5 bits, plain XOR,
+    // 2-byte deltas), an index stream of u32, colours under the colour
+    // filter, and a placeholder buffer with no URI.
+    let streams = [
+        meshopt::attributes(&pos_bytes, 12, Some(&[0x52, 0x02, 0x01])),
+        meshopt::indices(&flat),
+        meshopt::attributes(&yco, 4, Some(&[0x00])),
+    ];
+    let (views, bin) = packed(
+        "KHR_meshopt_compression",
+        &streams,
+        [
+            r#","mode":"ATTRIBUTES""#,
+            r#","mode":"INDICES""#,
+            r#","mode":"ATTRIBUTES","filter":"COLOR""#,
+        ],
+        [12, 4, 4],
+    );
+    let khr = file(
+        &views,
+        &format!(
+            r#"{{"uri":"sheet.bin","byteLength":{}}},{{"byteLength":9999}}"#,
+            bin.len()
+        ),
+        r#""extensionsRequired":["KHR_meshopt_compression"],"#,
+        5125,
+    );
+    let got = read(&khr, bin).unwrap();
+    assert_eq!(got.positions, plain.positions);
+    assert_eq!(got.triangles, plain.triangles);
+    assert_eq!(got.colors, plain.colors);
+    assert!(plain.colors.is_some());
 }

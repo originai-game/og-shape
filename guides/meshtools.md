@@ -13,8 +13,9 @@ import → join → repair → decimate → place → unwrap → measure → pre
 
 1. **Import** the file (`import`). Read what was skipped
    (`Imported::skipped`): points, lines, NURBS, morph targets and blend
-   shapes are not read. A Draco- or meshopt-compressed glTF is refused:
-   get an uncompressed one. A **skinned** mesh (bones and weights) is
+   shapes are not read. A meshopt-compressed glTF (`EXT_` or
+   `KHR_meshopt_compression`, as gltfpack writes) is read as the plain
+   file is. A Draco-compressed glTF is refused: get an uncompressed one. A **skinned** mesh (bones and weights) is
    read whole, in its bind pose (`measure` says `skinned` and lists the
    bones), and every tool keeps the skin: weights follow the vertices
    through repair, decimation blends them, and the commands write it

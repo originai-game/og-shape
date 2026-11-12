@@ -37,6 +37,7 @@ use shape_mesh::{Bone, Skin, Solid, Weights};
 use crate::export::{ColorSpace, Material};
 use crate::image::{ImageInfo, Texture};
 use crate::jsonread::{self, Value};
+use crate::meshopt;
 use crate::place::{Axis, AxisTurn, turned};
 use crate::polygon::triangulate;
 
@@ -647,7 +648,9 @@ pub(crate) fn fetch(uri: &str, resolve: Resolve) -> Result<Vec<u8>, ImportError>
 
 // ── glTF ────────────────────────────────────────────────────────────────────
 
-const SUPPORTED_EXTENSIONS: [&str; 6] = [
+const SUPPORTED_EXTENSIONS: [&str; 8] = [
+    "EXT_meshopt_compression",
+    "KHR_meshopt_compression",
     "KHR_mesh_quantization",
     "KHR_texture_transform",
     "KHR_materials_emissive_strength",
@@ -666,6 +669,8 @@ type RawWeights = Vec<Vec<(u32, f64)>>;
 struct Doc<'a> {
     json: Value,
     buffers: Vec<Vec<u8>>,
+    /// The meshopt-compressed buffer views, decoded.
+    decoded: BTreeMap<usize, Vec<u8>>,
     resolve: Resolve<'a>,
 }
 
@@ -690,9 +695,9 @@ struct Doc<'a> {
 /// weights with no skin. `COLOR_0` (float or normalised integer, RGB or
 /// RGBA, linear as glTF has it) becomes [`Solid::colors`]; a primitive
 /// without it is white, as glTF draws it. The material is read as
-/// [`ImportedPart::material`] says. A required
-/// extension the
-/// importer does not read (Draco, meshopt compression) is
+/// [`ImportedPart::material`] says. Buffer views compressed with
+/// `EXT_meshopt_compression` or `KHR_meshopt_compression` are decoded (`docs/research.md` §42). A
+/// required extension the importer does not read (Draco) is
 /// [`ImportError::Unsupported`].
 pub fn import_gltf(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportError> {
     let (json_bytes, bin) = if bytes.starts_with(b"glTF") {
@@ -742,15 +747,33 @@ pub fn import_gltf(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErr
             )));
         }
     }
+    let compressed = json
+        .get("bufferViews")
+        .items()
+        .iter()
+        .any(|v| !meshopt_of(v).is_null());
     let mut buffers = Vec::new();
     let mut bin = bin;
     for (i, b) in json.get("buffers").items().iter().enumerate() {
         let data = match b.get("uri").str() {
+            _ if meshopt_of(b).get("fallback").bool() == Some(true) => {
+                buffers.push(Vec::new());
+                continue;
+            }
             Some(uri) => fetch(uri, resolve)?,
-            None if i == 0 => bin
-                .take()
-                .ok_or_else(|| fmt_err("buffer 0 has no URI and there is no BIN chunk"))?,
-            None => return Err(fmt_err(format!("buffer {i} has no URI"))),
+            None => match bin.take().filter(|_| i == 0) {
+                Some(bin) => bin,
+                // The buffer a file names for its compressed views'
+                // decoded bytes, and does not carry.
+                None if compressed => {
+                    buffers.push(Vec::new());
+                    continue;
+                }
+                None if i == 0 => {
+                    return Err(fmt_err("buffer 0 has no URI and there is no BIN chunk"));
+                }
+                None => return Err(fmt_err(format!("buffer {i} has no URI"))),
+            },
         };
         let len = b.get("byteLength").index().unwrap_or(0);
         if data.len() < len {
@@ -761,12 +784,67 @@ pub fn import_gltf(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErr
         }
         buffers.push(data);
     }
+    let mut decoded = BTreeMap::new();
+    for (i, v) in json.get("bufferViews").items().iter().enumerate() {
+        let c = meshopt_of(v);
+        if c.is_null() {
+            continue;
+        }
+        let bad = |why: String| fmt_err(format!("bufferView {i}'s meshopt data: {why}"));
+        let off = c.get("byteOffset").index().unwrap_or(0);
+        let (Some(len), Some(stride), Some(count)) = (
+            c.get("byteLength").index(),
+            c.get("byteStride").index(),
+            c.get("count").index(),
+        ) else {
+            return Err(bad("no byteLength, byteStride or count".into()));
+        };
+        let data = c
+            .get("buffer")
+            .index()
+            .and_then(|b| buffers.get(b))
+            .and_then(|b| b.get(off..off.checked_add(len)?))
+            .ok_or_else(|| bad("it runs past its buffer".into()))?;
+        let mode = match c.get("mode").str() {
+            Some("ATTRIBUTES") => meshopt::Mode::Attributes,
+            Some("TRIANGLES") => meshopt::Mode::Triangles,
+            Some("INDICES") => meshopt::Mode::Indices,
+            m => return Err(bad(format!("mode {m:?}"))),
+        };
+        let filter = match c.get("filter").str() {
+            None | Some("NONE") => meshopt::Filter::None,
+            Some("OCTAHEDRAL") => meshopt::Filter::Octahedral,
+            Some("QUATERNION") => meshopt::Filter::Quaternion,
+            Some("EXPONENTIAL") => meshopt::Filter::Exponential,
+            Some("COLOR") => meshopt::Filter::Color,
+            Some(f) => return Err(bad(format!("filter {f:?}"))),
+        };
+        if v.get("byteLength").index() != count.checked_mul(stride) {
+            return Err(bad("its count and stride are not the view's length".into()));
+        }
+        decoded.insert(
+            i,
+            meshopt::decode(data, count, stride, mode, filter).map_err(bad)?,
+        );
+    }
     let doc = Doc {
         json,
         buffers,
+        decoded,
         resolve,
     };
     doc.read()
+}
+
+/// A buffer view's or buffer's meshopt extension, under either name.
+fn meshopt_of(v: &Value) -> &Value {
+    let e = v.get("extensions");
+    let c = e.get("EXT_meshopt_compression");
+    if c.is_null() {
+        e.get("KHR_meshopt_compression")
+    } else {
+        c
+    }
 }
 
 /// Component bytes of a glTF component type.
@@ -810,6 +888,9 @@ impl Doc<'_> {
     /// The bytes of a buffer view, and its stride.
     fn view(&self, i: usize) -> Result<(&[u8], Option<usize>), ImportError> {
         let v = self.json.get("bufferViews").at(i);
+        if let Some(bytes) = self.decoded.get(&i) {
+            return Ok((bytes, v.get("byteStride").index()));
+        }
         let buffer = v
             .get("buffer")
             .index()
