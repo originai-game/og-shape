@@ -8767,7 +8767,8 @@ file whose second layer holds 30° on the knee's 90° bend: added
 (120°), at half weight (105°), replacing (30°), mixed half way (60°),
 and added angle by angle (120°). Not checked against a file from an
 authoring tool: ufbx's layered files are unskinned cubes, which this
-importer reads no clip for. An animated layer weight is read at rest.
+importer reads no clip for. A layer weight that a curve drives is read
+over time (§45.1).
 
 ## 46. FBX blend shapes (2026-11-12)
 
@@ -8791,9 +8792,8 @@ Checked against Maya: ufbx's `maya_blend_shape_cube` (in
 0.284 file units), rest weights of 1, and the weights at frames 16
 and 53 (0.279, 0.670; 0.901, 0.168) to 2e-3:
 `blend_shapes_are_morph_targets_with_maya_s_weights`.
-`maya_blend_inbetween` reads with a note for its two channels'
-in-between shapes, which are not read: between 0 and the full weight
-such a channel moves straight to its full shape.
+`maya_blend_inbetween`'s two channels have in-between shapes, each
+read as a target of its own (§46.1).
 
 ## 47. Meshes moved by their nodes, and skins bound apart (2026-11-12)
 
@@ -8978,3 +8978,44 @@ under it by the curve's value at each sample, clamped to 0..100. The
 hand-written file of §45 with the second layer's weight driven from 0
 to 100: nothing of it at the start, half of both at the middle (60°),
 all of it at the end (120°).
+
+## 49. Unwrap with shared projection directions (2026-11-12)
+
+The unwrap (§17, `shape_tools::unwrap`) projects each chart along the normal of the triangle
+it started from. Blender's Smart UV Project instead chooses its
+projection directions over the whole mesh before any island exists.
+Its source (`uvedit_unwrap_ops.cc`, GPL) was read to learn how; only
+the idea is taken, written here in this unwrap's own terms
+(`unwrap::directions`), and nothing of its code or structure:
+
+- the largest triangle's normal is the first direction looked along;
+- every triangle not yet taken whose normal lies within half the angle
+  of it is taken, and their normals, weighted by area, are averaged
+  into one direction;
+- the triangle left whose normal lies furthest from every direction so
+  far starts the next, until none lies further than the angle;
+- each triangle takes the direction nearest its normal.
+
+`Unwrap::shared` (`--shared`, MCP `shared`) turns it on. A chart then
+grows across edges only among triangles of one direction and is
+projected along that direction; the rest is unchanged, so a chart is
+still connected, wound as its faces and never over itself (Blender's
+islands of one direction may overlap; these may not, and split
+instead). Off, the output is bit for bit what it was (the golden
+hashes do not move).
+
+Measured, charts with own normals → with shared directions, at the
+default 66° (and at 30°, 45°, 89°):
+
+| Solid | 66° | 30° | 45° | 89° |
+| --- | --- | --- | --- | --- |
+| sphere r10 | 7 → 7 | | | |
+| torus 20/6 | 14 → 10 | 65 → 56 | 30 → 24 | 7 → 7 |
+| dome r10 | 6 → 7 | 22 → 19 | 11 → 12 | 4 → 2 |
+| cone 10×20 | 4 → 5 | 9 → 9 | 7 → 5 | 4 → 3 |
+| cylinder 5×20 | 5 → 6 | 11 → 9 | 7 → 8 | 5 → 5 |
+| tube 10/6×20 | 11 → 10 | 19 → 18 | 14 → 12 | 8 → 10 |
+
+Neither way has fewer charts everywhere; the report's `charts` and
+`coverage` say which did better on a mesh. Checked:
+`shared_directions_are_chosen_over_the_whole_solid`.

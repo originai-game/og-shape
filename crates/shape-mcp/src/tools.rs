@@ -412,6 +412,7 @@ impl Args<'_> {
             angle: self.num("angle")?,
             resolution: self.u32("resolution")?,
             padding: self.num("padding")?,
+            shared: self.flag("shared")?,
         })
     }
 }
@@ -634,6 +635,13 @@ fn unwrap_props() -> Vec<(&'static str, Value)> {
             int("Texels across the atlas the padding is measured in; 0 is 1024."),
         ),
         ("padding", num("Texels between charts; 0 is 2.")),
+        (
+            "shared",
+            boolean(
+                "Charts share projection directions chosen over the whole mesh (as Blender's \
+                 Smart UV Project chooses them): all that faces one way is projected one way.",
+            ),
+        ),
     ]
 }
 

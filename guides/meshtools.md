@@ -157,7 +157,10 @@ import → join → repair → decimate → place → unwrap → measure → pre
    longer fit, so every one is dropped (the report's `material.dropped`
    names them); the factors and vertex colours stay. Raise `resolution`
    to the texture size you will bake at,
-   so the padding is in its texels. `shape process` keeps a textured
+   so the padding is in its texels. `shared` (`--shared`) chooses the
+   projection directions over the whole mesh, so that all that faces
+   one way is projected one way; try it when `charts` is high, and keep
+   whichever report has fewer charts and more `coverage`. `shape process` keeps a textured
    mesh's UVs unless given `--unwrap`, or `--bake PX`, which unwraps,
    packs and bakes the old maps into new ones (below, "Keep the UVs or
    bake").

@@ -45,6 +45,11 @@ pub struct Unwrap {
     pub resolution: u32,
     /// Texels between charts (half that to the atlas edge); 0 is 2.
     pub padding: f64,
+    /// Charts share projection directions chosen over the whole solid
+    /// ([`directions`]), as Blender's Smart UV Project chooses them: all
+    /// that faces one way is projected one way, wherever it is. Off, a
+    /// chart is projected along its own seed's normal.
+    pub shared: bool,
 }
 
 /// Texture coordinates for a solid.
@@ -182,6 +187,10 @@ pub(crate) fn form(s: &Solid, d: &Unwrap) -> (Vec<Vec<u32>>, Vec<u32>, Vec<[DVec
     }
     let mut seeds: Vec<usize> = (0..n).collect();
     seeds.sort_by(|&a, &b| areas[b].total_cmp(&areas[a]).then(a.cmp(&b)));
+    // With shared directions: each triangle's, by index, and the list.
+    let shared = d
+        .shared
+        .then(|| directions(&normals, &areas, &seeds, angle));
     let mut chart_of = vec![u32::MAX; n];
     let mut flat: Vec<[DVec2; 3]> = vec![[DVec2::ZERO; 3]; n];
     let mut charts: Vec<Vec<u32>> = Vec::new();
@@ -190,7 +199,10 @@ pub(crate) fn form(s: &Solid, d: &Unwrap) -> (Vec<Vec<u32>>, Vec<u32>, Vec<[DVec
             continue;
         }
         let id = charts.len() as u32;
-        let axis = normals[seed];
+        let axis = match &shared {
+            Some((list, of)) => list.get(of[seed] as usize).copied().unwrap_or(DVec3::ZERO),
+            None => normals[seed],
+        };
         let (u, v) = if axis == DVec3::ZERO {
             (DVec3::X, DVec3::Y)
         } else {
@@ -219,7 +231,13 @@ pub(crate) fn form(s: &Solid, d: &Unwrap) -> (Vec<Vec<u32>>, Vec<u32>, Vec<[DVec
                 } else {
                     users[0]
                 } as usize;
-                if chart_of[j] != u32::MAX || normals[j].dot(axis) < cos_limit {
+                // Within the angle of the seed's normal; or, with shared
+                // directions, of the same direction as the seed.
+                let fits = match &shared {
+                    Some((_, of)) => of[j] == of[seed],
+                    None => normals[j].dot(axis) >= cos_limit,
+                };
+                if chart_of[j] != u32::MAX || !fits {
                     continue;
                 }
                 let fj = project(j);
@@ -247,6 +265,74 @@ pub(crate) fn form(s: &Solid, d: &Unwrap) -> (Vec<Vec<u32>>, Vec<u32>, Vec<[DVec
         charts.push(members);
     }
     (charts, chart_of, flat)
+}
+
+/// Projection directions for the whole solid, and each triangle's (an
+/// index into them), chosen as Blender's Smart UV Project chooses its
+/// own (`docs/research.md` §49): the largest triangle's normal first;
+/// every triangle within half the angle of it gathered and their
+/// normals, weighted by area, averaged into a direction; then the
+/// triangle whose normal lies furthest from every direction so far
+/// starts the next, until none lies further than the angle. A triangle
+/// takes the direction nearest its normal.
+fn directions(
+    normals: &[DVec3],
+    areas: &[f64],
+    largest_first: &[usize],
+    angle: f64,
+) -> (Vec<DVec3>, Vec<u32>) {
+    let cos_half = trig::cos(trig::to_radians(angle / 2.0));
+    let cos_whole = trig::cos(trig::to_radians(angle));
+    let faces: Vec<usize> = largest_first
+        .iter()
+        .copied()
+        .filter(|&i| normals[i] != DVec3::ZERO)
+        .collect();
+    let mut list: Vec<DVec3> = Vec::new();
+    let mut taken = vec![false; normals.len()];
+    let mut start = faces.first().copied();
+    while let Some(first) = start {
+        let towards = normals[first];
+        let mut sum = DVec3::ZERO;
+        for &i in &faces {
+            if !taken[i] && (i == first || normals[i].dot(towards) > cos_half) {
+                taken[i] = true;
+                sum += normals[i] * areas[i];
+            }
+        }
+        let mean = unit(sum);
+        if mean != DVec3::ZERO {
+            list.push(mean);
+        }
+        // The triangle left whose normal is furthest from them all.
+        let mut furthest: Option<(f64, usize)> = None;
+        for &i in &faces {
+            if taken[i] {
+                continue;
+            }
+            let nearest = list.iter().map(|d| d.dot(normals[i])).fold(-1.0, f64::max);
+            if furthest.is_none_or(|(best, _)| nearest < best) {
+                furthest = Some((nearest, i));
+            }
+        }
+        start = furthest
+            .filter(|(nearest, _)| *nearest < cos_whole)
+            .map(|(_, i)| i);
+    }
+    let of = normals
+        .iter()
+        .map(|n| {
+            let mut best = (f64::NEG_INFINITY, 0u32);
+            for (k, d) in list.iter().enumerate() {
+                let dot = d.dot(*n);
+                if dot > best.0 {
+                    best = (dot, k as u32);
+                }
+            }
+            best.1
+        })
+        .collect();
+    (list, of)
 }
 
 fn charts(s: &Solid, d: &Unwrap) -> Result<Uvs, UnwrapError> {
@@ -547,8 +633,12 @@ mod tests {
     use shape_gen::solids::{CylinderDesc, cylinder, sphere};
 
     fn check(s: &Solid) -> Uvs {
+        check_with(s, &Unwrap::default())
+    }
+
+    fn check_with(s: &Solid, d: &Unwrap) -> Uvs {
         let mut s = s.clone();
-        let uv = unwrap(&mut s, &Unwrap::default()).unwrap();
+        let uv = unwrap(&mut s, d).unwrap();
         assert_eq!(s.uvs.as_ref(), Some(&uv.corners));
         // Inside the square, wound as the faces, no two triangles over one
         // another.
@@ -586,5 +676,27 @@ mod tests {
         })
         .unwrap();
         check(&c);
+    }
+
+    /// With shared directions a torus is projected along a few
+    /// directions chosen over all of it, and its charts are fewer than
+    /// when each starts from its own seed's normal; a box's six sides
+    /// are six charts either way.
+    #[test]
+    fn shared_directions_are_chosen_over_the_whole_solid() {
+        let shared = Unwrap {
+            shared: true,
+            ..Default::default()
+        };
+        let t = shape_gen::solids::torus(20.0, 6.0).unwrap();
+        assert_eq!(check(&t).chart_count, 14);
+        assert_eq!(check_with(&t, &shared).chart_count, 10);
+        let b = shape_gen::solids::cuboid(&shape_gen::solids::BoxDesc {
+            width: 10.0,
+            depth: 20.0,
+            height: 30.0,
+        })
+        .unwrap();
+        assert_eq!(check_with(&b, &shared).chart_count, 6);
     }
 }

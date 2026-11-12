@@ -16,7 +16,8 @@ pub struct Args {
 }
 
 /// Flags that take no value.
-const SWITCHES: [&str; 16] = [
+const SWITCHES: [&str; 17] = [
+    "--shared",
     "--cross-color-borders",
     "--unlit",
     "--each",

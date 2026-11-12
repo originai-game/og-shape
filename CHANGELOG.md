@@ -1536,3 +1536,10 @@
   negative weights too); the mesh stands where Maya's reference frames
   have it. A layer's weight that a curve drives is read over time
   (`docs/research.md` §46, §45).
+- `unwrap --shared` (MCP `shared`, `Unwrap::shared`): projection
+  directions are chosen over the whole mesh, as Blender's Smart UV
+  Project chooses them, and a chart holds only triangles of one
+  direction. A torus unwraps into 10 charts where it took 14; other
+  shapes go either way, and the report's `charts` and `coverage` say
+  which. Off by default; the default unwrap is unchanged
+  (`docs/research.md` §49).
