@@ -188,7 +188,9 @@ import → join → repair → decimate → place → unwrap → measure → pre
    map's size and decoded bytes before and after. A PNG of a photo
    texture is larger on disk than the JPEG it came from; the GPU memory
    (`decoded_bytes_with_mips`) is what shrinks. A map that is not
-   decoded (WebP, KTX2) is kept as it is (the report's `error` says so).
+   decoded (WebP, KTX2) is kept as it is (the report's `error` says so)
+   and written under its extension (`EXT_texture_webp`,
+   `KHR_texture_basisu`, which the file then requires).
 10. **Export** `glb_plain` for texturing (with `material` to keep the
    file's look), or `glb` for parts, joints and skins (a part's
    `material`). OBJ and STL hold the mesh only: the output's

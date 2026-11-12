@@ -451,3 +451,54 @@ fn fusing_makes_no_colour_border_where_the_colour_is_continuous() {
     assert_eq!(m.color_borders, Some(0));
     assert!(largest_error(&fused) < 1e-9);
 }
+
+/// A map in KTX2 (or WebP) is written as it came, under its extension,
+/// by both GLB writers, and read back as the same image: a file with
+/// such maps goes through the tools instead of being refused.
+#[test]
+fn a_ktx2_map_is_written_as_it_came() {
+    // A KTX2 header: the identifier, then a format, type size, and a
+    // width and height of 8 × 4.
+    let mut bytes = b"\xABKTX 20\xBB\r\n\x1A\n".to_vec();
+    for v in [0u32, 1, 8, 4] {
+        bytes.extend(v.to_le_bytes());
+    }
+    bytes.extend([0u8; 64]);
+    let map = Texture::from_bytes("skin.ktx2", bytes.clone());
+    assert_eq!(map.mime, "image/ktx2");
+    let s = shape_gen::solids::textured(&shape_gen::solids::Generator::Sphere(
+        shape_gen::solids::SphereDesc {
+            radius: 20.0,
+            ..Default::default()
+        },
+    ))
+    .unwrap();
+    let material = Material {
+        map: Some(map),
+        ..Default::default()
+    };
+    let mut part = Part::new("ball", &s);
+    part.material = material.clone();
+    let scene = glb(&Scene {
+        name: "ball".into(),
+        parts: vec![part],
+    })
+    .unwrap();
+    let plain = glb_plain(
+        &s,
+        &PlainGlb {
+            name: "ball",
+            material: Some(&material),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    for file in [scene, plain] {
+        let text = String::from_utf8_lossy(&file);
+        assert!(text.contains(r#""extensionsRequired":["KHR_texture_basisu"]"#));
+        assert!(text.contains(r#""extensions":{"KHR_texture_basisu":{"source":0}}"#));
+        let back = import(&file, &Import::default(), &no_files).unwrap();
+        let read = back.parts[0].material.map.as_ref().expect("the map");
+        assert_eq!((read.mime.as_str(), &read.bytes), ("image/ktx2", &bytes));
+    }
+}

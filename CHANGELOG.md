@@ -1508,3 +1508,9 @@
   bind pose is read as before.
   RobotExpressive joins, decimates to half and is written with its 55
   bones, 3 morph targets and 14 clips (`docs/research.md` §47).
+- GLB: a map in KTX2 or WebP is written as it came, under
+  `KHR_texture_basisu` or `EXT_texture_webp` (used and required), by
+  both writers. Such a file was refused at writing (only PNG and JPEG
+  were written), so it could be read and measured but not repaired or
+  decimated. three.js's `facecap.glb` (meshopt, KTX2, 52 morph targets)
+  decimates to half and keeps its map, targets and clips.

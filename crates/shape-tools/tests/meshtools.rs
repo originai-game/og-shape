@@ -596,7 +596,10 @@ fn a_uniform_armature_scale_comes_out_of_the_bones() {
         .zip(&pb.positions)
         .map(|(a, b)| (*a - *b).length())
         .fold(0.0, f64::max);
-    assert!((moved - posed_import.skin_scales[0].node_offset).abs() < 1e-6, "{moved}");
+    assert!(
+        (moved - posed_import.skin_scales[0].node_offset).abs() < 1e-6,
+        "{moved}"
+    );
     // The knee's far vertex, (10, 25) cm from the knee, turned 90° to
     // (−25, 10): √(35² + 15²) cm off.
     let off = posed_import.skin_scales[0].node_offset;

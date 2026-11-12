@@ -11,7 +11,7 @@ use shape_core::DVec3;
 use shape_mesh::Solid;
 
 use crate::export::{
-    ExportError, Material, extensions_used, gltf_uv, map_indices, material_json, texture_json,
+    ExportError, Material, extension_fields, gltf_uv, map_indices, material_json, texture_json,
 };
 use crate::image::Texture;
 use crate::json::{Json, f32n};
@@ -325,8 +325,11 @@ pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
         doc.push(("materials", Json::Arr(vec![material_json])));
         doc.push(("accessors", Json::Arr(accessors)));
         doc.extend(texture_json(&textures, &mut bin, &mut views));
-        if strength {
-            doc.insert(1, ("extensionsUsed", extensions_used()));
+        for (k, field) in extension_fields(strength, &textures)
+            .into_iter()
+            .enumerate()
+        {
+            doc.insert(1 + k, field);
         }
         doc.push(("bufferViews", Json::Arr(views)));
         doc.push((

@@ -1291,8 +1291,11 @@ fn glb_all(
         ),
         ("nodes", Json::Arr(nodes)),
     ];
-    if emissive_strength {
-        doc.insert(1, ("extensionsUsed", extensions_used()));
+    for (k, field) in extension_fields(emissive_strength, &textures)
+        .into_iter()
+        .enumerate()
+    {
+        doc.insert(1 + k, field);
     }
     if !meshes.is_empty() {
         doc.push(("meshes", Json::Arr(meshes)));
@@ -1340,18 +1343,53 @@ fn glb_all(
     Ok(out)
 }
 
-/// `extensionsUsed` for a material with an emissive strength.
-pub(crate) fn extensions_used() -> Json {
-    Json::Arr(vec![Json::Str("KHR_materials_emissive_strength".into())])
+/// The extension a texture's image format needs, if it is not one of
+/// glTF's core formats.
+fn texture_extension(t: &Texture) -> Option<&'static str> {
+    match t.mime.as_str() {
+        "image/ktx2" => Some("KHR_texture_basisu"),
+        "image/webp" => Some("EXT_texture_webp"),
+        _ => None,
+    }
+}
+
+/// `extensionsUsed` and `extensionsRequired` for what a file carries: a
+/// material with an emissive strength (used), and textures in KTX2 or
+/// WebP, written as they came (used and required: they have no image a
+/// reader without the extension could take).
+pub(crate) fn extension_fields(
+    emissive_strength: bool,
+    textures: &[&Texture],
+) -> Vec<(&'static str, Json)> {
+    let mut required: Vec<&'static str> = textures
+        .iter()
+        .filter_map(|t| texture_extension(t))
+        .collect();
+    required.sort_unstable();
+    required.dedup();
+    let mut used = required.clone();
+    if emissive_strength {
+        used.insert(0, "KHR_materials_emissive_strength");
+    }
+    let list = |names: &[&str]| Json::Arr(names.iter().map(|n| Json::Str((*n).into())).collect());
+    let mut out = Vec::new();
+    if !used.is_empty() {
+        out.push(("extensionsUsed", list(&used)));
+    }
+    if !required.is_empty() {
+        out.push(("extensionsRequired", list(&required)));
+    }
+    out
 }
 
 /// Checks that a texture can be written: PNG or JPEG (glTF's core
-/// formats), on a part with UVs.
+/// formats), or KTX2 or WebP (written as they came, under their
+/// extensions), on a part with UVs.
 pub(crate) fn check_texture(t: &Texture, part: &str, has_uvs: bool) -> Result<(), ExportError> {
     let why = if !has_uvs {
         "the part has no UVs to sample it with"
-    } else if t.mime != "image/png" && t.mime != "image/jpeg" {
-        "only PNG and JPEG are written (glTF's core image formats)"
+    } else if t.mime != "image/png" && t.mime != "image/jpeg" && texture_extension(t).is_none() {
+        "only PNG, JPEG, KTX2 and WebP images are written"
     } else {
         return Ok(());
     };
@@ -1405,11 +1443,22 @@ pub(crate) fn texture_json(
         (
             "textures",
             Json::Arr(
-                (0..textures.len())
-                    .map(|k| {
+                textures
+                    .iter()
+                    .enumerate()
+                    .map(|(k, t)| {
+                        // A core image is the texture's source; another
+                        // format's is under its extension.
+                        let source = ("source", Json::Int(k as u64));
                         Json::Obj(vec![
                             ("sampler", Json::Int(0)),
-                            ("source", Json::Int(k as u64)),
+                            match texture_extension(t) {
+                                Some(ext) => (
+                                    "extensions",
+                                    Json::Obj(vec![(ext, Json::Obj(vec![source]))]),
+                                ),
+                                None => source,
+                            },
                         ])
                     })
                     .collect(),
