@@ -1553,3 +1553,10 @@
   GPU holds it in a quarter of RGBA8's memory. ETC1S (BasisLZ) files
   are still passed through undecoded. The written files could not be
   run through the Basis transcoder here (`docs/research.md` §50).
+- `shape compress` (MCP `compress`, `shape_tools::compress`): a GLB's
+  geometry, skins and animation under `EXT_meshopt_compression`,
+  losslessly: each buffer view an accessor reads becomes an attribute
+  or triangle stream where that is smaller, and the file reads back the
+  same. Measured: DamagedHelmet's geometry 466 → 338 kB, the Mixamo
+  soldier's 1 063 → 761 kB, RobotExpressive's 346 → 196 kB. Images are
+  not touched; nothing is quantised (`docs/research.md` §51).

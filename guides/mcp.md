@@ -73,6 +73,7 @@ Tools (arguments are in each tool's schema):
 | `repair`, `decimate`, `unwrap` | a mesh file and the tool's settings (`decimate`: `ratio`, `target`, or `lod_ratios` for levels by their shares); `out`? | what changed, measures after |
 | `place` | a mesh file; `up`, `front`, `turn`, one of `longest`, `height`, `width`, `depth` (`"0.9m"`) or `scale`, `pivot` (`"base"`), `out`? | what was done, and the axis measures before and after |
 | `collide` | a program or a mesh file; `hulls`, `concavity` (mm), `max_vertices`, `out` | per part, its convex hulls' vertices, triangles, volume, concavity and `outside`; `out` gets the hulls as `<part>.collider.<k>` |
+| `compress` | a GLB's `path`, `out` | the buffer views compressed with meshopt (lossless), their bytes before and after; the file then requires `EXT_meshopt_compression` |
 | `process` | a mesh file; `budget` or `ratio`, `repair`, `unwrap`, `merge_charts`, `cross_color_borders`, `fresh_uvs`, `texture_max`, `bake`, `bake_distance`, `place`?, `out`? | the whole chain's report, with the material written and each map's size before and after; with `bake` (texels), fresh UVs packed into one atlas and the look baked into new maps, and a `bake` key: what was baked, texels with no source, distances, the normal map's angles (`guides/meshtools.md`, "Keep the UVs or bake") |
 | `run_typescript` | `source` or `path` (a .ts file already there); `program_out`? | parts, measures, the recorded program, `console.log` output as `logs` |
 

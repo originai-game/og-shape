@@ -64,7 +64,7 @@ pub(crate) fn nums(v: &[f64]) -> Json {
     Json::Arr(v.iter().map(|&x| Json::Num(x)).collect())
 }
 
-fn string(s: &str, out: &mut String) {
+pub(crate) fn string(s: &str, out: &mut String) {
     out.push('"');
     for c in s.chars() {
         match c {

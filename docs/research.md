@@ -9110,3 +9110,43 @@ reads, and the hints give the same ETC1 quality as the reference
 encoder's under the same reading. Determinism: `meshtools.look.ktx2`
 in the gate hashes two written files and their decoded texels on the
 three targets.
+
+## 51. Writing meshopt (2026-11-12)
+
+§42 reads `EXT_meshopt_compression`; `shape_tools::compress` writes it,
+as a step on a finished GLB so that every writer's output can take it.
+For each buffer view an accessor reads: a view that every primitive
+drawing with it draws as triangles becomes a triangle stream (16 or 32
+bit indices); any other whose elements are a multiple of 4 bytes, up
+to 256, becomes an attribute stream of that element size (positions,
+normals, UVs, colours, joints and weights, inverse bind matrices,
+animation times and values); a view of mixed element sizes, of a
+sparse accessor, or of an image stays as it is. A stream is kept only
+where it is smaller than the view and the decoder of §42 turns it back
+into the view's bytes. The streams are version 0 (the one
+`EXT_meshopt_compression` names; version 1 belongs to
+`KHR_meshopt_compression`). The file gets the fallback buffer the
+extension asks for and lists the extension as required.
+
+The attribute encoder writes each byte of an element as its
+difference from the element before, 16 at a time at the narrowest of
+0, 2, 4 or 8 bits that costs least. The triangle encoder is the
+format's: an edge of the last 16, a vertex that is the next new one,
+one of the last 16, or a distance from the last named. Vertices and
+triangles are not reordered and nothing is quantised, so the result is
+the same mesh bit for bit, and the gain is what lossless gives:
+
+| File | Views compressed | Their bytes | The file |
+| --- | --- | --- | --- |
+| DamagedHelmet (5 JPEG maps) | 3 of 9 | 465 792 → 337 780 | 3 773 916 → 3 646 512 |
+| Mixamo soldier (skin, 4 clips) | 463 of 654 | 1 062 732 → 760 507 | 2 160 468 → 1 926 452 |
+| RobotExpressive (morphs, 14 clips) | 203 of 283 | 346 320 → 195 841 | 463 988 → 343 476 |
+
+For each, `shape measure` of the compressed file equals that of the
+original but for the file's name. gltfpack's far smaller files come
+from quantising (`KHR_mesh_quantization`: 14-bit positions, 12-bit
+UVs, 8-bit normals) and from reordering for the vertex cache, neither
+done here. Checked: `a_compressed_glb_reads_back_the_same` (a plain
+mesh and a skinned, animated file import equal to their sources; the
+`gltf` crate sees the extension required); `meshtools.compress` in
+the gate.

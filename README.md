@@ -122,8 +122,8 @@ Run on `main` on 2026-11-10 to 12; each line says where the numbers come from.
 
 | Check | Result | How |
 |---|---|---|
-| The same bytes on every host | 166 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 387 pass | `scripts/check.sh test` |
+| The same bytes on every host | 167 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
+| Tests | 388 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -217,8 +217,10 @@ What a user might expect and will not find, as of 2026-11-12:
   without a rate-distortion pass and without weighing the BC7 it will
   become, at about 3 s a megatexel, and the written files have not
   been run through the Basis transcoder (`docs/research.md` §50).
-- **Compression on export.** Draco and meshopt are read, never
-  written: a GLB's geometry leaves uncompressed.
+- **Compression on export.** `shape compress` writes meshopt
+  losslessly (a quarter to two fifths off the geometry of the files
+  tried); it does not quantise, which is where meshopt's larger gains
+  come from. Draco is read, never written.
 - **Morph targets in the kernel.** A solid with morph targets goes
   through import, repair, decimation, preview and export; booleans,
   bevels, edits, `subdivide` and the plain GLB refuse it. A target's
@@ -269,6 +271,7 @@ shape process scan.glb --budget 40000 --weld 0.001 --floaters 0.05 \
                                              # repair, decimate, unwrap
 shape repair  leaf.obj --thicken 1.2 -o leaf.glb   # an open sheet made solid
 shape collide model.json --hulls 8 -o colliders.glb  # convex colliders
+shape compress game.glb -o game.small.glb            # meshopt, lossless
 ```
 
 ## Read

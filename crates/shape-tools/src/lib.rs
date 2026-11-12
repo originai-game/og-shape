@@ -58,6 +58,7 @@
 mod atlas;
 mod bake;
 mod collide;
+mod compress;
 mod decimate;
 mod decode;
 mod draco;
@@ -93,6 +94,7 @@ pub use atlas::{
 };
 pub use bake::{Bake, BakeError, BakeReport, BakeSource, Baked, BakedMap, NormalMeasures, bake};
 pub use collide::{Collide, CollideError, ColliderReport, HullReport, colliders};
+pub use compress::{Compressed, compress};
 pub use decimate::{
     Blocked, Decimate, DecimateError, DecimateReport, Rigid, collapse_short_edges, decimate, lods,
     merge_charts,

@@ -151,6 +151,7 @@ fn tools_resources_and_the_workspace() {
         "unwrap",
         "place",
         "collide",
+        "compress",
         "process",
         "run_typescript",
     ] {

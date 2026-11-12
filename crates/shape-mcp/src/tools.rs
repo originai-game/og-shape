@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use serde_json::{Map, Value, json};
 use shape_cli::build::report as build_report;
 use shape_cli::collide::{CollideDesc, collide};
+use shape_cli::compress::{CompressDesc, compress};
 use shape_cli::decimate::{DecimateDesc, decimate};
 use shape_cli::export::{export, written};
 use shape_cli::import::{ImportDesc, import};
@@ -41,7 +42,7 @@ struct Tool {
     handler: Handler,
 }
 
-const TOOLS: [Tool; 12] = [
+const TOOLS: [Tool; 13] = [
     Tool {
         name: "build",
         description: "Build a model program (the JSON form of resource og-shape://guides/program.md) \
@@ -123,6 +124,16 @@ const TOOLS: [Tool; 12] = [
             <part>.collider.<k>. Decimate a dense mesh first: the cost grows with its points.",
         schema: collide_schema,
         handler: collide_tool,
+    },
+    Tool {
+        name: "compress",
+        description: "Compress a GLB's geometry and animation with meshopt \
+            (`EXT_meshopt_compression`), losslessly: the file reads back to the same vertices, \
+            triangles, skins and clips, and a viewer needs the meshopt decoder. Images are left \
+            as they are. Reports the buffer views compressed and their bytes before and after. \
+            Do it last, on the file you ship.",
+        schema: compress_schema,
+        handler: compress_tool,
     },
     Tool {
         name: "place",
@@ -861,6 +872,19 @@ fn collide_schema() -> Value {
     schema(p, &[])
 }
 
+fn compress_schema() -> Value {
+    schema(
+        vec![
+            ("path", path("The GLB file, in the workspace.")),
+            (
+                "out",
+                path("Write the compressed GLB here, in the workspace."),
+            ),
+        ],
+        &["path", "out"],
+    )
+}
+
 fn place_schema() -> Value {
     let mut p = mesh_props(
         "Write the parts placed here: .glb (skins, UVs and textures kept), .obj or .stl.",
@@ -1207,6 +1231,16 @@ fn collide_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<
         out: a.path("out")?,
     };
     Ok(vec![text(collide(&server.ws, &d)?)])
+}
+
+fn compress_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
+    let d = CompressDesc {
+        input: a.mesh_input()?,
+        out: a
+            .path("out")?
+            .ok_or_else(|| Failure::Usage("give `out`, where to write the GLB".into()))?,
+    };
+    Ok(vec![text(compress(&server.ws, &d)?)])
 }
 
 fn place_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {

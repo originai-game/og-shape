@@ -212,6 +212,12 @@ import → join → repair → decimate → place → unwrap → measure → pre
    check a decimated skin, pose both meshes the same way
    (`shape-skin`'s `pose`) and compare them: the posed error should be no
    more than the rest error.
+11. **Compress** the file you ship (`shape compress in.glb -o out.glb`,
+   MCP `compress`): meshopt, lossless, a quarter to two fifths off the
+   geometry and animation; the file then requires
+   `EXT_meshopt_compression`, which three.js, Babylon and the engines'
+   glTF loaders read with the meshopt decoder. Not for a file a
+   texturing or modelling tool will open next.
 
 ## Keep the UVs or bake
 

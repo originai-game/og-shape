@@ -77,6 +77,10 @@ pub fn cases() -> Vec<Case> {
             name: "meshtools.skin.join",
             run: skin_join_case,
         },
+        Case {
+            name: "meshtools.compress",
+            run: compress_case,
+        },
     ]
 }
 
@@ -599,6 +603,15 @@ fn skin_decimate_case(h: &mut OutputHash) -> Result<(), HashError> {
 
 /// Skinned parts placed by one rigid transform, baked and joined into one
 /// skeleton; placed apart, the error naming the bones.
+/// A skinned, animated GLB under meshopt compression: its bytes.
+fn compress_case(h: &mut OutputHash) -> Result<(), HashError> {
+    let (bytes, report) =
+        shape_tools::compress(&skinned_support::skinned_glb_animated(None)).map_err(fail)?;
+    h.u64(report.compressed as u64);
+    h.bytes(&bytes);
+    Ok(())
+}
+
 fn skin_join_case(h: &mut OutputHash) -> Result<(), HashError> {
     let tube = skinned_support::skinned_tube();
     let part = |name: &str, t: DVec3| ImportedPart {

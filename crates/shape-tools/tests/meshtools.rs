@@ -1319,3 +1319,42 @@ fn a_mesh_its_node_s_animation_moves_is_a_skin_of_one_bone() {
     let imported = import_gltf(still.as_bytes(), &files).unwrap();
     assert!(imported.parts[0].solid.skin.is_none());
 }
+
+/// A compressed GLB reads back as the file it was made from: a plain
+/// mesh's vertices and triangles, a skinned and animated file's bones,
+/// weights and clips. It is smaller, says what it requires, and is not
+/// compressed twice.
+#[test]
+fn a_compressed_glb_reads_back_the_same() {
+    use shape_tools::compress;
+    let ball = shape_gen::solids::sphere(10.0).unwrap();
+    let plain = glb_plain(
+        &ball,
+        &PlainGlb {
+            name: "ball",
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (small, report) = compress(&plain).unwrap();
+    assert!(report.compressed >= 2 && report.bytes_after < report.bytes_before);
+    assert!(
+        plain.len() - small.len() > (report.bytes_before - report.bytes_after) / 2,
+        "{} to {}",
+        plain.len(),
+        small.len()
+    );
+    let read = |b: &[u8]| import(b, &Import::default(), &no_files).unwrap();
+    assert_eq!(read(&small), read(&plain));
+    let g = gltf::Gltf::from_slice_without_validation(&small).unwrap();
+    assert!(
+        g.extensions_required()
+            .any(|e| e == "EXT_meshopt_compression")
+    );
+    assert!(compress(&small).unwrap_err().contains("already"));
+    assert!(compress(b"not a glb").is_err());
+
+    let moving = skinned::skinned_glb_animated(None);
+    let (packed, _) = compress(&moving).unwrap();
+    assert_eq!(read(&packed), read(&moving));
+}
