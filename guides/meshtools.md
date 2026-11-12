@@ -32,7 +32,8 @@ import → join → repair → decimate → place → unwrap → measure → pre
    through repair, decimation blends them, and the commands write it
    back as a GLB with its bones and skin (parts whose skins hold
    different bones of one skeleton are joined on it). A mesh with no skin that a
-   clip moves by its node (a machine's rigid parts, a prop on a bone)
+   clip moves by its node or FBX model (a machine's rigid parts, a prop
+   on a bone)
    is read as a skin of one bone named `<part>.node`, standing where
    the node puts it at rest: `import` says so, and it is then a skinned
    part like any other. Parts skinned to one skeleton but bound in

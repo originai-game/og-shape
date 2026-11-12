@@ -8817,8 +8817,12 @@ each such part. A mesh no clip moves is read as before.
 What follows: `preview --clip` poses it; `repair`, `decimate` and
 `process` carry the bone and write the clips (as the bone's
 translation, rotation and scale from the origin, which is the same
-motion, not the file's own node tree). FBX models moved by their own
-curves are not read this way yet.
+motion, not the file's own node tree). An FBX mesh with no skin whose
+model, or a model above it, an animation's curves drive is read the
+same way (`<part>.node`): ufbx's `maya_interpolation_modes` cube is
+then where Maya's values put it at frames 1, 11, 21, 36, 46 and 60, to
+0.05 mm (a clip runs straight between its sixty samples a second):
+`a_model_s_animation_moves_its_mesh_as_one_bone`.
 
 **Skins bound apart.** Two meshes skinned to one skeleton may each be
 bound in its own space: their bones rest at the same places, and their

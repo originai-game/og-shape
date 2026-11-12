@@ -1514,3 +1514,7 @@
   were written), so it could be read and measured but not repaired or
   decimated. three.js's `facecap.glb` (meshopt, KTX2, 52 morph targets)
   decimates to half and keeps its map, targets and clips.
+- FBX: a mesh with no skin whose model, or a model above it, an
+  animation drives is read as a skin of one bone (`<part>.node`), as a
+  glTF mesh moved by its node is; such files had no clips. Checked
+  against Maya's values on ufbx's `maya_interpolation_modes` cube.

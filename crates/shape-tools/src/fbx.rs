@@ -1905,7 +1905,60 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
                 });
             }
             let mut transform = conj(&world(id));
-            if solid.skin.is_some() {
+            // A mesh with no skin that an animation moves by its model
+            // (or a model above it) is carried as a skin of one bone, as
+            // a glTF mesh moved by its node is (`docs/research.md` §47).
+            let driven = {
+                let mut at = id;
+                let mut found = false;
+                for _ in 0..256 {
+                    if stacks
+                        .iter()
+                        .any(|(_, layers)| layers.iter().any(|l| l.driven.contains_key(&at)))
+                    {
+                        found = true;
+                        break;
+                    }
+                    match parent_of.get(&at) {
+                        Some(&p) if p != 0 => at = p,
+                        _ => break,
+                    }
+                }
+                found
+            };
+            let rest = crate::import::affine_inverse(&transform)
+                .filter(|_| driven && solid.skin.is_none() && transform.determinant() > 0.0);
+            if let Some(unlink) = rest {
+                let space = FbxSpace {
+                    ids: vec![id],
+                    unlink: vec![unlink],
+                    mesh: vec![Affine::IDENTITY],
+                    out: Affine::IDENTITY,
+                };
+                let moved = clips_of(&space, &channels)?;
+                let placed = crate::repair::apply_transform(&ImportedPart {
+                    name: name.clone(),
+                    solid: solid.clone(),
+                    transform,
+                    ..Default::default()
+                });
+                if let (false, Ok(mut placed)) = (moved.is_empty(), placed) {
+                    placed.skin = Some(shape_mesh::Skin {
+                        bones: vec![shape_mesh::Bone::new(
+                            &format!("{name}.node"),
+                            None,
+                            shape_core::Frame::IDENTITY,
+                        )],
+                        weights: vec![shape_mesh::Weights::single(0); placed.positions.len()],
+                    });
+                    solid = placed;
+                    clips = moved;
+                    transform = Affine::IDENTITY;
+                    out.skipped.push(format!(
+                        "{name}: moved by its model's animation, so carried as a skin of one bone ({name}.node)"
+                    ));
+                }
+            } else if solid.skin.is_some() {
                 // The bones place a skinned mesh; its vertices and bones
                 // share the mesh's own coordinates.
                 if geo != Affine::IDENTITY || p_det < 0.0 {
@@ -2521,6 +2574,42 @@ Connections:  {
                     "frame {frame}: {got:?} for {want:?}"
                 );
             }
+        }
+    }
+
+    /// A cube with no skin that Maya moved along x by a curve (ufbx's
+    /// file again): it is read as a skin of one bone, and the clip puts
+    /// it where Maya's values say, frame by frame.
+    #[test]
+    fn a_model_s_animation_moves_its_mesh_as_one_bone() {
+        let bytes = include_bytes!(
+            "../../../third_party/ufbx/data/maya_interpolation_modes_7500_binary.fbx"
+        );
+        let imported = import_fbx(bytes, &no_files).unwrap();
+        let part = &imported.parts[0];
+        let skin = part.solid.skin.as_ref().expect("one bone");
+        assert_eq!(skin.bones.len(), 1);
+        assert!(skin.bones[0].name.ends_with(".node"));
+        let clip = &part.clips[0];
+        let centre = |s: &Solid| s.positions.iter().sum::<DVec3>() / s.positions.len() as f64;
+        // Maya's x at frames 1, 11, 21, 36, 46 and 60 (the file's
+        // centimetres; the clip starts at frame 1).
+        for (frame, x) in [
+            (1.0, -8.653366),
+            (11.0, -6.490576),
+            (21.0, -6.113196),
+            (36.0, -3.958113),
+            (46.0, -5.905977),
+            (60.0, -5.359269),
+        ] {
+            let at = clip.at((frame - 1.0) / 24.0).unwrap();
+            let posed = shape_skin::pose_by(&part.solid, &at).unwrap();
+            // Between its samples (sixty a second) a clip runs straight.
+            assert!(
+                (centre(&posed).x - x * 10.0).abs() < 0.05,
+                "frame {frame}: {:?}",
+                centre(&posed)
+            );
         }
     }
 }
