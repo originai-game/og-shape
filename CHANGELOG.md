@@ -1530,3 +1530,9 @@
   crossing, offset and blind holes, rounded pockets and pockets that
   meet, 120 build closed; the 7 280-shell and 2 434-edit sweeps are
   unchanged line for line (`docs/research.md` §48).
+- FBX: a blend-shape channel's in-between shapes are read, each as a
+  target of its own (`<channel>@<percent>`), and the rest weights and
+  the clips give each its part of the channel's weight (shapes at
+  negative weights too); the mesh stands where Maya's reference frames
+  have it. A layer's weight that a curve drives is read over time
+  (`docs/research.md` §46, §45).

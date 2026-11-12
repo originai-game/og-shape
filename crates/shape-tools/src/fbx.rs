@@ -600,6 +600,53 @@ fn axes(root: &Node) -> [(usize, f64); 3] {
     ]
 }
 
+/// How much of each of a blend-shape channel's shapes there is at the
+/// channel's `weight`: the shapes are whole at `keys` (rising), and
+/// between two of them, or between none and the first, the channel is
+/// part one and part the other; past the last it runs on as between
+/// the last two.
+fn shape_weights(weight: f64, keys: &[f64]) -> Vec<f64> {
+    let n = keys.len();
+    let mut out = vec![0.0; n];
+    // The shapes below none (negative weights) end here.
+    let below = keys.iter().take_while(|k| **k < 0.0).count();
+    // `None` is no shape at all, at weight 0.
+    let (mut prev, mut next): (Option<usize>, Option<usize>) = (None, None);
+    if weight > 0.0 {
+        prev = below.checked_sub(1);
+        for (i, key) in keys.iter().enumerate().skip(below) {
+            prev = next;
+            next = Some(i);
+            if *key > weight {
+                break;
+            }
+        }
+    } else {
+        if below < n {
+            prev = Some(below);
+        }
+        for i in (0..below).rev() {
+            prev = next;
+            next = Some(i);
+            if keys[i] < weight {
+                break;
+            }
+        }
+    }
+    let at = |k: Option<usize>| k.map_or(0.0, |i| keys[i]);
+    let span = at(next) - at(prev);
+    if span != 0.0 {
+        let t = (weight - at(prev)) / span;
+        if let Some(i) = prev {
+            out[i] = 1.0 - t;
+        }
+        if let Some(i) = next {
+            out[i] = t;
+        }
+    }
+    out
+}
+
 /// A blend-shape channel's weight in percent: its `DeformPercent`.
 fn deform_percent(channel: &&Node) -> f64 {
     channel
@@ -669,6 +716,8 @@ struct Layer {
     mode: i64,
     /// 0..=1.
     weight: f64,
+    /// The weight over time, in percent, where the file animates it.
+    weight_curve: Option<Curve>,
     /// Rotations add as turns (not angle by angle); scalings multiply.
     turns: bool,
     multiplies: bool,
@@ -691,8 +740,19 @@ struct Channel {
 impl Layered {
     /// Lays `value` of property `slot` (0 translation, 1 rotation, 2
     /// scaling) on, as `layer` does; the stack's first layer replaces.
-    fn lay(&mut self, first: bool, layer: &Layer, slot: usize, value: DVec3, order: i64) {
-        let w = layer.weight;
+    fn lay(
+        &mut self,
+        first: bool,
+        layer: &Layer,
+        time: f64,
+        slot: usize,
+        value: DVec3,
+        order: i64,
+    ) {
+        let w = layer
+            .weight_curve
+            .as_ref()
+            .map_or(layer.weight, |c| (c.at(time) / 100.0).clamp(0.0, 1.0));
         let mode = if first { 1 } else { layer.mode };
         let power = |v: f64, e: f64| {
             if e <= 0.0 {
@@ -1130,7 +1190,7 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
     let shapes_of = |g: &Node,
                      turned: &dyn Fn(DVec3) -> DVec3,
                      vertices: usize|
-     -> (Vec<(shape_mesh::Morph, usize)>, Vec<i64>) {
+     -> (Vec<shape_mesh::Morph>, Vec<(i64, Vec<f64>)>) {
         let class = |n: &Node| n.props.get(2).and_then(Prop::str).unwrap_or("").to_string();
         let id_of = |n: &Node| n.props.first().and_then(Prop::int);
         let under = |id: Option<i64>, name: &'static str, kind: &'static str| -> Vec<&Node> {
@@ -1142,41 +1202,58 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
                 .copied()
                 .collect()
         };
-        let (mut targets, mut ids) = (Vec::new(), Vec::new());
+        let (mut targets, mut channels) = (Vec::new(), Vec::new());
         for deformer in under(id_of(g), "Deformer", "BlendShape") {
             for channel in under(id_of(deformer), "Deformer", "BlendShapeChannel") {
                 let shapes = under(id_of(channel), "Geometry", "Shape");
-                // The shape at the channel's full weight: the last, or
-                // the one `FullWeights` gives the most.
+                let Some(cid) = id_of(channel) else { continue };
+                // Each shape with the weight it is whole at (`FullWeights`,
+                // percent; one shape alone at 100), in rising order.
                 let full = channel
                     .array("FullWeights")
-                    .filter(|w| w.len() == shapes.len())
-                    .and_then(|w| (0..w.len()).rev().max_by(|a, b| w[*a].total_cmp(&w[*b])))
-                    .unwrap_or(shapes.len().saturating_sub(1));
-                let (Some(shape), Some(cid)) = (shapes.get(full), id_of(channel)) else {
+                    .filter(|w| w.len() == shapes.len());
+                let mut keyed: Vec<(f64, &Node)> = shapes
+                    .iter()
+                    .enumerate()
+                    .map(|(k, s)| (full.map_or(100.0, |w| w[k]) / 100.0, *s))
+                    .filter(|(w, _)| w.is_finite() && *w != 0.0)
+                    .collect();
+                keyed.sort_by(|a, b| a.0.total_cmp(&b.0));
+                if keyed.is_empty() {
                     continue;
-                };
-                let mut deltas = vec![DVec3::ZERO; vertices];
-                let index = shape.array("Indexes").unwrap_or(&[]);
-                let offsets = shape.array("Vertices").unwrap_or(&[]);
-                for (i, d) in index.iter().zip(offsets.as_chunks::<3>().0) {
-                    let d = turned(DVec3::new(d[0], d[1], d[2]));
-                    if let Some(slot) = deltas.get_mut(*i as usize).filter(|_| d.is_finite()) {
-                        *slot = d;
-                    }
                 }
-                targets.push((
-                    shape_mesh::Morph {
-                        name: object_name(channel.props.get(1).and_then(Prop::str).unwrap_or("")),
-                        weight: deform_percent(&channel) / 100.0,
+                let name = object_name(channel.props.get(1).and_then(Prop::str).unwrap_or(""));
+                let keys: Vec<f64> = keyed.iter().map(|k| k.0).collect();
+                let rest = shape_weights(deform_percent(&channel) / 100.0, &keys);
+                // The shape at the largest weight bears the channel's
+                // name; the others, shapes on the way to it, their weight
+                // after it.
+                let top = keys.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                for (k, (weight, shape)) in keyed.iter().enumerate() {
+                    let mut deltas = vec![DVec3::ZERO; vertices];
+                    let index = shape.array("Indexes").unwrap_or(&[]);
+                    let offsets = shape.array("Vertices").unwrap_or(&[]);
+                    for (i, d) in index.iter().zip(offsets.as_chunks::<3>().0) {
+                        let d = turned(DVec3::new(d[0], d[1], d[2]));
+                        if let Some(slot) = deltas.get_mut(*i as usize).filter(|_| d.is_finite()) {
+                            *slot = d;
+                        }
+                    }
+                    targets.push(shape_mesh::Morph {
+                        name: if *weight == top {
+                            name.clone()
+                        } else {
+                            // In percent, to a thousandth.
+                            format!("{name}@{}", (weight * 100_000.0).round() / 1000.0)
+                        },
+                        weight: rest[k],
                         deltas,
-                    },
-                    shapes.len(),
-                ));
-                ids.push(cid);
+                    });
+                }
+                channels.push((cid, keys));
             }
         }
-        (targets, ids)
+        (targets, channels)
     };
     // A geometry's skin: its Skin deformer's clusters, each a bone, with
     // the bind matrices the clusters carry (`Transform`: the mesh at bind
@@ -1481,7 +1558,36 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
                 multiplies: int("ScaleAccumulationMode") == 0,
                 driven: BTreeMap::new(),
                 shapes: BTreeMap::new(),
+                weight_curve: None,
             };
+            // The layer's own weight, where a curve drives it.
+            for (cn, p, prop) in &op_links {
+                if *p != lid || prop != "Weight" {
+                    continue;
+                }
+                for (c, q, prop) in &op_links {
+                    if q != cn || prop != "d|Weight" {
+                        continue;
+                    }
+                    let Some(curve) = by_id.get(c).filter(|n| n.name == "AnimationCurve") else {
+                        continue;
+                    };
+                    if let (Some(t), Some(v)) =
+                        (curve.array("KeyTime"), curve.array("KeyValueFloat"))
+                        && !t.is_empty()
+                        && t.len() == v.len()
+                        && t.windows(2).all(|w| w[1] >= w[0])
+                    {
+                        layer.weight_curve = Some(Curve::new(
+                            t.iter().map(|x| x / 46_186_158_000.0).collect(),
+                            v.to_vec(),
+                            curve.array("KeyAttrFlags").unwrap_or(&[]),
+                            curve.array("KeyAttrDataFloat").unwrap_or(&[]),
+                            curve.array("KeyAttrRefCount").unwrap_or(&[]),
+                        ));
+                    }
+                }
+            }
             for cn in kids(lid, "AnimationCurveNode") {
                 // A blend-shape channel's weight, in percent.
                 let channel = op_links.iter().find_map(|(c, p, prop)| {
@@ -1597,9 +1703,10 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
             stacks.push((sname, layers));
         }
     }
-    // `channels`: the part's blend-shape channels, in its targets' order.
+    // `channels`: the part's blend-shape channels, in its targets' order,
+    // each with the weights its shapes are whole at.
     let clips_of = |space: &FbxSpace,
-                    channels: &[i64]|
+                    channels: &[(i64, Vec<f64>)]|
      -> Result<Vec<shape_mesh::SkinClip>, ImportError> {
         let mut clips = Vec::new();
         let mut used = BTreeMap::new();
@@ -1664,7 +1771,7 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
                                     v[axis] = c.at(time);
                                 }
                             }
-                            at.lay(k == 0, layer, slot, v, order);
+                            at.lay(k == 0, layer, time, slot, v, order);
                         }
                     }
                     let turn = at.turned.unwrap_or_else(|| euler(at.r, order));
@@ -1696,27 +1803,25 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
             }
             // Each channel's weight at each time, through the layers.
             let mut morphs = Vec::new();
-            let driven = |c: &i64| layers.iter().any(|l| l.shapes.contains_key(c));
+            let driven = |c: &(i64, Vec<f64>)| layers.iter().any(|l| l.shapes.contains_key(&c.0));
             if channels.iter().any(driven) {
                 for &time in &times {
-                    let row = channels
-                        .iter()
-                        .map(|c| {
-                            let mut at = Layered {
-                                t: DVec3::new(by_id.get(c).map_or(0.0, deform_percent), 0.0, 0.0),
-                                r: DVec3::ZERO,
-                                turned: None,
-                                s: DVec3::ONE,
-                            };
-                            for (k, layer) in layers.iter().enumerate() {
-                                if let Some((curve, rest)) = layer.shapes.get(c) {
-                                    let v = curve.as_ref().map_or(*rest, |x| x.at(time));
-                                    at.lay(k == 0, layer, 0, DVec3::new(v, 0.0, 0.0), 0);
-                                }
+                    let mut row = Vec::new();
+                    for (c, keys) in channels {
+                        let mut at = Layered {
+                            t: DVec3::new(by_id.get(c).map_or(0.0, deform_percent), 0.0, 0.0),
+                            r: DVec3::ZERO,
+                            turned: None,
+                            s: DVec3::ONE,
+                        };
+                        for (k, layer) in layers.iter().enumerate() {
+                            if let Some((curve, rest)) = layer.shapes.get(c) {
+                                let v = curve.as_ref().map_or(*rest, |x| x.at(time));
+                                at.lay(k == 0, layer, time, 0, DVec3::new(v, 0.0, 0.0), 0);
                             }
-                            at.t.x / 100.0
-                        })
-                        .collect();
+                        }
+                        row.extend(shape_weights(at.t.x / 100.0, keys));
+                    }
                     morphs.push(row);
                 }
             }
@@ -1850,14 +1955,6 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
                 &|d: DVec3| to_kernel(geo.rotate(d)) * unit,
                 solid.positions.len(),
             );
-            if !channels.is_empty() {
-                let lost = targets.iter().filter(|t| t.1 > 1).count();
-                if lost > 0 {
-                    out.skipped.push(format!(
-                        "{name}: {lost} blend-shape channels have in-between shapes; the full one is read"
-                    ));
-                }
-            }
             let read = skin_of(g, &name, &solid.positions)?;
             let mut clips = Vec::new();
             if let Some(((skin, scaled), space)) = read {
@@ -1865,7 +1962,7 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
                 if let Some((placed, info)) = scaled {
                     // Where the file's bind pose puts the vertices, and
                     // each target's ends with them.
-                    for (t, _) in &mut targets {
+                    for t in &mut targets {
                         let moved: Vec<DVec3> = solid
                             .positions
                             .iter()
@@ -1897,7 +1994,7 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
                 solid.morphs = Some(shape_mesh::Morphs {
                     targets: targets
                         .into_iter()
-                        .map(|(mut t, _)| {
+                        .map(|mut t| {
                             t.name = unique(&t.name, &mut names);
                             t
                         })
@@ -2393,6 +2490,37 @@ Connections:  {
             (p("BlendMode", "enum", 2) + &p("Weight", "Number", 50), 60.0),
             (p("RotationAccumulationMode", "enum", 1), 120.0),
         ];
+        // The layer's weight driven from 0 to 100 over the second: at
+        // the end it is whole.
+        let driven = with_layer("")
+            .replace(
+                "}\nConnections:  {",
+                "\tAnimationCurveNode: 63, \"AnimCurveNode::Weight\", \"\" {\n\t}\n\
+                 \tAnimationCurve: 64, \"AnimCurve::\", \"\" {\n\t\tKeyTime: *2 {\n\t\t\ta: 0,46186158000\n\t\t}\n\
+                 \t\tKeyValueFloat: *2 {\n\t\t\ta: 0,100\n\t\t}\n\t}\n}\nConnections:  {",
+            )
+            .replace(
+                "\tC: \"OO\",60,50\n",
+                "\tC: \"OO\",60,50\n\tC: \"OP\",63,60, \"Weight\"\n\tC: \"OP\",64,63, \"d|Weight\"\n",
+            );
+        let imported = import_fbx(driven.as_bytes(), &no_files).unwrap();
+        let part = &imported.parts[0];
+        let i = part
+            .solid
+            .positions
+            .iter()
+            .position(|p| (*p - DVec3::new(0.0, 0.0, 500.0)).length() < 1e-9)
+            .unwrap();
+        for (time, degrees) in [(0.0, 0.0), (0.5, 45.0 + 15.0), (1.0, 120.0)] {
+            let at = part.clips[0].at(time).unwrap();
+            let top = shape_skin::pose_by(&part.solid, &at).unwrap().positions[i];
+            let (sin, cos) = trig::sin_cos(trig::to_radians(degrees));
+            let want = DVec3::new(250.0 * sin, 0.0, 250.0 + 250.0 * cos);
+            assert!(
+                (top - want).length() < 0.05,
+                "weight at {time}: {top:?} for {want:?}"
+            );
+        }
         for (props, degrees) in cases {
             let imported = import_fbx(with_layer(&props).as_bytes(), &no_files).unwrap();
             assert!(
@@ -2610,6 +2738,65 @@ Connections:  {
                 "frame {frame}: {:?}",
                 centre(&posed)
             );
+        }
+    }
+
+    /// A channel with shapes on the way to its full one (ufbx's file,
+    /// and three frames of it as Maya wrote them out,
+    /// `third_party/ufbx`): each shape is a target, the clip gives each
+    /// its part at every time, and the mesh then stands where Maya's
+    /// does.
+    #[test]
+    fn in_between_shapes_are_targets_of_their_own() {
+        let bytes =
+            include_bytes!("../../../third_party/ufbx/data/maya_blend_inbetween_7500_binary.fbx");
+        let imported = import_fbx(bytes, &no_files).unwrap();
+        assert!(imported.skipped.is_empty(), "{:?}", imported.skipped);
+        let part = &imported.parts[0];
+        let rest = crate::repair::apply_transform(part).unwrap();
+        let m = rest.morphs.as_ref().expect("targets");
+        let names: Vec<&str> = m.targets.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "KeyBlend.LiftTop@50",
+                "KeyBlend.LiftTop",
+                "KeyBlend.MoveToSide@-49.9",
+                "KeyBlend.MoveToSide@-24.9",
+                "KeyBlend.MoveToSide"
+            ]
+        );
+        let clip = &part.clips[0];
+        let frames: [(f64, &str); 3] = [
+            (
+                30.0,
+                include_str!("../../../third_party/ufbx/data/maya_blend_inbetween_30.obj"),
+            ),
+            (
+                65.0,
+                include_str!("../../../third_party/ufbx/data/maya_blend_inbetween_65.obj"),
+            ),
+            (
+                89.0,
+                include_str!("../../../third_party/ufbx/data/maya_blend_inbetween_89.obj"),
+            ),
+        ];
+        for (frame, obj) in frames {
+            let weights = clip.weights_at((frame - 1.0) / 24.0).unwrap();
+            let posed = rest.morphed(&weights);
+            // Maya's corners, in its centimetres with Y up.
+            let want: Vec<DVec3> = obj
+                .lines()
+                .filter_map(|l| l.strip_prefix("v "))
+                .map(|l| {
+                    let v: Vec<f64> = l.split_whitespace().map(|x| x.parse().unwrap()).collect();
+                    DVec3::new(v[0], -v[2], v[1]) * 10.0
+                })
+                .collect();
+            assert_eq!(want.len(), posed.positions.len());
+            for (p, w) in posed.positions.iter().zip(&want) {
+                assert!((*p - *w).length() < 0.02, "frame {frame}: {p:?} for {w:?}");
+            }
         }
     }
 }

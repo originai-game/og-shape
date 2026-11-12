@@ -8952,3 +8952,29 @@ a blind hole's grown floor in the plane of the hollow's. Three holes through one
 the edits (2 434) are unchanged line for line; no golden line moved.
 `edits_answer_the_crossing_pairs_they_leave` holds the rounded rim,
 the crossing holes and a blind hole ending in another.
+
+### 46.1 In-between shapes (2026-11-12)
+
+A channel may have several shapes, each whole at one weight
+(`FullWeights`, percent): between two of them, or between no shape
+and the nearest, the mesh is part one and part the other; past the
+last it runs on as between the last two; shapes at negative weights
+lie on the other side of none (the rule is ufbx's). Each shape is now
+a target: the one at the largest weight bears the channel's name, the
+others `<channel>@<percent>`. A channel's `DeformPercent` gives each
+of its targets a weight (`shape_weights`): at rest, and at every
+sample of a clip.
+
+Checked against Maya: ufbx's `maya_blend_inbetween` (two channels,
+shapes at 50 and 100, and at −49.9, −24.9 and 100) with three of the
+frames Maya wrote out (30, 65, 89, in `third_party/ufbx/data`): every
+vertex within 0.02 mm (`in_between_shapes_are_targets_of_their_own`).
+
+### 45.1 A layer's weight over time (2026-11-12)
+
+A curve on a layer's `Weight` (an `AnimationCurveNode` linked to the
+layer, its curve on `d|Weight`) is read, and the layer lies on those
+under it by the curve's value at each sample, clamped to 0..100. The
+hand-written file of §45 with the second layer's weight driven from 0
+to 100: nothing of it at the start, half of both at the middle (60°),
+all of it at the end (120°).

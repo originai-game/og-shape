@@ -7,6 +7,10 @@ What is here:
   data/maya_auto_clamp_7700_binary.fbx
   data/maya_tangent_spline_7700_binary.fbx
   data/maya_blend_shape_cube_7700_binary.fbx
+  data/maya_blend_inbetween_7500_binary.fbx
+  data/maya_blend_inbetween_{30,65,89}.obj
+      The same cube with in-between shapes, and three frames of it as
+      Maya wrote them out (ufbx's reference frames).
       ufbx's test files: one animated cube each, written by Maya. The
       values Maya gives each curve at 24 frames a second are in ufbx's
       test/test_animation.h (the blend-shape cube's offsets and weights
