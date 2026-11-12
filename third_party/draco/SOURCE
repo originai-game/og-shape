@@ -1,0 +1,17 @@
+Draco (Google), Apache-2.0, LICENSE in this folder.
+repository: https://github.com/google/draco
+version:    1.5.7
+copied:     2026-11-12
+
+What is here:
+  testdata/*.drc, testdata/*.obj   Draco's own test files (bitstream 2.2:
+      sequential and EdgeBreaker, compression levels 3, 4 and 10) and the
+      Wavefront files they were made from. Used by the decoder's tests.
+
+What was read:
+  The Draco bitstream specification (https://google.github.io/draco/spec/,
+  version 2.2). crates/shape-tools/src/draco.rs is written from it and
+  keeps its names in comments. Draco's C++ source was not copied; where
+  the specification leaves something out (the bit order of a bit run,
+  whole numbers stored uncompressed, a boundary vertex in a traversal),
+  what Draco's format does is stated in docs/research.md §44.

@@ -1459,3 +1459,12 @@
   rather than drop them. `import` notes the places where vertices that
   coincide move apart in a target, which a weld joins. FBX blend shapes
   are still not read (`docs/research.md` §43).
+- Draco-compressed glTF is read: a primitive under
+  `KHR_draco_mesh_compression` is decoded from its Draco data (bitstream
+  2.2: sequential and EdgeBreaker connectivity, standard and valence;
+  depth-first and prediction-degree traversals; difference,
+  parallelogram, constrained multi-parallelogram and texture-coordinate
+  predictions; quantized, integer and raw attributes), with its UVs,
+  colours, joints and weights. Normals are parsed and recomputed as
+  for every import. No required glTF extension of geometry is refused
+  any more (`docs/research.md` §44; `third_party/draco/`).

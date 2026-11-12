@@ -23,8 +23,10 @@ import → join → repair → decimate → place → unwrap → measure → pre
    that coincide move apart in a target, a weld joins them: look at
    that target after `repair`. `process --bake` and the kernel's edits
    (booleans, bevels, shell) refuse a mesh with targets. A meshopt-compressed glTF (`EXT_` or
-   `KHR_meshopt_compression`, as gltfpack writes) is read as the plain
-   file is. A Draco-compressed glTF is refused: get an uncompressed one. A **skinned** mesh (bones and weights) is
+   `KHR_meshopt_compression`, as gltfpack writes) or a Draco-compressed
+   one (`KHR_draco_mesh_compression`, bitstream 2.2) is read as the
+   plain file is; Draco quantizes positions, so they stand a little off
+   the original's. A **skinned** mesh (bones and weights) is
    read whole, in its bind pose (`measure` says `skinned` and lists the
    bones), and every tool keeps the skin: weights follow the vertices
    through repair, decimation blends them, and the commands write it

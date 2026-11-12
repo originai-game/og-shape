@@ -34,6 +34,7 @@ use std::fmt;
 use shape_core::{DVec2, DVec3, Frame};
 use shape_mesh::{Bone, Skin, Solid, Weights};
 
+use crate::draco;
 use crate::export::{ColorSpace, Material};
 use crate::image::{ImageInfo, Texture};
 use crate::jsonread::{self, Value};
@@ -676,7 +677,8 @@ pub(crate) fn fetch(uri: &str, resolve: Resolve) -> Result<Vec<u8>, ImportError>
 
 // ── glTF ────────────────────────────────────────────────────────────────────
 
-const SUPPORTED_EXTENSIONS: [&str; 8] = [
+const SUPPORTED_EXTENSIONS: [&str; 9] = [
+    "KHR_draco_mesh_compression",
     "EXT_meshopt_compression",
     "KHR_meshopt_compression",
     "KHR_mesh_quantization",
@@ -728,8 +730,9 @@ struct Doc<'a> {
 /// without it is white, as glTF draws it. The material is read as
 /// [`ImportedPart::material`] says. Buffer views compressed with
 /// `EXT_meshopt_compression` or `KHR_meshopt_compression` are decoded (`docs/research.md` §42). A
-/// required extension the importer does not read (Draco) is
-/// [`ImportError::Unsupported`].
+/// primitive under `KHR_draco_mesh_compression` is decoded too
+/// (`docs/research.md` §44). A required extension the importer does not
+/// read is [`ImportError::Unsupported`].
 pub fn import_gltf(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportError> {
     let (json_bytes, bin) = if bytes.starts_with(b"glTF") {
         let u32_at = |i: usize| -> Result<u32, ImportError> {
@@ -1737,7 +1740,60 @@ impl Doc<'_> {
             let Some(pa) = attrs.get("POSITION").index() else {
                 return Err(fmt_err(format!("{name}: primitive {pi} has no POSITION")));
             };
-            let (pos, w) = self.accessor(pa)?;
+            // A Draco-compressed primitive: its points and triangles are
+            // in the extension's buffer view, not behind the accessors.
+            let packed = prim.get("extensions").get("KHR_draco_mesh_compression");
+            let draco = match packed.get("bufferView").index() {
+                Some(bv) => {
+                    let (bytes, _) = self.view(bv)?;
+                    Some(
+                        draco::decode(bytes)
+                            .map_err(|e| fmt_err(format!("{name}: primitive {pi}: {e}")))?,
+                    )
+                }
+                None => None,
+            };
+            let attr = |key: &str, accessor: usize| -> Result<(Vec<f64>, usize), ImportError> {
+                let (Some(d), Some(id)) = (&draco, packed.get("attributes").get(key).index())
+                else {
+                    return self.accessor(accessor);
+                };
+                let a = d
+                    .attributes
+                    .iter()
+                    .find(|a| a.id as usize == id && !a.values.is_empty())
+                    .ok_or_else(|| {
+                        fmt_err(format!(
+                            "{name}: primitive {pi}: no {key} in its Draco data"
+                        ))
+                    })?;
+                // Whole numbers the accessor calls normalized are scaled
+                // as its component type scales them.
+                let acc = self.json.get("accessors").at(accessor);
+                let scale = match acc.get("componentType").index() {
+                    _ if a.integer == 0 || !acc.get("normalized").bool().unwrap_or(false) => 1.0,
+                    Some(5120) => 127.0,
+                    Some(5121) => 255.0,
+                    Some(5122) => 32767.0,
+                    Some(5123) => 65535.0,
+                    _ => 1.0,
+                };
+                let values = a.values.iter().map(|v| (v / scale).max(-1.0)).collect();
+                Ok((
+                    if scale == 1.0 {
+                        a.values.clone()
+                    } else {
+                        values
+                    },
+                    a.components,
+                ))
+            };
+            let (pos, w) = attr("POSITION", pa)?;
+            if draco.as_ref().is_some_and(|d| d.points * 3 != pos.len()) {
+                return Err(fmt_err(format!(
+                    "{name}: primitive {pi}: its Draco data has no position a point"
+                )));
+            }
             if w != 3 {
                 return Err(fmt_err(format!("{name}: POSITION is not VEC3")));
             }
@@ -1780,7 +1836,7 @@ impl Doc<'_> {
             }
             let uv = match attrs.get("TEXCOORD_0").index() {
                 Some(ua) => {
-                    let (uv, w) = self.accessor(ua)?;
+                    let (uv, w) = attr("TEXCOORD_0", ua)?;
                     if w != 2 || uv.len() / 2 != count {
                         return Err(fmt_err(format!(
                             "{name}: TEXCOORD_0 does not match POSITION"
@@ -1792,7 +1848,7 @@ impl Doc<'_> {
             };
             let color = match attrs.get("COLOR_0").index() {
                 Some(ca) => {
-                    let (c, w) = self.accessor(ca)?;
+                    let (c, w) = attr("COLOR_0", ca)?;
                     if !(w == 3 || w == 4) || c.len() / w != count {
                         return Err(fmt_err(format!("{name}: COLOR_0 does not match POSITION")));
                     }
@@ -1809,6 +1865,10 @@ impl Doc<'_> {
                 None => None,
             };
             let index: Vec<u32> = match prim.get("indices").index() {
+                _ if draco.is_some() => draco
+                    .iter()
+                    .flat_map(|d| d.faces.iter().flatten().copied())
+                    .collect(),
                 Some(ia) => {
                     let (idx, w) = self.accessor(ia)?;
                     if w != 1 {
@@ -1822,6 +1882,7 @@ impl Doc<'_> {
                 return Err(fmt_err(format!("{name}: an index is out of range")));
             }
             let tris: Vec<[u32; 3]> = match mode {
+                _ if draco.is_some() => index.as_chunks::<3>().0.to_vec(),
                 4 => index.as_chunks::<3>().0.to_vec(),
                 5 => (2..index.len())
                     .map(|k| {
@@ -1847,8 +1908,8 @@ impl Doc<'_> {
                 attrs.get("WEIGHTS_0").index(),
             ) {
                 (Some(ja), Some(wa)) => {
-                    let (j, jw) = self.accessor(ja)?;
-                    let (w, ww) = self.accessor(wa)?;
+                    let (j, jw) = attr("JOINTS_0", ja)?;
+                    let (w, ww) = attr("WEIGHTS_0", wa)?;
                     if jw != 4 || ww != 4 || j.len() / 4 != count || w.len() / 4 != count {
                         return Err(fmt_err(format!(
                             "{name}: JOINTS_0 or WEIGHTS_0 does not match POSITION"

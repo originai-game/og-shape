@@ -175,11 +175,11 @@ fn gltf_with_external_and_embedded_buffers() {
     let err = import_gltf(json.as_bytes(), &no_files).unwrap_err();
     assert!(err.to_string().contains("tri pos.bin"), "{err}");
     // So is a required extension the importer does not read.
-    let draco = json.replace(
+    let instanced = json.replace(
         r#""asset":{"version":"2.0"}"#,
-        r#""asset":{"version":"2.0"},"extensionsRequired":["KHR_draco_mesh_compression"]"#,
+        r#""asset":{"version":"2.0"},"extensionsRequired":["EXT_mesh_gpu_instancing"]"#,
     );
-    assert!(import_gltf(draco.as_bytes(), &files).is_err());
+    assert!(import_gltf(instanced.as_bytes(), &files).is_err());
     // Vertex colours are read (image-to-3D outputs carry their colour
     // there): here the positions as RGB, clamped to 1.
     assert!(imported.skipped.is_empty());
@@ -1147,4 +1147,58 @@ fn morph_targets_are_read_carried_and_written() {
     assert!(off < 0.5, "{off}");
     // A plain GLB would drop the targets: refused.
     assert!(glb_plain(&half, &PlainGlb::default()).is_err());
+}
+
+/// A primitive under `KHR_draco_mesh_compression` is read from its
+/// Draco data: Draco's own cube with texture coordinates
+/// (`third_party/draco/testdata`), 12 triangles on a unit cube, each
+/// with UVs inside the image.
+#[test]
+fn a_draco_primitive_is_read() {
+    let packed =
+        include_bytes!("../../../third_party/draco/testdata/cube_att.obj.edgebreaker.cl4.2.2.drc");
+    let json = format!(
+        r#"{{"asset":{{"version":"2.0"}},"extensionsRequired":["KHR_draco_mesh_compression"],
+        "scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{{"name":"cube","mesh":0}}],
+        "meshes":[{{"primitives":[{{"attributes":{{"POSITION":0,"TEXCOORD_0":1}},"indices":2,
+          "extensions":{{"KHR_draco_mesh_compression":{{"bufferView":0,
+            "attributes":{{"POSITION":0,"TEXCOORD_0":1}}}}}}}}]}}],
+        "buffers":[{{"uri":"cube.drc","byteLength":{n}}}],
+        "bufferViews":[{{"buffer":0,"byteLength":{n}}}],
+        "accessors":[{{"componentType":5126,"count":24,"type":"VEC3"}},
+          {{"componentType":5126,"count":24,"type":"VEC2"}},
+          {{"componentType":5123,"count":36,"type":"SCALAR"}}]}}"#,
+        n = packed.len()
+    );
+    let files = |uri: &str| match uri {
+        "cube.drc" => Ok(packed.to_vec()),
+        _ => Err(format!("no {uri}")),
+    };
+    let imported = import_gltf(json.as_bytes(), &files).unwrap();
+    let s = &imported.parts[0].solid;
+    assert_eq!(s.triangles.len(), 12);
+    let (lo, hi) = s.positions.iter().fold(
+        (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY)),
+        |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+    );
+    assert!(
+        (hi - lo - DVec3::splat(1000.0)).abs().max_element() < 1.0,
+        "{lo:?} {hi:?}"
+    );
+    let uvs = s.uvs.as_ref().expect("UVs");
+    assert!(
+        uvs.iter()
+            .flatten()
+            .all(|q| (-1e-3..=1.001).contains(&q.x) && (-1e-3..=1.001).contains(&q.y))
+    );
+    // Every face of the cube is covered: the area is six square metres.
+    let area: f64 = s
+        .triangles
+        .iter()
+        .map(|t| {
+            let [a, b, c] = t.map(|v| s.positions[v as usize]);
+            (b - a).cross(c - a).length() / 2.0
+        })
+        .sum();
+    assert!((area - 6.0e6).abs() < 1.0e4, "{area}");
 }

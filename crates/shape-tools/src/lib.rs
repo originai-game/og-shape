@@ -58,6 +58,7 @@ mod bake;
 mod collide;
 mod decimate;
 mod decode;
+mod draco;
 mod export;
 mod fbx;
 mod image;

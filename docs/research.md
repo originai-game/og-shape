@@ -8642,3 +8642,76 @@ are recomputed from the moved positions); a cost in `decimate` for
 what a collapse does to a target (a face's lips decimate as the rest
 does); the animation of a mesh node's own transform when the mesh has
 no skin (RobotExpressive's rigid parts stay at rest).
+
+## 44. Draco-compressed glTF (2026-11-12)
+
+`shape-tools/src/draco.rs` decodes a Draco triangle mesh, which is
+what a glTF primitive under `KHR_draco_mesh_compression` holds. It is
+written from the Draco bitstream specification (version 2.2, Google,
+Apache-2.0; `third_party/draco/SOURCE`), and keeps the specification's
+names in its comments. Draco's C++ source was not copied.
+
+What is read:
+- **Connectivity.** Sequential (indices outright or as symbols), and
+  EdgeBreaker: the C, S, L, R and E symbols build the corner table
+  face by face from the last symbol back, topology splits reopen an
+  edge, and the start faces close each run. Standard symbols are bits;
+  valence symbols come from six contexts chosen by the valence of the
+  vertex ahead.
+- **Seams and points.** Each attribute with its own connectivity has a
+  bit an inner edge (a seam or not); a vertex is split where a seam
+  crosses its fan, and a point is a corner's vertex in every attribute
+  at once.
+- **Order of values.** Depth first from each face, or by prediction
+  degree (three stacks by how many neighbours a vertex's value can be
+  predicted from).
+- **Values.** Whole numbers as symbols (tagged by bit length, or raw
+  with a table) or outright, then the prediction undone: difference,
+  parallelogram, constrained multi-parallelogram (crease flags by how
+  many parallelograms there are), and texture coordinates from the
+  triangle's shape in space, each under the wrap transform. Quantized
+  values are scaled in f32 as the specification scales them. Normals
+  are parsed (their data must be passed to reach what follows) and not
+  computed: the importer recomputes normals.
+
+**Where the specification is silent or wrong**, what the format does
+(known from the format's behaviour on the files below, stated here so
+the code can be checked against it):
+- A run of bits (`f[n]`, the EdgeBreaker symbols, a tagged symbol's
+  value) fills each byte from its low bit, and a value's first bit is
+  its low bit. The specification says high to low.
+- A tagged symbol's values follow the symbol data as one bit run, not
+  byte-aligned a value.
+- Whole numbers not stored as symbols (`compressed` 0) are stored
+  outright: a byte count, then each number in that many bytes.
+- With no prediction (`-2`) the numbers are still zigzag-coded.
+- A position vertex is on the boundary when its left-most corner has
+  no neighbour to its left; the specification's `IsOnPositionBoundary`
+  answers false for every inner decoder. The left-most corners of
+  boundary vertices are set before an attribute's vertices are split.
+- An attribute decoder names its connectivity by `att_dec_data_id`;
+  one of type `MESH_VERTEX_ATTRIBUTE` uses the positions'.
+- `ReplaceVerts` is done over the merged vertex's corners, not over
+  every face.
+
+Counts are believed only as far as the data goes (a face needs at
+least a thirty-second of a byte), every fan walk is bounded, and a
+damaged file is an error value: the test flips every byte of six
+files two ways and none panics.
+
+Checked on files:
+- Draco's own (`third_party/draco/testdata`, in the gate): `test_nm`
+  and `cube_att` at EdgeBreaker levels 4 and 10 and sequential level
+  3. Each decodes to the triangles of its Wavefront source. Between
+  them: both connectivities, both traversals, and the difference,
+  parallelogram, constrained multi-parallelogram and
+  texture-coordinate predictions.
+- Khronos' `glTF-Draco` Box, Duck, Avocado, CesiumMan and BrainStem
+  (59 primitives, 22 of them valence-coded): the same triangle and
+  position counts, bounds and UV area as their `glTF-Binary` twins;
+  the duck and CesiumMan drawn with their textures, and CesiumMan and
+  BrainStem posed by their clips, look as the twins do.
+- three.js r160's `ferrari.glb` and `LittlestTokyo.glb` (18 and 51
+  primitives) decode.
+Only bitstream 2.2 is read (glTF requires it); three.js' `bunny.drc`
+(1.1) is refused by version. Point clouds are refused.

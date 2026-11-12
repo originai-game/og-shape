@@ -110,7 +110,7 @@ Run on `main` on 2026-11-10 and 11; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 165 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 370 pass | `scripts/check.sh test` |
+| Tests | 372 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -168,13 +168,13 @@ silent returns a result with no error:
 - Repair leaves open, and reports, non-manifold edges that no pairing of
   their faces separates and holes over 64 edges that no flat clear fill
   closes: 2 of TRELLIS's 6 meshes (`docs/research.md` §32).
-- Not read: Draco-compressed glTF, FBX blend shapes, a morph target's
-  normals, a second UV set. Vertices at one place are one vertex to the
-  tools, so a morph target that parts them (lips that touch at rest)
-  moves them together after a weld; `import` counts such places.
-  Meshopt-compressed glTF is read (`EXT_` and `KHR_meshopt_compression`). No USD or URDF export. `thicken` gives an open sheet one
-  thickness everywhere; where the sheet curves tighter than that its
-  second sheet folds (counted by `--intersections`).
+- Not read: FBX blend shapes, a morph target's normals, a second UV
+  set. Draco- and meshopt-compressed glTF are read. Vertices at one
+  place are one vertex to the tools, so a morph target that parts them
+  (lips that touch at rest) moves them together after a weld; `import`
+  counts such places. No USD or URDF export. `thicken` gives an open
+  sheet one thickness everywhere; where the sheet curves tighter than
+  that its second sheet folds (counted by `--intersections`).
 - An imported mesh's normals are recomputed, smooth within a surface: a
   normal map baked against the file's normals shades a median 1–1.6°
   differently after repair alone. The texture budget writes PNG only (no
