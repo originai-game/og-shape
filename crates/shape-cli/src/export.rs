@@ -26,7 +26,7 @@ use crate::{Failure, Files, failed};
 
 fn bad_extension(out: &Path) -> Failure {
     Failure::Usage(format!(
-        "{}: name the output .glb, .obj or .stl",
+        "{}: name the output .glb, .obj, .stl or .urdf",
         out.display()
     ))
 }
@@ -64,6 +64,9 @@ pub fn encode(source: &Source, out: &Path) -> Result<Vec<u8>, Failure> {
 /// written at the model's pose, else `"rest"` (a GLB's meshes are always
 /// at rest, posed by its joint nodes).
 pub fn export(files: &dyn Files, source: &Source, out: &Path) -> Result<String, Failure> {
+    if extension(out) == "urdf" {
+        return export_urdf(files, source, out);
+    }
     let bytes = encode(source, out)?;
     files.write(out, &bytes)?;
     Ok(match source {
@@ -88,6 +91,42 @@ pub fn export(files: &dyn Files, source: &Source, out: &Path) -> Result<String, 
             written_lost(out, bytes.len(), &lost)
         }
     })
+}
+
+/// Writes a program or a mesh as URDF: the description to `out` and
+/// each link's STL beside it, named `<out's stem>_<part>.stl`. Reports
+/// the path, format and size, the mesh files, and what URDF asks for
+/// that is not written.
+fn export_urdf(files: &dyn Files, source: &Source, out: &Path) -> Result<String, Failure> {
+    let stem = out
+        .file_stem()
+        .map_or("robot".to_string(), |s| s.to_string_lossy().into_owned());
+    let urdf = match source {
+        Source::Program(model) => model.urdf(&stem).map_err(failed)?,
+        Source::Mesh(mesh) => {
+            let placed = mesh.placed()?;
+            shape_tools::urdf(&scene(&mesh.name, &placed), &stem).map_err(failed)?
+        }
+    };
+    files.write(out, urdf.xml.as_bytes())?;
+    let mut names = Vec::new();
+    for (name, bytes) in &urdf.meshes {
+        files.write(&out.with_file_name(name), bytes)?;
+        names.push(string(name));
+    }
+    let lost = [
+        "inertial (mass and inertia)",
+        "limit effort and velocity (written 0)",
+        "materials, UVs and colours",
+    ];
+    Ok(object(&[
+        ("path", string(&out.display().to_string())),
+        ("format", string("urdf")),
+        ("bytes", urdf.xml.len().to_string()),
+        ("geometry", string("rest")),
+        ("meshes", crate::report::array(&names)),
+        ("not_written", crate::report::array(&lost.map(string))),
+    ]))
 }
 
 /// What a solid carries that writing it to `out` leaves out: OBJ and STL
@@ -326,7 +365,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
     known.extend(IMPORT_OPTIONS);
     a.only(&known)?;
     let out = a.out()?;
-    if !["glb", "obj", "stl"].contains(&extension(&out).as_str()) {
+    if !["glb", "obj", "stl", "urdf"].contains(&extension(&out).as_str()) {
         return Err(bad_extension(&out));
     }
     let source = load_uvs(&Local, &a.input()?, &a.import()?, a.switch("--uvs"))?;

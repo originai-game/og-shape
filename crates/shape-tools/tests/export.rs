@@ -383,3 +383,108 @@ fn a_clip_that_cannot_be_written_says_why() {
     assert!(why(clip("a", &[])).contains("no key"));
     assert!(why(clip("", &[(0.0, &[("spin", 0.0)])])).contains("no name"));
 }
+
+/// A URDF's links, put back where its joints' origins say, are the
+/// parts where they were built; its joints carry the kind, axis, limits
+/// (SI) and mimic of the scene's.
+#[test]
+fn a_urdf_s_links_stand_where_the_parts_were_built() {
+    use shape_core::trig;
+    let (base, wheel) = solids();
+    let mut s = scene(&base, &wheel);
+    // A pivot tilted every way, and a part welded to the wheel.
+    let tilted = Frame::from_normal(
+        DVec3::new(30.0, 0.0, 20.0),
+        DVec3::new(1.0, 2.0, 3.0).normalize(),
+        DVec3::new(3.0, -1.0, 0.5),
+    )
+    .unwrap();
+    s.parts[1].joint.as_mut().unwrap().pivot = tilted;
+    s.parts.push(Part {
+        parent: "wheel".into(),
+        ..Part::new("cap", &base)
+    });
+    let u = shape_tools::urdf(&s, "cart").unwrap();
+    let names: Vec<&str> = u.meshes.iter().map(|m| m.0.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "cart_base.stl",
+            "cart_wheel.stl",
+            "cart_nub.stl",
+            "cart_cap.stl"
+        ]
+    );
+    let attr = |text: &str, key: &str| -> String {
+        let at = text.find(&format!("{key}=\"")).unwrap() + key.len() + 2;
+        text[at..at + text[at..].find('"').unwrap()].to_string()
+    };
+    let nums = |t: &str| -> Vec<f64> { t.split(' ').map(|v| v.parse().unwrap()).collect() };
+    // Each link's frame in the world, from the joints' origins.
+    let mut frames: Vec<(String, [DVec3; 4])> =
+        vec![("base".into(), [DVec3::X, DVec3::Y, DVec3::Z, DVec3::ZERO])];
+    for joint in u.xml.split("<joint ").skip(1) {
+        let parent = attr(&joint[joint.find("<parent").unwrap()..], "link");
+        let child = attr(&joint[joint.find("<child").unwrap()..], "link");
+        let origin = &joint[joint.find("<origin").unwrap()..];
+        let (t, r) = (nums(&attr(origin, "xyz")), nums(&attr(origin, "rpy")));
+        let ((sr, cr), (sp, cp), (sy, cy)) = (
+            trig::sin_cos(r[0]),
+            trig::sin_cos(r[1]),
+            trig::sin_cos(r[2]),
+        );
+        // Rz(yaw) Ry(pitch) Rx(roll), by columns.
+        let local = [
+            DVec3::new(cy * cp, sy * cp, -sp),
+            DVec3::new(cy * sp * sr - sy * cr, sy * sp * sr + cy * cr, cp * sr),
+            DVec3::new(cy * sp * cr + sy * sr, sy * sp * cr - cy * sr, cp * cr),
+            DVec3::new(t[0], t[1], t[2]),
+        ];
+        let [px, py, pz, pt] = frames.iter().find(|f| f.0 == parent).unwrap().1;
+        let turn = |v: DVec3| px * v.x + py * v.y + pz * v.z;
+        frames.push((
+            child,
+            [
+                turn(local[0]),
+                turn(local[1]),
+                turn(local[2]),
+                turn(local[3]) + pt,
+            ],
+        ));
+    }
+    assert_eq!(frames.len(), 4);
+    for (part, (_, bytes)) in s.parts.iter().zip(&u.meshes) {
+        let [x, y, z, t] = frames.iter().find(|f| f.0 == part.name).unwrap().1;
+        assert_eq!(bytes.len(), 84 + 50 * part.solid.triangles.len());
+        for (k, tri) in part.solid.triangles.iter().enumerate() {
+            for (j, &v) in tri.iter().enumerate() {
+                let at = 84 + 50 * k + 12 + 12 * j;
+                let f = |i: usize| {
+                    f64::from(f32::from_le_bytes(
+                        bytes[at + 4 * i..][..4].try_into().unwrap(),
+                    ))
+                };
+                let world = x * f(0) + y * f(1) + z * f(2) + t;
+                let want = part.solid.positions[v as usize] * 0.001;
+                assert!(
+                    (world - want).length() < 1e-6,
+                    "{} {world} {want}",
+                    part.name
+                );
+            }
+        }
+    }
+    let joint = |name: &str| {
+        let at = u.xml.find(&format!("<joint name=\"{name}\"")).unwrap();
+        &u.xml[at..at + u.xml[at..].find("</joint>").unwrap()]
+    };
+    let spin = joint("spin");
+    assert!(spin.contains("type=\"revolute\"") && spin.contains("<axis xyz=\"0 0 1\"/>"));
+    assert!(spin.contains("lower=\"-1\" upper=\"2\""));
+    // 10 mm a radian is 0.01 m a radian.
+    let slide = joint("slide");
+    assert!(slide.contains("type=\"prismatic\"") && slide.contains("<axis xyz=\"1 0 0\"/>"));
+    assert!(slide.contains("<mimic joint=\"spin\" multiplier=\"0.01\"/>"));
+    assert!(slide.contains("lower=\"-0.01\" upper=\"0.02\""));
+    assert!(joint("cap_weld").contains("type=\"fixed\""));
+}

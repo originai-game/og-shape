@@ -336,22 +336,22 @@ fn finite(v: f64, what: impl Fn() -> String) -> Result<f64, ExportError> {
 }
 
 /// A joint after checks, in SI units and glTF space.
-struct Checked {
-    name: String,
-    kind: &'static str,
+pub(crate) struct Checked {
+    pub(crate) name: String,
+    pub(crate) kind: &'static str,
     /// The joint's node: the pivot after the joint's motion.
     node: Rigid,
     /// The part's node under it: the pivot's inverse.
     inverse: Rigid,
     axis: Option<DVec3>,
     value: f64,
-    span: Option<(f64, f64)>,
-    mimic: Option<(String, f64)>,
+    pub(crate) span: Option<(f64, f64)>,
+    pub(crate) mimic: Option<(String, f64)>,
     /// For clips, in kernel units: the pivot, the unit axis in the
     /// pivot's own coordinates (none for fixed and floating), whether it
     /// slides, its range, and the leader it follows with the multiplier.
-    pivot: Rigid,
-    local: Option<DVec3>,
+    pub(crate) pivot: Rigid,
+    pub(crate) local: Option<DVec3>,
     slides: bool,
     kernel_span: Option<(f64, f64)>,
     follows: Option<(String, f64)>,
@@ -499,7 +499,7 @@ pub(crate) fn check(scene: &Scene) -> Result<Vec<Rigid>, ExportError> {
 
 type Leader = (JointKind, Option<(f64, f64)>, f64);
 
-fn check_joints(scene: &Scene) -> Result<Vec<(Option<Checked>, Rigid)>, ExportError> {
+pub(crate) fn check_joints(scene: &Scene) -> Result<Vec<(Option<Checked>, Rigid)>, ExportError> {
     // Each part's placement so far, by name.
     let mut parts: BTreeMap<&str, Rigid> = BTreeMap::new();
     let mut joints: BTreeMap<String, Leader> = BTreeMap::new();

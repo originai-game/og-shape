@@ -21,8 +21,9 @@
 //! then, in the bone's space), their `Indexes` and `Weights` as
 //! weights, on the part's `Solid::skin` in the mesh's own coordinates (a
 //! bone scaled at bind time is refused), and blend shapes as morph
-//! targets. Skipped and listed: NURBS and other geometry, vertex
-//! colours. FBX 6 and
+//! targets, and the first colour layer as `Solid::colors` (RGBA as
+//! stored, taken as linear). Skipped and listed: NURBS and other
+//! geometry. FBX 6 and
 //! older are [`ImportError::Unsupported`].
 
 use std::collections::BTreeMap;
@@ -1937,12 +1938,14 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
         );
         let geo = geometric(o);
         for g in geometries {
-            let (mut solid, uvs, polys) = mesh(g, &name, &geo, unit, &to_kernel, p_det < 0.0)?;
-            if g.all("LayerElementColor").next().is_some() {
+            let (mut solid, uvs, colors, polys) =
+                mesh(g, &name, &geo, unit, &to_kernel, p_det < 0.0)?;
+            if colors.is_none() && g.all("LayerElementColor").next().is_some() {
                 out.skipped.push(format!(
-                    "{name}: its vertex colours (LayerElementColor) are not read"
+                    "{name}: its colour layer misses some corners, so no vertex colours"
                 ));
             }
+            solid.colors = colors;
             if uvs.is_none() && g.all("LayerElementUV").next().is_some() {
                 out.skipped.push(format!(
                     "{name}: its UV layer misses some corners, so no UVs"
@@ -2124,7 +2127,12 @@ fn back(p: &impl Fn(DVec3) -> DVec3, v: DVec3) -> DVec3 {
     out
 }
 
-type Mesh = (Solid, Option<Vec<[DVec2; 3]>>, usize);
+type Mesh = (
+    Solid,
+    Option<Vec<[DVec2; 3]>>,
+    Option<Vec<[[f64; 4]; 3]>>,
+    usize,
+);
 
 use crate::import::ReadSkin as FbxSkin;
 
@@ -2186,6 +2194,35 @@ fn mesh(
         };
         Some(DVec2::new(*values.get(k * 2)?, *values.get(k * 2 + 1)?))
     };
+    // Vertex colours: the first layer, RGBA as stored (taken as linear).
+    let color_layer = g.all("LayerElementColor").next();
+    let color_values = color_layer.and_then(|l| l.array("Colors"));
+    let color_index = color_layer.and_then(|l| l.array("ColorIndex"));
+    let color_mapping = color_layer
+        .and_then(|l| l.text("MappingInformationType"))
+        .unwrap_or("");
+    let color_ref = color_layer
+        .and_then(|l| l.text("ReferenceInformationType"))
+        .unwrap_or("");
+    let color_at = |corner: usize, vertex: usize| -> Option<[f64; 4]> {
+        let values = color_values?;
+        let k = match color_mapping {
+            "ByPolygonVertex" => corner,
+            "ByVertice" | "ByVertex" | "ByControlPoint" => vertex,
+            _ => return None,
+        };
+        let k = if color_ref == "Direct" {
+            k
+        } else {
+            *color_index?.get(k)? as usize
+        };
+        let c = values.get(k * 4..k * 4 + 4)?;
+        c.iter()
+            .all(|v| v.is_finite())
+            .then(|| [c[0], c[1], c[2], c[3]])
+    };
+    let mut colors: Vec<[[f64; 4]; 3]> = Vec::new();
+    let mut all_color = color_values.is_some();
     // Materials per polygon.
     let mat_layer = g.all("LayerElementMaterial").next();
     let mats = mat_layer.and_then(|l| l.array("Materials"));
@@ -2234,13 +2271,25 @@ fn mesh(
                     all_uv = false;
                     uvs.push([DVec2::ZERO; 3]);
                 }
+                let color = k.map(|j| color_at(corner_ids[j], corners[j] as usize));
+                if color.iter().all(Option::is_some) {
+                    colors.push(color.map(|c| c.unwrap_or([1.0; 4])));
+                } else {
+                    all_color = false;
+                    colors.push([[1.0; 4]; 3]);
+                }
             }
         }
         corners.clear();
         corner_ids.clear();
         polygon += 1;
     }
-    Ok((solid, if all_uv { Some(uvs) } else { None }, polys))
+    Ok((
+        solid,
+        all_uv.then_some(uvs),
+        all_color.then_some(colors),
+        polys,
+    ))
 }
 
 #[cfg(test)]
@@ -2279,6 +2328,16 @@ Objects:  {
 			}
 			UVIndex: *4 {
 				a: 0,1,2,3
+			}
+		}
+		LayerElementColor: 0 {
+			MappingInformationType: "ByVertice"
+			ReferenceInformationType: "IndexToDirect"
+			Colors: *8 {
+				a: 1,0,0,1,0,0,1,0.5
+			}
+			ColorIndex: *4 {
+				a: 0,0,1,1
 			}
 		}
 	}
@@ -2325,6 +2384,20 @@ Connections:  {
         let [a, b, c] = s.triangles[0].map(|v| s.positions[v as usize]);
         assert!((b - a).cross(c - a).z > 0.0);
         assert_eq!(p.solid.uvs.as_ref().map(Vec::len), Some(2));
+        // The colour layer, by vertex through its index: vertices 0 and
+        // 1 red, 2 and 3 blue at half alpha.
+        let colors = p.solid.colors.as_ref().unwrap();
+        for (t, c) in p.solid.triangles.iter().zip(colors) {
+            for (v, rgba) in t.iter().zip(c) {
+                let want = if *v < 2 {
+                    [1.0, 0.0, 0.0, 1.0]
+                } else {
+                    [0.0, 0.0, 1.0, 0.5]
+                };
+                assert_eq!(*rgba, want, "vertex {v}");
+            }
+        }
+        assert!(imported.skipped.is_empty(), "{:?}", imported.skipped);
     }
 
     /// Two legs' worth of FBX skin and animation, as exporters write it:

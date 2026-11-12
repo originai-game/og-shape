@@ -2208,6 +2208,12 @@ impl Model {
         )?)
     }
 
+    /// The model as URDF (`shape_tools::urdf`): its parts as links at
+    /// rest, its joints, and each link's STL named `<prefix>_<part>.stl`.
+    pub fn urdf(&self, prefix: &str) -> Result<shape_tools::Urdf, ModelError> {
+        Ok(shape_tools::urdf(&self.build()?.scene(), prefix)?)
+    }
+
     /// A turntable of the posed model (`shape_tools::preview`).
     pub fn preview(&self, d: &Preview) -> Result<Vec<Image>, ModelError> {
         Ok(shape_tools::preview(&self.build()?.scene(), d)?)

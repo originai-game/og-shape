@@ -777,7 +777,11 @@ fn export_schema() -> Value {
     let mut p = program_props();
     p.push((
         "out",
-        path("Where to write, in the workspace: .glb, .obj or .stl."),
+        path(
+            "Where to write, in the workspace: .glb, .obj, .stl, or .urdf (the description, \
+             with each part's STL beside it as <stem>_<part>.stl; links at rest, joints with \
+             their axes, limits and mimics; no inertial, and limit effort and velocity are 0).",
+        ),
     ));
     p.push(pose_prop());
     p.extend(obj_props());

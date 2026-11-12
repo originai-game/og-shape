@@ -211,7 +211,10 @@ import → join → repair → decimate → place → unwrap → measure → pre
    `not_written` lists the UVs, colours and material they leave out. To
    check a decimated skin, pose both meshes the same way
    (`shape-skin`'s `pose`) and compare them: the posed error should be no
-   more than the rest error.
+   more than the rest error. For a
+   robot simulator, name the output `.urdf`: links, joints and one STL
+   a part beside it; set each joint's `effort` and `velocity` and add
+   `inertial` yourself (the report's `not_written` lists them).
 11. **Compress** the file you ship (`shape compress in.glb -o out.glb`,
    MCP `compress`): meshopt, lossless, a quarter to two fifths off the
    geometry and animation; the file then requires

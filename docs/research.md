@@ -9150,3 +9150,40 @@ done here. Checked: `a_compressed_glb_reads_back_the_same` (a plain
 mesh and a skinned, animated file import equal to their sources; the
 `gltf` crate sees the extension required); `meshtools.compress` in
 the gate.
+
+## 52. URDF, and FBX vertex colours (2026-11-12)
+
+**URDF.** A scene already holds what a robot description is made of
+(§1.5: parts, parents, joints with a pivot, an axis, a range and a
+mimic). `shape_tools::urdf` writes it:
+
+- a link a part; its mesh a binary STL in the link's own frame, in
+  metres, as both `visual` and `collision`; a part with no triangles
+  (a group) is a bare link;
+- a jointed part's link frame is its joint's pivot, so the joint's
+  `origin` is the pivot in the parent link's frame (`xyz`, and `rpy`
+  as roll, pitch, yaw about fixed axes, yaw 0 at a pitch of a quarter
+  turn) and its `axis` the joint's own; a welded part shares its
+  parent's frame on a `fixed` joint named `<part>_weld`;
+- kinds as the GLB's extras name them: a revolute joint with no range
+  is `continuous`; limits in radians or metres; a mimic's multiplier
+  in SI (10 mm a radian is 0.01);
+- one root: several unparented parts hang by fixed joints on a link of
+  the scene's name.
+
+Not written, and reported as such: `inertial` (a scene has no
+densities), `effort` and `velocity` (written 0, which a simulator
+reads as a joint that cannot be driven until the author sets them),
+materials. Checked: `a_urdf_s_links_stand_where_the_parts_were_built`
+reads the description back, composes each joint's origin from the
+root, moves each link's STL by its frame and finds every corner where
+the part was built to 1e-6 m, through a pivot tilted about all three
+axes; the washing machine exports as 8 links and 7 joints. Not
+checked: no URDF parser (urdfdom, a simulator) has read the file here.
+
+**FBX vertex colours.** `LayerElementColor`'s first layer is read as
+UVs are: `Colors` (RGBA), by corner (`ByPolygonVertex`) or by vertex,
+`Direct` or through `ColorIndex`, onto `Solid::colors`. FBX does not
+say whether the values are linear; they are taken as linear, as glTF's
+`COLOR_0` is. A layer that misses a corner gives no colours and is
+listed.

@@ -123,7 +123,7 @@ Run on `main` on 2026-11-10 to 12; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 167 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 388 pass | `scripts/check.sh test` |
+| Tests | 389 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -189,7 +189,7 @@ silent returns a result with no error:
 - Not read: a morph target's normals, a second UV set. Draco- and meshopt-compressed glTF are read. Vertices at one
   place are one vertex to the tools, so a morph target that parts them
   (lips that touch at rest) moves them together after a weld; `import`
-  counts such places. No USD or URDF export. `thicken` gives an open
+  counts such places. No USD export. `thicken` gives an open
   sheet one thickness everywhere; where the sheet curves tighter than
   that its second sheet folds (counted by `--intersections`).
 - An imported mesh's normals are recomputed, smooth within a surface: a
@@ -227,7 +227,7 @@ What a user might expect and will not find, as of 2026-11-12:
   normals and a second UV set are not read.
 - **FBX.** Animation layers are checked on a hand-written file, not on
   one from an authoring tool. NURBS and other geometry that is not a
-  mesh, vertex colours, and FBX 6 and older are not read.
+  mesh, and FBX 6 and older, are not read.
 - **Shells and booleans.** 6 of 126 swept shells of crossing and
   blind holes stop at the boolean's own limits (faces in one plane, a
   rim that does not fill), and three holes through one point fail in
@@ -240,7 +240,8 @@ What a user might expect and will not find, as of 2026-11-12:
   metalness or roughness: it shows shape, colour and normal detail.
 - **Repair.** Non-manifold edges no pairing separates and holes over
   64 edges with no flat fill stay open, reported.
-- **Formats.** No USD or URDF export. No STEP or other B-rep, by
+- **Formats.** No USD export. URDF is written without inertia, and
+  with limit effort and velocity 0 for the author to set. No STEP or other B-rep, by
   design: the kernel holds meshes only.
 - **Size.** A `Solid` of 600 000 coloured triangles is about 300 MiB;
   nothing streams.
@@ -270,6 +271,7 @@ shape process scan.glb --budget 40000 --weld 0.001 --floaters 0.05 \
               --non-manifold --holes 64 --fuse -o asset.glb
                                              # repair, decimate, unwrap
 shape repair  leaf.obj --thicken 1.2 -o leaf.glb   # an open sheet made solid
+shape export model.json -o robot.urdf                # links, joints and STL meshes
 shape collide model.json --hulls 8 -o colliders.glb  # convex colliders
 shape compress game.glb -o game.small.glb            # meshopt, lossless
 ```

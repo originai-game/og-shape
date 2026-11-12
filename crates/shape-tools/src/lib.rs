@@ -86,6 +86,7 @@ mod texture;
 mod thicken;
 mod uastc;
 mod unwrap;
+mod urdf;
 mod uvview;
 
 pub use atlas::{
@@ -125,4 +126,5 @@ pub use repair::{
 pub use texture::{Downsize, TextureError, decode, downsize, to_ktx2};
 pub use thicken::{Thickened, thicken};
 pub use unwrap::{Unwrap, UnwrapError, Uvs, unwrap};
+pub use urdf::{Urdf, urdf};
 pub use uvview::{UvImage, UvView, uv_view};

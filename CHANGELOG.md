@@ -1560,3 +1560,14 @@
   same. Measured: DamagedHelmet's geometry 466 → 338 kB, the Mixamo
   soldier's 1 063 → 761 kB, RobotExpressive's 346 → 196 kB. Images are
   not touched; nothing is quantised (`docs/research.md` §51).
+- URDF: `shape export … -o robot.urdf` (MCP `export`, `Model::urdf`,
+  `shape_tools::urdf`) writes a program or a mesh as a robot
+  description: a link a part with its STL beside the file
+  (`<stem>_<part>.stl`, in the link's frame, metres), a joint where a
+  part hangs (revolute, continuous, prismatic, floating, fixed; axis,
+  limits in SI, mimic), welded parts on fixed joints, the parts as
+  built. No `inertial`; a limit's `effort` and `velocity` are 0
+  (`docs/research.md` §52).
+- FBX: the first colour layer (`LayerElementColor`, by corner or by
+  vertex, direct or indexed) is read as vertex colours, RGBA as stored
+  and taken as linear.
