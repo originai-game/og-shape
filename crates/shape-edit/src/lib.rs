@@ -125,7 +125,7 @@ impl std::fmt::Display for EditError {
             EditError::NotFlat(n) => write!(f, "the faces {n} are not flat; cut them flat first"),
             EditError::NoOverlap => f.write_str("the part shares no volume with the host"),
             EditError::Skinned => f.write_str(
-                "the solid is skinned; edits do not carry skins yet: edit first, then skin it",
+                "the solid is skinned or has morph targets; edits do not carry those yet: edit first, then skin it",
             ),
             EditError::NotClosed => f.write_str(
                 "the solid is not closed and manifold (an edge is not between exactly two faces)",
@@ -159,7 +159,10 @@ impl std::fmt::Display for EditError {
 impl std::error::Error for EditError {}
 
 fn unskinned(solids: &[&Solid]) -> Result<(), EditError> {
-    if solids.iter().any(|s| s.skin.is_some()) {
+    if solids
+        .iter()
+        .any(|s| s.skin.is_some() || s.morphs.is_some())
+    {
         Err(EditError::Skinned)
     } else {
         Ok(())

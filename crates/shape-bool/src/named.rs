@@ -155,7 +155,7 @@ impl std::fmt::Display for BoolError {
             ),
             BoolError::Skinned(w) => write!(
                 f,
-                "the {w} is skinned; booleans do not carry skins yet: build the solid first, then skin it"
+                "the {w} is skinned or has morph targets; booleans do not carry those yet: build the solid first, then skin it"
             ),
         }
     }
@@ -253,6 +253,7 @@ pub fn components(s: &Solid) -> Vec<Solid> {
             let mut c = Solid {
                 positions: s.positions.clone(),
                 skin: s.skin.clone(),
+                morphs: s.morphs.clone(),
                 uvs: s.uvs.as_ref().map(|_| Vec::new()),
                 colors: s.colors.as_ref().map(|_| Vec::new()),
                 ..Default::default()
@@ -285,7 +286,7 @@ pub fn components(s: &Solid) -> Vec<Solid> {
 /// instead, so the void stays. A solid of one shell that does not pass
 /// through itself comes back as it is.
 pub fn fuse(s: &Solid) -> Result<Solid, BoolError> {
-    if s.skin.is_some() {
+    if s.skin.is_some() || s.morphs.is_some() {
         return Err(BoolError::Skinned("target"));
     }
     // A shell that crosses itself only by rounding (an earlier boolean's
@@ -387,7 +388,7 @@ pub fn crossing_pairs(s: &Solid) -> usize {
 /// Refused: a skinned solid, one that is not closed and oriented after
 /// welding, an empty result, or an open one.
 pub fn self_union(s: &Solid) -> Result<Solid, BoolError> {
-    if s.skin.is_some() {
+    if s.skin.is_some() || s.morphs.is_some() {
         return Err(BoolError::Skinned("target"));
     }
     let u = self_union_points((&s.positions, &s.triangles)).map_err(|e| match e {
@@ -437,10 +438,10 @@ pub fn boolean_report(
     tool: &Solid,
     d: &Boolean,
 ) -> Result<(Solid, BoolReport), BoolError> {
-    if target.skin.is_some() {
+    if target.skin.is_some() || target.morphs.is_some() {
         return Err(BoolError::Skinned("target"));
     }
-    if tool.skin.is_some() {
+    if tool.skin.is_some() || tool.morphs.is_some() {
         return Err(BoolError::Skinned("tool"));
     }
     let fused = |s: &Solid| {

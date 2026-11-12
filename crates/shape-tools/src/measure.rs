@@ -139,6 +139,9 @@ pub struct MeshMeasures {
     pub texture: TextureMeasures,
     /// The solid's skin, if it is skinned (bones, weighted vertices).
     pub skin: Option<Skin>,
+    /// The solid's morph targets: each one's name, rest weight and the
+    /// farthest it moves a vertex, mm.
+    pub morphs: Vec<(String, f64, f64)>,
     /// On a solid with vertex colours: edges where a corner's colour
     /// differs between the edge's two triangles (hard colour borders).
     pub color_borders: Option<usize>,
@@ -150,6 +153,15 @@ pub fn measure(s: &Solid, d: &Measure) -> MeshMeasures {
         triangles: s.triangles.len(),
         vertices: s.positions.len(),
         skin: s.skin.clone(),
+        morphs: s
+            .morphs
+            .iter()
+            .flat_map(|m| &m.targets)
+            .map(|t| {
+                let reach = t.deltas.iter().map(|d| d.length()).fold(0.0, f64::max);
+                (t.name.clone(), t.weight, reach)
+            })
+            .collect(),
         ..Default::default()
     };
     // Exact weld, as ids only.
@@ -658,6 +670,23 @@ impl MeshMeasures {
         let mut doc = doc;
         if let (Some(n), Json::Obj(fields)) = (self.color_borders, &mut doc) {
             fields.push(("colors", Json::Obj(vec![("borders", count(n))])));
+        }
+        if let (false, Json::Obj(fields)) = (self.morphs.is_empty(), &mut doc) {
+            fields.push((
+                "morphs",
+                Json::Arr(
+                    self.morphs
+                        .iter()
+                        .map(|(name, weight, reach)| {
+                            Json::Obj(vec![
+                                ("name", Json::Str(name.clone())),
+                                ("weight", Json::Num(*weight)),
+                                ("reach_mm", Json::Num(*reach)),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ));
         }
         let mut out = String::new();
         doc.write(&mut out);

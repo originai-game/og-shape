@@ -123,7 +123,7 @@ impl std::fmt::Display for BevelError {
                 names.join(", ")
             ),
             BevelError::Skinned => f.write_str(
-                "the solid is skinned; bevels do not carry skins yet: bevel first, then skin it",
+                "the solid is skinned or has morph targets; bevels do not carry those yet: bevel first, then skin it",
             ),
         }
     }
@@ -273,7 +273,7 @@ fn run(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
 /// Rounds the named edges with a superellipse profile (a circle by
 /// default). New faces are named `fillet`.
 pub fn fillet(s: &Solid, d: &Fillet) -> Result<Solid, BevelError> {
-    if s.skin.is_some() {
+    if s.skin.is_some() || s.morphs.is_some() {
         return Err(BevelError::Skinned);
     }
     let r = positive(d.radius, "radius")?;
@@ -299,7 +299,7 @@ pub fn fillet(s: &Solid, d: &Fillet) -> Result<Solid, BevelError> {
 
 /// Bevels the named edges flat. New faces are named `chamfer`.
 pub fn chamfer(s: &Solid, d: &Chamfer) -> Result<Solid, BevelError> {
-    if s.skin.is_some() {
+    if s.skin.is_some() || s.morphs.is_some() {
         return Err(BevelError::Skinned);
     }
     let d1 = positive(d.distance, "distance")?;
@@ -333,7 +333,7 @@ pub fn chamfer(s: &Solid, d: &Chamfer) -> Result<Solid, BevelError> {
 /// A fillet of `radius` on every edge sharper than `angle` (or on the
 /// named ones). A solid with no such edge comes back unchanged.
 pub fn soften(s: &Solid, d: &Soften) -> Result<Solid, BevelError> {
-    if s.skin.is_some() {
+    if s.skin.is_some() || s.morphs.is_some() {
         return Err(BevelError::Skinned);
     }
     let r = positive(d.radius, "radius")?;

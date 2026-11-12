@@ -160,6 +160,17 @@ pub fn imported(format: &str, m: &Imported) -> String {
                     array(&k.bones.iter().map(|b| string(&b.name)).collect::<Vec<_>>())
                 }),
             ));
+            if let Some(m) = &p.solid.morphs {
+                fields.push((
+                    "morphs",
+                    array(
+                        &m.targets
+                            .iter()
+                            .map(|t| string(&t.name))
+                            .collect::<Vec<_>>(),
+                    ),
+                ));
+            }
             object(&fields)
         })
         .collect();

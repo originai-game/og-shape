@@ -425,7 +425,8 @@ pub fn pose(s: &Solid, pose: &Pose) -> Result<Solid, RigError> {
     let skin = s.skin.as_ref().ok_or(RigError::NotSkinned)?;
     skin.check(s.positions.len())?;
     let m = skin_matrices(skin, pose)?;
-    let mut out = s.clone();
+    // Morph targets first, at their rest weights, then the bones.
+    let mut out = s.morphed(&[]);
     out.skin = None;
     for (p, w) in out.positions.iter_mut().zip(&skin.weights) {
         let rest = *p;
@@ -451,7 +452,8 @@ pub fn pose_by(s: &Solid, matrices: &[Mat4]) -> Result<Solid, RigError> {
             skin.bones.len()
         )));
     }
-    let mut out = s.clone();
+    // Morph targets first, at their rest weights, then the bones.
+    let mut out = s.morphed(&[]);
     out.skin = None;
     for (p, w) in out.positions.iter_mut().zip(&skin.weights) {
         let rest = *p;

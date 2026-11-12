@@ -556,6 +556,34 @@ impl Track {
     }
 }
 
+impl Track {
+    /// Every number of the key at `time`, as [`Track::at`] takes them
+    /// (morph weights: any count a key, mixed straight).
+    fn row(&self, time: f64) -> Vec<f64> {
+        let w = self.width;
+        let key = |k: usize| &self.values[k * w..k * w + w];
+        let n = self.times.len();
+        let k = self.times.partition_point(|&t| t <= time);
+        if k == 0 {
+            return key(0).to_vec();
+        }
+        if k >= n || self.step {
+            return key(k - 1).to_vec();
+        }
+        let (t0, t1) = (self.times[k - 1], self.times[k]);
+        let f = if t1 > t0 {
+            (time - t0) / (t1 - t0)
+        } else {
+            0.0
+        };
+        key(k - 1)
+            .iter()
+            .zip(key(k))
+            .map(|(a, b)| a + (b - a) * f)
+            .collect()
+    }
+}
+
 /// The space a skin was read into: what a clip needs to follow it.
 pub(crate) struct SkinSpace {
     /// Each bone's node in the file, in the skin's bone order.
@@ -691,8 +719,11 @@ struct Doc<'a> {
 /// bone scaled unevenly or sheared, bones scaled differently, or a skin
 /// that does not check (an unweighted vertex), is
 /// [`ImportError::Unsupported`]. Skipped and listed in
-/// [`Imported::skipped`]: points and lines, morph targets, and bone
-/// weights with no skin. `COLOR_0` (float or normalised integer, RGB or
+/// [`Imported::skipped`]: points and lines, and bone weights with no
+/// skin. Morph targets' `POSITION` offsets become [`Solid::morphs`]
+/// (names from `extras.targetNames`, rest weights from the node or the
+/// mesh), and a clip's `weights` channel on the mesh's node its
+/// `SkinClip::morphs`; their normals and tangents are not read. `COLOR_0` (float or normalised integer, RGB or
 /// RGBA, linear as glTF has it) becomes [`Solid::colors`]; a primitive
 /// without it is white, as glTF draws it. The material is read as
 /// [`ImportedPart::material`] says. Buffer views compressed with
@@ -1082,14 +1113,30 @@ impl Doc<'_> {
             let images = out.images.clone();
             let (mut part, raw) =
                 self.part(&name, mesh, &world, &mut out, (&images, &image_bytes))?;
+            // A node's weights stand in for its mesh's.
+            if let (Some(m), Some(w)) = (&mut part.solid.morphs, n.get("weights").nums()) {
+                for (t, w) in m.targets.iter_mut().zip(w) {
+                    t.weight = w;
+                }
+            }
+            let morph_node =
+                |part: &ImportedPart| part.solid.morphs.as_ref().map(|m| (i, m.targets.len()));
             let weighted = raw.iter().any(|r| r.iter().any(|p| p.1 > 0.0));
             match n.get("skin").index() {
                 Some(k) => {
                     let ((skin, scaled), space) =
                         self.skin(k, &name, &raw, &part.solid.positions)?;
-                    part.clips = self.clips(&space)?;
+                    part.clips = self.clips(&space, morph_node(&part))?;
                     if let Some((placed, info)) = scaled {
-                        // Where the file's bind pose puts the vertices.
+                        // Where the file's bind pose puts the vertices,
+                        // and their morph offsets with them.
+                        if let (Some(m), Some(k)) =
+                            (&mut part.solid.morphs, affine_inverse(&space.unbind))
+                        {
+                            for d in m.targets.iter_mut().flat_map(|t| &mut t.deltas) {
+                                *d = k.rotate(*d);
+                            }
+                        }
                         part.solid.positions = placed;
                         out.skin_scales.push(info);
                     }
@@ -1103,10 +1150,21 @@ impl Doc<'_> {
                     part.transform = Affine::IDENTITY;
                     part.solid.skin = Some(skin);
                 }
-                None if weighted => out
-                    .skipped
-                    .push(format!("{name}: bone weights with no skin on its node")),
-                None => {}
+                None => {
+                    if weighted {
+                        out.skipped
+                            .push(format!("{name}: bone weights with no skin on its node"));
+                    }
+                    if part.solid.morphs.is_some() {
+                        // No bones: the clips drive the targets alone.
+                        let none = SkinSpace {
+                            nodes: Vec::new(),
+                            ibms: Vec::new(),
+                            unbind: Affine::IDENTITY,
+                        };
+                        part.clips = self.clips(&none, morph_node(&part))?;
+                    }
+                }
             }
             out.parts.push(part);
         }
@@ -1460,7 +1518,13 @@ impl Doc<'_> {
     /// A channel on a node that is no ancestor of a bone moves nothing
     /// here. A cubic-spline curve is read through its key values, straight
     /// between them.
-    fn clips(&self, space: &SkinSpace) -> Result<Vec<shape_mesh::SkinClip>, ImportError> {
+    /// `morph`: the mesh's node and how many morph targets it has, for
+    /// the clips' `weights` channels on that node.
+    fn clips(
+        &self,
+        space: &SkinSpace,
+        morph: Option<(usize, usize)>,
+    ) -> Result<Vec<shape_mesh::SkinClip>, ImportError> {
         let nodes = self.json.get("nodes").items();
         let parents = self.parents();
         // The nodes that move a bone: the bones and all above them.
@@ -1483,6 +1547,8 @@ impl Doc<'_> {
             // Per node: its translation, rotation and scale curves.
             let mut tracks: BTreeMap<usize, [Option<Track>; 3]> = BTreeMap::new();
             let mut times: Vec<f64> = Vec::new();
+            // The mesh's node's morph weights: one number a target a key.
+            let mut weights: Option<Track> = None;
             for ch in anim.get("channels").items() {
                 let target = ch.get("target");
                 let (Some(node), Some(path)) =
@@ -1490,14 +1556,16 @@ impl Doc<'_> {
                 else {
                     continue;
                 };
-                let (slot, width) = match path {
-                    "translation" => (0, 3),
-                    "rotation" => (1, 4),
-                    "scale" => (2, 3),
+                let (slot, width) = match (path, morph) {
+                    ("translation", _) => (0, 3),
+                    ("rotation", _) => (1, 4),
+                    ("scale", _) => (2, 3),
+                    ("weights", Some((n, targets))) if n == node && targets > 0 => (3, targets),
                     _ => continue,
                 };
-                if !above.get(node).copied().unwrap_or(false)
-                    || !nodes[node].get("matrix").is_null()
+                if slot < 3
+                    && (!above.get(node).copied().unwrap_or(false)
+                        || !nodes[node].get("matrix").is_null())
                 {
                     continue;
                 }
@@ -1518,7 +1586,9 @@ impl Doc<'_> {
                         .flat_map(|k| v[(k * 3 + 1) * width..(k * 3 + 2) * width].to_vec())
                         .collect();
                 }
-                if tw != 1 || vw != width || t.is_empty() || v.len() != t.len() * width {
+                // Morph weights are scalars, a target after a target.
+                let each = if slot == 3 { 1 } else { width };
+                if tw != 1 || vw != each || t.is_empty() || v.len() != t.len() * width {
                     return Err(fmt_err(format!(
                         "animation {ai}: a channel's times and values do not match"
                     )));
@@ -1529,14 +1599,19 @@ impl Doc<'_> {
                     )));
                 }
                 times.extend(&t);
-                tracks.entry(node).or_insert([None, None, None])[slot] = Some(Track {
+                let track = Track {
                     times: t,
                     values: v,
                     width,
                     step: interpolation == "STEP",
-                });
+                };
+                if slot == 3 {
+                    weights = Some(track);
+                } else {
+                    tracks.entry(node).or_insert([None, None, None])[slot] = Some(track);
+                }
             }
-            if tracks.is_empty() {
+            if tracks.is_empty() && weights.is_none() {
                 continue;
             }
             // Between samples the matrices run straight, which is not how
@@ -1625,6 +1700,10 @@ impl Doc<'_> {
             let first = times[0];
             out.push(shape_mesh::SkinClip {
                 name: unique(&name, &mut used),
+                morphs: weights
+                    .iter()
+                    .flat_map(|w| times.iter().map(|&t| w.row(t)))
+                    .collect(),
                 times: times.iter().map(|t| t - first).collect(),
                 poses,
             });
@@ -1646,16 +1725,13 @@ impl Doc<'_> {
         let mut any_uv = false;
         let mut materials: Vec<Option<usize>> = Vec::new();
         let mut raw: Vec<Vec<(u32, f64)>> = Vec::new();
+        let mut morphs: Vec<Vec<DVec3>> = Vec::new();
         for (pi, prim) in mesh.get("primitives").items().iter().enumerate() {
             let mode = prim.get("mode").index().unwrap_or(4);
             if !(4..=6).contains(&mode) {
                 out.skipped
                     .push(format!("{name}: primitive {pi} draws points or lines"));
                 continue;
-            }
-            if !prim.get("targets").items().is_empty() {
-                out.skipped
-                    .push(format!("{name}: primitive {pi}'s morph targets"));
             }
             let attrs = prim.get("attributes");
             let Some(pa) = attrs.get("POSITION").index() else {
@@ -1666,6 +1742,42 @@ impl Doc<'_> {
                 return Err(fmt_err(format!("{name}: POSITION is not VEC3")));
             }
             let count = pos.len() / 3;
+            // Morph targets: per target, each vertex's offset. Every
+            // primitive of a mesh has the same targets; one with none
+            // moves nothing.
+            let targets = prim.get("targets").items();
+            if morphs.is_empty() && !targets.is_empty() {
+                morphs = vec![vec![DVec3::ZERO; solid.positions.len()]; targets.len()];
+            }
+            if !targets.is_empty() && targets.len() != morphs.len() {
+                return Err(fmt_err(format!(
+                    "{name}: primitive {pi} has {} morph targets, the others {}",
+                    targets.len(),
+                    morphs.len()
+                )));
+            }
+            for (k, into) in morphs.iter_mut().enumerate() {
+                match targets.get(k).and_then(|t| t.get("POSITION").index()) {
+                    Some(a) => {
+                        let (d, w) = self.accessor(a)?;
+                        if w != 3 || d.len() / 3 != count {
+                            return Err(fmt_err(format!(
+                                "{name}: morph target {k} does not match POSITION"
+                            )));
+                        }
+                        if d.iter().any(|x| !x.is_finite()) {
+                            return Err(ImportError::NotFinite(name.to_string()));
+                        }
+                        into.extend(
+                            d.as_chunks::<3>()
+                                .0
+                                .iter()
+                                .map(|v| from_y_up(DVec3::new(v[0], v[1], v[2])) * 1000.0),
+                        );
+                    }
+                    None => into.resize(into.len() + count, DVec3::ZERO),
+                }
+            }
             let uv = match attrs.get("TEXCOORD_0").index() {
                 Some(ua) => {
                     let (uv, w) = self.accessor(ua)?;
@@ -1779,6 +1891,54 @@ impl Doc<'_> {
                         uvs.push([DVec2::ZERO; 3]);
                     }
                 }
+            }
+        }
+        if !morphs.is_empty() {
+            // Names as exporters write them (`extras.targetNames`).
+            let names = mesh.get("extras").get("targetNames").items();
+            let rest = mesh.get("weights").nums().unwrap_or_default();
+            let mut used = BTreeMap::new();
+            solid.morphs = Some(shape_mesh::Morphs {
+                targets: morphs
+                    .into_iter()
+                    .enumerate()
+                    .map(|(k, deltas)| shape_mesh::Morph {
+                        name: unique(
+                            names
+                                .get(k)
+                                .and_then(|n| n.str())
+                                .unwrap_or(&format!("target{k}")),
+                            &mut used,
+                        ),
+                        weight: rest.get(k).copied().unwrap_or(0.0),
+                        deltas,
+                    })
+                    .collect(),
+            });
+            // Vertices at one place are one vertex to every tool that
+            // welds; where a target moves them apart (lips that touch
+            // at rest), the weld takes the mean.
+            let order = shape_core::order::sorted_order(&solid.positions);
+            let mut remap = vec![0u32; solid.positions.len()];
+            let mut groups = 0u32;
+            for (k, &v) in order.iter().enumerate() {
+                let p = solid.positions[v as usize];
+                if k > 0
+                    && shape_core::order::cmp_dvec3(solid.positions[order[k - 1] as usize], p)
+                        .is_ne()
+                {
+                    groups += 1;
+                }
+                remap[v as usize] = groups;
+            }
+            let torn = solid
+                .morphs
+                .as_ref()
+                .map_or(0, |m| m.torn(&remap, groups as usize + 1));
+            if torn > 0 {
+                out.skipped.push(format!(
+                    "{name}: at {torn} places vertices that coincide move apart in a morph target; a tool that welds them moves them together (the mean)"
+                ));
             }
         }
         if materials.len() > 1 {

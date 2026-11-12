@@ -369,6 +369,8 @@ struct Mesh {
     max_len: f64,
     /// Per vertex, its bone weights, on a skinned solid.
     weights: Option<Vec<Weights>>,
+    /// Per vertex, its morph offsets, on a solid with morph targets.
+    morphs: Option<shape_mesh::Morphs>,
     /// Collapses that change weights cost extra.
     keep_borders: bool,
     /// The bend scale, mm.
@@ -1196,6 +1198,12 @@ impl Mesh {
                 w[to as usize] = Weights::blend(&items);
             }
         }
+        if let Some(m) = &mut self.morphs
+            && e.pos != self.pos[to as usize]
+        {
+            // Likewise the kept vertex's morph offsets.
+            m.blend(to as usize, &[(to as usize, 0.5), (from as usize, 0.5)]);
+        }
         self.pos[to as usize] = e.pos;
         let q = self.quadric[from as usize];
         self.quadric[to as usize].add(&q);
@@ -1357,6 +1365,11 @@ fn collapse(
             let mut w = k.weights.clone();
             w.resize(nv, Weights::default());
             w
+        }),
+        morphs: s.morphs.as_ref().map(|m| {
+            let mut m = m.clone();
+            m.resize(nv);
+            m
         }),
         keep_borders: !d.cross_bone_borders,
         bend: {
@@ -1607,6 +1620,7 @@ fn collapse(
             bones: k.bones.clone(),
             weights: m.weights.clone().unwrap_or_default(),
         }),
+        morphs: m.morphs.clone(),
         ..Default::default()
     };
     for (i, t) in m.tris.iter().enumerate() {

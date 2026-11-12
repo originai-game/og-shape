@@ -132,6 +132,12 @@ last row.
     borders. Rigid placement is baked into the bones, and join merges
     skeletons by bone name.
   - GLB export writes a glTF skin.
+- **Morph targets:** optional, on imported meshes: named per-vertex
+  offsets, each with a rest weight (`Solid::morphs`). They follow the
+  vertices as a skin's weights do (a weld takes the mean, a collapse
+  the blend, a placement turns and scales them), a clip may drive their
+  weights, and GLB export writes them. The kernel's own operations
+  refuse a solid that has them.
 - **Group / assembly:** a tree of parts. A **joint** connects a child to a
   parent at a frame, with a kind, an axis, a range and an optional mimic.
 - **Units:** millimetres in programs by default; metres on export. All

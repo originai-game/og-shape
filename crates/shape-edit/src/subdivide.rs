@@ -70,7 +70,7 @@ struct Cage {
 /// and manifold (every edge between exactly two faces), with no skin, UVs
 /// or vertex colours: those are refused, not dropped.
 pub fn subdivide(s: &Solid, d: &Subdivide) -> Result<Solid, EditError> {
-    if s.skin.is_some() {
+    if s.skin.is_some() || s.morphs.is_some() {
         return Err(EditError::Skinned);
     }
     if s.uvs.is_some() || s.colors.is_some() {

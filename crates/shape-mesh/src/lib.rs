@@ -5,10 +5,12 @@
 //! returns another, and every operation ends with [`Solid::canonicalize`].
 
 mod measure;
+pub mod morph;
 mod names;
 pub mod skin;
 
 pub use measure::Measures;
+pub use morph::{Morph, MorphError, Morphs};
 pub use names::{LookupError, Names, Tag};
 pub use skin::{Bone, Skin, SkinClip, SkinError, Weights};
 
@@ -85,6 +87,9 @@ pub struct Solid {
     pub uvs: Option<Vec<CornerUvs>>,
     /// Per triangle, its corners' colours (linear RGBA), if it has any.
     pub colors: Option<Vec<[[f64; 4]; 3]>>,
+    /// Morph targets, if the solid has any ([`morph`]). `None` leaves
+    /// every other part, and the hash, as it was before morphs.
+    pub morphs: Option<Morphs>,
 }
 
 impl Solid {
@@ -195,6 +200,9 @@ impl Solid {
             skin.weights.push(Weights::default());
         }
         self.positions.push(p);
+        if let Some(m) = &mut self.morphs {
+            m.resize(self.positions.len());
+        }
         self.positions.len() as u32 - 1
     }
 
@@ -351,6 +359,10 @@ impl Solid {
             }
             skin.weights = welded;
         }
+        if let Some(m) = &mut self.morphs {
+            m.resize(self.positions.len());
+            *m = m.remapped(&remap, positions.len());
+        }
         // 2. Triangles: renumbered, degenerate ones dropped, each rotated
         // to start at its smallest index (winding kept).
         type Tri = ([u32; 3], u32, Vec<Tag>, CornerUvs, CornerColors);
@@ -473,6 +485,16 @@ impl Solid {
                 h.f64s(&w.weights)?;
             }
         }
+        // Likewise morph targets.
+        if let Some(m) = &self.morphs {
+            h.str("morphs");
+            h.u64(m.targets.len() as u64);
+            for t in &m.targets {
+                h.str(&t.name);
+                h.f64s(&[t.weight])?;
+                h.dvec3s(&t.deltas)?;
+            }
+        }
         // Likewise UVs: only a solid that has them adds them.
         if let Some(uvs) = &self.uvs {
             h.str("uvs");
@@ -493,6 +515,9 @@ impl Solid {
     }
 
     /// Appends another solid; its surfaces are renumbered after this one's.
+    ///
+    /// Morph targets: the result has both solids' targets, matched by
+    /// name; a target one side lacks moves nothing there.
     ///
     /// Skins: when both solids have the same skeleton, the weights are
     /// appended with the vertices. Otherwise the result keeps this
@@ -538,6 +563,26 @@ impl Solid {
                     .resize(base as usize + other.positions.len(), Weights::default()),
             }
         }
+        if self.morphs.is_some() || other.morphs.is_some() {
+            let total = base as usize + other.positions.len();
+            let mine = self.morphs.get_or_insert_with(Morphs::default);
+            mine.resize(base as usize);
+            for t in other.morphs.iter().flat_map(|m| &m.targets) {
+                let slot = match mine.targets.iter().position(|m| m.name == t.name) {
+                    Some(i) => i,
+                    None => {
+                        mine.targets.push(Morph {
+                            name: t.name.clone(),
+                            weight: t.weight,
+                            deltas: vec![DVec3::ZERO; base as usize],
+                        });
+                        mine.targets.len() - 1
+                    }
+                };
+                mine.targets[slot].deltas.extend_from_slice(&t.deltas);
+            }
+            mine.resize(total);
+        }
         let surface_base = self.surfaces.iter().max().map_or(0, |s| s + 1);
         self.positions.extend_from_slice(&other.positions);
         for (i, t) in other.triangles.iter().enumerate() {
@@ -568,6 +613,14 @@ impl Solid {
     /// with their vertices; its bones are not moved (`f` need not be
     /// rigid), so place a solid before skinning it.
     pub fn map_positions(&mut self, f: impl Fn(DVec3) -> DVec3, mirrors: bool) {
+        // A morph offset becomes the difference of where its two ends go.
+        if let Some(m) = &mut self.morphs {
+            for t in &mut m.targets {
+                for (d, p) in t.deltas.iter_mut().zip(&self.positions) {
+                    *d = f(*p + *d) - f(*p);
+                }
+            }
+        }
         for p in &mut self.positions {
             *p = f(*p);
         }
@@ -576,6 +629,18 @@ impl Solid {
                 self.reverse_triangle(i);
             }
         }
+    }
+
+    /// The solid with its morph targets applied at `weights` (one a
+    /// target; a missing one is the target's rest weight): a snapshot,
+    /// which carries no targets. A solid without targets comes back as
+    /// it is.
+    pub fn morphed(&self, weights: &[f64]) -> Solid {
+        let mut out = self.clone();
+        if let Some(m) = out.morphs.take() {
+            out.positions = m.applied(&self.positions, weights);
+        }
+        out
     }
 
     /// Measures for the solid (`docs/design.md` §7).

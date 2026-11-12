@@ -1447,3 +1447,15 @@
   gltfpack compressed reads as the plain file does, skin and clips
   included. A fallback or placeholder buffer is not asked for. Draco is
   still refused (`docs/research.md` §42).
+- glTF morph targets are read and kept (`Solid::morphs`: named
+  per-vertex offsets with a rest weight). `import` lists each part's
+  `morphs`, `measure` each one's rest weight and reach; repair,
+  decimate, place, thicken and join carry them (welded vertices take the
+  mean of their offsets, a collapsed edge the blend), and the GLB
+  writers write them with the clips that drive their weights (keys
+  thinned to 1e-4). `preview` draws the rest weights, a clip's at
+  `time`, or `--morph NAME=WEIGHT,…` (MCP `morph`). Booleans, bevels,
+  edits, `process --bake` and the plain GLB refuse a solid with targets
+  rather than drop them. `import` notes the places where vertices that
+  coincide move apart in a target, which a weld joins. FBX blend shapes
+  are still not read (`docs/research.md` §43).

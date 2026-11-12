@@ -159,7 +159,7 @@ pub fn encode_solid_clips(
         // A skinned solid goes out as a scene of one part: a mesh node,
         // its bones as nodes and a skin, as a program's skinned part does
         // (a plain GLB is one node and carries none).
-        "glb" if s.skin.is_some() => {
+        "glb" if s.skin.is_some() || s.morphs.is_some() => {
             let mut part = shape_tools::Part::new(name, s);
             if let Some(m) = material {
                 part.material = m.clone();

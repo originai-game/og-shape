@@ -8586,3 +8586,59 @@ the test owns (`tests/support/meshopt.rs`), written from the same
 text: that test shows the decoder and the encoder agree, not that
 either agrees with gltfpack there. gltfpack could not be run in this
 environment to make such a file.
+
+## 43. Morph targets (2026-11-12)
+
+glTF's morph targets were read past. They are now part of the solid:
+`Solid::morphs`, a list of targets, each a name, a rest weight and an
+offset a vertex (`shape-mesh/src/morph.rs`). A solid without targets
+hashes as before.
+
+**How they follow the vertices.** As a skin's weights do (§11):
+- a new vertex has no offset; a copy takes its vertex's
+  (`thicken`, repair's split of a pinched vertex);
+- vertices welded into one (`canonicalize`, repair's welds) take the
+  mean of their offsets, summed in sorted order;
+- a collapsed edge's kept vertex takes half of each end's, where it
+  moves (`decimate`); a hole's new centre the mean of its rim's;
+- a placement turns and scales an offset and does not shift it
+  (`f(p + d) − f(p)`); `append` matches targets by name, and a target
+  one side lacks moves nothing there.
+The kernel's own operations (booleans, bevels, shell and the other
+edits, subdivide), `process --bake` and the plain GLB writer refuse a
+solid with targets, as they refuse a skin: none drops them.
+
+**The weld.** The tools take vertices at one place for one vertex.
+A target that moves such vertices apart (lips closed at rest) cannot
+do so after a weld: they take the mean and move together. `import`
+counts those places and says so. three.js's `facecap.glb` (52 targets)
+has none.
+
+**Clips.** A glTF animation's `weights` channel on the mesh's node is
+sampled with the bones' curves into `SkinClip::morphs` (a weight a
+target at each of the clip's times); a mesh with targets and no skin
+gets clips of weights alone. `join_clips` gives each joined target
+the first part's weights that drive it. On export each clip's weights
+are written on the mesh's node, their keys thinned to 1e-4, so a file
+read and written again does not grow (AnimatedMorphCube: 378 keys,
+370 after one round, 370 after two).
+
+**Posing.** `Solid::morphed(weights)` is the snapshot; `pose` and
+`pose_by` apply the rest weights before the bones; `preview` takes a
+clip's weights at its time and the ones set by name over them.
+
+Checked on files (not kept here): Khronos' AnimatedMorphCube and
+MorphPrimitivesTest, three.js r160's RobotExpressive (targets on an
+unskinned head) and `facecap.glb` (meshopt-compressed, 52 targets, an
+11 s clip: the face at rest, with `jawOpen` and `eyeBlink_L` at 1, and
+at 5 s were looked at). In the gate:
+`targets_follow_their_vertices_through_a_weld_a_map_and_a_join` and
+`morph_targets_are_read_carried_and_written` (a hand-written file read,
+joined, written and read again; a ball that swells, decimated to
+half, keeps each vertex's offset to 0.5 mm).
+
+Not done: FBX blend shapes; a target's normals and tangents (normals
+are recomputed from the moved positions); a cost in `decimate` for
+what a collapse does to a target (a face's lips decimate as the rest
+does); the animation of a mesh node's own transform when the mesh has
+no skin (RobotExpressive's rigid parts stay at rest).

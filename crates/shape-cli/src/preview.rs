@@ -36,6 +36,10 @@ pub struct PreviewDesc {
     /// A skinned mesh file's clip to pose it by, by name; `""` with a
     /// `time` or `frames` is the file's first. `None` draws the bind pose.
     pub clip: Option<String>,
+    /// Morph targets of a mesh file set to weights, by name, over the
+    /// file's rest weights and a clip's (`NAME=WEIGHT`, as `--morph`
+    /// takes them).
+    pub morph: Vec<(String, f64)>,
     /// The time in the clip, seconds from its first key (held past its
     /// ends).
     pub time: f64,
@@ -96,6 +100,7 @@ pub fn camera(c: &ViewCamera) -> String {
 fn with_scene<T>(
     source: &Source,
     pose: Option<(&str, f64)>,
+    morph: &[(String, f64)],
     run: impl FnOnce(&Scene) -> Result<T, Failure>,
 ) -> Result<T, Failure> {
     match source {
@@ -115,6 +120,44 @@ fn with_scene<T>(
             // by exact position, a seam is no open edge (drawn as a line)
             // and no crease (shaded flat).
             let mut placed = mesh.placed()?;
+            // Each target named must be one of some part's.
+            for (name, _) in morph {
+                let known = |s: &shape_mesh::Solid| {
+                    s.morphs
+                        .as_ref()
+                        .is_some_and(|m| m.targets.iter().any(|t| t.name == *name))
+                };
+                if !placed.iter().any(|(_, s)| known(s)) {
+                    let names: Vec<&str> = placed
+                        .iter()
+                        .flat_map(|(_, s)| s.morphs.iter().flat_map(|m| &m.targets))
+                        .map(|t| t.name.as_str())
+                        .collect();
+                    return Err(Failure::Failed(format!(
+                        "no morph target {name:?}; the file's targets: {names:?}"
+                    )));
+                }
+            }
+            // A part's weights: its rest ones, a clip's over them, the
+            // ones asked for over both.
+            let weights_of = |s: &shape_mesh::Solid, from_clip: Option<Vec<f64>>| -> Vec<f64> {
+                let Some(m) = &s.morphs else {
+                    return Vec::new();
+                };
+                let mut w = from_clip.unwrap_or_else(|| m.weights());
+                w.resize(m.targets.len(), 0.0);
+                for (name, x) in morph {
+                    if let Some(k) = m.targets.iter().position(|t| t.name == *name) {
+                        w[k] = *x;
+                    }
+                }
+                w
+            };
+            if pose.is_none() {
+                for (_, s) in &mut placed {
+                    *s = s.morphed(&weights_of(s, None));
+                }
+            }
             if let Some((clip, time)) = pose {
                 // Each skinned part by the clip of that name among its own.
                 let mut any = false;
@@ -123,7 +166,15 @@ fn with_scene<T>(
                         "" => p.clips.first(),
                         name => p.clips.iter().find(|c| c.name == name),
                     };
-                    if let Some(m) = found.and_then(|c| c.at(time)) {
+                    let Some(c) = found else {
+                        *s = s.morphed(&weights_of(s, None));
+                        continue;
+                    };
+                    // The clip's morph weights first, then its bones.
+                    let driven = c.weights_at(time).filter(|_| s.morphs.is_some());
+                    any |= driven.is_some();
+                    *s = s.morphed(&weights_of(s, driven));
+                    if let Some(m) = c.at(time).filter(|_| s.skin.is_some()) {
                         *s = shape_skin::pose_by(s, &m).map_err(failed)?;
                         any = true;
                     }
@@ -155,6 +206,22 @@ fn with_scene<T>(
 }
 
 /// The names of a mesh file's clips, each once, in file order.
+/// `NAME=WEIGHT[,NAME=WEIGHT…]` as morph weights.
+pub fn morph_weights(text: &str) -> Result<Vec<(String, f64)>, Failure> {
+    text.split(',')
+        .filter(|p| !p.trim().is_empty())
+        .map(|pair| {
+            let bad = || Failure::Usage(format!("--morph {pair:?}: write NAME=WEIGHT"));
+            let (name, weight) = pair.rsplit_once('=').ok_or_else(bad)?;
+            let weight: f64 = weight.trim().parse().map_err(|_| bad())?;
+            if !weight.is_finite() {
+                return Err(bad());
+            }
+            Ok((name.trim().to_string(), weight))
+        })
+        .collect()
+}
+
 fn clip_names(mesh: &crate::source::Mesh) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     for c in mesh.imported.parts.iter().flat_map(|p| &p.clips) {
@@ -202,7 +269,7 @@ pub fn render(source: &Source, d: &PreviewDesc) -> Result<Rendered, Failure> {
     // One box for all the frames: the camera stands still.
     let mut frame: Option<(shape_core::DVec3, shape_core::DVec3)> = None;
     for &t in &times {
-        with_scene(source, Some((&name, t)), |scene| {
+        with_scene(source, Some((&name, t)), &d.morph, |scene| {
             for p in scene.parts.iter().flat_map(|p| &p.solid.positions) {
                 frame = Some(match frame {
                     None => (*p, *p),
@@ -242,7 +309,7 @@ fn render_pose(
     d: &PreviewDesc,
     pose: Option<(&str, f64)>,
 ) -> Result<Rendered, Failure> {
-    with_scene(source, pose, |scene| {
+    with_scene(source, pose, &d.morph, |scene| {
         if let Some(uv) = &d.uv {
             let layouts = uv_view(scene, uv).map_err(failed)?;
             if layouts.is_empty() {
@@ -372,6 +439,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         "--uv-size",
         "--uvs",
         "--clip",
+        "--morph",
         "--time",
         "--frames",
         IMPORT_OPTIONS[0],
@@ -413,6 +481,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
             }
             None => None,
         },
+        morph: morph_weights(a.value(&["--morph"])?.unwrap_or(""))?,
         time: a.number("--time")?.unwrap_or(0.0),
         frames: a.number("--frames")?.unwrap_or(0),
     };

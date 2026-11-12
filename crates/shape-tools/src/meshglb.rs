@@ -58,7 +58,7 @@ impl fmt::Display for PlainGlbError {
                 f.write_str("a position, UV, colour or material value is not finite")
             }
             PlainGlbError::Skinned => f.write_str(
-                "the solid is skinned and a plain GLB carries no skin, so it is refused",
+                "the solid is skinned or has morph targets and a plain GLB carries neither, so it is refused",
             ),
             PlainGlbError::UvMismatch => {
                 f.write_str("the UVs were made for a different number of triangles")
@@ -80,7 +80,7 @@ impl std::error::Error for PlainGlbError {}
 /// skin, and dropping the bones would break it silently. [`crate::glb`]
 /// writes skins.
 pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
-    if s.skin.is_some() {
+    if s.skin.is_some() || s.morphs.is_some() {
         return Err(PlainGlbError::Skinned);
     }
     if s.positions.iter().any(|p| !p.is_finite()) {

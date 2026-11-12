@@ -686,6 +686,10 @@ fn preview_schema() -> Value {
                 the file's first. Without any of the three, the bind pose."}),
         ),
         (
+            "morph",
+            json!({"type": "string", "description": "Morph targets of a mesh file set to                 weights: `NAME=WEIGHT[,NAME=WEIGHT…]` (the names are in `import`'s parts'                 `morphs`), over the file's rest weights and a clip's."}),
+        ),
+        (
             "time",
             num("Seconds into the clip, from its first key (held past its ends)."),
         ),
@@ -1059,6 +1063,7 @@ fn preview_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<
             None if a.opt_num("time")?.is_some() || a.u32("frames")? > 0 => Some(String::new()),
             None => None,
         },
+        morph: shape_cli::preview::morph_weights(a.string("morph")?.unwrap_or(""))?,
         time: a.num("time")?,
         frames: a.u32("frames")?,
     };

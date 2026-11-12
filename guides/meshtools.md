@@ -12,8 +12,17 @@ import → join → repair → decimate → place → unwrap → measure → pre
 ```
 
 1. **Import** the file (`import`). Read what was skipped
-   (`Imported::skipped`): points, lines, NURBS, morph targets and blend
-   shapes are not read. A meshopt-compressed glTF (`EXT_` or
+   (`Imported::skipped`): points, lines, NURBS and FBX blend shapes are
+   not read. glTF **morph targets** are: `import` lists each part's
+   `morphs` (names), `measure` each one's rest weight and reach, and
+   every mesh command keeps them (offsets follow the vertices; welded
+   vertices take the mean, a collapsed edge the blend) and writes them
+   back, with the clips that drive their weights. `preview` draws the
+   rest weights, a clip's at `time`, or the ones you set (`morph`, CLI
+   `--morph NAME=WEIGHT[,NAME=WEIGHT…]`). Where `import` says vertices
+   that coincide move apart in a target, a weld joins them: look at
+   that target after `repair`. `process --bake` and the kernel's edits
+   (booleans, bevels, shell) refuse a mesh with targets. A meshopt-compressed glTF (`EXT_` or
    `KHR_meshopt_compression`, as gltfpack writes) is read as the plain
    file is. A Draco-compressed glTF is refused: get an uncompressed one. A **skinned** mesh (bones and weights) is
    read whole, in its bind pose (`measure` says `skinned` and lists the

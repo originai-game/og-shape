@@ -194,7 +194,7 @@ pub fn process_steps(
     let imported = report::imported(&mesh.format, &mesh.imported);
     let joined = mesh.joined()?;
     let mut clips = mesh.clips()?;
-    if d.bake > 0 && joined.skin.is_some() {
+    if d.bake > 0 && (joined.skin.is_some() || joined.morphs.is_some()) {
         // The baked file is a plain GLB with TANGENT, one node: no skin.
         return Err(Failure::Failed(
             "--bake on a skinned mesh is not done: the baked file would lose its skin. Keep \

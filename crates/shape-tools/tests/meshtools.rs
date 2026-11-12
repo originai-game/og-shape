@@ -1022,3 +1022,129 @@ fn meshopt_compressed_views_read_as_the_plain_file() {
     assert_eq!(got.colors, plain.colors);
     assert!(plain.colors.is_some());
 }
+
+/// A file's morph target and the clip that drives it are read, joined,
+/// written and read again as the same shape and motion; a decimated
+/// solid's targets still fit its vertices and move them as before.
+#[test]
+fn morph_targets_are_read_carried_and_written() {
+    use shape_tools::{glb_skin_clips, join_clips};
+    // A square of four vertices; the target `lift` raises one 0.5 m
+    // (glTF's +y, the kernel's +z); the mesh rests at 0.25 of it, and
+    // the clip takes it from 0 to 1 over a second.
+    let mut bin: Vec<u8> = Vec::new();
+    let f32s = |bin: &mut Vec<u8>, v: &[f32]| v.iter().for_each(|x| bin.extend(x.to_le_bytes()));
+    f32s(
+        &mut bin,
+        &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, -1.0, 0.0, 0.0, -1.0],
+    );
+    f32s(&mut bin, &[0.0; 6]);
+    f32s(&mut bin, &[0.0, 0.5, 0.0, 0.0, 0.0, 0.0]);
+    for i in [0u16, 1, 2, 0, 2, 3] {
+        bin.extend(i.to_le_bytes());
+    }
+    f32s(&mut bin, &[0.0, 1.0, 0.0, 1.0]);
+    let json = format!(
+        r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0]}}],
+        "nodes":[{{"name":"flag","mesh":0}}],
+        "meshes":[{{"primitives":[{{"attributes":{{"POSITION":0}},"indices":2,"targets":[{{"POSITION":1}}]}}],
+          "weights":[0.25],"extras":{{"targetNames":["lift"]}}}}],
+        "animations":[{{"name":"raise","channels":[{{"sampler":0,"target":{{"node":0,"path":"weights"}}}}],
+          "samplers":[{{"input":3,"output":4}}]}}],
+        "buffers":[{{"uri":"flag.bin","byteLength":{}}}],
+        "bufferViews":[{{"buffer":0,"byteLength":48}},{{"buffer":0,"byteOffset":48,"byteLength":48}},
+          {{"buffer":0,"byteOffset":96,"byteLength":12}},{{"buffer":0,"byteOffset":108,"byteLength":8}},
+          {{"buffer":0,"byteOffset":116,"byteLength":8}}],
+        "accessors":[{{"bufferView":0,"componentType":5126,"count":4,"type":"VEC3"}},
+          {{"bufferView":1,"componentType":5126,"count":4,"type":"VEC3"}},
+          {{"bufferView":2,"componentType":5123,"count":6,"type":"SCALAR"}},
+          {{"bufferView":3,"componentType":5126,"count":2,"type":"SCALAR"}},
+          {{"bufferView":4,"componentType":5126,"count":2,"type":"SCALAR"}}]}}"#,
+        bin.len()
+    );
+    let files = move |uri: &str| match uri {
+        "flag.bin" => Ok(bin.clone()),
+        _ => Err(format!("no {uri}")),
+    };
+    let first = import_gltf(json.as_bytes(), &files).unwrap();
+    assert!(first.skipped.is_empty(), "{:?}", first.skipped);
+    let check = |s: &Solid, clips: &[shape_mesh::SkinClip]| {
+        let m = s.morphs.as_ref().expect("targets");
+        m.check(s.positions.len()).unwrap();
+        assert_eq!(m.targets.len(), 1);
+        assert_eq!(
+            (m.targets[0].name.as_str(), m.targets[0].weight),
+            ("lift", 0.25)
+        );
+        // Only the corner at glTF's (1, 0, −1) m moves: 500 mm up.
+        for (p, d) in s.positions.iter().zip(&m.targets[0].deltas) {
+            let want = if *p == DVec3::new(1000.0, 1000.0, 0.0) {
+                DVec3::new(0.0, 0.0, 500.0)
+            } else {
+                DVec3::ZERO
+            };
+            assert_eq!(*d, want, "at {p:?}");
+        }
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].name, "raise");
+        assert!((clips[0].duration() - 1.0).abs() < 1e-6);
+        let w = clips[0].weights_at(0.5).unwrap();
+        assert!((w[0] - 0.5).abs() < 1e-6, "{w:?}");
+        // Half way through, the corner stands 250 mm up.
+        let top = s
+            .morphed(&w)
+            .positions
+            .iter()
+            .map(|p| p.z)
+            .fold(0.0, f64::max);
+        assert!((top - 250.0).abs() < 1e-3, "{top}");
+    };
+    let solid = join(&first.parts).unwrap();
+    let clips = join_clips(&first.parts).unwrap();
+    check(&solid, &clips);
+    let bytes = glb_skin_clips(
+        &Scene {
+            name: "flag".into(),
+            parts: vec![Part::new("flag", &solid)],
+        },
+        &[("flag", &clips)],
+    )
+    .unwrap();
+    let back = import(&bytes, &Import::default(), &no_files).unwrap();
+    check(
+        &join(&back.parts).unwrap(),
+        &join_clips(&back.parts).unwrap(),
+    );
+
+    // A ball that swells by a tenth, at half its triangles: every
+    // vertex still has its offset, a tenth of where it stands, to within
+    // what moving a vertex along a collapsed edge leaves.
+    let mut ball = sphere(25.0).unwrap();
+    ball.morphs = Some(shape_mesh::Morphs {
+        targets: vec![shape_mesh::Morph {
+            name: "swell".into(),
+            weight: 0.0,
+            deltas: ball.positions.iter().map(|p| *p * 0.1).collect(),
+        }],
+    });
+    let (half, _) = decimate(
+        &ball,
+        &Decimate {
+            ratio: 0.5,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(half.triangles.len() < ball.triangles.len() * 6 / 10);
+    let m = half.morphs.as_ref().expect("targets kept");
+    m.check(half.positions.len()).unwrap();
+    let off = half
+        .positions
+        .iter()
+        .zip(&m.targets[0].deltas)
+        .map(|(p, d)| (*p * 0.1 - *d).length())
+        .fold(0.0, f64::max);
+    assert!(off < 0.5, "{off}");
+    // A plain GLB would drop the targets: refused.
+    assert!(glb_plain(&half, &PlainGlb::default()).is_err());
+}

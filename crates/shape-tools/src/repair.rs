@@ -392,9 +392,21 @@ pub fn join_clips(parts: &[ImportedPart]) -> Result<Vec<shape_mesh::SkinClip>, R
         .map(apply_transform)
         .collect::<Result<_, _>>()?;
     let named: Vec<(&str, &Solid)> = parts.iter().map(|p| p.name.as_str()).zip(&placed).collect();
-    let Some((bones, maps)) = merge_skeletons(&named)? else {
-        return Ok(Vec::new());
+    let (bones, maps) = match merge_skeletons(&named)? {
+        Some(merged) => merged,
+        // No skin: the clips drive morph targets alone.
+        None => (Vec::new(), vec![Vec::new(); parts.len()]),
     };
+    // The joined solid's targets, in `Solid::append`'s order, and each
+    // one's weight at rest.
+    let mut targets: Vec<(&str, f64)> = Vec::new();
+    for s in &placed {
+        for t in s.morphs.iter().flat_map(|m| &m.targets) {
+            if !targets.iter().any(|(n, _)| *n == t.name) {
+                targets.push((&t.name, t.weight));
+            }
+        }
+    }
     // Each part's clips where `join` puts the part.
     let mut moved: Vec<Vec<shape_mesh::SkinClip>> = Vec::with_capacity(parts.len());
     for p in parts {
@@ -448,10 +460,37 @@ pub fn join_clips(parts: &[ImportedPart]) -> Result<Vec<shape_mesh::SkinClip>, R
                 set[merged as usize] = true;
             }
         }
+        // Each target's weight from the first part whose clip drives it.
+        let mut morphs = Vec::new();
+        if order
+            .iter()
+            .any(|&i| of(i).is_some_and(|c| !c.morphs.is_empty()))
+        {
+            for &t in &times {
+                let mut row: Vec<f64> = targets.iter().map(|(_, w)| *w).collect();
+                for (slot, (target, _)) in targets.iter().enumerate() {
+                    for &i in &order {
+                        let local = placed[i]
+                            .morphs
+                            .as_ref()
+                            .and_then(|m| m.targets.iter().position(|x| x.name == *target));
+                        let at = of(i).and_then(|c| c.weights_at(t));
+                        if let (Some(local), Some(at)) = (local, at)
+                            && let Some(w) = at.get(local)
+                        {
+                            row[slot] = *w;
+                            break;
+                        }
+                    }
+                }
+                morphs.push(row);
+            }
+        }
         out.push(shape_mesh::SkinClip {
             name: name.to_string(),
             times,
             poses,
+            morphs,
         });
     }
     Ok(out)
@@ -560,6 +599,10 @@ fn rebuild(s: &Solid, triangles: &[usize], remap: &[u32], positions: Vec<DVec3>)
         .skin
         .as_ref()
         .map(|k| remap_skin(k, remap, out.positions.len()));
+    out.morphs = s
+        .morphs
+        .as_ref()
+        .map(|m| m.remapped(remap, out.positions.len()));
     out
 }
 
@@ -1201,6 +1244,9 @@ pub fn split_non_manifold(s: &Solid) -> Result<(Solid, NonManifold), RepairError
             if let Some(k) = &mut s.skin {
                 k.weights[copy as usize] = k.weights[v as usize];
             }
+            if let Some(m) = &mut s.morphs {
+                m.copy(v as usize, copy as usize);
+            }
             copies.push((copy, v));
             for &t in fan {
                 renames.push((t, v, copy));
@@ -1412,6 +1458,13 @@ pub fn close_holes(s: &Solid, max_edges: usize) -> Result<(Solid, Holes), Repair
                         .map(|&v| (k.weights[v as usize], 1.0 / rim.len() as f64))
                         .collect();
                     k.weights[ci as usize] = Weights::blend(&items);
+                }
+                if let Some(m) = &mut s.morphs {
+                    let items: Vec<(usize, f64)> = rim
+                        .iter()
+                        .map(|&v| (v as usize, 1.0 / rim.len() as f64))
+                        .collect();
+                    m.blend(ci as usize, &items);
                 }
                 (0..rim.len())
                     .map(|k| [rim[k], rim[(k + 1) % rim.len()], ci])

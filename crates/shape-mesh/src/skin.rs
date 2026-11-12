@@ -311,6 +311,9 @@ pub struct SkinClip {
     pub times: Vec<f64>,
     /// Per key, per bone (in the skin's order): the skinning matrix.
     pub poses: Vec<Vec<Mat4>>,
+    /// Per key, per morph target (in the solid's order): its weight.
+    /// Empty when the clip does not drive the targets.
+    pub morphs: Vec<Vec<f64>>,
 }
 
 /// `a · b`, column-major.
@@ -362,6 +365,7 @@ impl SkinClip {
         Some(SkinClip {
             name: self.name.clone(),
             times: self.times.clone(),
+            morphs: self.morphs.clone(),
             poses: self
                 .poses
                 .iter()
@@ -377,6 +381,27 @@ impl SkinClip {
     /// The last key's time; 0 for a clip without keys.
     pub fn duration(&self) -> f64 {
         self.times.last().copied().unwrap_or(0.0)
+    }
+
+    /// Every morph target's weight at `time`, as [`SkinClip::at`] takes
+    /// the matrices. `None` for a clip that does not drive the targets.
+    pub fn weights_at(&self, time: f64) -> Option<Vec<f64>> {
+        let last = self.times.len().min(self.morphs.len()).checked_sub(1)?;
+        let k = self.times[..=last].partition_point(|&t| t <= time);
+        if k == 0 {
+            return self.morphs.first().cloned();
+        }
+        if k > last {
+            return self.morphs.get(last).cloned();
+        }
+        let (t0, t1) = (self.times[k - 1], self.times[k]);
+        let f = if t1 > t0 {
+            (time - t0) / (t1 - t0)
+        } else {
+            0.0
+        };
+        let (a, b) = (&self.morphs[k - 1], &self.morphs[k]);
+        Some(a.iter().zip(b).map(|(x, y)| x + (y - x) * f).collect())
     }
 
     /// Every bone's skinning matrix at `time`: the first key's before it,

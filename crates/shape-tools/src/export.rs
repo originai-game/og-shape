@@ -897,6 +897,8 @@ fn glb_all(
     let mut skins: Vec<SkinOut> = Vec::new();
     // Per skinned part: its skin and its bones' nodes.
     let mut skin_nodes: BTreeMap<&str, (&shape_mesh::Skin, Vec<usize>)> = BTreeMap::new();
+    // Per part with morph targets: how many.
+    let mut morph_counts: BTreeMap<&str, usize> = BTreeMap::new();
     let mut textures: Vec<&Texture> = Vec::new();
     let mut emissive_strength = false;
     let mut view = |bin: &mut Vec<u8>, start: usize, target: u64| -> u64 {
@@ -938,6 +940,7 @@ fn glb_all(
         }
         let mut attributes = Vec::new();
         let mut primitive = Vec::new();
+        let mut morph_fields: Vec<(&str, Json)> = Vec::new();
         if !pos.is_empty() {
             let start = bin.len();
             pos.iter().flatten().for_each(|&v| push_f32(&mut bin, v));
@@ -1033,6 +1036,60 @@ fn glb_all(
             ]));
             primitive.push(("attributes", Json::Obj(attributes)));
             primitive.push(("indices", Json::Int((accessors.len() - 1) as u64)));
+            // Morph targets: each vertex's offset, in glTF space.
+            if let Some(m) = &part.solid.morphs {
+                m.check(part.solid.positions.len())
+                    .map_err(|e| ExportError::NotFinite(format!("part {:?}: {e}", part.name)))?;
+                let mut targets = Vec::with_capacity(m.targets.len());
+                for t in &m.targets {
+                    let start = bin.len();
+                    let mut lo = [f32::INFINITY; 3];
+                    let mut hi = [f32::NEG_INFINITY; 3];
+                    for &v in &s.sources {
+                        let q = y_up(t.deltas[v as usize]) * METRES;
+                        for (k, c) in [q.x as f32, q.y as f32, q.z as f32].into_iter().enumerate() {
+                            lo[k] = lo[k].min(c);
+                            hi[k] = hi[k].max(c);
+                            push_f32(&mut bin, c);
+                        }
+                    }
+                    let dv = view(&mut bin, start, ARRAY_BUFFER);
+                    accessors.push(Json::Obj(vec![
+                        ("bufferView", Json::Int(dv)),
+                        ("componentType", Json::Int(FLOAT)),
+                        ("count", Json::Int(s.sources.len() as u64)),
+                        ("type", Json::Str("VEC3".into())),
+                        ("min", Json::Arr(lo.iter().map(|&v| f32n(v)).collect())),
+                        ("max", Json::Arr(hi.iter().map(|&v| f32n(v)).collect())),
+                    ]));
+                    targets.push(Json::Obj(vec![(
+                        "POSITION",
+                        Json::Int((accessors.len() - 1) as u64),
+                    )]));
+                }
+                if !targets.is_empty() {
+                    primitive.push(("targets", Json::Arr(targets)));
+                    morph_fields = vec![
+                        (
+                            "weights",
+                            Json::Arr(m.targets.iter().map(|t| f32n(t.weight as f32)).collect()),
+                        ),
+                        (
+                            "extras",
+                            Json::Obj(vec![(
+                                "targetNames",
+                                Json::Arr(
+                                    m.targets
+                                        .iter()
+                                        .map(|t| Json::Str(t.name.clone()))
+                                        .collect(),
+                                ),
+                            )]),
+                        ),
+                    ];
+                    morph_counts.insert(part.name.as_str(), m.targets.len());
+                }
+            }
         }
         let maps = map_indices(
             &part.material,
@@ -1059,10 +1116,12 @@ fn glb_all(
         if !primitive.is_empty() {
             primitive.push(("material", Json::Int(index as u64)));
             primitive.push(("mode", Json::Int(4)));
-            meshes.push(Json::Obj(vec![
+            let mut mesh = vec![
                 ("name", Json::Str(part.name.clone())),
                 ("primitives", Json::Arr(vec![Json::Obj(primitive)])),
-            ]));
+            ];
+            mesh.extend(morph_fields);
+            meshes.push(Json::Obj(mesh));
         }
         // Where the part's node hangs.
         let parent = if part.parent.is_empty() {
@@ -1172,6 +1231,7 @@ fn glb_all(
     animations.extend(skin_animations(
         skin_clips,
         &skin_nodes,
+        (&part_node, &morph_counts),
         &mut bin,
         &mut views,
         &mut accessors,
@@ -1345,6 +1405,7 @@ pub(crate) fn gltf_uv(q: shape_core::DVec2) -> [f32; 2] {
 fn skin_animations(
     skin_clips: &[(&str, &[shape_mesh::SkinClip])],
     skin_nodes: &BTreeMap<&str, (&shape_mesh::Skin, Vec<usize>)>,
+    (part_node, morph_counts): (&BTreeMap<&str, usize>, &BTreeMap<&str, usize>),
     bin: &mut Vec<u8>,
     views: &mut Vec<Json>,
     accessors: &mut Vec<Json>,
@@ -1370,9 +1431,26 @@ fn skin_animations(
             let Some(clip) = clips.iter().find(|c| c.name == name) else {
                 continue;
             };
-            let Some((skin, nodes)) = skin_nodes.get(part) else {
-                return Err(bad(format!("part {part:?} has no skin in the scene")));
+            let targets = morph_counts.get(part).copied().unwrap_or(0);
+            let driven = !clip.morphs.is_empty();
+            let none = (&shape_mesh::Skin::default(), Vec::new());
+            let (skin, nodes) = match skin_nodes.get(part) {
+                Some((skin, nodes)) => (*skin, nodes),
+                // A clip of morph weights alone needs no skin.
+                None if driven && targets > 0 => (none.0, &none.1),
+                None => return Err(bad(format!("part {part:?} has no skin in the scene"))),
             };
+            if driven
+                && (clip.morphs.len() != clip.times.len()
+                    || clip
+                        .morphs
+                        .iter()
+                        .any(|r| r.len() != targets || r.iter().any(|w| !w.is_finite())))
+            {
+                return Err(bad(format!(
+                    "part {part:?}: a weight a morph target ({targets}) at each time"
+                )));
+            }
             let n = skin.bones.len();
             if clip.times.is_empty()
                 || clip.poses.len() != clip.times.len()
@@ -1528,6 +1606,59 @@ fn skin_animations(
                     ]));
                 }
             }
+            if driven {
+                // A weight a target at each key kept, the targets in order.
+                let Some(&node) = part_node.get(part) else {
+                    return Err(bad(format!("part {part:?} is not in the scene")));
+                };
+                let kept = thin(&clip.times, &clip.morphs, KEEP_WEIGHT, true);
+                let start = bin.len();
+                for &k in &kept {
+                    push_f32(bin, clip.times[k] as f32);
+                }
+                let tv = plain(bin, start);
+                accessors.push(Json::Obj(vec![
+                    ("bufferView", Json::Int(tv)),
+                    ("componentType", Json::Int(FLOAT)),
+                    ("count", Json::Int(kept.len() as u64)),
+                    ("type", Json::Str("SCALAR".into())),
+                    ("min", Json::Arr(vec![f32n(clip.times[kept[0]] as f32)])),
+                    (
+                        "max",
+                        Json::Arr(vec![f32n(clip.times[kept[kept.len() - 1]] as f32)]),
+                    ),
+                ]));
+                let input = (accessors.len() - 1) as u64;
+                let start = bin.len();
+                for &k in &kept {
+                    for &w in &clip.morphs[k] {
+                        push_f32(bin, w as f32);
+                    }
+                }
+                let ov = plain(bin, start);
+                accessors.push(Json::Obj(vec![
+                    ("bufferView", Json::Int(ov)),
+                    ("componentType", Json::Int(FLOAT)),
+                    ("count", Json::Int((kept.len() * targets) as u64)),
+                    ("type", Json::Str("SCALAR".into())),
+                ]));
+                let output = (accessors.len() - 1) as u64;
+                channels.push(Json::Obj(vec![
+                    ("sampler", Json::Int(samplers.len() as u64)),
+                    (
+                        "target",
+                        Json::Obj(vec![
+                            ("node", Json::Int(node as u64)),
+                            ("path", Json::Str("weights".into())),
+                        ]),
+                    ),
+                ]));
+                samplers.push(Json::Obj(vec![
+                    ("input", Json::Int(input)),
+                    ("interpolation", Json::Str("LINEAR".into())),
+                    ("output", Json::Int(output)),
+                ]));
+            }
         }
         if !channels.is_empty() {
             out.push(Json::Obj(vec![
@@ -1555,15 +1686,16 @@ const KEEP_SCALE: f64 = 1e-5;
 /// either side of it. A curve that never leaves its first value keeps
 /// that one key, unless `whole` asks for its last too (so a clip keeps
 /// its length).
-fn thin(times: &[f64], values: &[[f64; 4]], tolerance: f64, whole: bool) -> Vec<usize> {
+fn thin<V: AsRef<[f64]>>(times: &[f64], values: &[V], tolerance: f64, whole: bool) -> Vec<usize> {
     let n = values.len();
+    let values: Vec<&[f64]> = values.iter().map(AsRef::as_ref).collect();
     let off = |a: usize, b: usize, k: usize| {
         let f = if times[b] > times[a] {
             (times[k] - times[a]) / (times[b] - times[a])
         } else {
             0.0
         };
-        (0..4)
+        (0..values[k].len())
             .map(|i| (values[a][i] + (values[b][i] - values[a][i]) * f - values[k][i]).abs())
             .fold(0.0, f64::max)
     };
@@ -1594,6 +1726,9 @@ fn thin(times: &[f64], values: &[[f64; 4]], tolerance: f64, whole: bool) -> Vec<
     }
     (0..n).filter(|&k| keep[k]).collect()
 }
+
+/// The same for a morph target's weight.
+const KEEP_WEIGHT: f64 = 1e-4;
 
 /// A translation, a rotation (a unit quaternion x, y, z, w) and a scale.
 type Trs = ([f64; 3], [f64; 4], [f64; 3]);

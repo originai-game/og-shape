@@ -142,6 +142,9 @@ pub fn thicken(s: &Solid, thickness: f64) -> Result<(Solid, Thickened), RepairEr
             skin.weights.resize(k as usize + 1, Default::default());
             skin.weights[k as usize] = skin.weights[v as usize];
         }
+        if let Some(m) = &mut out.morphs {
+            m.copy(v as usize, k as usize);
+        }
     }
     let surfaces = s.surfaces.iter().copied().max().map_or(0, |m| m + 1);
     let names = |i: usize, extra: &'static str| -> Vec<String> {

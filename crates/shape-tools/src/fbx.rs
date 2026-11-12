@@ -1156,6 +1156,7 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
                 poses.push(pose);
             }
             clips.push(shape_mesh::SkinClip {
+                morphs: Vec::new(),
                 name: unique(sname, &mut used),
                 times: times.iter().map(|t| t - start).collect(),
                 poses,

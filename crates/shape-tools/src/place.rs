@@ -424,6 +424,14 @@ fn mat_mul(a: &Mat4, b: &Mat4) -> Mat4 {
 
 fn moved(s: &Solid, m: &Motion) -> Solid {
     let mut out = s.clone();
+    // A morph offset is turned and scaled, not shifted.
+    if let Some(morphs) = &mut out.morphs {
+        for t in &mut morphs.targets {
+            for (d, p) in t.deltas.iter_mut().zip(&s.positions) {
+                *d = m.point(*p + *d) - m.point(*p);
+            }
+        }
+    }
     for p in &mut out.positions {
         *p = m.point(*p);
     }
