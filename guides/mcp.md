@@ -68,7 +68,7 @@ Tools (arguments are in each tool's schema):
 | `build` | `program` (JSON) or `path` (.json) | parts, joints, measures |
 | `preview` | a program or a mesh file; `views`, `width`, `height`, `columns`, `elevation` (over 0, up to π/2), `azimuth` (radians), `no_edges`, `no_ground`, `fov` (perspective, over 0, up to π/3), `unlit`, `each` (one PNG a view, with its camera), `uv` and `uv_size` (the UV layout of each material instead), `pose`?, `clip`, `time`, `frames` (a skinned mesh file posed by its own clip), `morph` (`NAME=WEIGHT,…`: a mesh file's morph targets set), `out`? | PNGs (image content); a report: `images` (each with what it `shows`: cameras, or `uv_min` and `tiles`) and `undrawn` maps |
 | `measure` | a program or a mesh file; `intersections`, `posed`, `pose`?, `axes` | measures, no thresholds; `axes`: a mesh's extents, area facing each way, where its mass sits |
-| `export` | a program or a mesh file; `out` (.glb, .obj, .stl, or .urdf with one STL a part beside it), `pose`? | the file |
+| `export` | a program or a mesh file; `out` (.glb, .obj, .stl, .urdf with one STL a part beside it, or .usda with its maps beside it), `pose`? | the file |
 | `import` | a mesh file; `out`? | parts, materials, UVs, bones, images, what was skipped |
 | `repair`, `decimate`, `unwrap` | a mesh file and the tool's settings (`decimate`: `ratio`, `target`, or `lod_ratios` for levels by their shares); `out`? | what changed, measures after |
 | `place` | a mesh file; `up`, `front`, `turn`, one of `longest`, `height`, `width`, `depth` (`"0.9m"`) or `scale`, `pivot` (`"base"`), `out`? | what was done, and the axis measures before and after |

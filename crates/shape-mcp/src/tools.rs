@@ -780,7 +780,10 @@ fn export_schema() -> Value {
         path(
             "Where to write, in the workspace: .glb, .obj, .stl, or .urdf (the description, \
              with each part's STL beside it as <stem>_<part>.stl; links at rest, joints with \
-             their axes, limits and mimics; no inertial, and limit effort and velocity are 0).",
+             their axes, limits and mimics; no inertial, and limit effort and velocity are 0), \
+             or .usda (a USD stage in the kernel's space, Z up in millimetres: a mesh a part \
+             with normals and UVs, UsdPreviewSurface materials, PNG and JPEG maps beside it; \
+             no joints, skins, morph targets or clips).",
         ),
     ));
     p.push(pose_prop());

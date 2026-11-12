@@ -26,7 +26,7 @@ use crate::{Failure, Files, failed};
 
 fn bad_extension(out: &Path) -> Failure {
     Failure::Usage(format!(
-        "{}: name the output .glb, .obj, .stl or .urdf",
+        "{}: name the output .glb, .obj, .stl, .urdf or .usda",
         out.display()
     ))
 }
@@ -66,6 +66,9 @@ pub fn encode(source: &Source, out: &Path) -> Result<Vec<u8>, Failure> {
 pub fn export(files: &dyn Files, source: &Source, out: &Path) -> Result<String, Failure> {
     if extension(out) == "urdf" {
         return export_urdf(files, source, out);
+    }
+    if extension(out) == "usda" {
+        return export_usda(files, source, out);
     }
     let bytes = encode(source, out)?;
     files.write(out, &bytes)?;
@@ -126,6 +129,41 @@ fn export_urdf(files: &dyn Files, source: &Source, out: &Path) -> Result<String,
         ("geometry", string("rest")),
         ("meshes", crate::report::array(&names)),
         ("not_written", crate::report::array(&lost.map(string))),
+    ]))
+}
+
+/// Writes a program or a mesh as a USD stage: the `.usda` text to
+/// `out` and each map beside it. Reports the path, format and size, the
+/// map files, and what the stage leaves out.
+fn export_usda(files: &dyn Files, source: &Source, out: &Path) -> Result<String, Failure> {
+    let stem = out
+        .file_stem()
+        .map_or("stage".to_string(), |s| s.to_string_lossy().into_owned());
+    let usd = match source {
+        Source::Program(model) => model.usda(&stem).map_err(failed)?,
+        Source::Mesh(mesh) => {
+            let placed = mesh.placed()?;
+            let mut s = scene(&mesh.name, &placed);
+            for (part, p) in s.parts.iter_mut().zip(&mesh.imported.parts) {
+                part.material = p.material.clone();
+            }
+            shape_tools::usda(&s, &stem).map_err(failed)?
+        }
+    };
+    files.write(out, usd.text.as_bytes())?;
+    let mut names = Vec::new();
+    for (name, bytes) in &usd.textures {
+        files.write(&out.with_file_name(name), bytes)?;
+        names.push(string(name));
+    }
+    let lost: Vec<String> = usd.not_written.iter().map(|s| string(s)).collect();
+    Ok(object(&[
+        ("path", string(&out.display().to_string())),
+        ("format", string("usda")),
+        ("bytes", usd.text.len().to_string()),
+        ("geometry", string("rest")),
+        ("textures", crate::report::array(&names)),
+        ("not_written", crate::report::array(&lost)),
     ]))
 }
 
@@ -365,7 +403,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
     known.extend(IMPORT_OPTIONS);
     a.only(&known)?;
     let out = a.out()?;
-    if !["glb", "obj", "stl", "urdf"].contains(&extension(&out).as_str()) {
+    if !["glb", "obj", "stl", "urdf", "usda"].contains(&extension(&out).as_str()) {
         return Err(bad_extension(&out));
     }
     let source = load_uvs(&Local, &a.input()?, &a.import()?, a.switch("--uvs"))?;

@@ -2214,6 +2214,13 @@ impl Model {
         Ok(shape_tools::urdf(&self.build()?.scene(), prefix)?)
     }
 
+    /// The model as a USD stage (`shape_tools::usda`): its parts as
+    /// meshes at rest with their materials, maps named
+    /// `<prefix>_<part>_<kind>`.
+    pub fn usda(&self, prefix: &str) -> Result<shape_tools::Usd, ModelError> {
+        Ok(shape_tools::usda(&self.build()?.scene(), prefix)?)
+    }
+
     /// A turntable of the posed model (`shape_tools::preview`).
     pub fn preview(&self, d: &Preview) -> Result<Vec<Image>, ModelError> {
         Ok(shape_tools::preview(&self.build()?.scene(), d)?)

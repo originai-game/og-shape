@@ -1581,3 +1581,11 @@
   `roughness` under 1 change (`docs/research.md` §53).
 - `glb_plain` writes a solid's morph targets (offsets, rest weights,
   names) where it refused them; a skinned solid is still refused.
+- USD: `shape export … -o model.usda` (MCP `export`, `Model::usda`,
+  `shape_tools::usda`) writes a stage in the kernel's own space (Z up,
+  `metersPerUnit` 0.001): a mesh a part with a normal and a UV at every
+  corner and vertex colours as `displayColor`, a `UsdPreviewSurface`
+  material a part (colour, metallic, roughness, emissive, opacity and
+  cutoff, each map as a `UsdUVTexture` on a PNG or JPEG written beside
+  the stage). Joints, skins, morph targets and clips are not written
+  and are listed (`docs/research.md` §54).

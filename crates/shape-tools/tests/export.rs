@@ -488,3 +488,80 @@ fn a_urdf_s_links_stand_where_the_parts_were_built() {
     assert!(slide.contains("lower=\"-0.01\" upper=\"0.02\""));
     assert!(joint("cap_weld").contains("type=\"fixed\""));
 }
+
+/// A USD stage holds each part as a mesh in the kernel's own space:
+/// its points and triangles as built, a normal a corner, its material's
+/// factors; what it leaves out is listed.
+#[test]
+fn a_usd_stage_holds_the_parts_as_built() {
+    let (base, wheel) = solids();
+    let s = scene(&base, &wheel);
+    let u = shape_tools::usda(&s, "cart").unwrap();
+    let t = &u.text;
+    assert!(t.starts_with("#usda 1.0\n"));
+    assert!(t.contains("metersPerUnit = 0.001") && t.contains("upAxis = \"Z\""));
+    assert!(t.contains("defaultPrim = \"cart\""));
+    // Every brace, bracket and parenthesis closes.
+    for (open, close) in [('{', '}'), ('[', ']'), ('(', ')')] {
+        assert_eq!(t.matches(open).count(), t.matches(close).count(), "{open}");
+    }
+    // The array after `key` in the mesh named `mesh`, as numbers.
+    let numbers = |mesh: &str, key: &str| -> Vec<f64> {
+        let at = t.find(&format!("def Mesh \"{mesh}\"")).unwrap();
+        let from = at + t[at..].find(key).unwrap();
+        let open = from + t[from..].find("= [").unwrap() + 2;
+        let close = open + t[open..].find(']').unwrap();
+        t[open + 1..close]
+            .split(|c: char| !(c.is_ascii_digit() || "+-.e".contains(c)))
+            .filter(|x| !x.is_empty())
+            .map(|x| x.parse().unwrap())
+            .collect()
+    };
+    for (name, solid) in [("base", &base), ("wheel", &wheel)] {
+        let points = numbers(name, "point3f[] points");
+        assert_eq!(points.len(), solid.positions.len() * 3);
+        for (p, q) in solid.positions.iter().zip(points.chunks(3)) {
+            assert!(
+                (*p - DVec3::new(q[0], q[1], q[2])).length() < 1e-3,
+                "{name}"
+            );
+        }
+        let ids = numbers(name, "int[] faceVertexIndices");
+        let want: Vec<f64> = solid
+            .triangles
+            .iter()
+            .flatten()
+            .map(|&v| f64::from(v))
+            .collect();
+        assert_eq!(ids, want);
+        assert_eq!(
+            numbers(name, "int[] faceVertexCounts").len(),
+            solid.triangles.len()
+        );
+        assert_eq!(
+            numbers(name, "normal3f[] normals").len(),
+            solid.triangles.len() * 9
+        );
+    }
+    // The wheel's brass: a metal at half opacity; the base's colour,
+    // sRGB (0.2, 0.4, 0.8) written linear.
+    let material = |name: &str| {
+        let at = t.find(&format!("def Material \"{name}\"")).unwrap();
+        &t[at..at + t[at..].find("token outputs:surface\n").unwrap()]
+    };
+    assert!(material("wheel").contains("float inputs:metallic = 1"));
+    assert!(material("wheel").contains("float inputs:opacity = 0.5"));
+    assert!(material("base").contains("float inputs:roughness = 0.4"));
+    let base_look = material("base");
+    let at = base_look.find("diffuseColor = (").unwrap() + 16;
+    let written: Vec<f64> = base_look[at..at + base_look[at..].find(')').unwrap()]
+        .split(", ")
+        .map(|x| x.parse().unwrap())
+        .collect();
+    for (w, c) in written.iter().zip([0.2f64, 0.4, 0.8]) {
+        let linear = shape_core::trig::pow((c + 0.055) / 1.055, 2.4);
+        assert!((w - linear).abs() < 1e-6, "{w} {linear}");
+    }
+    assert!(u.textures.is_empty());
+    assert_eq!(u.not_written, ["joints (the parts stand as built)"]);
+}

@@ -9227,3 +9227,42 @@ darkens and intensity 0 does not; a white glow under a blue map is
 blue; the map's blue channel turns a metal off, to the plain bytes).
 The README's gallery pictures were made before this and have not been
 drawn again.
+
+## 54. USD (2026-11-12)
+
+`shape_tools::usda` writes a scene as USD text. Text because it needs
+no library and reads in every USD tool; `.usdc` (the binary crate
+format) and `.usdz` (a zip of a stage and its maps, uncompressed and
+aligned to 64 bytes) are not written.
+
+- **Space.** The stage says `upAxis = "Z"` and `metersPerUnit = 0.001`
+  and holds the points as built, in millimetres: nothing is converted,
+  and a reader that honours the header places it right.
+- **Meshes.** One `Mesh` a part under one `Xform` (the default prim):
+  `faceVertexCounts` all 3, `faceVertexIndices`, `points`, `normals`
+  at every corner (`faceVarying`; the preview's, creased at 35°),
+  `primvars:st` at every corner where the part has UVs (v up, as the
+  kernel's), vertex colours as `primvars:displayColor` and
+  `displayOpacity`, `subdivisionScheme = "none"`.
+- **Materials.** One `Material` a part with a `UsdPreviewSurface`:
+  `diffuseColor`, `metallic`, `roughness`, `emissiveColor` (times the
+  intensity), `opacity`, `opacityThreshold`; factors given in sRGB are
+  written linear. A map is a `UsdUVTexture` on a file beside the stage
+  (`<prefix>_<part>_<kind>.png|jpg`), read through a
+  `UsdPrimvarReader_float2` of `st`: base colour and emissive as sRGB
+  with the factor as `scale`; the metallic-roughness map raw, its `g`
+  to `roughness` and `b` to `metallic`, the factors as `scale`; the
+  normal map raw with `scale` 2 and `bias` −1 (times `normal_scale` in
+  x and y); occlusion's `r`. A map that is not PNG or JPEG, or on a
+  part with no UVs, is left out and listed.
+- **Not written, and listed in `not_written`:** joints (the parts
+  stand as built; `UsdPhysics` joints would be the place), skins
+  (`UsdSkel`), morph targets, clips.
+
+Checked: `a_usd_stage_holds_the_parts_as_built` reads the text back
+(every bracket closes; each mesh's points and indices are the part's;
+a normal a corner; the materials' factors, a colour given in sRGB
+written linear); DamagedHelmet exports as one mesh of 15 452 triangles
+with its five maps wired. Not checked: no USD library or viewer has
+opened a file here (none can be run in this environment), so the
+syntax rests on the USD documentation's examples.
