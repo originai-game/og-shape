@@ -216,8 +216,7 @@ impl Mesh {
             .collect()
     }
 
-    /// Every part placed and joined into one solid (`shape_tools::join`);
-    /// refused for a skinned part.
+    /// Every part placed and joined into one solid (`shape_tools::join`).
     pub fn joined(&self) -> Result<Solid, Failure> {
         if self.imported.parts.is_empty() {
             return Err(Failure::Failed(format!(
@@ -226,6 +225,12 @@ impl Mesh {
             )));
         }
         join(&self.imported.parts).map_err(failed)
+    }
+
+    /// The file's clips on the joined solid's skeleton
+    /// (`shape_tools::join_clips`); empty for a file without any.
+    pub fn clips(&self) -> Result<Vec<shape_mesh::SkinClip>, Failure> {
+        shape_tools::join_clips(&self.imported.parts).map_err(failed)
     }
 
     /// The material the joined solid is written with, the glTF factors

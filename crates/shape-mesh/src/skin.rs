@@ -313,7 +313,67 @@ pub struct SkinClip {
     pub poses: Vec<Vec<Mat4>>,
 }
 
+/// `a · b`, column-major.
+pub fn mat_mul(a: &Mat4, b: &Mat4) -> Mat4 {
+    let mut out = [0.0; 16];
+    for c in 0..4 {
+        for r in 0..4 {
+            out[4 * c + r] = (0..4).map(|k| a[4 * k + r] * b[4 * c + k]).sum();
+        }
+    }
+    out
+}
+
+/// The inverse of an affine matrix (its last row 0, 0, 0, 1), if its
+/// linear part is not singular.
+pub fn affine_inverse(m: &Mat4) -> Option<Mat4> {
+    let a = |r: usize, c: usize| m[4 * c + r];
+    let cof =
+        |r0: usize, r1: usize, c0: usize, c1: usize| a(r0, c0) * a(r1, c1) - a(r0, c1) * a(r1, c0);
+    let det = a(0, 0) * cof(1, 2, 1, 2) - a(0, 1) * cof(1, 2, 0, 2) + a(0, 2) * cof(1, 2, 0, 1);
+    if det == 0.0 || !det.is_finite() {
+        return None;
+    }
+    // The adjugate over the determinant.
+    let inv = [
+        [cof(1, 2, 1, 2), -cof(0, 2, 1, 2), cof(0, 1, 1, 2)],
+        [-cof(1, 2, 0, 2), cof(0, 2, 0, 2), -cof(0, 1, 0, 2)],
+        [cof(1, 2, 0, 1), -cof(0, 2, 0, 1), cof(0, 1, 0, 1)],
+    ];
+    let mut out = [0.0; 16];
+    for r in 0..3 {
+        for c in 0..3 {
+            out[4 * c + r] = inv[r][c] / det;
+        }
+    }
+    for r in 0..3 {
+        out[12 + r] = -(0..3).map(|c| out[4 * c + r] * m[12 + c]).sum::<f64>();
+    }
+    out[15] = 1.0;
+    Some(out)
+}
+
 impl SkinClip {
+    /// The clip of the same skin once its solid has been moved by the
+    /// affine `m` (a placement: a turn, a scale, a shift): each matrix
+    /// `m · S · m⁻¹`. `None` if `m` is singular.
+    pub fn moved(&self, m: &Mat4) -> Option<SkinClip> {
+        let inverse = affine_inverse(m)?;
+        Some(SkinClip {
+            name: self.name.clone(),
+            times: self.times.clone(),
+            poses: self
+                .poses
+                .iter()
+                .map(|pose| {
+                    pose.iter()
+                        .map(|s| mat_mul(&mat_mul(m, s), &inverse))
+                        .collect()
+                })
+                .collect(),
+        })
+    }
+
     /// The last key's time; 0 for a clip without keys.
     pub fn duration(&self) -> f64 {
         self.times.last().copied().unwrap_or(0.0)

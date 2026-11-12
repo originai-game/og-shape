@@ -378,6 +378,85 @@ fn merge_skeletons(parts: &[(&str, &Solid)]) -> Result<Option<Merged>, RepairErr
     Ok(Some((bones, maps)))
 }
 
+/// The clips of [`join`]'s solid: the parts' clips on the joined
+/// skeleton, one a name. A clip's times are those of the part with the
+/// most bones that has it; each bone's matrices come from the first such
+/// part that holds the bone (read at those times), and a bone no part
+/// moves in that clip stays at rest. Empty when no part has a clip.
+pub fn join_clips(parts: &[ImportedPart]) -> Result<Vec<shape_mesh::SkinClip>, RepairError> {
+    if parts.iter().all(|p| p.clips.is_empty()) {
+        return Ok(Vec::new());
+    }
+    let placed: Vec<Solid> = parts
+        .iter()
+        .map(apply_transform)
+        .collect::<Result<_, _>>()?;
+    let named: Vec<(&str, &Solid)> = parts.iter().map(|p| p.name.as_str()).zip(&placed).collect();
+    let Some((bones, maps)) = merge_skeletons(&named)? else {
+        return Ok(Vec::new());
+    };
+    // Each part's clips where `join` puts the part.
+    let mut moved: Vec<Vec<shape_mesh::SkinClip>> = Vec::with_capacity(parts.len());
+    for p in parts {
+        let t = &p.transform;
+        let m = [
+            t.x.x, t.x.y, t.x.z, 0.0, t.y.x, t.y.y, t.y.z, 0.0, t.z.x, t.z.y, t.z.z, 0.0, t.t.x,
+            t.t.y, t.t.z, 1.0,
+        ];
+        let mut clips = Vec::with_capacity(p.clips.len());
+        for c in &p.clips {
+            clips.push(c.moved(&m).ok_or_else(|| {
+                RepairError::Skinned(format!(
+                    "part {:?} is placed by a singular transform",
+                    p.name
+                ))
+            })?);
+        }
+        moved.push(clips);
+    }
+    // Fullest skin first, as the skeleton was merged.
+    let mut order: Vec<usize> = (0..parts.len()).collect();
+    order.sort_by_key(|&i| (core::cmp::Reverse(maps[i].len()), i));
+    let mut names: Vec<&str> = Vec::new();
+    for &i in &order {
+        for c in &moved[i] {
+            if !names.contains(&c.name.as_str()) {
+                names.push(&c.name);
+            }
+        }
+    }
+    let identity = shape_mesh::skin::frame_matrix(&shape_core::Frame::IDENTITY);
+    let mut out = Vec::with_capacity(names.len());
+    for name in names {
+        let of = |i: usize| moved[i].iter().find(|c| c.name == name);
+        let Some(times) = order.iter().find_map(|&i| of(i)).map(|c| c.times.clone()) else {
+            continue;
+        };
+        let mut poses = vec![vec![identity; bones.len()]; times.len()];
+        let mut set = vec![false; bones.len()];
+        for &i in &order {
+            let Some(clip) = of(i) else { continue };
+            for (k, &t) in times.iter().enumerate() {
+                let Some(at) = clip.at(t) else { continue };
+                for (local, &merged) in maps[i].iter().enumerate() {
+                    if !set[merged as usize] {
+                        poses[k][merged as usize] = at[local];
+                    }
+                }
+            }
+            for &merged in &maps[i] {
+                set[merged as usize] = true;
+            }
+        }
+        out.push(shape_mesh::SkinClip {
+            name: name.to_string(),
+            times,
+            poses,
+        });
+    }
+    Ok(out)
+}
+
 fn transformed(s: &Solid, m: &Affine) -> Solid {
     let mut out = s.clone();
     out.map_positions(|p| m.apply(p), m.determinant() < 0.0);

@@ -5,6 +5,7 @@ use std::fmt;
 
 use shape_core::{DVec3, Frame, trig};
 use shape_mesh::Solid;
+use shape_mesh::skin::Mat4;
 
 use crate::image::Texture;
 use crate::json::{Json, f32n, nums};
@@ -859,7 +860,28 @@ pub fn glb_clips(scene: &Scene, clips: &[Clip]) -> Result<Vec<u8>, ExportError> 
     glb_with(scene, false, clips)
 }
 
+/// [`glb`], with the clips of its skinned parts as animations of their
+/// bones' nodes: `skin_clips` gives each such part's, by its name. Every
+/// bone gets its translation and rotation at each of the clip's times,
+/// and its scale where the clip scales it. Clips of one name on several
+/// parts are one animation.
+pub fn glb_skin_clips(
+    scene: &Scene,
+    skin_clips: &[(&str, &[shape_mesh::SkinClip])],
+) -> Result<Vec<u8>, ExportError> {
+    glb_all(scene, false, &[], skin_clips)
+}
+
 fn glb_with(scene: &Scene, share: bool, clips: &[Clip]) -> Result<Vec<u8>, ExportError> {
+    glb_all(scene, share, clips, &[])
+}
+
+fn glb_all(
+    scene: &Scene,
+    share: bool,
+    clips: &[Clip],
+    skin_clips: &[(&str, &[shape_mesh::SkinClip])],
+) -> Result<Vec<u8>, ExportError> {
     let checked = check_joints(scene)?;
     let mut joint_node: BTreeMap<&str, usize> = BTreeMap::new();
     let mut bin: Vec<u8> = Vec::new();
@@ -873,6 +895,8 @@ fn glb_with(scene: &Scene, share: bool, clips: &[Clip]) -> Result<Vec<u8>, Expor
     let mut children: Vec<Vec<usize>> = Vec::new();
     let mut roots: Vec<usize> = Vec::new();
     let mut skins: Vec<SkinOut> = Vec::new();
+    // Per skinned part: its skin and its bones' nodes.
+    let mut skin_nodes: BTreeMap<&str, (&shape_mesh::Skin, Vec<usize>)> = BTreeMap::new();
     let mut textures: Vec<&Texture> = Vec::new();
     let mut emissive_strength = false;
     let mut view = |bin: &mut Vec<u8>, start: usize, target: u64| -> u64 {
@@ -1102,6 +1126,7 @@ fn glb_with(scene: &Scene, share: bool, clips: &[Clip]) -> Result<Vec<u8>, Expor
                     }
                     let roots_of = sk.bones.iter().filter(|b| b.parent.is_none()).count();
                     let skeleton = (roots_of == 1).then(|| joints[0]);
+                    skin_nodes.insert(part.name.as_str(), (sk, joints.clone()));
                     skins.push((crate::skin::inverse_binds(sk), joints, skeleton));
                 }
             }
@@ -1136,7 +1161,7 @@ fn glb_with(scene: &Scene, share: bool, clips: &[Clip]) -> Result<Vec<u8>, Expor
         ));
         skins_json.push(Json::Obj(fields));
     }
-    let animations = animations(
+    let mut animations = animations(
         clips,
         &checked,
         &joint_node,
@@ -1144,6 +1169,13 @@ fn glb_with(scene: &Scene, share: bool, clips: &[Clip]) -> Result<Vec<u8>, Expor
         &mut views,
         &mut accessors,
     )?;
+    animations.extend(skin_animations(
+        skin_clips,
+        &skin_nodes,
+        &mut bin,
+        &mut views,
+        &mut accessors,
+    )?);
     let texture_fields = texture_json(&textures, &mut bin, &mut views);
     // Children lists go in last, now that every node exists.
     for (n, kids) in nodes.iter_mut().zip(&children) {
@@ -1306,6 +1338,234 @@ pub(crate) fn texture_json(
 /// left).
 pub(crate) fn gltf_uv(q: shape_core::DVec2) -> [f32; 2] {
     [q.x as f32, (1.0 - q.y) as f32]
+}
+
+/// Skinned parts' clips as glTF animations ([`glb_skin_clips`]): a clip
+/// name is one animation, with channels for every part that has it.
+fn skin_animations(
+    skin_clips: &[(&str, &[shape_mesh::SkinClip])],
+    skin_nodes: &BTreeMap<&str, (&shape_mesh::Skin, Vec<usize>)>,
+    bin: &mut Vec<u8>,
+    views: &mut Vec<Json>,
+    accessors: &mut Vec<Json>,
+) -> Result<Vec<Json>, ExportError> {
+    use shape_mesh::skin::{affine_inverse, mat_mul};
+    let mut names: Vec<&str> = Vec::new();
+    for (_, clips) in skin_clips {
+        for c in *clips {
+            if !names.contains(&c.name.as_str()) {
+                names.push(&c.name);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for name in names {
+        let bad = |why: String| ExportError::BadClip {
+            clip: name.to_string(),
+            why,
+        };
+        let mut samplers = Vec::new();
+        let mut channels = Vec::new();
+        for (part, clips) in skin_clips {
+            let Some(clip) = clips.iter().find(|c| c.name == name) else {
+                continue;
+            };
+            let Some((skin, nodes)) = skin_nodes.get(part) else {
+                return Err(bad(format!("part {part:?} has no skin in the scene")));
+            };
+            let n = skin.bones.len();
+            if clip.times.is_empty()
+                || clip.poses.len() != clip.times.len()
+                || clip.poses.iter().any(|p| p.len() != n)
+                || clip.times.iter().any(|t| !t.is_finite())
+                || clip.times.windows(2).any(|w| w[1] <= w[0])
+            {
+                return Err(bad(format!(
+                    "part {part:?}: its times must rise, with a matrix a bone at each"
+                )));
+            }
+            let unbind: Vec<Mat4> = skin
+                .bones
+                .iter()
+                .map(|b| {
+                    affine_inverse(&b.inverse_bind).ok_or_else(|| {
+                        bad(format!(
+                            "bone {:?}'s inverse bind matrix is singular",
+                            b.name
+                        ))
+                    })
+                })
+                .collect::<Result<_, _>>()?;
+            // Per bone, per key: translation, rotation, scale (glTF space).
+            let mut tracks: Vec<Vec<Trs>> = vec![Vec::with_capacity(clip.times.len()); n];
+            for pose in &clip.poses {
+                // Each bone in the world then: its skinning matrix undone
+                // of its inverse bind. Its node is that under its parent's.
+                let world: Vec<Mat4> = (0..n).map(|b| mat_mul(&pose[b], &unbind[b])).collect();
+                for b in 0..n {
+                    let local = match skin.bones[b].parent {
+                        Some(p) => {
+                            let up = affine_inverse(&world[p as usize]).ok_or_else(|| {
+                                bad(format!(
+                                    "bone {:?} is flattened by the clip",
+                                    skin.bones[p as usize].name
+                                ))
+                            })?;
+                            mat_mul(&up, &world[b])
+                        }
+                        None => world[b],
+                    };
+                    let mut key = decompose(&crate::skin::gltf_matrix(&local));
+                    if let Some(last) = tracks[b].last() {
+                        // The same rotation the short way from the last key.
+                        let dot: f64 = (0..4).map(|k| key.1[k] * last.1[k]).sum();
+                        if dot < 0.0 {
+                            key.1 = key.1.map(|c| -c);
+                        }
+                    }
+                    if !key
+                        .0
+                        .iter()
+                        .chain(&key.1)
+                        .chain(&key.2)
+                        .all(|c| c.is_finite())
+                    {
+                        return Err(bad(format!(
+                            "bone {:?} is not finite in it",
+                            skin.bones[b].name
+                        )));
+                    }
+                    tracks[b].push(key);
+                }
+            }
+            let mut plain = |bin: &Vec<u8>, start: usize| {
+                views.push(Json::Obj(vec![
+                    ("buffer", Json::Int(0)),
+                    ("byteOffset", Json::Int(start as u64)),
+                    ("byteLength", Json::Int((bin.len() - start) as u64)),
+                ]));
+                (views.len() - 1) as u64
+            };
+            let start = bin.len();
+            for &t in &clip.times {
+                push_f32(bin, t as f32);
+            }
+            let tv = plain(bin, start);
+            accessors.push(Json::Obj(vec![
+                ("bufferView", Json::Int(tv)),
+                ("componentType", Json::Int(FLOAT)),
+                ("count", Json::Int(clip.times.len() as u64)),
+                ("type", Json::Str("SCALAR".into())),
+                ("min", Json::Arr(vec![f32n(clip.times[0] as f32)])),
+                (
+                    "max",
+                    Json::Arr(vec![f32n(clip.times[clip.times.len() - 1] as f32)]),
+                ),
+            ]));
+            let input = (accessors.len() - 1) as u64;
+            for (b, track) in tracks.iter().enumerate() {
+                // A scale channel only for a bone the clip scales.
+                let scaled = track
+                    .iter()
+                    .any(|k| k.2.iter().any(|s| (s - 1.0).abs() > 1e-6));
+                for (path, kind, on) in [
+                    ("translation", "VEC3", true),
+                    ("rotation", "VEC4", true),
+                    ("scale", "VEC3", scaled),
+                ] {
+                    if !on {
+                        continue;
+                    }
+                    let start = bin.len();
+                    for k in track {
+                        let values: &[f64] = match path {
+                            "translation" => &k.0,
+                            "rotation" => &k.1,
+                            _ => &k.2,
+                        };
+                        for &c in values {
+                            push_f32(bin, c as f32);
+                        }
+                    }
+                    let ov = plain(bin, start);
+                    accessors.push(Json::Obj(vec![
+                        ("bufferView", Json::Int(ov)),
+                        ("componentType", Json::Int(FLOAT)),
+                        ("count", Json::Int(track.len() as u64)),
+                        ("type", Json::Str(kind.into())),
+                    ]));
+                    let output = (accessors.len() - 1) as u64;
+                    channels.push(Json::Obj(vec![
+                        ("sampler", Json::Int(samplers.len() as u64)),
+                        (
+                            "target",
+                            Json::Obj(vec![
+                                ("node", Json::Int(nodes[b] as u64)),
+                                ("path", Json::Str(path.into())),
+                            ]),
+                        ),
+                    ]));
+                    samplers.push(Json::Obj(vec![
+                        ("input", Json::Int(input)),
+                        ("interpolation", Json::Str("LINEAR".into())),
+                        ("output", Json::Int(output)),
+                    ]));
+                }
+            }
+        }
+        if !channels.is_empty() {
+            out.push(Json::Obj(vec![
+                ("name", Json::Str(name.to_string())),
+                ("channels", Json::Arr(channels)),
+                ("samplers", Json::Arr(samplers)),
+            ]));
+        }
+    }
+    Ok(out)
+}
+
+/// A translation, a rotation (a unit quaternion x, y, z, w) and a scale.
+type Trs = ([f64; 3], [f64; 4], [f64; 3]);
+
+/// An affine matrix as a translation, a rotation (a unit quaternion x, y,
+/// z, w) and a scale: the columns' lengths are the scale (the first
+/// negative for a mirror), what is left the rotation.
+fn decompose(m: &Mat4) -> Trs {
+    let col = |c: usize| DVec3::new(m[4 * c], m[4 * c + 1], m[4 * c + 2]);
+    let (mut x, y, z) = (col(0), col(1), col(2));
+    let mut scale = [x.length(), y.length(), z.length()];
+    if x.cross(y).dot(z) < 0.0 {
+        scale[0] = -scale[0];
+        x = -x;
+    }
+    let unit = |v: DVec3, fallback: DVec3| {
+        let l = v.length();
+        if l > 0.0 { v / l } else { fallback }
+    };
+    let (x, y, z) = (unit(x, DVec3::X), unit(y, DVec3::Y), unit(z, DVec3::Z));
+    // The quaternion of the rotation with columns x, y, z.
+    let (m00, m11, m22) = (x.x, y.y, z.z);
+    let trace = m00 + m11 + m22;
+    let q = if trace > 0.0 {
+        let s = (trace + 1.0).sqrt() * 2.0;
+        [(y.z - z.y) / s, (z.x - x.z) / s, (x.y - y.x) / s, 0.25 * s]
+    } else if m00 > m11 && m00 > m22 {
+        let s = (1.0 + m00 - m11 - m22).sqrt() * 2.0;
+        [0.25 * s, (y.x + x.y) / s, (z.x + x.z) / s, (y.z - z.y) / s]
+    } else if m11 > m22 {
+        let s = (1.0 + m11 - m00 - m22).sqrt() * 2.0;
+        [(y.x + x.y) / s, 0.25 * s, (z.y + y.z) / s, (z.x - x.z) / s]
+    } else {
+        let s = (1.0 + m22 - m00 - m11).sqrt() * 2.0;
+        [(z.x + x.z) / s, (z.y + y.z) / s, 0.25 * s, (x.y - y.x) / s]
+    };
+    let len = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
+    let q = if len > 0.0 {
+        q.map(|c| c / len)
+    } else {
+        [0.0, 0.0, 0.0, 1.0]
+    };
+    ([m[12], m[13], m[14]], q, scale)
 }
 
 /// The clips as glTF animations ([`glb_clips`]): their accessors and

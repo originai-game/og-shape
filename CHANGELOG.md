@@ -1424,3 +1424,10 @@
   mesh was at the origin (Mixamo): a cluster's `Transform` is the mesh
   in the bone's space, not in the world. The bind pose and weights were
   right; a pose was not. `docs/research.md` §40.
+- A skinned file's clips go through `repair`, `decimate` and `process`
+  into the output GLB: `shape_tools::join_clips` (the parts' clips on
+  the joined skeleton), `SkinClip::moved` (a placement:
+  `PlaceReport::matrix`), `shape_tools::glb_skin_clips` (per bone, its
+  translation, rotation and, where scaled, scale at every sample). The
+  soldier at 4 550 triangles and 1 m keeps its four clips; Samba at
+  5 000 its one (`docs/research.md` §40.5).

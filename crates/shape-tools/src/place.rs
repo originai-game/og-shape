@@ -350,6 +350,9 @@ pub struct PlaceReport {
     pub scale: f64,
     /// The translation applied after the turn and the scale, mm.
     pub moved: DVec3,
+    /// The whole placement as one matrix (column-major): what a clip of
+    /// the mesh's skin is moved by (`shape_mesh::SkinClip::moved`).
+    pub matrix: Mat4,
     /// The input's measures.
     pub before: AxisMeasures,
     /// The output's.
@@ -556,6 +559,13 @@ pub fn place(parts: &[Solid], d: &Place) -> Result<(Vec<Solid>, PlaceReport), Pl
         turn: d.turn,
         scale: m.scale,
         moved: m.t,
+        matrix: {
+            let cols = [DVec3::X, DVec3::Y, DVec3::Z].map(|e| m.rotate(e) * m.scale);
+            [
+                cols[0].x, cols[0].y, cols[0].z, 0.0, cols[1].x, cols[1].y, cols[1].z, 0.0,
+                cols[2].x, cols[2].y, cols[2].z, 0.0, m.t.x, m.t.y, m.t.z, 1.0,
+            ]
+        },
         before: axis_measures(parts),
         after: axis_measures(&out),
     };

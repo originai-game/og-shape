@@ -93,7 +93,7 @@ pub use decimate::{
 };
 pub use export::{
     Clip, ClipKey, ColorSpace, ExportError, Joint, JointKind, MAP_KINDS, Material, Mimic, Part,
-    Placement, Scene, glb, glb_clips, glb_shared, obj, obj_at, posed, stl, stl_at,
+    Placement, Scene, glb, glb_clips, glb_shared, glb_skin_clips, obj, obj_at, posed, stl, stl_at,
 };
 pub use fbx::import_fbx;
 pub use image::{ImageInfo, Texture};
@@ -111,8 +111,8 @@ pub use png::png;
 pub use preview::{Image, Preview, ViewCamera, Views, preview, sheet, views};
 pub use repair::{
     Floaters, Holes, LARGE_HOLE_EDGES, NonManifold, Repair, RepairError, RepairReport, Weld,
-    apply_transform, close_holes, join, orient, remove_degenerate, remove_floaters, repair,
-    repair_owned, split_non_manifold, weld,
+    apply_transform, close_holes, join, join_clips, orient, remove_degenerate, remove_floaters,
+    repair, repair_owned, split_non_manifold, weld,
 };
 pub use texture::{Downsize, TextureError, decode, downsize};
 pub use thicken::{Thickened, thicken};

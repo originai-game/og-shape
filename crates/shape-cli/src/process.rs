@@ -44,7 +44,6 @@ use shape_tools::{
 };
 
 use crate::args::{Args, IMPORT_OPTIONS};
-use crate::export::write_solid;
 use crate::report::{self, object};
 use crate::source::{Input, Local, load_mesh};
 use crate::{Failure, Files, failed};
@@ -194,6 +193,7 @@ pub fn process_steps(
     let mesh = load_mesh(files, &d.input, &import)?;
     let imported = report::imported(&mesh.format, &mesh.imported);
     let joined = mesh.joined()?;
+    let mut clips = mesh.clips()?;
     if d.bake > 0 && joined.skin.is_some() {
         // The baked file is a plain GLB with TANGENT, one node: no skin.
         return Err(Failure::Failed(
@@ -259,6 +259,12 @@ pub fn process_steps(
     let (mut low, placed) = if placing {
         let (mut out, r) =
             shape_tools::place(std::slice::from_ref(&low), &place).map_err(failed)?;
+        // The clips go where the mesh went.
+        clips = clips
+            .iter()
+            .map(|c| c.moved(&r.matrix))
+            .collect::<Option<_>>()
+            .ok_or_else(|| Failure::Failed("the placement is singular".into()))?;
         (out.pop().unwrap_or_default(), Some(r.to_json()))
     } else {
         (low, None)
@@ -293,7 +299,14 @@ pub fn process_steps(
     let output = if baked.is_some() {
         crate::export::write_solid_tangents(files, &mesh.name, &low, &material, d.out.as_deref())?
     } else {
-        write_solid(files, &mesh.name, &low, Some(&material), d.out.as_deref())?
+        crate::export::write_solid_clips(
+            files,
+            &mesh.name,
+            &low,
+            Some(&material),
+            &clips,
+            d.out.as_deref(),
+        )?
     };
     let mut fields = vec![
         ("import", imported),

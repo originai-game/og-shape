@@ -142,6 +142,18 @@ pub fn encode_solid(
     material: Option<&Material>,
     out: &Path,
 ) -> Result<Vec<u8>, Failure> {
+    encode_solid_clips(name, s, material, &[], out)
+}
+
+/// [`encode_solid`], a skinned solid's GLB with `clips` as animations of
+/// its bones (a file's own, carried through the tools).
+pub fn encode_solid_clips(
+    name: &str,
+    s: &Solid,
+    material: Option<&Material>,
+    clips: &[shape_mesh::SkinClip],
+    out: &Path,
+) -> Result<Vec<u8>, Failure> {
     let parts = [(name.to_string(), s.clone())];
     match extension(out).as_str() {
         // A skinned solid goes out as a scene of one part: a mesh node,
@@ -152,10 +164,13 @@ pub fn encode_solid(
             if let Some(m) = material {
                 part.material = m.clone();
             }
-            glb(&shape_tools::Scene {
-                name: name.to_string(),
-                parts: vec![part],
-            })
+            shape_tools::glb_skin_clips(
+                &shape_tools::Scene {
+                    name: name.to_string(),
+                    parts: vec![part],
+                },
+                &[(name, clips)],
+            )
             .map_err(failed)
         }
         "glb" => glb_plain(
@@ -184,10 +199,22 @@ pub fn write_solid(
     material: Option<&Material>,
     out: Option<&Path>,
 ) -> Result<String, Failure> {
+    write_solid_clips(files, name, s, material, &[], out)
+}
+
+/// [`write_solid`], with a skinned solid's clips in its GLB.
+pub fn write_solid_clips(
+    files: &dyn Files,
+    name: &str,
+    s: &Solid,
+    material: Option<&Material>,
+    clips: &[shape_mesh::SkinClip],
+    out: Option<&Path>,
+) -> Result<String, Failure> {
     match out {
         None => Ok("null".into()),
         Some(out) => {
-            let bytes = encode_solid(name, s, material, out)?;
+            let bytes = encode_solid_clips(name, s, material, clips, out)?;
             files.write(out, &bytes)?;
             Ok(written_lost(
                 out,

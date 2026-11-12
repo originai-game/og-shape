@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use shape_tools::{Floaters, Import, Measure, Repair};
 
 use crate::args::{Args, IMPORT_OPTIONS};
-use crate::export::write_solid;
 use crate::report::{self, object};
 use crate::source::{Input, Local, load_mesh};
 use crate::{Failure, Files, failed};
@@ -32,11 +31,19 @@ pub struct RepairDesc {
 pub fn repair(files: &dyn Files, d: &RepairDesc) -> Result<String, Failure> {
     let mesh = load_mesh(files, &d.input, &d.import)?;
     let joined = mesh.joined()?;
+    let clips = mesh.clips()?;
     let triangles_in = joined.triangles.len();
     let (fixed, r) = shape_tools::repair_owned(joined, &d.repair).map_err(failed)?;
     let m = shape_tools::measure(&fixed, &Measure::default());
     let (material, defaults, dropped) = mesh.material();
-    let output = write_solid(files, &mesh.name, &fixed, Some(&material), d.out.as_deref())?;
+    let output = crate::export::write_solid_clips(
+        files,
+        &mesh.name,
+        &fixed,
+        Some(&material),
+        &clips,
+        d.out.as_deref(),
+    )?;
     Ok(object(&[
         ("triangles_in", triangles_in.to_string()),
         ("repair", report::repair(&r)),

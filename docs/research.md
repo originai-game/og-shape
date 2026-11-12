@@ -8455,8 +8455,7 @@ following its head; `Samba Dancing.fbx`'s one (`mixamo.com`, 18.2 s,
 
 ### 40.4 Not done
 
-- **Clips are not written back.** `repair`, `decimate` and `process`
-  write the skin without the file's animations.
+- ~~Clips are not written back.~~ They are, see §40.5.
 - A program's parts are posed by its own `pose` and `clip` ops; `--clip`
   is for mesh files.
 - FBX easing, further animation layers, and glTF cubic-spline tangents
@@ -8464,3 +8463,33 @@ following its head; `Samba Dancing.fbx`'s one (`mixamo.com`, 18.2 s,
   (179° to −179° between two keys) turns the long way for that step.
 - The Soldier's maps are progressive JPEGs, which the preview does not
   decode (`undrawn` says so): it is drawn grey.
+
+### 40.5 Clips through the tools and into the output
+
+`repair`, `decimate` (every level) and `process` now write a skinned
+file's clips with its skin.
+
+- **Joined.** `shape_tools::join_clips`: the parts' clips on the joined
+  skeleton, one a name; times from the part with the most bones, each
+  bone's matrices from the first part that holds it.
+- **Placed.** A placement `P` moves a clip to `P · S · P⁻¹`
+  (`SkinClip::moved`, with `PlaceReport::matrix`).
+- **Written.** `shape_tools::glb_skin_clips`: per clip one glTF
+  animation; per bone, at every sample, the bone in the world
+  (`S · inverse bind⁻¹`) under its parent's, as a translation, a
+  rotation (the short way from the sample before) and, where the clip
+  scales the bone, a scale; linear.
+
+A hand-written file read, joined, placed (a quarter turn, twice the
+size, on its base), written and read again stands within 0.05 mm of the
+first reading at five times, with and without a scaled armature
+(`a_clip_is_written_back_and_read_as_the_same_motion`). On the samples:
+the soldier through `process --ratio 0.4 --height 1m` (4 550 triangles)
+keeps its four clips (1.5 MB), Samba through `decimate --target 5000`
+its one (3.6 MB, 2 242 samples of 52 bones); read back and drawn posed
+they move as the originals do.
+
+The written clips are the samples, not the file's curves: a clip of 60
+keys comes back as 296 (sixty a second, plus the keys). Thinning them
+to a tolerance is not done.
+

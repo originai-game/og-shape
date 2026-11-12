@@ -770,3 +770,64 @@ fn a_file_s_animation_poses_its_skin() {
         }
     }
 }
+
+/// A file's clip goes out with the skin and comes back the same motion:
+/// read, joined, placed (turned, scaled and moved), written as a GLB
+/// with the clip on its bones' nodes, and read again, the mesh stands at
+/// each time where the first reading, placed the same way, has it.
+#[test]
+fn a_clip_is_written_back_and_read_as_the_same_motion() {
+    use shape_tools::{Part, Place, Scene, glb_skin_clips, join, join_clips, place};
+    for armature in [None, Some([0.01f32; 3])] {
+        let first = import(
+            &skinned::skinned_glb_animated(armature),
+            &Import::default(),
+            &no_files,
+        )
+        .unwrap();
+        let solid = join(&first.parts).unwrap();
+        let clips = join_clips(&first.parts).unwrap();
+        assert_eq!(clips.len(), 1);
+        // Placed: a quarter turn about up, twice the size, moved to its base.
+        let (mut placed, report) = place(
+            std::slice::from_ref(&solid),
+            &Place {
+                turn: 90.0,
+                size: shape_tools::Size::Scale(2.0),
+                pivot: shape_tools::Pivot::Base,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let placed = placed.pop().unwrap();
+        let clip = clips[0].moved(&report.matrix).unwrap();
+        let bytes = glb_skin_clips(
+            &Scene {
+                name: "legs".into(),
+                parts: vec![Part::new("legs", &placed)],
+            },
+            &[("legs", std::slice::from_ref(&clip))],
+        )
+        .unwrap();
+        let back = import(&bytes, &Import::default(), &no_files).unwrap();
+        let again = &back.parts[0];
+        assert_eq!(again.clips.len(), 1);
+        assert_eq!(again.clips[0].name, "bend");
+        assert!((again.clips[0].duration() - 1.0).abs() < 1e-6);
+        // The same corners, by where they stand at rest, at each time.
+        for time in [0.0, 0.3, 0.5, 0.9, 1.0] {
+            let a = shape_skin::pose_by(&placed, &clip.at(time).unwrap()).unwrap();
+            let b = shape_skin::pose_by(&again.solid, &again.clips[0].at(time).unwrap()).unwrap();
+            for (i, rest) in placed.positions.iter().enumerate() {
+                let j = again
+                    .solid
+                    .positions
+                    .iter()
+                    .position(|p| (*p - *rest).length() < 1e-3)
+                    .expect("the same vertex");
+                let d = (a.positions[i] - b.positions[j]).length();
+                assert!(d < 0.05, "at {time}: {d} mm");
+            }
+        }
+    }
+}

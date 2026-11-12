@@ -25,7 +25,9 @@ import → join → repair → decimate → place → unwrap → measure → pre
    samples), and `preview` with `clip` and `time` (CLI `--clip NAME
    --time T`) draws the mesh as the clip has it then; `frames: 24`
    (`--frames 24`) draws that many frames over the clip, one PNG each
-   with the camera still. Clips are not written to the output yet. A
+   with the camera still. `repair`, `decimate` and `process` write the
+   clips with the skin (as samples sixty times a second, moved with the
+   mesh when it is placed). A
    skeleton under a uniformly scaled armature (centimetres)
    has the scale taken out; the import report (`skin_scales`) says so.
    UVs (the first set), vertex colours (glTF `COLOR_0`, OBJ

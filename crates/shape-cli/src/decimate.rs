@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use shape_tools::{Decimate, Import, Measure, lods};
 
 use crate::args::{Args, IMPORT_OPTIONS};
-use crate::export::write_solid;
 use crate::report::{self, array, object};
 use crate::source::{Input, Local, extension, load_mesh};
 use crate::{Failure, Files, failed};
@@ -70,6 +69,7 @@ fn lod_levels(d: &Decimate, n: u32) -> Vec<Decimate> {
 pub fn decimate(files: &dyn Files, d: &DecimateDesc) -> Result<String, Failure> {
     let mesh = load_mesh(files, &d.input, &d.import)?;
     let joined = mesh.joined()?;
+    let clips = mesh.clips()?;
     let levels = if !d.lod_ratios.is_empty() {
         let falling = d.lod_ratios.windows(2).all(|w| w[1] < w[0]);
         let shares = d.lod_ratios.iter().all(|&r| r > 0.0 && r <= 1.0);
@@ -109,7 +109,14 @@ pub fn decimate(files: &dyn Files, d: &DecimateDesc) -> Result<String, Failure> 
             ("measures", m.to_json()),
             (
                 "output",
-                write_solid(files, &mesh.name, s, Some(&material), out.as_deref())?,
+                crate::export::write_solid_clips(
+                    files,
+                    &mesh.name,
+                    s,
+                    Some(&material),
+                    &clips,
+                    out.as_deref(),
+                )?,
             ),
         ]));
     }

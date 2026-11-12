@@ -102,7 +102,7 @@ pub(crate) fn inverse_binds(skin: &Skin) -> Vec<u8> {
 }
 
 /// `C · m · C⁻¹` for an affine `m` in kernel space.
-fn gltf_matrix(m: &Mat4) -> Mat4 {
+pub(crate) fn gltf_matrix(m: &Mat4) -> Mat4 {
     let col = |c: usize| DVec3::new(m[4 * c], m[4 * c + 1], m[4 * c + 2]);
     // C⁻¹ sends glTF x, y, z to kernel x, z, −y (over METRES, which
     // cancels for the linear part).
