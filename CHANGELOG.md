@@ -1571,3 +1571,11 @@
 - FBX: the first colour layer (`LayerElementColor`, by corner or by
   vertex, direct or indexed) is read as vertex colours, RGBA as stored
   and taken as linear.
+- The preview draws what it left out: `metalness` and `roughness`
+  (factors and the metallic-roughness map) as a highlight of the light
+  and a sky over a ground, tinted by a metal's colour; the occlusion
+  map; and the emissive map, which multiplies the emissive colour (a
+  file whose emissive factor is white with a map, as DamagedHelmet's,
+  was drawn all white). A matte part that is no metal is drawn as
+  before, to the byte; previews of parts with `metalness` over 0 or
+  `roughness` under 1 change (`docs/research.md` §53).

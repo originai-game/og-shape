@@ -50,8 +50,15 @@
 //! - A material's `emissive` (times `emissive_intensity`, in its
 //!   `color_space`) is added to the lit colour in linear light, before
 //!   blending: it glows the same in shade and in light. A part without it
-//!   is drawn as before, to the byte. The emissive map, `metalness` and
-//!   `roughness` do not change the picture (`docs/research.md` §30, §33).
+//!   is drawn as before, to the byte. The emissive map multiplies it.
+//! - `metalness` and `roughness` (and the metallic-roughness map's blue
+//!   and green) add what the surface reflects, in linear light: a
+//!   highlight of the light, and a sky over a ground (lighter the more
+//!   the reflection points up), blurred as the surface roughens; a
+//!   metal's own colour tints both and it keeps no matte colour. A
+//!   matte part that is no metal is drawn as before, to the byte. The
+//!   occlusion map's red dims the light from all round by
+//!   `ao_map_intensity` (`docs/research.md` §53).
 //! - A material's `normal_map` (with the part's UVs) bends the light per
 //!   pixel: the map is read as data, at its finest level, in the
 //!   triangle's own tangent frame (u along the tangent, v along the
@@ -68,7 +75,7 @@ use shape_core::{DVec2, DVec3, trig};
 
 use shape_mesh::Solid;
 
-use crate::export::{ColorSpace, ExportError, Scene};
+use crate::export::{ColorSpace, ExportError, Material, Scene};
 use crate::image::Texture;
 use crate::sampler::{Mips, to_linear, to_srgb};
 use crate::surface::face_normal;
@@ -539,11 +546,7 @@ pub fn views(scene: &Scene, d: &Preview) -> Result<Views, ExportError> {
         let paint = paint(
             p.name.as_str(),
             p.solid,
-            p.material.map.as_ref(),
-            p.material
-                .normal_map
-                .as_ref()
-                .map(|t| (t, p.material.normal_scale.unwrap_or(1.0))),
+            &p.material,
             rgb,
             &mut maps,
             &mut undrawn,
@@ -694,20 +697,76 @@ struct Paint {
     colors: Option<Vec<[[f64; 4]; 3]>>,
     /// The material's colour in linear light.
     base: [f64; 3],
+    /// What the surface does with light besides its colour, if anything.
+    gloss: Option<Gloss>,
 }
+
+/// A material that is a metal, smoother than matte, or has maps for
+/// those, for occlusion or for its glow. Each map is its chain in
+/// [`Maps`]; they share the part's UVs.
+struct Gloss {
+    metal: f64,
+    rough: f64,
+    /// Roughness in green, metalness in blue, times the factors.
+    metal_rough: Option<usize>,
+    /// Occlusion in red, and how much of it counts.
+    occlusion: Option<(usize, f64)>,
+    /// The colour the emissive light is multiplied by.
+    glow: Option<usize>,
+    uvs: Option<Vec<[DVec2; 3]>>,
+}
+
+/// The light a mirror facing straight down and straight up reflects
+/// (linear): the ground's and the sky's.
+const ENV_DOWN: f64 = 0.15;
+const ENV_UP: f64 = 0.9;
 
 /// The part's [`Paint`], if it has a map it can draw or vertex colours;
 /// what it cannot draw goes to `undrawn`.
 fn paint<'a>(
     name: &str,
     s: &Solid,
-    map: Option<&'a Texture>,
-    normal: Option<(&'a Texture, f64)>,
+    material: &'a Material,
     rgb: [f64; 3],
     maps: &mut Maps<'a>,
     undrawn: &mut Vec<(String, String)>,
 ) -> Option<Paint> {
     let n = s.triangles.len();
+    let map = material.map.as_ref();
+    let normal = material
+        .normal_map
+        .as_ref()
+        .map(|t| (t, material.normal_scale.unwrap_or(1.0)));
+    // The maps of the surface's gloss, each read with the part's UVs.
+    let uvs = s.uvs.as_ref().filter(|uv| uv.len() == n);
+    let mut chain = |t: Option<&'a Texture>, color: bool, what: &str| -> Option<usize> {
+        let t = t?;
+        let why = match uvs {
+            None => format!("the part has no UVs to sample its {what} with"),
+            Some(_) => match if color { maps.get(t) } else { maps.get_data(t) } {
+                Ok(k) => return Some(k),
+                Err(e) => e,
+            },
+        };
+        undrawn.push((name.to_string(), why));
+        None
+    };
+    let metal_rough = chain(material.metalness_map.as_ref(), false, "metalness map");
+    let occlusion = chain(material.ao_map.as_ref(), false, "occlusion map")
+        .map(|k| (k, material.ao_map_intensity.unwrap_or(1.0).clamp(0.0, 1.0)));
+    let glow = chain(material.emissive_map.as_ref(), true, "emissive map");
+    let metal = material.metalness.clamp(0.0, 1.0);
+    let rough = material.roughness.unwrap_or(1.0).clamp(0.0, 1.0);
+    let glossy = metal > 0.0 || rough < 1.0;
+    let gloss =
+        (glossy || metal_rough.is_some() || occlusion.is_some() || glow.is_some()).then(|| Gloss {
+            metal,
+            rough,
+            metal_rough,
+            occlusion,
+            glow,
+            uvs: uvs.cloned(),
+        });
     let normal = normal.and_then(|(t, scale)| {
         let why = match &s.uvs {
             None => "the part has no UVs to sample its normal map with".to_string(),
@@ -743,7 +802,7 @@ fn paint<'a>(
             None
         }
     });
-    if map.is_none() && colors.is_none() && normal.is_none() {
+    if map.is_none() && colors.is_none() && normal.is_none() && gloss.is_none() {
         return None;
     }
     Some(Paint {
@@ -751,6 +810,7 @@ fn paint<'a>(
         normal,
         colors,
         base: rgb.map(|c| to_linear(c.clamp(0.0, 1.0))),
+        gloss,
     })
 }
 
@@ -1033,11 +1093,15 @@ fn draw_triangle(t: &mut Target, look: &Look, p: &Drawn, k: usize) {
         Some((look.maps.mips(*m)?, uv, *scale, tangent, bitangent))
     });
     let corner_normals = p.normals[k].map(|n| n * flip);
+    let gloss = paint.gloss.as_ref();
+    let view = toward.try_normalize().unwrap_or(DVec3::Z);
     raster(dims, c, persp, map.is_some() || bump.is_some(), |f| {
         let (i, z, mut l) = (f.i, f.z, f.light);
         if z >= depth[i] {
             return;
         }
+        // The normal the light meets here: the map's, where it bends it.
+        let mut facing = None;
         if let Some((mips, uv, scale, tangent, bitangent)) = bump {
             let at = mix2(f.w, uv);
             let s = mips.sample(at, 0);
@@ -1060,6 +1124,7 @@ fn draw_triangle(t: &mut Target, look: &Look, p: &Drawn, k: usize) {
                     );
                     if let Some(bent) = (t * x + b * y + n * zz).try_normalize() {
                         l = AMBIENT + DIFFUSE * bent.dot(look.light).max(0.0);
+                        facing = Some(bent);
                     }
                 }
             }
@@ -1085,16 +1150,76 @@ fn draw_triangle(t: &mut Target, look: &Look, p: &Drawn, k: usize) {
                 *c *= f.w[0] * vc[0][ch] + f.w[1] * vc[1][ch] + f.w[2] * vc[2][ch];
             }
         }
-        let srgb = [0, 1, 2].map(|c| to_srgb(col[c].clamp(0.0, 1.0)));
+        let lit: [f64; 3] = match gloss {
+            None => {
+                let srgb = [0, 1, 2].map(|c| to_srgb(col[c].clamp(0.0, 1.0)));
+                [0, 1, 2].map(|c| glow(srgb[c], l, c))
+            }
+            Some(g) => {
+                let at = g.uvs.as_ref().map(|uv| mix2(f.w, &uv[k]));
+                let read = |m: Option<usize>| {
+                    let s = look.maps.mips(m?)?.sample(at?, 0);
+                    s.iter().all(|v| v.is_finite()).then_some(s)
+                };
+                let (mut metal, mut rough) = (g.metal, g.rough);
+                if let Some(s) = read(g.metal_rough) {
+                    rough *= s[1];
+                    metal *= s[2];
+                }
+                let shade = match g.occlusion.and_then(|(m, by)| Some((read(Some(m))?, by))) {
+                    Some((s, by)) => 1.0 + by * (s[0] - 1.0),
+                    None => 1.0,
+                };
+                let tint = read(g.glow).unwrap_or([1.0; 4]);
+                let n = facing.or_else(|| {
+                    (corner_normals[0] * f.w[0]
+                        + corner_normals[1] * f.w[1]
+                        + corner_normals[2] * f.w[2])
+                        .try_normalize()
+                });
+                let towards = n.map_or(0.0, |n| n.dot(look.light).max(0.0));
+                if !look.unlit && shade != 1.0 {
+                    // Occlusion dims the light from all round, not the sun.
+                    l = AMBIENT * shade + DIFFUSE * towards;
+                }
+                // What is reflected: a highlight of the light, and the
+                // sky over the ground, blurred as the surface roughens.
+                let mut mirror = [0.0; 3];
+                if let (Some(n), false, true) = (n, look.unlit, metal > 0.0 || rough < 1.0) {
+                    let smooth = 1.0 - rough;
+                    let alpha2 = (rough * rough * rough * rough).max(1e-6);
+                    let power = (2.0 / alpha2 - 2.0).clamp(0.0, 2000.0);
+                    let half = (look.light + view).try_normalize().unwrap_or(n);
+                    let highlight = DIFFUSE
+                        * ((power + 2.0) / 8.0 * trig::pow(n.dot(half).max(0.0), power)).min(8.0)
+                        * towards
+                        * smooth;
+                    let back = n * (2.0 * n.dot(view)) - view;
+                    let sharp = ENV_DOWN + (ENV_UP - ENV_DOWN) * (0.5 + 0.5 * back.z);
+                    let flat = (ENV_DOWN + ENV_UP) / 2.0;
+                    let around = (sharp + (flat - sharp) * rough) * shade;
+                    let reach = metal + (1.0 - metal) * smooth;
+                    for (c, m) in mirror.iter_mut().enumerate() {
+                        let f0 = 0.04 * (1.0 - metal) + col[c].clamp(0.0, 1.0) * metal;
+                        *m = f0 * (highlight + around * reach);
+                    }
+                }
+                [0, 1, 2].map(|c| {
+                    let matte = to_srgb((col[c] * (1.0 - metal)).clamp(0.0, 1.0));
+                    let linear =
+                        to_linear((matte * l).clamp(0.0, 1.0)) + mirror[c] + e[c] * tint[c];
+                    to_srgb(linear.clamp(0.0, 1.0))
+                })
+            }
+        };
         if alpha == 1.0 {
             depth[i] = z;
             ground[i] = false;
-            out[i] = [0, 1, 2].map(|c| byte(glow(srgb[c], l, c)));
+            out[i] = lit.map(byte);
         } else {
             let a = alpha * col[3].clamp(0.0, 1.0);
             let under = out[i];
-            out[i] = [0, 1, 2]
-                .map(|c| byte(glow(srgb[c], l, c) * a + f64::from(under[c]) / 255.0 * (1.0 - a)));
+            out[i] = [0, 1, 2].map(|c| byte(lit[c] * a + f64::from(under[c]) / 255.0 * (1.0 - a)));
         }
     });
 }
@@ -1456,6 +1581,78 @@ mod tests {
         let v = one_view(&floor_quad(), bad, Preview::default());
         assert_eq!(v.images, plain);
         assert_eq!(v.undrawn.len(), 1);
+    }
+
+    /// Metal, gloss, occlusion and the emissive map each change the
+    /// picture the way they should, and a matte part that is no metal
+    /// is drawn as it always was.
+    #[test]
+    fn metal_gloss_occlusion_and_glow_maps_show() {
+        let s = floor_quad();
+        let at = |m: Material, d: Preview| rgb_at(&one_view(&s, m, d).images[0], 128, 128);
+        let grey = Material {
+            color: Some([0.5; 3]),
+            ..Default::default()
+        };
+        let plain = at(grey.clone(), Preview::default());
+        // Roughness 1 and no metal, said out loud: the same bytes.
+        let said = Material {
+            roughness: Some(1.0),
+            ..grey.clone()
+        };
+        assert_eq!(at(said, Preview::default()), plain);
+        // A metal is not black: it shows the sky, tinted by its colour.
+        let gold = Material {
+            color: Some([1.0, 0.8, 0.2]),
+            metalness: 1.0,
+            ..Default::default()
+        };
+        let [r, g, b] = at(gold, Preview::default());
+        assert!(r > 150 && r > g && g > b && b > 20, "{r} {g} {b}");
+        // The same metal polished shows more of the sky above it.
+        let rough = Material {
+            metalness: 1.0,
+            ..grey.clone()
+        };
+        let polished = Material {
+            roughness: Some(0.0),
+            ..rough.clone()
+        };
+        assert!(at(polished, Preview::default())[0] > at(rough, Preview::default())[0]);
+        // Occlusion darkens; with intensity 0 it does nothing.
+        let dark = map(2, 2, |_, _| [0, 255, 255, 255]);
+        let pit = Material {
+            ao_map: Some(dark.clone()),
+            ..grey.clone()
+        };
+        assert!(at(pit, Preview::default())[0] < plain[0]);
+        let off = Material {
+            ao_map: Some(dark),
+            ao_map_intensity: Some(0.0),
+            ..grey.clone()
+        };
+        assert_eq!(at(off, Preview::default()), plain);
+        // The glow is its colour times its map's: a white glow under a
+        // blue map is blue, and black where the map is black.
+        let glowing = |texel: [u8; 4]| Material {
+            color: Some([0.0; 3]),
+            emissive: [1.0; 3],
+            emissive_map: Some(map(2, 2, move |_, _| texel)),
+            ..Default::default()
+        };
+        let unlit = Preview {
+            unlit: true,
+            ..Default::default()
+        };
+        assert_eq!(at(glowing([0, 0, 255, 255]), unlit), [0, 0, 255]);
+        assert_eq!(at(glowing([0, 0, 0, 255]), unlit), [0, 0, 0]);
+        // The metalness map's blue channel turns the metal off.
+        let no_metal = Material {
+            metalness: 1.0,
+            metalness_map: Some(map(2, 2, |_, _| [0, 255, 0, 255])),
+            ..grey
+        };
+        assert_eq!(at(no_metal, Preview::default()), plain);
     }
 
     #[test]

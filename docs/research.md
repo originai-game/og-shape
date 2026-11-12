@@ -9187,3 +9187,43 @@ UVs are: `Colors` (RGBA), by corner (`ByPolygonVertex`) or by vertex,
 say whether the values are linear; they are taken as linear, as glTF's
 `COLOR_0` is. A layer that misses a corner gives no colours and is
 listed.
+
+## 53. The preview's metal, gloss, occlusion and glow map (2026-11-12)
+
+§30 and §33 left the preview at colour, a normal map and an emissive
+colour. Two things were wrong with that: a metal looked like paint,
+and a file whose emissive factor is white because its emissive map
+carries the colour (DamagedHelmet) was drawn all white, since the
+factor was added without the map.
+
+What is drawn now, for a part whose material asks for it:
+
+- **Emissive map**: the emissive colour times the map (read as
+  colour), added in linear light as before.
+- **Occlusion map**: its red, by `ao_map_intensity`, scales the ambient
+  term only (`0.38 × occlusion + 0.62 × n·l`).
+- **Metalness and roughness**, times the metallic-roughness map's blue
+  and green. The matte colour is the base colour × (1 − metalness),
+  lit as before. To it is added, in linear light, F0 × (highlight +
+  surroundings), F0 being 0.04 for a dielectric and the base colour
+  for a metal. The highlight is a normalised Blinn-Phong lobe (power
+  2/roughness⁴ − 2, capped) of the one light, times (1 − roughness).
+  The surroundings are a sky over a ground: 0.15 looking straight
+  down, 0.9 straight up, linear in the reflected ray's height, pulled
+  to their mean by the roughness and dimmed by the occlusion; a metal
+  reflects them whatever its roughness, a dielectric by (1 −
+  roughness).
+
+This is a reading aid, not a renderer: there is no environment image,
+no Fresnel at grazing angles, no energy conservation. The rule that
+keeps old pictures is exact: a part with metalness 0, roughness 1 and
+none of the three maps takes the old path and gives the old bytes.
+Four golden lines move, each a preview of a scene whose materials set
+`metalness` or a `roughness` under 1: `model.joints.preview`,
+`model.washing_machine.png`, `tools.preview`, `tools.preview.png`.
+Checked: `metal_gloss_occlusion_and_glow_maps_show` (a gold metal is
+gold and not black; polished shows more sky than rough; occlusion
+darkens and intensity 0 does not; a white glow under a blue map is
+blue; the map's blue channel turns a metal off, to the plain bytes).
+The README's gallery pictures were made before this and have not been
+drawn again.

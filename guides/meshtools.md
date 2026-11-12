@@ -172,8 +172,9 @@ import → join → repair → decimate → place → unwrap → measure → pre
    charts count as flipped).
 8. **Preview** and look at it. It draws the base-colour map (PNG,
    JPEG or KTX2 of UASTC blocks), the normal map's detail in the light, vertex colours and the
-   material's colour and emissive colour (not its metallic-roughness,
-   emissive or occlusion maps, metalness or roughness); after a bake,
+   material's colour, its emissive colour and map, its occlusion map,
+   and metalness and roughness (factors and map) as a highlight and a
+   plain sky over a ground, so a metal reads as one; after a bake,
    look along chart borders for lines in the shading. Its `undrawn` lists a map it could not
    draw (WebP, a KTX2 of ETC1S blocks, an arithmetic-coded JPEG, no UVs). `--uv` (MCP `uv`) shows
    the UV layout over the map: dark lines are chart outlines, dimmed
