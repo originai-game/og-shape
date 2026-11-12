@@ -8768,3 +8768,29 @@ file whose second layer holds 30° on the knee's 90° bend: added
 and added angle by angle (120°). Not checked against a file from an
 authoring tool: ufbx's layered files are unskinned cubes, which this
 importer reads no clip for. An animated layer weight is read at rest.
+
+## 46. FBX blend shapes (2026-11-12)
+
+§43 left FBX blend shapes unread. They are morph targets now
+(`fbx.rs`, `shapes_of`): under a geometry, each `BlendShape`
+deformer's `BlendShapeChannel` is one target, named as the channel
+is; its offsets are its full shape's (`Geometry` of kind `Shape`:
+`Indexes` name control points, `Vertices` their offsets; the shape
+`FullWeights` gives the most, else the last), turned and scaled as the
+mesh's positions are, and where a skin's bind pose places the vertices
+each offset's two ends are placed with them. The rest weight is the
+channel's `DeformPercent` over 100. A curve on `DeformPercent` (an
+`AnimationCurveNode` linked to the channel, its curve on
+`d|DeformPercent`) becomes the clip's weights, through the same
+easing and layers as a bone's curves (§45); a mesh with shapes and no
+skin gets clips of weights alone.
+
+Checked against Maya: ufbx's `maya_blend_shape_cube` (in
+`third_party/ufbx/data`, with the expected values from ufbx's
+`test_skin.h`): two channels, their eight offsets each (0.317 and
+0.284 file units), rest weights of 1, and the weights at frames 16
+and 53 (0.279, 0.670; 0.901, 0.168) to 2e-3:
+`blend_shapes_are_morph_targets_with_maya_s_weights`.
+`maya_blend_inbetween` reads with a note for its two channels'
+in-between shapes, which are not read: between 0 and the full weight
+such a channel moves straight to its full shape.

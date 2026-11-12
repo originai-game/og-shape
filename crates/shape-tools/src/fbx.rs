@@ -600,6 +600,18 @@ fn axes(root: &Node) -> [(usize, f64); 3] {
     ]
 }
 
+/// A blend-shape channel's weight in percent: its `DeformPercent`.
+fn deform_percent(channel: &&Node) -> f64 {
+    channel
+        .p70_num("DeformPercent")
+        .or(channel
+            .child("DeformPercent")
+            .and_then(|c| c.props.first())
+            .and_then(Prop::num))
+        .filter(|w| w.is_finite())
+        .unwrap_or(0.0)
+}
+
 /// A rotation matrix taken `w` of its way from no turn (`w` in 0..=1):
 /// the same axis, the angle scaled.
 fn part_turn(r: &Affine, w: f64) -> Affine {
@@ -663,6 +675,9 @@ struct Layer {
     /// Per model: its translation, rotation and scaling curves, an axis
     /// each, and the value an axis without a curve has in this layer.
     driven: BTreeMap<i64, [Channel; 3]>,
+    /// Per blend-shape channel: its `DeformPercent` curve, and its value
+    /// in this layer without one.
+    shapes: BTreeMap<i64, (Option<Curve>, f64)>,
 }
 
 /// A property's three curves in a layer, and its values without them.
@@ -1092,10 +1107,12 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
     let mut shapes = 0;
     for o in &objects.children {
         let class = o.props.get(2).and_then(Prop::str).unwrap_or("");
-        if o.name == "Deformer" && class != "Skin" && class != "Cluster" {
+        if o.name == "Deformer"
+            && !["Skin", "Cluster", "BlendShape", "BlendShapeChannel"].contains(&class)
+        {
             shapes += 1;
         }
-        if o.name == "Geometry" && o.props.get(2).and_then(Prop::str) != Some("Mesh") {
+        if o.name == "Geometry" && !["Mesh", "Shape"].contains(&class) {
             out.skipped.push(format!(
                 "geometry {:?} of kind {:?}",
                 object_name(o.props.get(1).and_then(Prop::str).unwrap_or("")),
@@ -1105,9 +1122,62 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
     }
     if shapes > 0 {
         out.skipped.push(format!(
-            "{shapes} blend-shape deformers: meshes read without them"
+            "{shapes} deformers that are neither skins nor blend shapes: meshes read without them"
         ));
     }
+    // A geometry's blend shapes: per channel a target (and how many
+    // shapes the channel has), and the channels' ids in that order.
+    let shapes_of = |g: &Node,
+                     turned: &dyn Fn(DVec3) -> DVec3,
+                     vertices: usize|
+     -> (Vec<(shape_mesh::Morph, usize)>, Vec<i64>) {
+        let class = |n: &Node| n.props.get(2).and_then(Prop::str).unwrap_or("").to_string();
+        let id_of = |n: &Node| n.props.first().and_then(Prop::int);
+        let under = |id: Option<i64>, name: &'static str, kind: &'static str| -> Vec<&Node> {
+            id.and_then(|id| children_of.get(&id))
+                .into_iter()
+                .flatten()
+                .filter_map(|c| by_id.get(c))
+                .filter(|n| n.name == name && class(n) == kind)
+                .copied()
+                .collect()
+        };
+        let (mut targets, mut ids) = (Vec::new(), Vec::new());
+        for deformer in under(id_of(g), "Deformer", "BlendShape") {
+            for channel in under(id_of(deformer), "Deformer", "BlendShapeChannel") {
+                let shapes = under(id_of(channel), "Geometry", "Shape");
+                // The shape at the channel's full weight: the last, or
+                // the one `FullWeights` gives the most.
+                let full = channel
+                    .array("FullWeights")
+                    .filter(|w| w.len() == shapes.len())
+                    .and_then(|w| (0..w.len()).rev().max_by(|a, b| w[*a].total_cmp(&w[*b])))
+                    .unwrap_or(shapes.len().saturating_sub(1));
+                let (Some(shape), Some(cid)) = (shapes.get(full), id_of(channel)) else {
+                    continue;
+                };
+                let mut deltas = vec![DVec3::ZERO; vertices];
+                let index = shape.array("Indexes").unwrap_or(&[]);
+                let offsets = shape.array("Vertices").unwrap_or(&[]);
+                for (i, d) in index.iter().zip(offsets.as_chunks::<3>().0) {
+                    let d = turned(DVec3::new(d[0], d[1], d[2]));
+                    if let Some(slot) = deltas.get_mut(*i as usize).filter(|_| d.is_finite()) {
+                        *slot = d;
+                    }
+                }
+                targets.push((
+                    shape_mesh::Morph {
+                        name: object_name(channel.props.get(1).and_then(Prop::str).unwrap_or("")),
+                        weight: deform_percent(&channel) / 100.0,
+                        deltas,
+                    },
+                    shapes.len(),
+                ));
+                ids.push(cid);
+            }
+        }
+        (targets, ids)
+    };
     // A geometry's skin: its Skin deformer's clusters, each a bone, with
     // the bind matrices the clusters carry (`Transform`: the mesh at bind
     // time; `TransformLink`: the bone), in the mesh's own coordinates.
@@ -1410,8 +1480,52 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
                 turns: int("RotationAccumulationMode") == 0,
                 multiplies: int("ScaleAccumulationMode") == 0,
                 driven: BTreeMap::new(),
+                shapes: BTreeMap::new(),
             };
             for cn in kids(lid, "AnimationCurveNode") {
+                // A blend-shape channel's weight, in percent.
+                let channel = op_links.iter().find_map(|(c, p, prop)| {
+                    (*c == cn
+                        && prop == "DeformPercent"
+                        && by_id.get(p).is_some_and(|n| n.name == "Deformer"))
+                    .then_some(*p)
+                });
+                if let Some(channel) = channel {
+                    let own = by_id.get(&channel).map_or(0.0, deform_percent);
+                    let rest = by_id
+                        .get(&cn)
+                        .and_then(|n| n.p70_num("d|DeformPercent"))
+                        .unwrap_or(if first { own } else { 0.0 });
+                    let mut found = None;
+                    for (c, p, prop) in &op_links {
+                        if *p != cn || prop != "d|DeformPercent" {
+                            continue;
+                        }
+                        let Some(curve) = by_id.get(c).filter(|n| n.name == "AnimationCurve")
+                        else {
+                            continue;
+                        };
+                        let (Some(t), Some(v)) =
+                            (curve.array("KeyTime"), curve.array("KeyValueFloat"))
+                        else {
+                            continue;
+                        };
+                        if t.is_empty() || t.len() != v.len() || t.windows(2).any(|w| w[1] < w[0]) {
+                            return Err(fmt_err(format!(
+                                "animation {sname:?}: a curve's times and values do not match or do not rise"
+                            )));
+                        }
+                        found = Some(Curve::new(
+                            t.iter().map(|x| x / 46_186_158_000.0).collect(),
+                            v.to_vec(),
+                            curve.array("KeyAttrFlags").unwrap_or(&[]),
+                            curve.array("KeyAttrDataFloat").unwrap_or(&[]),
+                            curve.array("KeyAttrRefCount").unwrap_or(&[]),
+                        ));
+                    }
+                    layer.shapes.insert(channel, (found, rest));
+                    continue;
+                }
                 // The model property this curve node drives.
                 let Some((model, slot)) = op_links.iter().find_map(|(c, p, prop)| {
                     let slot = match prop.as_str() {
@@ -1476,11 +1590,17 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
             }
             layers.push(layer);
         }
-        if layers.iter().any(|l| !l.driven.is_empty()) {
+        if layers
+            .iter()
+            .any(|l| !l.driven.is_empty() || !l.shapes.is_empty())
+        {
             stacks.push((sname, layers));
         }
     }
-    let clips_of = |space: &FbxSpace| -> Result<Vec<shape_mesh::SkinClip>, ImportError> {
+    // `channels`: the part's blend-shape channels, in its targets' order.
+    let clips_of = |space: &FbxSpace,
+                    channels: &[i64]|
+     -> Result<Vec<shape_mesh::SkinClip>, ImportError> {
         let mut clips = Vec::new();
         let mut used = BTreeMap::new();
         for (sname, layers) in &stacks {
@@ -1489,6 +1609,12 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
                 .flat_map(|l| l.driven.values())
                 .flatten()
                 .flat_map(|ch| ch.curves.iter().flatten())
+                .chain(
+                    layers
+                        .iter()
+                        .flat_map(|l| l.shapes.values())
+                        .filter_map(|s| s.0.as_ref()),
+                )
                 .flat_map(|c| c.times.iter().copied())
                 .collect();
             if times.is_empty() {
@@ -1568,8 +1694,34 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
                 }
                 poses.push(pose);
             }
+            // Each channel's weight at each time, through the layers.
+            let mut morphs = Vec::new();
+            let driven = |c: &i64| layers.iter().any(|l| l.shapes.contains_key(c));
+            if channels.iter().any(driven) {
+                for &time in &times {
+                    let row = channels
+                        .iter()
+                        .map(|c| {
+                            let mut at = Layered {
+                                t: DVec3::new(by_id.get(c).map_or(0.0, deform_percent), 0.0, 0.0),
+                                r: DVec3::ZERO,
+                                turned: None,
+                                s: DVec3::ONE,
+                            };
+                            for (k, layer) in layers.iter().enumerate() {
+                                if let Some((curve, rest)) = layer.shapes.get(c) {
+                                    let v = curve.as_ref().map_or(*rest, |x| x.at(time));
+                                    at.lay(k == 0, layer, 0, DVec3::new(v, 0.0, 0.0), 0);
+                                }
+                            }
+                            at.t.x / 100.0
+                        })
+                        .collect();
+                    morphs.push(row);
+                }
+            }
             clips.push(shape_mesh::SkinClip {
-                morphs: Vec::new(),
+                morphs,
                 name: unique(sname, &mut used),
                 times: times.iter().map(|t| t - start).collect(),
                 poses,
@@ -1691,16 +1843,66 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
                 ));
             }
             solid.uvs = uvs;
+            // Blend shapes: each channel a morph target, its last shape's
+            // offsets (control points the shape does not list stay).
+            let (mut targets, channels) = shapes_of(
+                g,
+                &|d: DVec3| to_kernel(geo.rotate(d)) * unit,
+                solid.positions.len(),
+            );
+            if !channels.is_empty() {
+                let lost = targets.iter().filter(|t| t.1 > 1).count();
+                if lost > 0 {
+                    out.skipped.push(format!(
+                        "{name}: {lost} blend-shape channels have in-between shapes; the full one is read"
+                    ));
+                }
+            }
             let read = skin_of(g, &name, &solid.positions)?;
             let mut clips = Vec::new();
             if let Some(((skin, scaled), space)) = read {
-                clips = clips_of(&space)?;
+                clips = clips_of(&space, &channels)?;
                 if let Some((placed, info)) = scaled {
-                    // Where the file's bind pose puts the vertices.
+                    // Where the file's bind pose puts the vertices, and
+                    // each target's ends with them.
+                    for (t, _) in &mut targets {
+                        let moved: Vec<DVec3> = solid
+                            .positions
+                            .iter()
+                            .zip(&t.deltas)
+                            .map(|(p, d)| *p + *d)
+                            .collect();
+                        if let Some(((_, Some((ends, _))), _)) = skin_of(g, &name, &moved)? {
+                            for ((d, e), p) in t.deltas.iter_mut().zip(&ends).zip(&placed) {
+                                *d = *e - *p;
+                            }
+                        }
+                    }
                     solid.positions = placed;
                     out.skin_scales.push(info);
                 }
                 solid.skin = Some(skin);
+            } else if !channels.is_empty() {
+                // No bones: the clips drive the targets alone.
+                let none = FbxSpace {
+                    ids: Vec::new(),
+                    unlink: Vec::new(),
+                    mesh: Vec::new(),
+                    out: Affine::IDENTITY,
+                };
+                clips = clips_of(&none, &channels)?;
+            }
+            if !targets.is_empty() {
+                let mut names = BTreeMap::new();
+                solid.morphs = Some(shape_mesh::Morphs {
+                    targets: targets
+                        .into_iter()
+                        .map(|(mut t, _)| {
+                            t.name = unique(&t.name, &mut names);
+                            t
+                        })
+                        .collect(),
+                });
             }
             let mut transform = conj(&world(id));
             if solid.skin.is_some() {
@@ -2250,6 +2452,73 @@ Connections:  {
                 assert!(
                     (got - want).abs() < within,
                     "case {k}, frame {frame}: {got} for {want}"
+                );
+            }
+        }
+    }
+
+    /// A cube Maya gave two blend shapes and animated (ufbx's test file
+    /// and its expected values, `third_party/ufbx`): each channel is a
+    /// morph target with the offsets and rest weight Maya has, and the
+    /// clip drives the two weights as Maya evaluates them.
+    #[test]
+    fn blend_shapes_are_morph_targets_with_maya_s_weights() {
+        let bytes =
+            include_bytes!("../../../third_party/ufbx/data/maya_blend_shape_cube_7700_binary.fbx");
+        let imported = import_fbx(bytes, &no_files).unwrap();
+        assert!(imported.skipped.is_empty(), "{:?}", imported.skipped);
+        let part = &imported.parts[0];
+        let m = part.solid.morphs.as_ref().expect("targets");
+        m.check(part.solid.positions.len()).unwrap();
+        let names: Vec<&str> = m.targets.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["Squish.TopH", "Squish.TopV"]);
+        assert!(m.targets.iter().all(|t| (t.weight - 1.0).abs() < 1e-6));
+        // The file's centimetres, Y up: 0.317 along x is 3.17 mm along
+        // x, and 0.284 along z is 2.84 mm along −y.
+        let (h, v) = (3.17, 2.84);
+        let want = [
+            [
+                [0.0; 3],
+                [0.0; 3],
+                [h, 0.0, 0.0],
+                [-h, 0.0, 0.0],
+                [h, 0.0, 0.0],
+                [-h, 0.0, 0.0],
+                [0.0; 3],
+                [0.0; 3],
+            ],
+            [
+                [0.0; 3],
+                [0.0; 3],
+                [0.0, v, 0.0],
+                [0.0, v, 0.0],
+                [0.0, -v, 0.0],
+                [0.0, -v, 0.0],
+                [0.0; 3],
+                [0.0; 3],
+            ],
+        ];
+        for (t, want) in m.targets.iter().zip(want) {
+            for (d, w) in t.deltas.iter().zip(want) {
+                assert!(
+                    (*d - DVec3::from_array(w)).length() < 0.01,
+                    "{}: {d:?} for {w:?}",
+                    t.name
+                );
+            }
+        }
+        // Maya's weights at frames 16 and 53 (the clip starts at frame 1).
+        let clip = &part.clips[0];
+        for (frame, want) in [
+            (1.0, [1.0, 1.0]),
+            (16.0, [0.279, 0.670]),
+            (53.0, [0.901, 0.168]),
+        ] {
+            let got = clip.weights_at((frame - 1.0) / 24.0).unwrap();
+            for k in 0..2 {
+                assert!(
+                    (got[k] - want[k]).abs() < 2e-3,
+                    "frame {frame}: {got:?} for {want:?}"
                 );
             }
         }

@@ -1482,3 +1482,10 @@
   and with `TANGENT` (`Part::tangents`: the scene writer writes the
   frame the plain GLB writes). Mixamo's soldier at 4 000 triangles,
   freshly unwrapped and baked at 1024, runs as the original does.
+- FBX blend shapes are read as morph targets: each `BlendShapeChannel`
+  a target named as the channel is, with its full shape's offsets and
+  its `DeformPercent` as rest weight, and an animation's `DeformPercent`
+  curves as the clips' weights (eased and layered as the bones' curves
+  are). A channel's in-between shapes are noted and not read. Checked
+  against Maya's values on ufbx's blend-shape cube
+  (`docs/research.md` §46).

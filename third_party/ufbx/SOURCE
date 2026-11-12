@@ -6,9 +6,11 @@ What is here:
   data/maya_interpolation_modes_7500_binary.fbx
   data/maya_auto_clamp_7700_binary.fbx
   data/maya_tangent_spline_7700_binary.fbx
+  data/maya_blend_shape_cube_7700_binary.fbx
       ufbx's test files: one animated cube each, written by Maya. The
       values Maya gives each curve at 24 frames a second are in ufbx's
-      test/test_animation.h and, copied from there, in the test in
+      test/test_animation.h (the blend-shape cube's offsets and weights
+      in test/test_skin.h) and, copied from there, in the tests in
       crates/shape-tools/src/fbx.rs.
 
 What was read:

@@ -12,8 +12,8 @@ import → join → repair → decimate → place → unwrap → measure → pre
 ```
 
 1. **Import** the file (`import`). Read what was skipped
-   (`Imported::skipped`): points, lines, NURBS and FBX blend shapes are
-   not read. glTF **morph targets** are: `import` lists each part's
+   (`Imported::skipped`): points, lines and NURBS are not read. glTF
+   **morph targets** and FBX blend shapes are: `import` lists each part's
    `morphs` (names), `measure` each one's rest weight and reach, and
    every mesh command keeps them (offsets follow the vertices; welded
    vertices take the mean, a collapsed edge the blend) and writes them
