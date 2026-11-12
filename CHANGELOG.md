@@ -1579,3 +1579,5 @@
   was drawn all white). A matte part that is no metal is drawn as
   before, to the byte; previews of parts with `metalness` over 0 or
   `roughness` under 1 change (`docs/research.md` §53).
+- `glb_plain` writes a solid's morph targets (offsets, rest weights,
+  names) where it refused them; a skinned solid is still refused.

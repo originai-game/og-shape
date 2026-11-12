@@ -1165,8 +1165,21 @@ fn morph_targets_are_read_carried_and_written() {
         .map(|(p, d)| (*p * 0.1 - *d).length())
         .fold(0.0, f64::max);
     assert!(off < 0.5, "{off}");
-    // A plain GLB would drop the targets: refused.
-    assert!(glb_plain(&half, &PlainGlb::default()).is_err());
+    // A plain GLB carries the targets: read back, the same shape at
+    // every weight (to the file's f32), under the same name.
+    let plain = glb_plain(&half, &PlainGlb::default()).unwrap();
+    let back = import(&plain, &Import::default(), &no_files).unwrap();
+    let read = &back.parts[0].solid;
+    let rm = read.morphs.as_ref().expect("targets read back");
+    assert_eq!(rm.targets.len(), 1);
+    assert_eq!(rm.targets[0].name, m.targets[0].name);
+    assert_eq!(rm.targets[0].weight, m.targets[0].weight);
+    let (a, b) = (half.morphed(&[1.0]), read.morphed(&[1.0]));
+    assert_eq!(
+        shape_tools::measure(&a, &Measure::default()).triangles,
+        shape_tools::measure(&b, &Measure::default()).triangles
+    );
+    assert!((a.measure().volume - b.measure().volume).abs() < 1e-3 * a.measure().volume.abs());
 }
 
 /// A primitive under `KHR_draco_mesh_compression` is read from its

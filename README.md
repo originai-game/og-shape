@@ -224,7 +224,7 @@ What a user might expect and will not find, as of 2026-11-12:
   come from. Draco is read, never written.
 - **Morph targets in the kernel.** A solid with morph targets goes
   through import, repair, decimation, preview and export; booleans,
-  bevels, edits, `subdivide` and the plain GLB refuse it. A target's
+  bevels, edits and `subdivide` refuse it. A target's
   normals and a second UV set are not read.
 - **FBX.** Animation layers are checked on a hand-written file, not on
   one from an authoring tool. NURBS and other geometry that is not a

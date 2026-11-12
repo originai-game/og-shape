@@ -58,7 +58,7 @@ impl fmt::Display for PlainGlbError {
                 f.write_str("a position, UV, colour or material value is not finite")
             }
             PlainGlbError::Skinned => f.write_str(
-                "the solid is skinned or has morph targets and a plain GLB carries neither, so it is refused",
+                "the solid is skinned and a plain GLB carries no skin, so it is refused",
             ),
             PlainGlbError::UvMismatch => {
                 f.write_str("the UVs were made for a different number of triangles")
@@ -78,10 +78,16 @@ impl std::error::Error for PlainGlbError {}
 /// the input.
 /// A skinned solid is refused: a plain GLB promises one mesh with no
 /// skin, and dropping the bones would break it silently. [`crate::glb`]
-/// writes skins.
+/// writes skins. Morph targets are written, with their rest weights and
+/// names.
 pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
-    if s.skin.is_some() || s.morphs.is_some() {
+    if s.skin.is_some() {
         return Err(PlainGlbError::Skinned);
+    }
+    if let Some(m) = &s.morphs
+        && m.check(s.positions.len()).is_err()
+    {
+        return Err(PlainGlbError::NotFinite);
     }
     if s.positions.iter().any(|p| !p.is_finite()) {
         return Err(PlainGlbError::NotFinite);
@@ -137,6 +143,8 @@ pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
     let mut nrm: Vec<[f32; 3]> = Vec::new();
     let mut tex: Vec<[f32; 2]> = Vec::new();
     let mut col: Vec<[f32; 4]> = Vec::new();
+    // The solid's vertex each written vertex came from.
+    let mut sources: Vec<u32> = Vec::new();
     let mut indices: Vec<u32> = Vec::with_capacity(s.triangles.len() * 3);
     for (i, t) in s.triangles.iter().enumerate() {
         for (k, &v) in t.iter().enumerate() {
@@ -152,6 +160,7 @@ pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
             let next = pos.len() as u32;
             let id = *ids.entry(key).or_insert(next);
             if id == next {
+                sources.push(v);
                 let p = y_up(s.positions[v as usize]) * METRES;
                 pos.push([p.x as f32, p.y as f32, p.z as f32]);
                 let n = normal[&(v, s.surfaces[i])];
@@ -267,6 +276,37 @@ pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
             attributes.push(("COLOR_0", Json::Int(a)));
         }
     }
+    // Morph targets: each written vertex's offset, in glTF space.
+    let mut targets = Vec::new();
+    for t in s.morphs.iter().flat_map(|m| &m.targets) {
+        if pos.is_empty() {
+            break;
+        }
+        let mut lo = [f32::INFINITY; 3];
+        let mut hi = [f32::NEG_INFINITY; 3];
+        let mut flat: Vec<f32> = Vec::with_capacity(sources.len() * 3);
+        for &v in &sources {
+            let q = y_up(t.deltas[v as usize]) * METRES;
+            for (k, c) in [q.x as f32, q.y as f32, q.z as f32].into_iter().enumerate() {
+                lo[k] = lo[k].min(c);
+                hi[k] = hi[k].max(c);
+                flat.push(c);
+            }
+        }
+        let a = add(
+            &mut bin,
+            floats(&flat),
+            34962,
+            vec![
+                ("componentType", Json::Int(5126)),
+                ("count", Json::Int(sources.len() as u64)),
+                ("type", Json::Str("VEC3".into())),
+                ("min", Json::Arr(lo.iter().map(|&v| f32n(v)).collect())),
+                ("max", Json::Arr(hi.iter().map(|&v| f32n(v)).collect())),
+            ],
+        );
+        targets.push(Json::Obj(vec![("POSITION", Json::Int(a))]));
+    }
     let mut doc = vec![
         (
             "asset",
@@ -307,21 +347,34 @@ pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
                 ("mesh", Json::Int(0)),
             ])]),
         ));
-        doc.push((
-            "meshes",
-            Json::Arr(vec![Json::Obj(vec![
-                ("name", Json::Str(name.into())),
-                (
-                    "primitives",
-                    Json::Arr(vec![Json::Obj(vec![
-                        ("attributes", Json::Obj(attributes)),
-                        ("indices", Json::Int(ia)),
-                        ("material", Json::Int(0)),
-                        ("mode", Json::Int(4)),
-                    ])]),
-                ),
-            ])]),
-        ));
+        let mut primitive = vec![
+            ("attributes", Json::Obj(attributes)),
+            ("indices", Json::Int(ia)),
+            ("material", Json::Int(0)),
+            ("mode", Json::Int(4)),
+        ];
+        let mut mesh = vec![("name", Json::Str(name.into()))];
+        if let (Some(m), false) = (&s.morphs, targets.is_empty()) {
+            primitive.push(("targets", Json::Arr(targets)));
+            mesh.push((
+                "weights",
+                Json::Arr(m.targets.iter().map(|t| f32n(t.weight as f32)).collect()),
+            ));
+            mesh.push((
+                "extras",
+                Json::Obj(vec![(
+                    "targetNames",
+                    Json::Arr(
+                        m.targets
+                            .iter()
+                            .map(|t| Json::Str(t.name.clone()))
+                            .collect(),
+                    ),
+                )]),
+            ));
+        }
+        mesh.insert(1, ("primitives", Json::Arr(vec![Json::Obj(primitive)])));
+        doc.push(("meshes", Json::Arr(vec![Json::Obj(mesh)])));
         doc.push(("materials", Json::Arr(vec![material_json])));
         doc.push(("accessors", Json::Arr(accessors)));
         doc.extend(texture_json(&textures, &mut bin, &mut views));
