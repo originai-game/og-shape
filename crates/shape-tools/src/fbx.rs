@@ -534,19 +534,28 @@ fn local(m: &Node) -> Affine {
 /// [`local`] with the model's translation, rotation (Euler degrees, in
 /// its own order) and scaling given: what an animation curve changes.
 fn local_with(m: &Node, lcl_t: DVec3, lcl_r: DVec3, lcl_s: DVec3) -> Affine {
-    let v = |k: &str| m.p70_vec(k, DVec3::ZERO);
-    let order = m
-        .p70("RotationOrder")
+    local_turned(m, lcl_t, &euler(lcl_r, rotation_order(m)), lcl_s)
+}
+
+/// A model's `RotationOrder`.
+fn rotation_order(m: &Node) -> i64 {
+    m.p70("RotationOrder")
         .and_then(|p| p.first())
         .and_then(Prop::int)
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
+
+/// [`local_with`], the rotation given as a matrix (what layers composed
+/// leave).
+fn local_turned(m: &Node, lcl_t: DVec3, lcl_r: &Affine, lcl_s: DVec3) -> Affine {
+    let v = |k: &str| m.p70_vec(k, DVec3::ZERO);
     let (rp, sp) = (v("RotationPivot"), v("ScalingPivot"));
     let chain = [
         translate(lcl_t),
         translate(v("RotationOffset")),
         translate(rp),
         euler(v("PreRotation"), 0),
-        euler(lcl_r, order),
+        *lcl_r,
         transpose(&euler(v("PostRotation"), 0)),
         translate(-rp),
         translate(v("ScalingOffset")),
@@ -589,6 +598,390 @@ fn axes(root: &Node) -> [(usize, f64); 3] {
         (u as usize, sign(get("UpAxisSign", 1))),
         (f as usize, sign(get("FrontAxisSign", 1))),
     ]
+}
+
+/// A rotation matrix taken `w` of its way from no turn (`w` in 0..=1):
+/// the same axis, the angle scaled.
+fn part_turn(r: &Affine, w: f64) -> Affine {
+    if w >= 1.0 {
+        return *r;
+    }
+    let trace = r.x.x + r.y.y + r.z.z;
+    let angle = trig::acos(((trace - 1.0) * 0.5).clamp(-1.0, 1.0));
+    // The axis: the matrix's skew part, or by its diagonal at a half turn.
+    let mut axis = DVec3::new(r.y.z - r.z.y, r.z.x - r.x.z, r.x.y - r.y.x);
+    if axis.length() < 1e-9 {
+        if angle < 1.0 {
+            return Affine::IDENTITY;
+        }
+        axis = DVec3::new(
+            ((r.x.x + 1.0) * 0.5).max(0.0).sqrt(),
+            ((r.y.y + 1.0) * 0.5).max(0.0).sqrt(),
+            ((r.z.z + 1.0) * 0.5).max(0.0).sqrt(),
+        );
+        if r.x.y + r.y.x < 0.0 {
+            axis.y = -axis.y;
+        }
+        if r.x.z + r.z.x < 0.0 {
+            axis.z = -axis.z;
+        }
+    }
+    let Some(n) = axis.try_normalize() else {
+        return Affine::IDENTITY;
+    };
+    // Rodrigues: each basis vector turned about the axis.
+    let (s, c) = trig::sin_cos(angle * w);
+    let turn = |v: DVec3| v * c + n.cross(v) * s + n * (n.dot(v) * (1.0 - c));
+    Affine {
+        x: turn(DVec3::X),
+        y: turn(DVec3::Y),
+        z: turn(DVec3::Z),
+        t: DVec3::ZERO,
+    }
+}
+
+/// A model's translation, rotation and scaling as an animation's layers
+/// leave them (`docs/research.md` §45).
+struct Layered {
+    t: DVec3,
+    /// Euler degrees, until a layer composes a turn onto them.
+    r: DVec3,
+    /// The rotation once layers were composed as turns.
+    turned: Option<Affine>,
+    s: DVec3,
+}
+
+/// One layer of an animation stack: how it lies on those under it.
+struct Layer {
+    /// 0 adds, 2 mixes towards its value by its weight, others replace.
+    mode: i64,
+    /// 0..=1.
+    weight: f64,
+    /// Rotations add as turns (not angle by angle); scalings multiply.
+    turns: bool,
+    multiplies: bool,
+    /// Per model: its translation, rotation and scaling curves, an axis
+    /// each, and the value an axis without a curve has in this layer.
+    driven: BTreeMap<i64, [Channel; 3]>,
+}
+
+/// A property's three curves in a layer, and its values without them.
+#[derive(Default)]
+struct Channel {
+    on: bool,
+    curves: [Option<Curve>; 3],
+    rest: [f64; 3],
+}
+
+impl Layered {
+    /// Lays `value` of property `slot` (0 translation, 1 rotation, 2
+    /// scaling) on, as `layer` does; the stack's first layer replaces.
+    fn lay(&mut self, first: bool, layer: &Layer, slot: usize, value: DVec3, order: i64) {
+        let w = layer.weight;
+        let mode = if first { 1 } else { layer.mode };
+        let power = |v: f64, e: f64| {
+            if e <= 0.0 {
+                1.0
+            } else if e >= 1.0 {
+                v
+            } else {
+                trig::pow(v.abs(), e) * if v < 0.0 { -1.0 } else { 1.0 }
+            }
+        };
+        match (slot, mode) {
+            (0, 0) => self.t += value * w,
+            (0, 2) => self.t = self.t * (1.0 - w) + value * w,
+            (0, _) => self.t = value,
+            (2, 0) if layer.multiplies => {
+                self.s *= DVec3::new(power(value.x, w), power(value.y, w), power(value.z, w));
+            }
+            (2, 0) => self.s += value * w,
+            (2, 2) if layer.multiplies => {
+                let mix = |a: f64, b: f64| power(a, 1.0 - w) * power(b, w);
+                self.s = DVec3::new(
+                    mix(self.s.x, value.x),
+                    mix(self.s.y, value.y),
+                    mix(self.s.z, value.z),
+                );
+            }
+            (2, 2) => self.s = self.s * (1.0 - w) + value * w,
+            (2, _) => self.s = value,
+            (_, 0 | 2) if layer.turns => {
+                let under = self.turned.unwrap_or_else(|| euler(self.r, order));
+                let over = euler(value, order);
+                // Adding: the layer's turn, part of it, after those
+                // under. Mixing: part of the way from those to it.
+                let step = if mode == 0 {
+                    part_turn(&over, w)
+                } else {
+                    part_turn(&transpose(&under).then(&over), w)
+                };
+                self.turned = Some(under.then(&step));
+            }
+            (_, 0) => self.r += value * w,
+            (_, 2) => self.r = self.r * (1.0 - w) + value * w,
+            _ => {
+                self.r = value;
+                self.turned = None;
+            }
+        }
+    }
+}
+
+/// How a curve runs from one key to the next.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Ease {
+    /// The key's value, until the next.
+    Hold,
+    /// The next key's value, from this one on.
+    HoldNext,
+    /// Straight.
+    Line,
+    /// A cubic Bézier in time and value, by the handles either side.
+    Cubic,
+}
+
+/// One number of a model's property over time (an `AnimationCurve`): its
+/// keys, and for each how it runs to the next (`docs/research.md` §45).
+#[derive(Clone, Debug)]
+struct Curve {
+    /// Key times, seconds, rising.
+    times: Vec<f64>,
+    values: Vec<f64>,
+    ease: Vec<Ease>,
+    /// Per key, the handle leaving it: seconds and value from the key.
+    right: Vec<(f64, f64)>,
+    /// Per key, the handle arriving at it: seconds and value before it.
+    left: Vec<(f64, f64)>,
+}
+
+const KEY_CONSTANT: i64 = 0x2;
+const KEY_CUBIC: i64 = 0x8;
+const KEY_AUTO_OR_NEXT: i64 = 0x100;
+const KEY_TCB: i64 = 0x200;
+const KEY_USER: i64 = 0x400;
+const KEY_CLAMP: i64 = 0x1000;
+const KEY_TIME_INDEPENDENT: i64 = 0x2000;
+const KEY_CLAMP_PROGRESSIVE: i64 = 0x4000;
+const KEY_WEIGHTED_RIGHT: i64 = 0x100_0000;
+const KEY_WEIGHTED_NEXT_LEFT: i64 = 0x200_0000;
+
+impl Curve {
+    /// The curve of `times` and `values` with the file's key attributes:
+    /// `flags` and four numbers of `data` for each run of keys that
+    /// `refs` counts. Without them every key runs straight to the next.
+    fn new(times: Vec<f64>, values: Vec<f64>, flags: &[f64], data: &[f64], refs: &[f64]) -> Curve {
+        let n = times.len();
+        let third = 1.0 / 3.0;
+        let mut c = Curve {
+            ease: vec![Ease::Line; n],
+            right: vec![(0.0, 0.0); n],
+            left: vec![(0.0, 0.0); n],
+            times,
+            values,
+        };
+        // Each key's run of attributes.
+        let mut run_of = Vec::with_capacity(n);
+        for (run, count) in refs.iter().enumerate() {
+            for _ in 0..(*count).max(0.0) as usize {
+                if run_of.len() < n {
+                    run_of.push(run);
+                }
+            }
+        }
+        if run_of.len() < n || flags.len() < refs.len() || data.len() < refs.len() * 4 {
+            run_of.clear();
+        }
+        // What the key before left for this key's arriving handle.
+        let (mut slope_left, mut weight_left) = (0.0f64, third);
+        for i in 0..n {
+            let (t, v) = (c.times[i], c.values[i]);
+            let before = (i > 0 && t > c.times[i - 1]).then(|| (c.times[i - 1], c.values[i - 1]));
+            let after =
+                (i + 1 < n && c.times[i + 1] > t).then(|| (c.times[i + 1], c.values[i + 1]));
+            let chord = after.map_or(0.0, |(nt, nv)| (nv - v) / (nt - t));
+            let (flag, attr) = match run_of.get(i) {
+                Some(&run) => (flags[run] as i64, &data[run * 4..run * 4 + 4]),
+                None => (0, &[0.0; 4][..]),
+            };
+            let (mut slope_right, mut next_slope_left) = (attr[0], attr[1]);
+            let (mut weight_right, mut next_weight_left) = (third, third);
+            // Weights: two decimal fixed-point numbers in the third
+            // number's bits.
+            let packed = (attr[2] as f32).to_bits();
+            if flag & KEY_WEIGHTED_RIGHT != 0 {
+                weight_right = f64::from(packed & 0xffff) * 0.0001;
+            }
+            if flag & KEY_WEIGHTED_NEXT_LEFT != 0 {
+                next_weight_left = f64::from(packed >> 16) * 0.0001;
+            }
+            if flag & KEY_CONSTANT != 0 {
+                c.ease[i] = if flag & KEY_AUTO_OR_NEXT != 0 {
+                    Ease::HoldNext
+                } else {
+                    Ease::Hold
+                };
+                (weight_right, next_weight_left) = (third, third);
+                (slope_right, next_slope_left) = (0.0, 0.0);
+            } else if flag & KEY_CUBIC != 0 {
+                c.ease[i] = Ease::Cubic;
+                if flag & KEY_TCB != 0 {
+                    // Tension, continuity and bias mix the chords either side.
+                    let (tension, continuity, bias) = (attr[0], attr[1], attr[2]);
+                    let chord_left = before.map_or(0.0, |(pt, pv)| (v - pv) / (t - pt));
+                    let factor = if before.is_some() && after.is_some() {
+                        0.5
+                    } else {
+                        1.0
+                    };
+                    let k = factor * (1.0 - tension);
+                    slope_left = k
+                        * ((1.0 + bias) * (1.0 - continuity) * chord_left
+                            + (1.0 - bias) * (1.0 + continuity) * chord);
+                    slope_right = k
+                        * ((1.0 + bias) * (1.0 + continuity) * chord_left
+                            + (1.0 - bias) * (1.0 - continuity) * chord);
+                    next_slope_left = 0.0;
+                    next_weight_left = third;
+                } else if flag & KEY_USER == 0 {
+                    // Automatic: the slope through the keys either side;
+                    // what the file stores is a bias.
+                    let auto = |bias: f64| -> f64 {
+                        match (before, after) {
+                            (Some((pt, pv)), Some((nt, nv))) => {
+                                if flag & KEY_CLAMP != 0 && (pv == v || nv == v) {
+                                    return 0.0;
+                                }
+                                let mut slope = (nv - pv) / (nt - pt);
+                                let (sl, sr) = ((v - pv) / (t - pt), (nv - v) / (nt - t));
+                                if flag & KEY_TIME_INDEPENDENT == 0 {
+                                    let delta = (t - pt) / (nt - pt);
+                                    slope = slope * 0.5 + (sl * (1.0 - delta) + sr * delta) * 0.5;
+                                    let w = bias.abs() / 100.0;
+                                    if w > 0.0001 {
+                                        let target = if bias > 0.0 { sr } else { sl };
+                                        let toward = target - slope;
+                                        slope = slope * (1.0 - w) + target * w;
+                                        if w > 5.0 {
+                                            let sign =
+                                                if toward.abs() > 0.00001 { toward } else { bias };
+                                            let sign = if sign > 0.0 { 1.0 } else { -1.0 };
+                                            slope += (w - 5.0) * (w - 5.0) * sign * 40.0;
+                                        }
+                                    }
+                                }
+                                if flag & KEY_CLAMP_PROGRESSIVE != 0 {
+                                    // Neither handle passes its neighbour's value.
+                                    let sign = if slope >= 0.0 { 1.0 } else { -1.0 };
+                                    let reach_left = weight_left * (t - pt);
+                                    let reach_right = weight_right * (nt - t);
+                                    let mut most = slope * sign;
+                                    for limit in [
+                                        sign * (v - pv) / reach_left,
+                                        sign * (nv - v) / reach_right,
+                                    ] {
+                                        most = most.min(if limit > 0.0 { limit } else { 0.0 });
+                                    }
+                                    slope = sign * most;
+                                }
+                                slope
+                            }
+                            (side_before, side_after) => {
+                                let Some((ot, ov)) = side_before.or(side_after) else {
+                                    return 0.0;
+                                };
+                                if flag & KEY_CLAMP_PROGRESSIVE != 0
+                                    || (flag & KEY_CLAMP != 0 && ov == v)
+                                {
+                                    return 0.0;
+                                }
+                                let mut slope = (ov - v) / (ot - t);
+                                let w = bias.abs() / 100.0 - 5.0;
+                                if flag & KEY_TIME_INDEPENDENT == 0 && w > 0.0 {
+                                    slope += w * w * if bias > 0.0 { 40.0 } else { -40.0 };
+                                }
+                                slope
+                            }
+                        }
+                    };
+                    if before.is_some()
+                        && after.is_some()
+                        && (slope_left + slope_right).abs() > 0.0001
+                    {
+                        (slope_left, slope_right) = (auto(-slope_left), auto(slope_right));
+                    } else if before.is_some() && after.is_none() {
+                        slope_left = auto(-slope_left);
+                        slope_right = slope_left;
+                    } else {
+                        slope_right = auto(slope_right);
+                        slope_left = slope_right;
+                    }
+                }
+            } else {
+                (weight_right, next_weight_left) = (third, third);
+                (slope_right, next_slope_left) = (chord, chord);
+            }
+            if let Some((pt, _)) = before {
+                let dx = weight_left * (t - pt);
+                c.left[i] = (dx, dx * slope_left);
+            }
+            if let Some((nt, _)) = after {
+                let dx = weight_right * (nt - t);
+                c.right[i] = (dx, dx * slope_right);
+            }
+            (slope_left, weight_left) = (next_slope_left, next_weight_left);
+        }
+        c
+    }
+
+    /// The value at `time`: the first key's before it, the last key's
+    /// after it.
+    fn at(&self, time: f64) -> f64 {
+        let (t, v) = (&self.times, &self.values);
+        let k = t.partition_point(|&x| x <= time);
+        if k == 0 {
+            return v[0];
+        }
+        if k >= t.len() || t[k - 1] == time {
+            return v[k - 1];
+        }
+        let span = t[k] - t[k - 1];
+        let x = (time - t[k - 1]) / span;
+        match self.ease[k - 1] {
+            Ease::Hold => v[k - 1],
+            Ease::HoldNext => v[k],
+            Ease::Line => v[k - 1] + (v[k] - v[k - 1]) * x,
+            Ease::Cubic => {
+                // Where along the Bézier the time is `x`: its time runs
+                // 0, x1, x2, 1 and rises, so halving finds it.
+                let x1 = self.right[k - 1].0 / span;
+                let x2 = 1.0 - self.left[k].0 / span;
+                let time_at = |s: f64| {
+                    let u = 1.0 - s;
+                    3.0 * (u * u * s * x1 + u * s * s * x2) + s * s * s
+                };
+                let (mut lo, mut hi) = (0.0f64, 1.0f64);
+                // Handles a third of the way each: the time is the place.
+                let even = (x1 - 1.0 / 3.0).abs() < 1e-9 && (x2 - 2.0 / 3.0).abs() < 1e-9;
+                if even {
+                    (lo, hi) = (x, x);
+                }
+                for _ in 0..if even { 0 } else { 60 } {
+                    let mid = (lo + hi) * 0.5;
+                    if time_at(mid) < x {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                let s = (lo + hi) * 0.5;
+                let u = 1.0 - s;
+                let (y0, y3) = (v[k - 1], v[k]);
+                let (y1, y2) = (y0 + self.right[k - 1].1, y3 - self.left[k].1);
+                u * u * u * y0 + 3.0 * (u * u * s * y1 + u * s * s * y2) + s * s * s * y3
+            }
+        }
+    }
 }
 
 /// Reads an FBX 7.x file, binary or ASCII. See the module docs for what
@@ -981,8 +1374,8 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
     };
     // The file's animation stacks as they move a skin: each sampled at
     // its curves' key times and sixty times a second between them. A
-    // stack's first layer is read; a curve is straight between its keys
-    // (its easing is not read).
+    // stack's first layer is read; a curve's easing between its keys
+    // (`Curve`) is in the samples.
     let kids = |id: i64, name: &str| -> Vec<i64> {
         children_of
             .get(&id)
@@ -992,99 +1385,111 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
             .filter(|c| by_id.get(c).is_some_and(|n| n.name == name))
             .collect()
     };
-    let mut layered = Vec::new();
-    // Per stack: its name, and per model its (translation, rotation,
-    // scaling) curves, each axis as key times (seconds) and values.
-    type Curve = (Vec<f64>, Vec<f64>);
-    type Driven = BTreeMap<i64, [[Option<Curve>; 3]; 3]>;
-    let mut stacks: Vec<(String, Driven)> = Vec::new();
+    // Per stack: its name and its layers, the first undermost.
+    let mut stacks: Vec<(String, Vec<Layer>)> = Vec::new();
     for o in objects.all("AnimationStack") {
         let Some(sid) = o.props.first().and_then(Prop::int) else {
             continue;
         };
         let sname = object_name(o.props.get(1).and_then(Prop::str).unwrap_or(""));
-        let layers = kids(sid, "AnimationLayer");
-        if layers.len() > 1 {
-            layered.push(format!(
-                "animation {sname:?}: {} layers, the first read",
-                layers.len()
-            ));
-        }
-        let Some(&layer) = layers.first() else {
-            continue;
-        };
-        let mut driven: Driven = BTreeMap::new();
-        for cn in kids(layer, "AnimationCurveNode") {
-            // The model property this curve node drives.
-            let Some((model, slot)) = op_links.iter().find_map(|(c, p, prop)| {
-                let slot = match prop.as_str() {
-                    "Lcl Translation" => 0,
-                    "Lcl Rotation" => 1,
-                    "Lcl Scaling" => 2,
-                    _ => return None,
-                };
-                (*c == cn && by_id.get(p).is_some_and(|n| n.name == "Model")).then_some((*p, slot))
-            }) else {
-                continue;
+        let mut layers = Vec::new();
+        for lid in kids(sid, "AnimationLayer") {
+            let first = layers.is_empty();
+            let node = by_id.get(&lid);
+            let int = |key: &str| {
+                node.and_then(|n| n.p70(key))
+                    .and_then(|p| p.first())
+                    .and_then(Prop::int)
+                    .unwrap_or(0)
             };
-            for (c, p, prop) in &op_links {
-                let axis = match prop.as_str() {
-                    "d|X" => 0,
-                    "d|Y" => 1,
-                    "d|Z" => 2,
-                    _ => continue,
-                };
-                if *p != cn {
+            let mut layer = Layer {
+                mode: int("BlendMode"),
+                weight: node
+                    .and_then(|n| n.p70_num("Weight"))
+                    .map_or(1.0, |w| (w / 100.0).clamp(0.0, 1.0)),
+                turns: int("RotationAccumulationMode") == 0,
+                multiplies: int("ScaleAccumulationMode") == 0,
+                driven: BTreeMap::new(),
+            };
+            for cn in kids(lid, "AnimationCurveNode") {
+                // The model property this curve node drives.
+                let Some((model, slot)) = op_links.iter().find_map(|(c, p, prop)| {
+                    let slot = match prop.as_str() {
+                        "Lcl Translation" => 0,
+                        "Lcl Rotation" => 1,
+                        "Lcl Scaling" => 2,
+                        _ => return None,
+                    };
+                    (*c == cn && by_id.get(p).is_some_and(|n| n.name == "Model"))
+                        .then_some((*p, slot))
+                }) else {
                     continue;
+                };
+                let channel = &mut layer.driven.entry(model).or_default()[slot];
+                channel.on = true;
+                // What an axis without a curve has in this layer.
+                for (axis, key) in ["d|X", "d|Y", "d|Z"].into_iter().enumerate() {
+                    // The undermost layer, where the file says nothing:
+                    // the model's own value.
+                    let own = by_id.get(&model).filter(|_| first).map(|m| {
+                        let key = ["Lcl Translation", "Lcl Rotation", "Lcl Scaling"][slot];
+                        m.p70_vec(key, if slot == 2 { DVec3::ONE } else { DVec3::ZERO })[axis]
+                    });
+                    channel.rest[axis] = by_id
+                        .get(&cn)
+                        .and_then(|n| n.p70_num(key))
+                        .or(own)
+                        .unwrap_or(if slot == 2 { 1.0 } else { 0.0 });
                 }
-                let Some(curve) = by_id.get(c).filter(|n| n.name == "AnimationCurve") else {
-                    continue;
-                };
-                let (Some(t), Some(v)) = (curve.array("KeyTime"), curve.array("KeyValueFloat"))
-                else {
-                    continue;
-                };
-                if t.is_empty() || t.len() != v.len() || t.windows(2).any(|w| w[1] < w[0]) {
-                    return Err(fmt_err(format!(
-                        "animation {sname:?}: a curve's times and values do not match or do not rise"
-                    )));
+                for (c, p, prop) in &op_links {
+                    let axis = match prop.as_str() {
+                        "d|X" => 0,
+                        "d|Y" => 1,
+                        "d|Z" => 2,
+                        _ => continue,
+                    };
+                    if *p != cn {
+                        continue;
+                    }
+                    let Some(curve) = by_id.get(c).filter(|n| n.name == "AnimationCurve") else {
+                        continue;
+                    };
+                    let (Some(t), Some(v)) = (curve.array("KeyTime"), curve.array("KeyValueFloat"))
+                    else {
+                        continue;
+                    };
+                    if t.is_empty() || t.len() != v.len() || t.windows(2).any(|w| w[1] < w[0]) {
+                        return Err(fmt_err(format!(
+                            "animation {sname:?}: a curve's times and values do not match or do not rise"
+                        )));
+                    }
+                    // FBX time: 46 186 158 000 ticks a second.
+                    let seconds: Vec<f64> = t.iter().map(|x| x / 46_186_158_000.0).collect();
+                    layer.driven.entry(model).or_default()[slot].curves[axis] = Some(Curve::new(
+                        seconds,
+                        v.to_vec(),
+                        curve.array("KeyAttrFlags").unwrap_or(&[]),
+                        curve.array("KeyAttrDataFloat").unwrap_or(&[]),
+                        curve.array("KeyAttrRefCount").unwrap_or(&[]),
+                    ));
                 }
-                // FBX time: 46 186 158 000 ticks a second.
-                let seconds: Vec<f64> = t.iter().map(|x| x / 46_186_158_000.0).collect();
-                driven.entry(model).or_default()[slot][axis] = Some((seconds, v.to_vec()));
             }
+            layers.push(layer);
         }
-        if !driven.is_empty() {
-            stacks.push((sname, driven));
+        if layers.iter().any(|l| !l.driven.is_empty()) {
+            stacks.push((sname, layers));
         }
     }
-    out.skipped.extend(layered);
-    let value = |c: &Curve, time: f64| -> f64 {
-        let (t, v) = c;
-        let k = t.partition_point(|&x| x <= time);
-        if k == 0 {
-            return v[0];
-        }
-        if k >= t.len() {
-            return v[t.len() - 1];
-        }
-        let f = if t[k] > t[k - 1] {
-            (time - t[k - 1]) / (t[k] - t[k - 1])
-        } else {
-            0.0
-        };
-        v[k - 1] + (v[k] - v[k - 1]) * f
-    };
     let clips_of = |space: &FbxSpace| -> Result<Vec<shape_mesh::SkinClip>, ImportError> {
         let mut clips = Vec::new();
         let mut used = BTreeMap::new();
-        for (sname, driven) in &stacks {
-            let mut times: Vec<f64> = driven
-                .values()
+        for (sname, layers) in &stacks {
+            let mut times: Vec<f64> = layers
+                .iter()
+                .flat_map(|l| l.driven.values())
                 .flatten()
-                .flatten()
-                .flatten()
-                .flat_map(|c| c.0.iter().copied())
+                .flat_map(|ch| ch.curves.iter().flatten())
+                .flat_map(|c| c.times.iter().copied())
                 .collect();
             if times.is_empty() {
                 continue;
@@ -1112,24 +1517,32 @@ pub fn import_fbx(bytes: &[u8], resolve: Resolve) -> Result<Imported, ImportErro
             for &time in &times {
                 // A model's local transform at this time.
                 let local_at = |id: i64, node: &Node| -> Affine {
-                    let Some(d) = driven.get(&id) else {
+                    if !layers.iter().any(|l| l.driven.contains_key(&id)) {
                         return local(node);
+                    }
+                    let order = rotation_order(node);
+                    let mut at = Layered {
+                        t: node.p70_vec("Lcl Translation", DVec3::ZERO),
+                        r: node.p70_vec("Lcl Rotation", DVec3::ZERO),
+                        turned: None,
+                        s: node.p70_vec("Lcl Scaling", DVec3::ONE),
                     };
-                    let rest = [
-                        node.p70_vec("Lcl Translation", DVec3::ZERO),
-                        node.p70_vec("Lcl Rotation", DVec3::ZERO),
-                        node.p70_vec("Lcl Scaling", DVec3::ONE),
-                    ];
-                    let at = |slot: usize| {
-                        let mut v = rest[slot];
-                        for axis in 0..3 {
-                            if let Some(c) = &d[slot][axis] {
-                                v[axis] = value(c, time);
+                    for (k, layer) in layers.iter().enumerate() {
+                        let Some(channels) = layer.driven.get(&id) else {
+                            continue;
+                        };
+                        for (slot, ch) in channels.iter().enumerate().filter(|(_, ch)| ch.on) {
+                            let mut v = DVec3::from_array(ch.rest);
+                            for axis in 0..3 {
+                                if let Some(c) = &ch.curves[axis] {
+                                    v[axis] = c.at(time);
+                                }
                             }
+                            at.lay(k == 0, layer, slot, v, order);
                         }
-                        v
-                    };
-                    local_with(node, at(0), at(1), at(2))
+                    }
+                    let turn = at.turned.unwrap_or_else(|| euler(at.r, order));
+                    local_turned(node, at.t, &turn, at.s)
                 };
                 let mut pose = Vec::with_capacity(space.ids.len());
                 for (b, &id) in space.ids.iter().enumerate() {
@@ -1692,5 +2105,153 @@ Connections:  {
         let d = 250.0 * trig::sin(trig::PI / 4.0);
         near(top(0.5), DVec3::new(d, 0.0, 250.0 + d));
         near(top(1.0), DVec3::new(250.0, 0.0, 250.0));
+    }
+
+    /// A second layer on the knee's bend (a steady 30° about the same
+    /// axis) lies on the first as its blend mode and weight say: added
+    /// (120° at the end), added at half weight (105°), replacing (30°),
+    /// and mixed half way (60°); added angle by angle it is 120° too.
+    #[test]
+    fn an_animation_s_layers_lie_on_each_other() {
+        let with_layer = |props: &str| {
+            let objects = format!(
+                "\tAnimationLayer: 60, \"AnimLayer::over\", \"\" {{\n\t\tProperties70:  {{\n{props}\t\t}}\n\t}}\n\
+                 \tAnimationCurveNode: 61, \"AnimCurveNode::R\", \"\" {{\n\t}}\n\
+                 \tAnimationCurve: 62, \"AnimCurve::\", \"\" {{\n\t\tKeyTime: *2 {{\n\t\t\ta: 0,46186158000\n\t\t}}\n\
+                 \t\tKeyValueFloat: *2 {{\n\t\t\ta: 30,30\n\t\t}}\n\t}}\n}}\nConnections:  {{"
+            );
+            let links = "\tC: \"OP\",53,52, \"d|Y\"\n\tC: \"OO\",60,50\n\tC: \"OO\",61,60\n\
+                         \tC: \"OP\",61,31, \"Lcl Rotation\"\n\tC: \"OP\",62,61, \"d|Y\"\n";
+            let text = LEGS
+                .replace("}\nConnections:  {", &objects)
+                .replace("\tC: \"OP\",53,52, \"d|Y\"\n", links);
+            assert_ne!(text.len(), LEGS.len());
+            text
+        };
+        let p = |name: &str, kind: &str, value: i64| {
+            format!("\t\t\tP: \"{name}\", \"{kind}\", \"\", \"\",{value}\n")
+        };
+        let cases = [
+            (String::new(), 120.0),
+            (p("Weight", "Number", 50), 105.0),
+            (p("BlendMode", "enum", 1), 30.0),
+            (p("BlendMode", "enum", 2) + &p("Weight", "Number", 50), 60.0),
+            (p("RotationAccumulationMode", "enum", 1), 120.0),
+        ];
+        for (props, degrees) in cases {
+            let imported = import_fbx(with_layer(&props).as_bytes(), &no_files).unwrap();
+            assert!(
+                imported.skipped.iter().all(|s| !s.contains("layers")),
+                "{:?}",
+                imported.skipped
+            );
+            let part = &imported.parts[0];
+            let i = part
+                .solid
+                .positions
+                .iter()
+                .position(|p| (*p - DVec3::new(0.0, 0.0, 500.0)).length() < 1e-9)
+                .unwrap();
+            let clip = &part.clips[0];
+            let top = shape_skin::pose_by(&part.solid, &clip.at(1.0).unwrap())
+                .unwrap()
+                .positions[i];
+            let (sin, cos) = trig::sin_cos(trig::to_radians(degrees));
+            let want = DVec3::new(250.0 * sin, 0.0, 250.0 + 250.0 * cos);
+            assert!(
+                (top - want).length() < 0.05,
+                "{props:?}: {top:?} for {want:?}"
+            );
+        }
+    }
+
+    /// The first curve of a file that moves, as [`Curve`] reads it.
+    fn moving_curve(bytes: &[u8]) -> Curve {
+        fn find(n: &Node) -> Option<Curve> {
+            if n.name == "AnimationCurve" {
+                let v = n.array("KeyValueFloat")?;
+                if v.iter().any(|x| (x - v[0]).abs() > 1e-3) {
+                    let t = n.array("KeyTime")?;
+                    return Some(Curve::new(
+                        t.iter().map(|x| x / 46_186_158_000.0).collect(),
+                        v.to_vec(),
+                        n.array("KeyAttrFlags")?,
+                        n.array("KeyAttrDataFloat")?,
+                        n.array("KeyAttrRefCount")?,
+                    ));
+                }
+            }
+            n.children.iter().find_map(find)
+        }
+        find(&parse_binary(bytes).unwrap().1).unwrap()
+    }
+
+    /// Curves Maya wrote, against the values Maya gives them at 24 frames
+    /// a second (ufbx's test files and tables, `third_party/ufbx`): keys
+    /// that hold, run straight, and ease by automatic, clamped, broken
+    /// and weighted tangents.
+    #[test]
+    fn eased_curves_are_what_maya_evaluates() {
+        macro_rules! file {
+            ($name:literal) => {
+                include_bytes!(concat!("../../../third_party/ufbx/data/", $name)).as_slice()
+            };
+        }
+        #[rustfmt::skip]
+        let modes = [
+            -8.653366,
+            -8.653366,-8.602998,-8.464664,-8.257528,-8.00075,-7.713489,-7.414906,-7.124163,-6.86042,
+            -6.642837,-6.490576,-6.388305,-6.306414,-6.242637,-6.19471,-6.160368,-6.137348,-6.123385,
+            -6.116215,-6.113573,-6.113196,-5.969524,-5.825851,-5.682179,-5.538507,-5.394835,-5.251163,
+            -5.107491,-4.963819,-4.820146,-4.676474,-4.532802,-4.38913,-4.245458,-4.101785,-3.958113,-4.1529,
+            -4.347686,-4.542472,-4.737258,-4.932045,-5.126832,-5.321618,-5.516404,-5.71119,-5.905977,-5.767788,
+            -5.315578,-4.954943,-4.83559,-4.856855,-4.960766,-5.118543,-4.976541,-4.885909,-4.865979,-4.93845,
+            -5.099224,-5.270246,-5.359269,-5.349404,-5.261964,-5.118543,-5.264501,-5.33535,-5.285445,-5.058857,
+            -4.69383,-4.357775,-4.124978,-3.981697,-3.904232,-3.875225,-3.875225,-3.875225,-3.875225,-3.875225,
+            -3.875225,-3.875225,-2.942738,-2.942738,-2.942738,-2.942738,-2.942738,-2.942738,-2.942738,-2.942738,
+            -2.942738,-1.243537,-1.243537,-1.243537,-1.243537,-1.243537,-1.243537,-1.243537,5.603338,5.603338,
+            5.603338,5.603338,5.603338,5.603338,5.603338,5.603338,5.603338,5.603338,5.603338,5.603338,5.603338,
+            5.603338,5.603338,5.603338,5.603338,5.603338,5.603338,5.603338,5.603338,5.603338,5.603338,5.603338,5.603338,
+        ];
+        #[rustfmt::skip]
+        let clamp = [
+            0.000, 0.000, 0.273, 0.515, 0.718, 0.868, 0.945, 0.920, 0.779, 0.611,
+            0.591, 0.747, 1.206, 2.059, 3.191, 4.489, 5.837, 7.121, 8.228, 9.042,
+            9.449, 9.694, 10.128, 10.610, 10.873, 10.927, 10.854, 10.704, 10.502,
+            10.264, 10.000,
+        ];
+        #[rustfmt::skip]
+        let spline = [
+            0.00000, 3.50000, 6.00000, 6.51562, 6.37500, 6.04688, 6.00000,
+            6.67313, 7.71167, 8.39438, 8.00000, 3.63667, -1.04000, -1.96474,
+            -1.68059, -1.00000, 0.27700, 2.00000,
+        ];
+        // The first table is read a moment after each frame, so a key
+        // that holds has given way to the next.
+        let cases: [(&[u8], &[f64], f64, f64); 3] = [
+            (
+                file!("maya_interpolation_modes_7500_binary.fbx"),
+                &modes,
+                1e-6,
+                1e-4,
+            ),
+            (file!("maya_auto_clamp_7700_binary.fbx"), &clamp, 0.0, 1e-3),
+            (
+                file!("maya_tangent_spline_7700_binary.fbx"),
+                &spline,
+                0.0,
+                1e-4,
+            ),
+        ];
+        for (k, (bytes, values, after, within)) in cases.into_iter().enumerate() {
+            let curve = moving_curve(bytes);
+            for (frame, want) in values.iter().enumerate() {
+                let got = curve.at(frame as f64 / 24.0 + after);
+                assert!(
+                    (got - want).abs() < within,
+                    "case {k}, frame {frame}: {got} for {want}"
+                );
+            }
+        }
     }
 }

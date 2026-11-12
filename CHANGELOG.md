@@ -1468,3 +1468,12 @@
   colours, joints and weights. Normals are parsed and recomputed as
   for every import. No required glTF extension of geometry is refused
   any more (`docs/research.md` §44; `third_party/draco/`).
+- FBX animation is read as the file means it. A curve eases between its
+  keys: keys that hold (to the next key, or the next key's value), run
+  straight, or run cubic by automatic tangents (with their clamps and
+  bias), TCB, or user tangents, broken or not, weighted or not; the
+  samples a clip is read at carry the easing. An animation's layers
+  lie on each other by blend mode (additive, override, override
+  passthrough), weight, and rotation and scaling accumulation, where
+  only the first layer was read (`docs/research.md` §45;
+  `third_party/ufbx/`).

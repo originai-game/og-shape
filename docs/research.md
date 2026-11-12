@@ -8715,3 +8715,56 @@ Checked on files:
   primitives) decode.
 Only bitstream 2.2 is read (glTF requires it); three.js' `bunny.drc`
 (1.1) is refused by version. Point clouds are refused.
+
+## 45. FBX curves and layers (2026-11-12)
+
+The FBX reader took a curve straight between its keys and read an
+animation's first layer only. Both are now read as the file means
+them. The rules are ufbx's (Samuli Raivio, MIT; `third_party/ufbx/SOURCE`
+says what was read); the code is this project's own.
+
+**A curve's keys.** `KeyAttrFlags`, four numbers of `KeyAttrDataFloat`
+and `KeyAttrRefCount` describe runs of keys. A key runs to the next:
+- holding its value (`0x2`), or the next key's (`0x2 | 0x100`);
+- straight (`0x4`, or no attributes at all);
+- cubic (`0x8`), a Bézier in time and value whose two handles reach a
+  third of the way each, or a weight of the way (`0x1000000`,
+  `0x2000000`; the weights are two decimal fixed-point numbers in the
+  third number's bits). The slopes are: stored (user tangents,
+  `0x400`: the key's right slope and the next key's left slope); mixed
+  from the chords either side by tension, continuity and bias (TCB,
+  `0x200`); or automatic (`0x100`): the slope through the keys either
+  side, the chord at a curve's ends, mixed with the two chords and a
+  stored bias unless time-independent (`0x2000`), flat where a clamped
+  key (`0x1000`) has a neighbour's value, and held back so no handle
+  passes its neighbour's value (`0x4000`).
+The time along a weighted Bézier is found by halving (60 steps), so a
+value is the same on every host; with both handles at a third the
+time is the place. The importer samples clips at their keys and sixty
+times a second (§40), so the easing is in the samples.
+
+Checked against Maya: three of ufbx's test files, each a cube Maya
+animated, with the values Maya gives the curve at 24 frames a second
+(from ufbx's `test_animation.h`), are in
+`eased_curves_are_what_maya_evaluates`: twelve keys of every kind
+(123 frames, to 1e-4), four clamped automatic keys with weights (31
+frames, to the table's three decimals), seven automatic keys (18
+frames, to 1e-4). Mixamo's Samba is automatic keys at every frame;
+its import takes 1.1 s where it took 1.0 s.
+
+**Layers.** A stack's layers lie on each other in order. The first
+replaces the model's own value. A later one, by its `BlendMode`: adds
+(0) its value times its `Weight`; replaces (1); or mixes (2) from what
+is under it towards its value by its weight. Rotations add and mix as
+turns when `RotationAccumulationMode` is 0 (the layer's turn, or the
+weight's part of it, after those under), else angle by angle;
+scalings multiply (a value to the weight's power) when
+`ScaleAccumulationMode` is 0, else add. An axis a layer's curve node
+has no curve for takes the node's own `d|X`, `d|Y`, `d|Z`.
+
+Checked: `an_animation_s_layers_lie_on_each_other`, a hand-written
+file whose second layer holds 30° on the knee's 90° bend: added
+(120°), at half weight (105°), replacing (30°), mixed half way (60°),
+and added angle by angle (120°). Not checked against a file from an
+authoring tool: ufbx's layered files are unskinned cubes, which this
+importer reads no clip for. An animated layer weight is read at rest.

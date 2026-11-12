@@ -1,0 +1,21 @@
+ufbx (Samuli Raivio), MIT or public domain (LICENSE in this folder; MIT taken).
+repository: https://github.com/ufbx/ufbx
+copied:     2026-11-12 (master)
+
+What is here:
+  data/maya_interpolation_modes_7500_binary.fbx
+  data/maya_auto_clamp_7700_binary.fbx
+  data/maya_tangent_spline_7700_binary.fbx
+      ufbx's test files: one animated cube each, written by Maya. The
+      values Maya gives each curve at 24 frames a second are in ufbx's
+      test/test_animation.h and, copied from there, in the test in
+      crates/shape-tools/src/fbx.rs.
+
+What was read:
+  ufbx.c, the reading of an AnimationCurve's keys (KeyAttrFlags,
+  KeyAttrDataFloat, KeyAttrRefCount) and the evaluation of a curve. The
+  rules crates/shape-tools/src/fbx.rs follows are ufbx's: which flag
+  means what, the automatic tangent (the slope through the keys either
+  side, its bias, its clamps), the TCB mix, the weights packed in a
+  float's bits, and the cubic as a Bezier in time and value. The code
+  is written anew in this project's structure.
