@@ -1543,3 +1543,13 @@
   shapes go either way, and the report's `charts` and `coverage` say
   which. Off by default; the default unwrap is unchanged
   (`docs/research.md` §49).
+- KTX2: a map of UASTC blocks (`KHR_texture_basisu`'s high-quality
+  mode; plain, Zstandard or zlib) is decoded, so the preview draws it
+  and the texture budget and the bake read it. `process --ktx2` (MCP
+  `ktx2`, `shape_tools::to_ktx2`) writes every map kept as KTX2: UASTC
+  blocks with mip levels, Zstandard. Measured on a 1024² colour grid:
+  49.9 dB against the source (toktx's file of it: 47.9 dB), 2.3 s; the
+  file is about a byte a texel, larger than a JPEG or most PNGs, and a
+  GPU holds it in a quarter of RGBA8's memory. ETC1S (BasisLZ) files
+  are still passed through undecoded. The written files could not be
+  run through the Basis transcoder here (`docs/research.md` §50).

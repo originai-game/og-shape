@@ -943,6 +943,12 @@ fn process_schema() -> Value {
                  written as PNG); the report gives each map's size before and after. 0 keeps them."),
         ),
         (
+            "ktx2",
+            boolean("Write every map kept as KTX2 (UASTC blocks with mip levels, Zstandard; \
+                     `KHR_texture_basisu`), after any shrinking: a quarter of the texture memory \
+                     on a GPU, and seconds of work per 1024² map."),
+        ),
+        (
             "bake",
             int("Bake the repaired mesh's look into new maps this many texels across, on fresh \
                  UVs packed into one atlas: decimate without UVs or vertex colours, pack, and \
@@ -1229,6 +1235,7 @@ fn process_tool(server: &Server, a: &Args, p: &mut dyn Progress) -> Result<Vec<V
         intersections: a.flag("intersections")?,
         fresh_uvs: a.flag("fresh_uvs")?,
         texture_max: a.u32("texture_max")?,
+        ktx2: a.flag("ktx2")?,
         bake: a.u32("bake")?,
         bake_distance: a.num("bake_distance")?,
         out: a.path("out")?,

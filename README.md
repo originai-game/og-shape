@@ -123,7 +123,7 @@ Run on `main` on 2026-11-10 and 11; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 165 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 382 pass | `scripts/check.sh test` |
+| Tests | 387 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -191,9 +191,11 @@ silent returns a result with no error:
   that its second sheet folds (counted by `--intersections`).
 - An imported mesh's normals are recomputed, smooth within a surface: a
   normal map baked against the file's normals shades a median 1–1.6°
-  differently after repair alone. The texture budget writes PNG only; a
-  KTX2 or WebP map is not decoded, and is written as it came
-  (`KHR_texture_basisu`, `EXT_texture_webp`). A
+  differently after repair alone. The texture budget writes PNG, or with
+  `--ktx2` KTX2 of UASTC blocks (no rate-distortion pass: about a byte
+  a texel on disk). A KTX2 of ETC1S blocks or a WebP map is not
+  decoded, and is written as it came (`KHR_texture_basisu`,
+  `EXT_texture_webp`). A
   plain GLB has one material, so parts whose materials differ lose
   theirs (reported).
 - `place` turns, sizes and moves a mesh to its base, but does not

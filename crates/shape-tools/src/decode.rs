@@ -1,4 +1,4 @@
-//! Decodes a texture's PNG or JPEG bytes to RGBA8, for the preview to
+//! Decodes a texture's PNG, JPEG or KTX2 (UASTC) bytes to RGBA8, for the preview to
 //! sample (`docs/research.md` §30, §33).
 //!
 //! The decoding is the texture budget's ([`crate::texture::decode`],
@@ -7,7 +7,7 @@
 //! extended sequential and progressive JPEG, one or three components,
 //! integer inverse DCT. Colour-space chunks (`gAMA`, `iCCP`, `sRGB`) are ignored: the
 //! bytes are taken as sRGB, as glTF says a base-colour image is.
-//! Arithmetic-coded and lossless JPEG, WebP and KTX2 are refused with
+//! Arithmetic-coded and lossless JPEG, WebP and KTX2 of ETC1S blocks are refused with
 //! the reason, as is an image over [`MAX_PIXELS`] (read from its header,
 //! before anything is decoded).
 //!
@@ -21,8 +21,11 @@ pub const MAX_PIXELS: u64 = 1 << 26;
 
 /// The image an image file's bytes hold, as RGBA8, rows top to bottom.
 pub(crate) fn decode(bytes: &[u8]) -> Result<Image, String> {
-    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") && !bytes.starts_with(&[0xFF, 0xD8]) {
-        return Err("not a PNG or JPEG image (the preview decodes those two)".into());
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+        && !bytes.starts_with(&[0xFF, 0xD8])
+        && !bytes.starts_with(b"\xabKTX 20")
+    {
+        return Err("not a PNG, JPEG or KTX2 image (the preview decodes those)".into());
     }
     if let (Some(w), Some(h)) = {
         let i = ImageInfo::from_bytes("", bytes);

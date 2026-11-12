@@ -170,12 +170,12 @@ import → join → repair → decimate → place → unwrap → measure → pre
    across a seam. After decimation, `uv.overlapping_pairs` and
    `uv.flipped` should be what they were before (a file's own mirrored
    charts count as flipped).
-8. **Preview** and look at it. It draws the base-colour map (PNG or
-   JPEG), the normal map's detail in the light, vertex colours and the
+8. **Preview** and look at it. It draws the base-colour map (PNG,
+   JPEG or KTX2 of UASTC blocks), the normal map's detail in the light, vertex colours and the
    material's colour and emissive colour (not its metallic-roughness,
    emissive or occlusion maps, metalness or roughness); after a bake,
    look along chart borders for lines in the shading. Its `undrawn` lists a map it could not
-   draw (WebP, KTX2, an arithmetic-coded JPEG, no UVs). `--uv` (MCP `uv`) shows
+   draw (WebP, a KTX2 of ETC1S blocks, an arithmetic-coded JPEG, no UVs). `--uv` (MCP `uv`) shows
    the UV layout over the map: dark lines are chart outlines, dimmed
    texels are unused. For a texturing step or a turntable: `--each
    --fov 0.7` gives one PNG a view (`out.00.png` … `out.11.png`: the
@@ -192,9 +192,19 @@ import → join → repair → decimate → place → unwrap → measure → pre
    map's size and decoded bytes before and after. A PNG of a photo
    texture is larger on disk than the JPEG it came from; the GPU memory
    (`decoded_bytes_with_mips`) is what shrinks. A map that is not
-   decoded (WebP, KTX2) is kept as it is (the report's `error` says so)
-   and written under its extension (`EXT_texture_webp`,
+   decoded (WebP, a KTX2 of ETC1S blocks) is kept as it is (the report's
+   `error` says so) and written under its extension (`EXT_texture_webp`,
    `KHR_texture_basisu`, which the file then requires).
+   `--ktx2` (MCP `ktx2`) writes every map kept as KTX2: UASTC blocks
+   with their mip levels, compressed with Zstandard, under
+   `KHR_texture_basisu` (the file then requires it, and a viewer needs
+   the Basis transcoder). A GPU holds such a map in a quarter of the
+   memory (one byte a texel, where RGBA8 takes four;
+   `decoded_bytes_with_mips` still counts RGBA8), and the levels come
+   with the file. The file grows: about a byte a texel with the levels,
+   several times a JPEG. It takes about 3 s a megatexel. Use it for a
+   game that loads KTX2; leave it off for texturing tools, which want
+   PNG.
 10. **Export** `glb_plain` for texturing (with `material` to keep the
    file's look), or `glb` for parts, joints and skins (a part's
    `material`). OBJ and STL hold the mesh only: the output's
@@ -255,7 +265,7 @@ What to check in the report:
   95th percentile, with the baked map (the bytes' rounding: about 0.2°)
   and without it (`*_without_map`: what the low mesh shows by its own
   normals). The difference is the detail the map carries.
-- `bake.not_baked`: a map that could not be read (WebP, KTX2) is not
+- `bake.not_baked`: a map that could not be read (WebP, KTX2 of ETC1S) is not
   baked and is named here.
 - `material.maps`: the baked maps (`baked_map.png`, …), `defaults` and
   the factors as the file had them.

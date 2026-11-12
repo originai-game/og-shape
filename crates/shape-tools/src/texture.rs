@@ -4,7 +4,9 @@
 //! Entry: [`downsize`]. Decoding reads PNG (every colour type and bit
 //! depth, interlaced or not) and JPEG, baseline, extended sequential
 //! or progressive (Huffman, 8-bit, any sampling; a lossless, hierarchical
-//! or arithmetic-coded JPEG is [`TextureError::Unsupported`]). Everything after the file's bytes is
+//! or arithmetic-coded JPEG is [`TextureError::Unsupported`]), and KTX2
+//! of UASTC blocks ([`crate::ktx2`]). [`to_ktx2`] writes a map as one.
+//! Everything after the file's bytes is
 //! integer arithmetic: the JPEG's inverse DCT in fixed point, the box
 //! filter with integer area weights, so the output is the same bytes on
 //! every host. The one table computed in f64 (sRGB to linear, by
@@ -83,15 +85,45 @@ pub fn downsize(t: &Texture, d: &Downsize) -> Result<Option<Texture>, TextureErr
     }))
 }
 
-/// Decodes a PNG or baseline JPEG to RGBA8.
+/// `t` as a KTX2 file of UASTC blocks with its mip levels
+/// (`KHR_texture_basisu`), compressed with Zstandard; `None` when it is
+/// a KTX2 file already. `color` as in [`Downsize::color`]: the texels
+/// are sRGB, and the levels are averaged in linear light.
+pub fn to_ktx2(t: &Texture, color: bool) -> Result<Option<Texture>, TextureError> {
+    if t.mime == "image/ktx2" {
+        return Ok(None);
+    }
+    let image = decode(&t.bytes)?;
+    let alpha = image.rgba.as_chunks::<4>().0.iter().any(|p| p[3] != 255);
+    let mut levels = Vec::new();
+    let (mut w, mut h) = (image.width, image.height);
+    while w > 1 || h > 1 {
+        (w, h) = ((w / 2).max(1), (h / 2).max(1));
+        levels.push(resize(&image, w, h, color));
+    }
+    levels.insert(0, image);
+    let name = match t.name.rsplit_once('.') {
+        Some((stem, _)) => format!("{stem}.ktx2"),
+        None => format!("{}.ktx2", t.name),
+    };
+    Ok(Some(Texture {
+        name,
+        mime: "image/ktx2".into(),
+        bytes: crate::ktx2::encode(&levels, color, alpha),
+    }))
+}
+
+/// Decodes a PNG, a JPEG or a KTX2 file of UASTC blocks to RGBA8.
 pub fn decode(bytes: &[u8]) -> Result<Image, TextureError> {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         decode_png(bytes)
     } else if bytes.starts_with(&[0xFF, 0xD8]) {
         decode_jpeg(bytes)
+    } else if bytes.starts_with(b"\xabKTX 20") {
+        crate::ktx2::decode(bytes).map_err(TextureError::Unsupported)
     } else {
         Err(TextureError::Unsupported(
-            "only PNG and JPEG are decoded".into(),
+            "only PNG, JPEG and KTX2 (UASTC) are decoded".into(),
         ))
     }
 }

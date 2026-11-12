@@ -13,6 +13,7 @@ shape-mesh.workspace = true
 shape-bool.workspace = true
 shape-gen.workspace = true
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
+ruzstd = { version = "0.9.1", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 gltf = { version = "1.4.1", default-features = false, features = ["utils", "names", "extras"] }

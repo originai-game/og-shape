@@ -6608,8 +6608,8 @@ and adds the fourth. Numbers, no verdicts.
   OBJ and STL hold positions only: the output's `not_written` lists the
   UVs, colours and material left out.
 - **The texture budget** (`shape_tools::downsize`, `--texture-max PX`):
-  decode, box filter, PNG. Rejected: KTX2/Basis (an encoder is a large
-  dependency or port, and out of scope here); resampling with a wider
+  decode, box filter, PNG. Rejected then: KTX2/Basis (an encoder is a large
+  dependency or port, and out of scope here; UASTC since written, §50); resampling with a wider
   kernel (a box filter's weights are exact rationals, so the integer
   arithmetic is exact and target-independent; a Lanczos kernel needs
   `sin`).
@@ -9019,3 +9019,94 @@ default 66° (and at 30°, 45°, 89°):
 Neither way has fewer charts everywhere; the report's `charts` and
 `coverage` say which did better on a mesh. Checked:
 `shared_directions_are_chosen_over_the_whole_solid`.
+
+## 50. KTX2 and UASTC (2026-11-12)
+
+`KHR_texture_basisu` holds a texture as KTX2 in one of two block
+formats: ETC1S (small files, low quality, a codebook and BasisLZ) and
+UASTC LDR 4×4 (16 bytes a block, high quality, a subset of ASTC that
+also maps onto BC7). §29 left both out as "an encoder is a large port".
+UASTC is not: its specification is 1 700 lines with every table and 64
+example blocks, and a block is fitted on its own.
+
+**Read.** `shape_tools::uastc::decode_block` is written from the
+specification (public domain by its own declaration, CC0 where that
+does not apply; the same tables are in Basis Universal's Apache-2.0
+transcoder, `third_party/basis_universal/SOURCE`). All 19 modes: one
+to three subsets from the 60 partition patterns, one or two planes of
+weights, RGB, RGBA and luminance-alpha, endpoints as trits or quints
+then bits, the first weight of each subset one bit short. Checked: the
+specification's 64 blocks decode to exactly its pixels and its three
+invalid blocks to none (`the_specification_s_blocks_decode_to_its_pixels`).
+`ktx2::decode` reads the container's largest level, plain or under
+Zstandard (`ruzstd`, MIT, pure Rust) or zlib. Run by hand on Khronos'
+files (not kept here: their licences are not on this project's list):
+
+| File | What | Result |
+| --- | --- | --- |
+| KTX-Software `color_grid_uastc.ktx2` | 1024², no supercompression | 47.92 dB against `color_grid.png` |
+| `color_grid_uastc_zstd.ktx2` | the same, Zstandard | the same texels |
+| `cimg5293_uastc.ktx2` | 648×1152, 11 levels | decodes |
+| StainedGlassLamp `glass_basecolor-alpha.ktx2` | 2048×1024, RGBA, Zstandard, 12 levels | decodes, 18 266 translucent texels |
+| FlightHelmet `LensesMat_Normal.ktx2` | 1024², linear, Zstandard | every texel (127, 127, 255) |
+| `color_grid_basis.ktx2` | ETC1S | refused: "ETC1S blocks (BasisLZ)" |
+
+**Write.** `uastc::encode_block` is this project's own (Basis
+Universal's encoder was not read). A block of one colour is the solid
+mode. Otherwise it is fitted in modes 0, 18, 5, 1 (one subset), 6 (a
+component with weights of its own, each of R, G, B tried) and, where
+those leave a squared error over 16, modes 2, 4 and 7 on the three
+two-subset patterns and mode 3 on the two three-subset patterns whose
+subsets lie nearest lines; a block with alpha in modes 10, 12, 14, 11,
+13 and 9. A fit is a line: the covariance matrix applied six times to
+its own widest column gives the direction, the texels' extent along it
+the ends; the ends are rounded to what the mode's range holds, each
+texel takes the nearest weight (by the decoder's own integer mix), and
+the ends are solved again by least squares for those weights, three
+rounds, the best kept. The fit with the least error is packed; where a
+subset's first weight has its top bit set the subset's ends change
+places and its weights turn round (per plane's components with two
+planes). The f64 arithmetic is `+ − × ÷` only; every comparison that
+chooses is between integers.
+
+The hints for transcoders: the ETC1 flip, differential flag, two
+intensity tables and bias, and the ETC2 alpha table and multiplier,
+are found by doing what the transcoder does with them (Basis
+Universal's `transcode_uastc_to_etc1` and `…_etc2_eac_a8` were read
+for that; `apply_etc1_bias` is the specification's) and keeping the
+least error. The BC1 hints are left off, which the format allows: the
+transcoder then fits BC1 itself.
+
+`ktx2::encode` writes the levels (box filter, colour in linear light,
+down to one texel) smallest first, each under Zstandard (`ruzstd`'s
+encoder, its fastest level), the descriptor (UASTC, sRGB or linear,
+RGB or RGBA) and `KTXorientation` `rd`.
+
+Measured (x86-64, release, one thread):
+
+| Input | Result |
+| --- | --- |
+| `color_grid.png` 1024² | 49.85 dB against the source in 2.3 s (toktx's file: 47.92 dB); modes 0: 33 210, 5: 22 984, 18: 5 209, 4: 1 656, 2: 1 110, the rest under 500 each |
+| the same, ETC1 a transcoder would make of it | 36.35 dB with this encoder's hints, 36.21 dB with toktx's blocks' hints, both under this project's reading of the transcoder |
+| the same as a file | 356 804 bytes with 11 levels (level 0: 225 712; toktx's level 0 under Zstandard: 170 276; the PNG: 286 178) |
+| DamagedHelmet, five 2048² JPEG maps, `process --ktx2` | 61.5 s; 3.8 MB → 16.9 MB; with `--texture-max 1024`: 19.6 s, 4.9 MB (16 s of it the encoding) |
+
+So: quality is above the reference tool's default on that image
+(which also weighs the BC7 it will become, and this does not), speed
+is about 3 s a megatexel with its levels, and files are large: UASTC
+is 8 bits a texel before Zstandard, there is no rate-distortion pass
+to make the blocks compress, and `ruzstd` writes only its fastest
+level. What it buys is GPU memory (a quarter of RGBA8) and levels in
+the file.
+
+Not done, and said in the README: ETC1S in either direction; a
+rate-distortion pass; weighing the BC7 error. Not checked: the written
+files have not been through the Basis transcoder (running it here was
+refused by the environment). What stands in for it: the blocks are read
+back by the decoder that passes the specification's vectors
+(`a_fit_in_each_mode_decodes_to_its_own_error` for every mode
+written), the container is laid out as the Khronos files this reader
+reads, and the hints give the same ETC1 quality as the reference
+encoder's under the same reading. Determinism: `meshtools.look.ktx2`
+in the gate hashes two written files and their decoded texels on the
+three targets.

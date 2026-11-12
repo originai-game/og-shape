@@ -28,6 +28,10 @@ pub fn cases() -> Vec<Case> {
             name: "meshtools.look.texture",
             run: texture_case,
         },
+        Case {
+            name: "meshtools.look.ktx2",
+            run: ktx2_case,
+        },
     ]
 }
 
@@ -306,6 +310,25 @@ fn chain_case(h: &mut OutputHash) -> Result<(), HashError> {
 
 /// The baseline JPEG fixture decoded; it and a PNG shrunk as colour and
 /// as data.
+/// Maps written as KTX2: the files' bytes (UASTC blocks fitted in f64,
+/// mip levels, Zstandard) and what they decode to.
+fn ktx2_case(h: &mut OutputHash) -> Result<(), HashError> {
+    let jpg = include_bytes!("../../../golden/meshes/stripes_420.jpg");
+    let tex = [
+        (Texture::from_bytes("stripes.jpg", jpg.to_vec()), true),
+        (Texture::from_bytes("noise.png", png(9, 37, 23)), false),
+    ];
+    for (t, color) in &tex {
+        let k = shape_tools::to_ktx2(t, *color)
+            .map_err(fail)?
+            .ok_or(HashError::NaN)?;
+        h.str(&k.name);
+        h.bytes(&k.bytes);
+        h.bytes(&decode(&k.bytes).map_err(fail)?.rgba);
+    }
+    Ok(())
+}
+
 fn texture_case(h: &mut OutputHash) -> Result<(), HashError> {
     let jpg = include_bytes!("../../../golden/meshes/stripes_420.jpg");
     let img = decode(jpg).map_err(fail)?;

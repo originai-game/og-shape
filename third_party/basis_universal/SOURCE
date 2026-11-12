@@ -1,0 +1,36 @@
+Basis Universal (Binomial LLC), Apache-2.0, LICENSE in this folder.
+repository: https://github.com/BinomialLLC/basis_universal
+version:    1.16.4
+copied:     2026-11-12
+
+What is here:
+  Nothing but the licence. What came from the project lives in
+  crates/shape-tools/src/uastc.rs and crates/shape-tools/src/uastc/:
+
+  - the tables of the UASTC LDR 4x4 format (the mode prefix codes, each
+    mode's weight bits, endpoint range, subsets, planes and components,
+    the partition patterns of the two- and three-subset modes, the
+    values each coded endpoint integer stands for, the weight tables).
+    They are the format's own numbers, as the specification prints them
+    and as transcoder/basisu_transcoder.cpp and
+    transcoder/basisu_transcoder_uastc.h hold them;
+  - uastc/vectors.rs: the specification's 64 example blocks and the
+    pixels each decodes to, the decoder's test.
+
+What was read:
+  - "UASTC LDR 4x4 Texture Specification" (the repository's wiki,
+    https://github.com/BinomialLLC/basis_universal/wiki/UASTC-LDR-4x4-Texture-Specification).
+    Its text says it is in the public domain, CC0 where that does not
+    apply. The decoder and the block layout are written from it; its
+    apply_etc1_bias is restated in encode.rs (etc1_biased).
+  - transcoder/basisu_transcoder.cpp (Apache-2.0): unpack_uastc, for
+    which blocks are invalid; transcode_uastc_to_etc1 and
+    transcode_uastc_to_etc2_eac_a8, for what a transcoder does with a
+    block's hints, which the encoder tries before it writes them. No
+    code was copied.
+  - encoder/basisu_uastc_enc.cpp was fetched and not read: the encoder
+    here (which modes it tries, how it fits a line, how it picks
+    patterns) is this project's own.
+
+The KTX2 container is written from the Khronos KTX 2.0 specification
+(https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html).

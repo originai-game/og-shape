@@ -49,7 +49,9 @@
 //! - [`glb_plain`]: one node, one mesh, positions, normals, UVs, vertex
 //!   colours and the material with its maps.
 //! - [`downsize`]: a texture budget: a map over a size, decoded (PNG,
-//!   baseline JPEG), box-filtered down and written as PNG.
+//!   JPEG, KTX2 of UASTC blocks), box-filtered down and written as PNG.
+//! - [`to_ktx2`]: a map as KTX2 of UASTC blocks with its mip levels
+//!   (`KHR_texture_basisu`).
 //! - [`interference()`]: which parts of a posed scene pass through,
 //!   touch, or hold each other wholly inside ([`Interfering`]).
 
@@ -67,6 +69,7 @@ mod interference;
 mod intersect;
 mod json;
 mod jsonread;
+mod ktx2;
 mod measure;
 mod meshglb;
 mod meshopt;
@@ -80,6 +83,7 @@ mod skin;
 mod surface;
 mod texture;
 mod thicken;
+mod uastc;
 mod unwrap;
 mod uvview;
 
@@ -116,7 +120,7 @@ pub use repair::{
     apply_transform, close_holes, join, join_clips, orient, remove_degenerate, remove_floaters,
     repair, repair_owned, split_non_manifold, weld,
 };
-pub use texture::{Downsize, TextureError, decode, downsize};
+pub use texture::{Downsize, TextureError, decode, downsize, to_ktx2};
 pub use thicken::{Thickened, thicken};
 pub use unwrap::{Unwrap, UnwrapError, Uvs, unwrap};
 pub use uvview::{UvImage, UvView, uv_view};

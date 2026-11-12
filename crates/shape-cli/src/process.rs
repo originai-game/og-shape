@@ -84,6 +84,9 @@ pub struct ProcessDesc {
     /// Shrink every map kept whose longest side is over this many texels
     /// (box filter, written as PNG); 0 keeps them as they are.
     pub texture_max: u32,
+    /// Write every map kept as KTX2 (UASTC blocks with mip levels,
+    /// Zstandard: `KHR_texture_basisu`), after any shrinking.
+    pub ktx2: bool,
     /// Bake the source's look into maps of this many texels across, on
     /// fresh UVs (implies `fresh_uvs`); 0 does not bake.
     pub bake: u32,
@@ -127,11 +130,11 @@ fn map_size(i: &ImageInfo) -> String {
     ])
 }
 
-/// Shrinks the material's maps to `max` texels (0: none); per map, its
-/// kind, name, size before and after (null when kept as it was), and why
-/// it could not be read.
-fn texture_budget(m: &mut Material, max: u32) -> String {
-    if max == 0 {
+/// Shrinks the material's maps to `max` texels (0: none) and, with
+/// `ktx2`, writes each as KTX2; per map, its kind, name, size before
+/// and after (null when kept as it was), and why it could not be read.
+fn texture_budget(m: &mut Material, max: u32, ktx2: bool) -> String {
+    if max == 0 && !ktx2 {
         return "null".into();
     }
     let mut out = Vec::new();
@@ -142,10 +145,17 @@ fn texture_budget(m: &mut Material, max: u32) -> String {
             max,
             color: Material::is_color_map(kind),
         };
-        let (after, error) = match downsize(t, &d) {
-            Ok(Some(small)) => {
-                let info = ImageInfo::from_bytes(&small.name, &small.bytes);
-                *t = small;
+        let changed = downsize(t, &d).and_then(|small| {
+            if !ktx2 {
+                return Ok(small);
+            }
+            let packed = shape_tools::to_ktx2(small.as_ref().unwrap_or(t), d.color)?;
+            Ok(packed.or(small))
+        });
+        let (after, error) = match changed {
+            Ok(Some(new)) => {
+                let info = ImageInfo::from_bytes(&new.name, &new.bytes);
+                *t = new;
                 (map_size(&info), "null".to_string())
             }
             Ok(None) => ("null".to_string(), "null".to_string()),
@@ -271,7 +281,7 @@ pub fn process_steps(
         "null".to_string()
     };
     step(4)?;
-    let textures = texture_budget(&mut material, d.texture_max);
+    let textures = texture_budget(&mut material, d.texture_max, d.ktx2);
     step(5)?;
     let images: Vec<ImageInfo> = material
         .maps()
@@ -411,6 +421,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         "--intersections",
         "--unwrap",
         "--texture-max",
+        "--ktx2",
         "--bake",
         "--bake-distance",
     ];
@@ -436,6 +447,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
             fresh_uvs: a.switch("--unwrap"),
             intersections: a.switch("--intersections"),
             texture_max: a.number("--texture-max")?.unwrap_or(0),
+            ktx2: a.switch("--ktx2"),
             bake: a.number("--bake")?.unwrap_or(0),
             bake_distance: a.number("--bake-distance")?.unwrap_or(0.0),
             out: a.out_opt()?,
