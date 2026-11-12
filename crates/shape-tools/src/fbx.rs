@@ -20,8 +20,9 @@
 //! `TransformLink` (the bone at bind time) and `Transform` (the mesh
 //! then, in the bone's space), their `Indexes` and `Weights` as
 //! weights, on the part's `Solid::skin` in the mesh's own coordinates (a
-//! bone scaled at bind time is refused). Skipped and listed: blend
-//! shapes, NURBS and other geometry, vertex colours. FBX 6 and
+//! bone scaled at bind time is refused), and blend shapes as morph
+//! targets. Skipped and listed: NURBS and other geometry, vertex
+//! colours. FBX 6 and
 //! older are [`ImportError::Unsupported`].
 
 use std::collections::BTreeMap;

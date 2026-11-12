@@ -118,11 +118,11 @@ chain with their look and placement, and sixteen kept and baked at
 
 ## What has been checked
 
-Run on `main` on 2026-11-10 and 11; each line says where the numbers come from.
+Run on `main` on 2026-11-10 to 12; each line says where the numbers come from.
 
 | Check | Result | How |
 |---|---|---|
-| The same bytes on every host | 165 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
+| The same bytes on every host | 166 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
 | Tests | 387 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
@@ -142,6 +142,8 @@ Run on `main` on 2026-11-10 and 11; each line says where the numbers come from.
 | Clips | a clip read back from its GLB with an independent glTF reader: a rotation channel on the joint's node and a translation on its follower's, a turn of 3 radians in steps of a quarter turn at most, the last key equal to the node of the scene posed there. The washing machine's `open` (hinge and drawer) and `spin` (the drum's full turn, 5 keys) export as two animations | `crates/shape-tools/tests/export.rs`; `golden/programs/washing_machine_clips.json` |
 | Colliders | the washing machine's 7 parts covered by 19 convex hulls of at most 16 vertices in 4 s; an octagonal cup's hollow kept by 16 hulls (41 mm bridged, against 310 mm by one) | `shape collide` (`guides/meshtools.md`) |
 | The mesh chain on a damaged mesh | open, 2 pieces, 79 flipped faces → closed, 1 piece, on budget, unwrapped with no UV overlap | `shape process golden/meshes/ball_defects.obj` |
+| Compressed and animated files | meshopt (`EXT_`/`KHR_meshopt_compression`) and Draco (bitstream 2.2) glTF read: three.js's and Khronos's samples, Draco's own test files to their Wavefront sources; morph targets and their weight animations read, drawn (`preview --morph`) and written back; FBX eased curves, animation layers and blend shapes (in-between shapes too) against the values Maya wrote for ufbx's test files, to 0.05 mm | `docs/research.md` §42–§47 |
+| KTX2 textures | UASTC: the specification's 64 example blocks decode to exactly its pixels; Khronos's files read (plain and Zstandard, with and without alpha). `process --ktx2` writes one: 49.9 dB on a 1024² colour grid (toktx's file of it: 47.9 dB) in 2.3 s. Not run through the Basis transcoder | `docs/research.md` §50 |
 | Outside files | glTF, OBJ and FBX from three.js's and Khronos's samples import; textured and skinned ones keep UVs, bones and weights through repair and decimation to half | `docs/research.md` §9, §11.5, §17 |
 | three.js reads the output | the washing machine's joints move and a skinned figure poses in headless Chromium; vertex positions match the kernel's own pose | `docs/research.md` §19 |
 | A real MCP client | the official TypeScript SDK client and headless Claude Code drive every tool and resource | `docs/research.md` §19 |
@@ -162,8 +164,9 @@ silent returns a result with no error:
 - 1 300 of the scan's bevels are refused: too large for the faces (426),
   a lone piece of a crease that does not fit (226), a twisted face (340),
   an edge with more than two faces (308).
-- The unwrap is planar per chart. The preview
-  draws base-colour and normal maps (PNG, baseline JPEG), vertex colours
+- The unwrap is planar per chart (`--shared` chooses the directions
+  over the whole mesh; neither way has fewer charts everywhere). The preview
+  draws base-colour and normal maps (PNG, JPEG, KTX2 of UASTC blocks), vertex colours
   and the emissive colour, but no metallic-roughness or emissive maps,
   and no metalness or roughness factors.
 - A mesh of 600 000 triangles with colours is about 300 MiB in memory
@@ -204,6 +207,41 @@ silent returns a result with no error:
   program places its own parts.
 - The declarative `.ogt` source and `og cook` belonged to the merge into
   origin-engine, which is dropped: a program is JSON or TypeScript.
+
+## Not done
+
+What a user might expect and will not find, as of 2026-11-12:
+
+- **Textures.** ETC1S (BasisLZ) KTX2 and WebP are neither decoded nor
+  written: such a map passes through as it came. UASTC is written
+  without a rate-distortion pass and without weighing the BC7 it will
+  become, at about 3 s a megatexel, and the written files have not
+  been run through the Basis transcoder (`docs/research.md` §50).
+- **Compression on export.** Draco and meshopt are read, never
+  written: a GLB's geometry leaves uncompressed.
+- **Morph targets in the kernel.** A solid with morph targets goes
+  through import, repair, decimation, preview and export; booleans,
+  bevels, edits, `subdivide` and the plain GLB refuse it. A target's
+  normals and a second UV set are not read.
+- **FBX.** Animation layers are checked on a hand-written file, not on
+  one from an authoring tool. NURBS and other geometry that is not a
+  mesh, vertex colours, and FBX 6 and older are not read.
+- **Shells and booleans.** 6 of 126 swept shells of crossing and
+  blind holes stop at the boolean's own limits (faces in one plane, a
+  rim that does not fill), and three holes through one point fail in
+  `hole` (`docs/research.md` §48).
+- **Unwrap and bake.** Charts are planar projections: no conformal
+  (LSCM, ABF) flattening, so a curved surface is cut into many charts.
+  The baked normal map is in this kernel's tangent frame, not
+  MikkTSpace.
+- **Preview.** No metallic-roughness, emissive or occlusion maps, no
+  metalness or roughness: it shows shape, colour and normal detail.
+- **Repair.** Non-manifold edges no pairing separates and holes over
+  64 edges with no flat fill stay open, reported.
+- **Formats.** No USD or URDF export. No STEP or other B-rep, by
+  design: the kernel holds meshes only.
+- **Size.** A `Solid` of 600 000 coloured triangles is about 300 MiB;
+  nothing streams.
 
 ## Use it
 
