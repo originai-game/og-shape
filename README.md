@@ -123,7 +123,7 @@ Run on `main` on 2026-11-10 to 12; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 167 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 391 pass | `scripts/check.sh test` |
+| Tests | 392 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -165,7 +165,8 @@ silent returns a result with no error:
   a lone piece of a crease that does not fit (226), a twisted face (340),
   an edge with more than two faces (308).
 - The unwrap is planar per chart (`--shared` chooses the directions
-  over the whole mesh; neither way has fewer charts everywhere). The preview
+  over the whole mesh; `--conformal` flattens bending charts keeping
+  their angles; neither has fewer charts everywhere). The preview
   draws base-colour and normal maps (PNG, JPEG, KTX2 of UASTC blocks), vertex colours
   and the emissive colour and map, occlusion, and metalness and
   roughness as a highlight and a sky over a ground: no image-based
@@ -233,9 +234,10 @@ What a user might expect and will not find, as of 2026-11-12:
   blind holes stop at the boolean's own limits (faces in one plane, a
   rim that does not fill), and three holes through one point fail in
   `hole` (`docs/research.md` §48).
-- **Unwrap and bake.** Charts are planar projections: no conformal
-  (LSCM, ABF) flattening, so a curved surface is cut into many charts.
-  The baked normal map is in this kernel's tangent frame, not
+- **Unwrap and bake.** `--conformal` flattens bending charts keeping
+  their angles (LSCM), but cuts no seams of its own: a chart still
+  ends where the surface has turned too far from its seed, so a head
+  or a limb is several charts, not one cut open. The baked normal map is in this kernel's tangent frame, not
   MikkTSpace.
 - **Preview.** One light, a sky over a ground for reflections, no
   environment image; none of glTF's material extensions (clearcoat,

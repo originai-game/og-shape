@@ -424,6 +424,7 @@ impl Args<'_> {
             resolution: self.u32("resolution")?,
             padding: self.num("padding")?,
             shared: self.flag("shared")?,
+            conformal: self.flag("conformal")?,
         })
     }
 }
@@ -651,6 +652,14 @@ fn unwrap_props() -> Vec<(&'static str, Value)> {
             boolean(
                 "Charts share projection directions chosen over the whole mesh (as Blender's \
                  Smart UV Project chooses them): all that faces one way is projected one way.",
+            ),
+        ),
+        (
+            "conformal",
+            boolean(
+                "Flatten charts that bend keeping their angles (least squares conformal maps) \
+                 where that neither folds nor stretches an area past twice or under half: fewer, \
+                 larger charts on curved surfaces, at the surface's true area.",
             ),
         ),
     ]

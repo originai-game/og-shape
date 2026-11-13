@@ -1589,3 +1589,10 @@
   cutoff, each map as a `UsdUVTexture` on a PNG or JPEG written beside
   the stage). Joints, skins, morph targets and clips are not written
   and are listed (`docs/research.md` §54).
+- `unwrap --conformal` (MCP `conformal`, `Unwrap::conformal`): charts
+  that bend are flattened keeping their angles (least squares conformal
+  maps) where that neither folds, overlaps nor stretches an area past
+  twice or under half; the rest is projected as before. A dome takes 3
+  charts for 6, a cylinder's side unrolls at its true area,
+  DamagedHelmet takes 497 charts for 643. Off by default
+  (`docs/research.md` §55).

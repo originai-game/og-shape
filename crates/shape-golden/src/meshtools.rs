@@ -455,6 +455,7 @@ fn unwrap_case(h: &mut OutputHash) -> Result<(), HashError> {
         resolution: 256,
         padding: 4.0,
         shared: false,
+        conformal: false,
     };
     hash_unwrap(h, &unwrap(&mut b.clone(), &d).map_err(fail)?)
 }

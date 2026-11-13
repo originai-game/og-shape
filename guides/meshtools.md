@@ -160,7 +160,10 @@ import → join → repair → decimate → place → unwrap → measure → pre
    so the padding is in its texels. `shared` (`--shared`) chooses the
    projection directions over the whole mesh, so that all that faces
    one way is projected one way; try it when `charts` is high, and keep
-   whichever report has fewer charts and more `coverage`. `shape process` keeps a textured
+   whichever report has fewer charts and more `coverage`. `conformal`
+   (`--conformal`) flattens charts that bend keeping their angles, at
+   the surface's true area: fewer charts on curved parts and even texel
+   density, but shapes that pack looser (lower `coverage`). `shape process` keeps a textured
    mesh's UVs unless given `--unwrap`, or `--bake PX`, which unwraps,
    packs and bakes the old maps into new ones (below, "Keep the UVs or
    bake").

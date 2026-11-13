@@ -9266,3 +9266,60 @@ written linear); DamagedHelmet exports as one mesh of 15 452 triangles
 with its five maps wired. Not checked: no USD library or viewer has
 opened a file here (none can be run in this environment), so the
 syntax rests on the USD documentation's examples.
+
+## 55. Conformal charts (2026-11-12)
+
+The unwrap projects each chart on a plane, so a chart may turn at most
+`angle` from its seed and loses area towards its rim (cos 66° = 0.41).
+`Unwrap::conformal` flattens charts that bend, keeping their angles:
+least squares conformal maps (Lévy, Petitjean, Ray, Maillot, 2002),
+written from the paper.
+
+- **The map.** Each triangle asks that its flat image be its own shape
+  turned and scaled: with its corners as complex numbers in its own
+  plane, Σ W_j U_j = 0, W_j the opposite edge over the root of twice
+  its area. Two real equations a triangle; two vertices far apart
+  (the furthest from the first, and the furthest from that) are held
+  at their true distance. The least squares answer is found by
+  conjugate gradients on the equations themselves (CGLS, no matrix
+  formed), from the chart's projection on its mean plane, until the
+  gradient has fallen by 1e-10 or 4 n + 100 steps (8 000 at most). f64
+  `+ − × ÷` and `sqrt`, in a fixed order.
+- **What is accepted.** The result is scaled to the surface's area and
+  kept only if every triangle keeps its winding (`orient2d`), no two
+  lie over each other (the grid and exact test of §17), and no
+  triangle's area is over twice or under half its own. So a map is
+  never worse than those bounds, and a chart that cannot be flattened
+  (a cap with its sides, a closed tube) is not forced.
+- **Which charts.** From each seed (largest triangle first) the chart
+  grows to 1.6 × `angle` from the seed's normal (150° at most), taking
+  of the triangles on its rim the one that faces most as the seed
+  does: any first part of the chart is then its flattest part, in one
+  piece. If the whole does not pass, it is tried up to each place it
+  turns a corner (a triangle 0.25 further, in 1 − cos, than any before
+  it), then at a half, a quarter and an eighth. Failed attempts are
+  counted and the search stops at six times the mesh's triangles.
+  What no conformal chart took is projected as before.
+
+Measured (charts without → with; `coverage` is the packed square's
+use):
+
+| Mesh | Charts | Coverage | Time |
+| --- | --- | --- | --- |
+| sphere r10, 960 triangles | 7 → 5 | | 0.02 s |
+| torus 20/6 | 14 → 11 | | 0.2 s |
+| dome r10 | 6 → 3 | | |
+| cone 10×20 | 4 → 3 | | |
+| cylinder 5×20 | 5 → 4 (two strips, two caps) | | |
+| tube 10/6×20 | 11 → 7 | | |
+| DamagedHelmet, 15 452 | 643 → 497 | 0.43 → 0.39 | 0.55 → 0.48 s |
+| `ball_defects.obj`, 1 984 | 91 → 86 | 0.63 → 0.46 | 0.05 → 0.07 s |
+| Mixamo soldier | 650 → 635 | 0.46 → 0.44 | 0.55 → 1.1 s |
+
+Fewer charts and true area (a cylinder's side keeps all of it; the
+projection keeps under nine tenths), but the charts are less
+box-shaped and pack looser. It does not cut seams: a chart still ends
+where the surface has turned, so a closed organic shape is several
+charts rather than one opened along a cut, which is what a seam-placing
+unwrapper (xatlas, Blender with marked seams) gives. Checked:
+`conformal_charts_keep_angles_and_area`.
