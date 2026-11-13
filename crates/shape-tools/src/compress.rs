@@ -1,11 +1,13 @@
 //! Compresses a GLB's geometry and animation with meshopt
 //! (`EXT_meshopt_compression`), losslessly: every buffer view an
 //! accessor reads is written as an attribute or triangle stream where
-//! that is smaller, and reads back to the same bytes
-//! (`docs/research.md` §51).
+//! that is smaller, and reads back to the same bytes, a triangle
+//! perhaps from another of its corners (`docs/research.md` §51, §68).
 //!
 //! Entry: [`compress`]. Images are left as they are. The streams are
 //! version 0, the one every reader of the extension takes.
+
+use std::collections::BTreeMap;
 
 use crate::json::string;
 use crate::jsonread::{Value, parse};
@@ -151,7 +153,11 @@ pub(crate) fn triangles(tris: &[[u32; 3]]) -> Vec<u8> {
                 vo += 1;
             }
         } else {
-            (a, b, c) = (t[0], t[1], t[2]);
+            // From its new vertex, if it has one: an old vertex first
+            // and two new ones after would write the byte that means
+            // "count the new ones from nothing again".
+            let r = (0..3).find(|&r| t[r] == next).unwrap_or(0);
+            (a, b, c) = (t[r], t[(r + 1) % 3], t[(r + 2) % 3]);
             if (a, b, c) == (next, next + 1, next + 2) {
                 // The table's first entry: three new vertices.
                 codes.push(0xf0);
@@ -385,9 +391,26 @@ pub fn compress(glb: &[u8]) -> Result<(Vec<u8>, Compressed), String> {
         out_bin.resize(out_bin.len().next_multiple_of(4), 0);
         let start = out_bin.len();
         let packed = stream(&doc, i, view, data).filter(|(mode, size, count, bytes)| {
-            // Smaller, and the same bytes when read back.
+            // Smaller, and the same bytes when read back; a triangle
+            // may come back from another of its corners (the codec
+            // names it by an edge it shares with one before).
+            let same = |back: &[u8]| {
+                if *mode != Mode::Triangles {
+                    return back == data;
+                }
+                let step = 3 * size;
+                back.len() == data.len()
+                    && back.chunks(step).zip(data.chunks(step)).all(|(b, d)| {
+                        (0..3).any(|r| {
+                            (0..3).all(|k| {
+                                b[k * size..(k + 1) * size]
+                                    == d[((k + r) % 3) * size..((k + r) % 3 + 1) * size]
+                            })
+                        })
+                    })
+            };
             bytes.len() < data.len()
-                && decode(bytes, *count, *size, *mode, Filter::None).as_deref() == Ok(data)
+                && decode(bytes, *count, *size, *mode, Filter::None).is_ok_and(|b| same(&b))
         });
         match packed {
             Some((mode, size, count, bytes)) => {
@@ -551,8 +574,8 @@ pub fn quantize(glb: &[u8], position_bits: u8) -> Result<(Vec<u8>, Quantized), S
                 note(a.index(), STEMS.iter().copied().find(|s| *s == stem));
             }
             for t in p.get("targets").items() {
-                for (_, a) in t.entries() {
-                    note(a.index(), None);
+                for (name, a) in t.entries() {
+                    note(a.index(), (name == "POSITION").then_some("MORPH"));
                 }
             }
             if !p.get("extensions").is_null() {
@@ -598,9 +621,9 @@ pub fn quantize(glb: &[u8], position_bits: u8) -> Result<(Vec<u8>, Quantized), S
         }
         out.iter().all(|v| v.is_finite()).then_some((out, n))
     };
-    // Which meshes' positions may become whole numbers: no skin, no
-    // morph targets, nodes without children that nothing animates, and
-    // position accessors no other mesh reads.
+    // Which meshes' positions may become whole numbers: those whose
+    // position accessors (the targets' too) are plain floats no other
+    // mesh reads, a target's offsets within 16 bits of the grid.
     let nodes = doc.get("nodes").items().to_vec();
     let mesh_count = doc.get("meshes").items().len();
     let mut held = vec![false; mesh_count];
@@ -617,21 +640,25 @@ pub fn quantize(glb: &[u8], position_bits: u8) -> Result<(Vec<u8>, Quantized), S
             }
         }
     }
-    for (n, node) in nodes.iter().enumerate() {
-        if let Some(m) = node.get("mesh").index().filter(|&m| m < mesh_count)
-            && (!node.get("skin").is_null()
-                || !node.get("children").items().is_empty()
-                || animated[n]
-                || !node.get("camera").is_null())
-        {
-            held[m] = true;
-        }
-    }
     let mut position_mesh: Vec<Option<usize>> = vec![None; accessors.len()];
+    let mut morph_mesh: Vec<Option<usize>> = vec![None; accessors.len()];
     for (m, mesh) in doc.get("meshes").items().iter().enumerate() {
         for p in mesh.get("primitives").items() {
-            if !p.get("targets").is_null() {
-                held[m] = true;
+            for t in p.get("targets").items() {
+                let Some(a) = t.get("POSITION").index().filter(|&a| a < accessors.len()) else {
+                    continue;
+                };
+                match morph_mesh[a] {
+                    None => morph_mesh[a] = Some(m),
+                    Some(other) if other != m => {
+                        held[m] = true;
+                        held[other] = true;
+                    }
+                    _ => {}
+                }
+                if reader[a] != Some("MORPH") || floats_of(a).is_none_or(|(_, n)| n != 3) {
+                    held[m] = true;
+                }
             }
             if let Some(a) = p
                 .get("attributes")
@@ -679,9 +706,20 @@ pub fn quantize(glb: &[u8], position_bits: u8) -> Result<(Vec<u8>, Quantized), S
             frames[m] = Some((low, extent));
         }
     }
+    let top = ((1u32 << bits) - 1) as f32;
+    // A target's offsets are whole steps of the grid, signed 16 bits.
+    for (a, m) in morph_mesh.iter().enumerate() {
+        let Some((_, extent)) = m.and_then(|m| frames[m]) else {
+            continue;
+        };
+        let fits = floats_of(a)
+            .is_some_and(|(values, _)| values.iter().all(|v| (v / extent * top).abs() <= 32767.0));
+        if !fits && let Some(m) = *m {
+            frames[m] = None;
+        }
+    }
     // Rewrite.
     let mut report = Quantized::default();
-    let top = ((1u32 << bits) - 1) as f32;
     let mut new_accessors = accessors.clone();
     let mut fresh: Vec<(usize, Vec<u8>, usize)> = Vec::new();
     for i in 0..accessors.len() {
@@ -698,18 +736,34 @@ pub fn quantize(glb: &[u8], position_bits: u8) -> Result<(Vec<u8>, Quantized), S
                 let Some((low, extent)) = position_mesh[i].and_then(|m| frames[m]) else {
                     continue;
                 };
-                let (mut least, mut most) = ([u16::MAX; 3], [0u16; 3]);
+                let (mut least, mut most) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
                 for point in values.as_chunks::<3>().0 {
                     for c in 0..3 {
                         let q = (((point[c] - low[c]) / extent * top + 0.5) as u32).min(top as u32)
                             as u16;
-                        least[c] = least[c].min(q);
-                        most[c] = most[c].max(q);
+                        least[c] = least[c].min(f64::from(q));
+                        most[c] = most[c].max(f64::from(q));
                         bytes.extend_from_slice(&q.to_le_bytes());
                     }
                     bytes.extend_from_slice(&[0, 0]);
                 }
                 (8, 5123, false, Some((least, most)))
+            }
+            "MORPH" => {
+                let Some((_, extent)) = morph_mesh[i].and_then(|m| frames[m]) else {
+                    continue;
+                };
+                let (mut least, mut most) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+                for point in values.as_chunks::<3>().0 {
+                    for c in 0..3 {
+                        let q = (point[c] / extent * top).round() as i16;
+                        least[c] = least[c].min(f64::from(q));
+                        most[c] = most[c].max(f64::from(q));
+                        bytes.extend_from_slice(&q.to_le_bytes());
+                    }
+                    bytes.extend_from_slice(&[0, 0]);
+                }
+                (8, 5122, false, Some((least, most)))
             }
             "NORMAL" | "TANGENT" if (stem == "NORMAL") == (n == 3) => {
                 for point in values.chunks(n) {
@@ -755,12 +809,12 @@ pub fn quantize(glb: &[u8], position_bits: u8) -> Result<(Vec<u8>, Quantized), S
             set(
                 a,
                 "min",
-                Value::Arr(least.iter().map(|&v| num(v as usize)).collect()),
+                Value::Arr(least.iter().map(|&v| Value::Num(v)).collect()),
             );
             set(
                 a,
                 "max",
-                Value::Arr(most.iter().map(|&v| num(v as usize)).collect()),
+                Value::Arr(most.iter().map(|&v| Value::Num(v)).collect()),
             );
         }
         fresh.push((i, bytes, size));
@@ -768,9 +822,34 @@ pub fn quantize(glb: &[u8], position_bits: u8) -> Result<(Vec<u8>, Quantized), S
     if report.accessors == 0 {
         return Ok((glb.to_vec(), report));
     }
-    // The nodes of the meshes whose positions changed take the scale
-    // and offset that restore them.
+    // What restores the positions of a mesh that changed: the scale
+    // and offset on its node; on a node of its own under one that has
+    // children, a camera or an animation; or, for a skinned node, in
+    // inverse bind matrices of its own (a skinned mesh's node does not
+    // place it).
     let mut new_nodes = nodes.clone();
+    let mut new_skins = doc.get("skins").items().to_vec();
+    let mut new_animations = doc.get("animations").items().to_vec();
+    let mut skin_for: BTreeMap<(usize, usize), usize> = BTreeMap::new();
+    let mats_of = |i: usize| -> Option<Vec<f32>> {
+        let a = accessors.get(i)?;
+        if a.get("componentType").index() != Some(5126) || a.get("type").str() != Some("MAT4") {
+            return None;
+        }
+        let view = doc.get("bufferViews").at(a.get("bufferView").index()?);
+        let stride = view.get("byteStride").index().unwrap_or(64);
+        let at =
+            view.get("byteOffset").index().unwrap_or(0) + a.get("byteOffset").index().unwrap_or(0);
+        let mut out = Vec::new();
+        for k in 0..a.get("count").index()? {
+            for c in 0..16 {
+                let from = at + k * stride + c * 4;
+                let b = bin.get(from..from + 4)?;
+                out.push(f32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+            }
+        }
+        Some(out)
+    };
     for (m, frame) in frames.iter().enumerate() {
         let Some((low, extent)) = frame else { continue };
         let changed = fresh
@@ -782,10 +861,113 @@ pub fn quantize(glb: &[u8], position_bits: u8) -> Result<(Vec<u8>, Quantized), S
         report.meshes += 1;
         let scale = f64::from(*extent) / f64::from(top);
         let offset = low.map(f64::from);
-        for node in new_nodes
-            .iter_mut()
-            .filter(|n| n.get("mesh").index() == Some(m))
-        {
+        // M · (the scale, then the offset), column-major.
+        let restored = |mat: &[f64]| -> Vec<f64> {
+            let mut out = mat.to_vec();
+            for r in 0..4 {
+                out[12 + r] = mat[r] * offset[0]
+                    + mat[4 + r] * offset[1]
+                    + mat[8 + r] * offset[2]
+                    + mat[12 + r];
+                for c in 0..3 {
+                    out[c * 4 + r] = mat[c * 4 + r] * scale;
+                }
+            }
+            out
+        };
+        let users: Vec<usize> = (0..nodes.len())
+            .filter(|&n| nodes[n].get("mesh").index() == Some(m))
+            .collect();
+        for n in users {
+            if let Some(s) = nodes[n]
+                .get("skin")
+                .index()
+                .filter(|&s| s < new_skins.len())
+            {
+                let at = match skin_for.get(&(s, m)) {
+                    Some(&at) => at,
+                    None => {
+                        let mut skin = new_skins[s].clone();
+                        let joints = skin.get("joints").items().len();
+                        let had = skin
+                            .get("inverseBindMatrices")
+                            .index()
+                            .and_then(mats_of)
+                            .filter(|v| v.len() == joints * 16);
+                        let mut bytes = Vec::with_capacity(joints * 64);
+                        for j in 0..joints {
+                            let mat: Vec<f64> = match &had {
+                                Some(v) => v[j * 16..j * 16 + 16]
+                                    .iter()
+                                    .map(|&x| f64::from(x))
+                                    .collect(),
+                                None => (0..16)
+                                    .map(|k| if k % 5 == 0 { 1.0 } else { 0.0 })
+                                    .collect(),
+                            };
+                            for x in restored(&mat) {
+                                bytes.extend_from_slice(&(x as f32).to_le_bytes());
+                            }
+                        }
+                        let accessor = new_accessors.len();
+                        new_accessors.push(obj(vec![
+                            ("componentType", num(5126)),
+                            ("count", num(joints)),
+                            ("type", Value::Str("MAT4".into())),
+                        ]));
+                        fresh.push((accessor, bytes, 0));
+                        set(&mut skin, "inverseBindMatrices", num(accessor));
+                        new_skins.push(skin);
+                        skin_for.insert((s, m), new_skins.len() - 1);
+                        new_skins.len() - 1
+                    }
+                };
+                set(&mut new_nodes[n], "skin", num(at));
+                continue;
+            }
+            if !nodes[n].get("children").items().is_empty()
+                || animated[n]
+                || !nodes[n].get("camera").is_null()
+            {
+                let child = new_nodes.len();
+                let mut fields = vec![
+                    ("mesh", num(m)),
+                    (
+                        "translation",
+                        Value::Arr(offset.iter().map(|&v| Value::Num(v)).collect()),
+                    ),
+                    ("scale", Value::Arr(vec![Value::Num(scale); 3])),
+                ];
+                let weights = nodes[n].get("weights").clone();
+                if !weights.is_null() {
+                    fields.push(("weights", weights));
+                }
+                let node = &mut new_nodes[n];
+                let mut children = node.get("children").items().to_vec();
+                children.push(num(child));
+                if let Value::Obj(own) = node {
+                    own.retain(|(k, _)| k != "mesh" && k != "weights");
+                }
+                set(node, "children", Value::Arr(children));
+                new_nodes.push(obj(fields));
+                // A clip that drives the targets drives them there.
+                for anim in &mut new_animations {
+                    let mut channels = anim.get("channels").items().to_vec();
+                    for c in &mut channels {
+                        let target = c.get("target");
+                        if target.get("node").index() == Some(n)
+                            && target.get("path").str() == Some("weights")
+                        {
+                            let mut target = target.clone();
+                            set(&mut target, "node", num(child));
+                            set(c, "target", target);
+                        }
+                    }
+                    set(anim, "channels", Value::Arr(channels));
+                }
+                continue;
+            }
+            let node = &mut new_nodes[n];
             if let Some(mat) = node.get("matrix").nums().filter(|v| v.len() == 16) {
                 // Column-major: the new last column is M · (offset, 1).
                 let mut out = mat.clone();
@@ -895,13 +1077,17 @@ pub fn quantize(glb: &[u8], position_bits: u8) -> Result<(Vec<u8>, Quantized), S
     for (i, bytes, size) in &fresh {
         out_bin.resize(out_bin.len().next_multiple_of(4), 0);
         set(&mut new_accessors[*i], "bufferView", num(views.len()));
-        views.push(obj(vec![
+        let mut view = vec![
             ("buffer", num(0)),
             ("byteOffset", num(out_bin.len())),
             ("byteLength", num(bytes.len())),
-            ("byteStride", num(*size)),
-            ("target", num(34962)),
-        ]));
+        ];
+        // Vertex data says its stride; matrices are a plain view.
+        if *size > 0 {
+            view.push(("byteStride", num(*size)));
+            view.push(("target", num(34962)));
+        }
+        views.push(obj(view));
         out_bin.extend_from_slice(bytes);
     }
     out_bin.resize(out_bin.len().next_multiple_of(4), 0);
@@ -913,6 +1099,12 @@ pub fn quantize(glb: &[u8], position_bits: u8) -> Result<(Vec<u8>, Quantized), S
     }
     set(&mut doc, "accessors", Value::Arr(new_accessors));
     set(&mut doc, "nodes", Value::Arr(new_nodes));
+    if !new_skins.is_empty() {
+        set(&mut doc, "skins", Value::Arr(new_skins));
+    }
+    if !new_animations.is_empty() {
+        set(&mut doc, "animations", Value::Arr(new_animations));
+    }
     if !images.is_empty() {
         set(&mut doc, "images", Value::Arr(images));
     }

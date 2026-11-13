@@ -234,13 +234,15 @@ import → join → repair → decimate → place → unwrap → measure → pre
    a part beside it; set each joint's `effort` and `velocity` and add
    `inertial` yourself (the report's `not_written` lists them).
 11. **Compress** the file you ship (`shape compress in.glb -o out.glb`,
-   MCP `compress`): meshopt, lossless, a quarter to two fifths off the
+   MCP `compress`): meshopt, lossless (triangles and vertices may
+   come back in a vertex-cache order, a triangle from another of its
+   corners: `reordered`, or `--keep-order`), a third to a half off the
    geometry and animation; the file then requires
    `EXT_meshopt_compression`, which three.js, Babylon and the engines'
    glTF loaders read with the meshopt decoder. `--quantize` (MCP
    `quantize`) first writes normals, tangents, UVs and colours in
-   fewer bytes and, on static meshes, positions as 14-bit whole
-   numbers (lossy; about another third off). `--draco` (MCP `draco`)
+   fewer bytes and positions as 14-bit whole numbers (lossy; about
+   another third off), skinned and morphing meshes too. `--draco` (MCP `draco`)
    compresses the meshes with Draco instead: several times smaller,
    and lossy (positions to 14 bits of the mesh's size, normals 10, UVs
    12, colours 8; `--position-bits` and the others change that), with

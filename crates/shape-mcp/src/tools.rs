@@ -924,6 +924,14 @@ fn compress_schema() -> Value {
                 ),
             ),
             (
+                "keep_order",
+                boolean(
+                    "Meshopt: leave triangles and vertices in the file's order. Off, they are \
+                     also tried in a vertex-cache order (nothing drawn changes) and the smaller \
+                     file is written; `reordered` counts the primitives if that one was.",
+                ),
+            ),
+            (
                 "sequential",
                 boolean(
                     "With draco: keep every primitive's points and triangles in the file's \
@@ -1336,6 +1344,7 @@ fn compress_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec
     let d = CompressDesc {
         draco: a.flag("draco")?.then_some(draco),
         quantize: a.flag("quantize")?.then_some(draco.position_bits),
+        keep_order: a.flag("keep_order")?,
         input: a.mesh_input()?,
         out: a
             .path("out")?

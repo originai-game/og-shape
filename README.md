@@ -124,7 +124,7 @@ Run on `main` on 2026-11-10 to 12; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 170 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 409 pass | `scripts/check.sh test` |
+| Tests | 410 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -227,12 +227,13 @@ What a user might expect and will not find, as of 2026-11-12:
   not read. No
   written KTX2 file has been run through the Basis transcoder
   (`docs/research.md` §50, §57).
-- **Compression on export.** `shape compress` writes meshopt
-  losslessly (a quarter to two fifths off the geometry of the files
-  tried); `--quantize` first writes attributes in fewer bytes, but
-  positions only on meshes with no skin, morph targets, child nodes or
-  animation, and vertices are not reordered for the cache as gltfpack
-  does; or
+- **Compression on export.** `shape compress` writes meshopt with
+  every value as it was (a triangle may come back from another of its
+  corners), in a vertex-cache order where that is smaller;
+  `--quantize` first writes attributes in fewer bytes. It does not
+  simplify, merge meshes or quantize animation as gltfpack does, and
+  neither the meshopt decoder nor gltfpack has read a file written
+  here (`docs/research.md` §68). Or
   with `--draco` Draco: quantized, an EdgeBreaker walk with the
   parallelogram prediction, without the octahedral normals, the UV
   prediction and the valence symbols of Draco's own encoder: 0.5 to

@@ -1714,3 +1714,21 @@
   `--sequential` keeps the file's order as before; `--weight-bits N`
   quantizes skin weights (`docs/research.md` §67). Golden
   `meshtools.compress` moved.
+- `shape compress`: the triangle (index) views were left uncompressed
+  on nearly every real file by a bug in the writer (a triangle of an
+  old vertex and two new ones wrote the byte that restarts the count);
+  they are compressed now, and a triangle may read back from another
+  of its corners. The file is also tried with its triangles in a
+  vertex-cache order and its vertices in the order of first use
+  (`shape_tools::reorder`), and the smaller is written (`reordered`
+  in the report; `--keep-order` does not try): BrainStem 1 468 760 →
+  1 219 680 bytes, the soldier 1 926 452 → 1 801 448.
+- `--quantize` reaches positions of skinned meshes (restored in
+  inverse bind matrices of their own), of meshes on nodes with
+  children, cameras or animation (moved to a child node), and of
+  meshes with morph targets (the targets' offsets as 16-bit steps):
+  BrainStem 1 066 900 → 800 164 bytes.
+- Import: a skinned file whose inverse bind matrices scale (one
+  quantized as above, or by gltfpack) comes in with its vertices where
+  the bind pose puts them, not in grid steps (`docs/research.md` §68).
+  Golden `meshtools.compress` moved.

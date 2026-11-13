@@ -1408,12 +1408,22 @@ impl Doc<'_> {
                 None => Affine::IDENTITY,
             })
         };
-        // Rigid already (every axis of unit length, to 1e-9): kept as it is.
-        let rigid = order.iter().all(|&ji| {
+        // Rigid already (every axis of unit length, to 1e-9; the
+        // inverse bind matrices' too, to what 32-bit floats keep): kept
+        // as it is. Inverse bind matrices that scale (a file whose
+        // positions are whole numbers of a grid, restored there) go
+        // the other way: the vertices to where the bind pose puts
+        // them.
+        let rigid = order.iter().enumerate().all(|(b, &ji)| {
             let w = self.world(joints[ji], &parents);
             [w.x, w.y, w.z]
                 .iter()
                 .all(|a| (a.length() - 1.0).abs() < 1e-9)
+                && ibm_of(ji, &names[b]).is_ok_and(|m| {
+                    [m.x, m.y, m.z]
+                        .iter()
+                        .all(|a| (a.length() - 1.0).abs() < 1e-5)
+                })
         });
         let mut bones = Vec::with_capacity(joints.len());
         let mut scaled = None;

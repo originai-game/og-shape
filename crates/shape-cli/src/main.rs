@@ -84,7 +84,10 @@ const USAGE: &str = "usage: shape <command> <input> [options]
            [--longest L | --height L | --width L | --depth L | --scale F]
            [--pivot base|center|X,Y,Z]      turn, size (L with a unit: 1.2m, 90cm,
                                                 900mm) and origin, before and after
-  compress <file.glb> -o out.glb             meshopt, lossless (EXT_meshopt_compression)
+  compress <file.glb> -o out.glb [--keep-order]
+                                                meshopt, lossless (EXT_meshopt_compression);
+                                                also tried in a vertex-cache order, the
+                                                smaller written
            [--quantize [--position-bits N]]     first: attributes in fewer bytes (lossy)
            [--draco [--position-bits N] [--normal-bits N] [--uv-bits N] [--color-bits N]
             [--weight-bits N] [--sequential]]   Draco, quantized (KHR_draco_mesh_compression):

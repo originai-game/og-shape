@@ -9979,3 +9979,87 @@ two pieces, a notched sheet: the same triangles between the same
 points, each in fewer bytes than in order),
 `what_cannot_be_walked_is_mended`. Golden: `meshtools.compress` moved
 (its Draco part is a walk now).
+
+## 68. Meshopt: triangle streams that were not written, a vertex-cache order, and quantizing what moves (2026-11-13)
+
+**A bug in §51.** The triangle stream's writer took a triangle with no
+edge in common with the ones before as it stood. Where its first
+vertex was an old one and its other two the next two new ones, the
+byte after the code came out 0, which in the format means "count new
+vertices from nothing again": the triangle read back as (old, 0, 1).
+The check that a view reads back the same caught it every time, so
+nothing wrong was written; but the index view of nearly every real
+file was left uncompressed (the Helmet's 92 712 bytes, BrainStem's
+369 996). Now such a triangle is written from its new vertex. The
+check itself asked for the same bytes, and a triangle named by an edge
+it shares with one before comes back from another of its corners; it
+now asks for the same triangles, each from any corner. So "lossless"
+means: every value as it was, every triangle the same triangle,
+possibly from another corner.
+
+**A vertex-cache order** (`reorder`, `reorder.rs`). gltfpack orders
+triangles for the vertex cache and vertices by first use before it
+compresses; the codecs count on it (a triangle sharing an edge with a
+recent one is one byte; a vertex that is the next new one is nothing).
+Here: Tom Forsyth's order ("Linear-Speed Vertex Cache Optimisation",
+2006, written from the article): each vertex scores by its place in a
+cache of 32 (the last triangle's three 0.75, then falling as a power
+1.5, computed as x·√x) plus 2/√(triangles still needing it); the
+triangle of the highest sum goes next, looked for among the triangles
+of the vertices in the cache, else among all. Then vertices are
+numbered in the order the triangles first use them, and every
+attribute and morph target is moved alike, in place: the JSON does
+not change. Primitives that share a vertex accessor move together; a
+group is left alone where an accessor is sparse or has no view, where
+counts differ, or where its bytes are also read by something else.
+`shape compress` packs the file both ways and writes the smaller
+(`reordered` says which; `--keep-order` does not try): an exporter's
+own order is sometimes already the better one.
+
+**Quantizing what moves** (§61 left skinned, morphing, animated and
+parented meshes' positions as floats).
+- A skinned node: the scale and offset that restore the positions go
+  into inverse bind matrices of its own (each the file's times that
+  transform, as gltfpack does), in a copy of the skin; the node's own
+  transform does not place a skinned mesh.
+- A node with children, a camera or an animation: the mesh moves to a
+  child node of its own that holds the scale and offset; a clip that
+  drives the node's morph weights is pointed at the child.
+- Morph targets: each target's position offsets become signed 16-bit
+  whole steps of the same grid (no offset: they are differences). A
+  mesh one of whose targets is sparse, shared, or reaches past 32 767
+  steps keeps its floats.
+- The importer took a skinned file whose bones are rigid as it stood,
+  inverse bind matrices and all, so such a file (gltfpack's too) came
+  in with its vertices in grid steps. It now takes that way only where
+  the inverse bind matrices are rigid as well (axes of unit length to
+  1e-5); otherwise the vertices go where the bind pose puts them, as
+  for a scaled armature (§9.9).
+
+Measured, the whole file in bytes (textures included):
+
+| File | §51/§61 | `compress` | of which reordered | `--quantize` |
+| --- | --- | --- | --- | --- |
+| DamagedHelmet | 3 646 512 | 3 573 464 | no | 3 405 672 (was 3 479 092) |
+| Mixamo soldier | 1 926 452 | 1 801 448 | yes | 1 577 856 (1 667 844; its 2 meshes now quantized) |
+| RobotExpressive | 343 476 | 329 852 | yes | 256 844 (270 172; 14 meshes) |
+| BrainStem | 1 468 760 | 1 219 680 | yes | 800 164 (1 066 900) |
+| CesiumMan | 347 680 | 317 592 | yes | 296 664 |
+
+Read back (`shape measure`, and renders of the soldier half way
+through its run and the robot at a morph target): the same triangles,
+welded positions, boundary edges, skins and parts; areas to the
+grid; 49 of 640 000 and 20 of 360 000 pixels differ by more than 40
+of 255 between the renders before and after `--quantize`.
+
+Not done: gltfpack also simplifies, merges and quantizes animation;
+none of that here. Not checked: by the meshopt decoder itself or by
+gltfpack (nothing outside can be run here).
+
+Checked: `a_reordered_glb_is_the_same_mesh` (a ball's triangles
+shuffled: the same triangles, a tenth fewer bytes after meshopt),
+`a_quantized_glb_reads_back_to_the_bits_kept` (a skinned file: the
+vertices to the grid, the weights, every bone's matrix at every key
+carrying them to the same places), `a_compressed_glb_reads_back_the_same`
+(all three views now). Golden: `meshtools.compress` moved (its index
+views are compressed now).

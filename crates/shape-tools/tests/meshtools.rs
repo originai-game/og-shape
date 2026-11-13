@@ -1357,8 +1357,29 @@ fn a_compressed_glb_reads_back_the_same() {
         plain.len(),
         small.len()
     );
-    let read = |b: &[u8]| import(b, &Import::default(), &no_files).unwrap();
-    assert_eq!(read(&small), read(&plain));
+    // Each triangle from its least vertex on, with what its corners
+    // carry: the triangle stream names a triangle by an edge it shares
+    // with one before, so it can come back from another corner.
+    let read = |b: &[u8]| {
+        let mut file = import(b, &Import::default(), &no_files).unwrap();
+        for part in &mut file.parts {
+            let s = &mut part.solid;
+            for i in 0..s.triangles.len() {
+                let t = s.triangles[i];
+                let r = (0..3).min_by_key(|&k| t[k]).unwrap_or(0);
+                s.triangles[i] = [t[r], t[(r + 1) % 3], t[(r + 2) % 3]];
+                if let Some(uvs) = &mut s.uvs {
+                    uvs[i].rotate_left(r);
+                }
+                if let Some(colors) = &mut s.colors {
+                    colors[i].rotate_left(r);
+                }
+            }
+        }
+        file
+    };
+    assert!(report.compressed == 3, "{report:?}");
+    assert!(read(&small) == read(&plain));
     let g = gltf::Gltf::from_slice_without_validation(&small).unwrap();
     assert!(
         g.extensions_required()
@@ -1369,7 +1390,7 @@ fn a_compressed_glb_reads_back_the_same() {
 
     let moving = skinned::skinned_glb_animated(None);
     let (packed, _) = compress(&moving).unwrap();
-    assert_eq!(read(&packed), read(&moving));
+    assert!(read(&packed) == read(&moving));
 }
 
 /// A GLB compressed with Draco reads back as the same mesh to the
@@ -1525,11 +1546,121 @@ fn a_quantized_glb_reads_back_to_the_bits_kept() {
         b.positions
     );
 
+    // A skinned mesh: what restores its positions is in inverse bind
+    // matrices of its own, so it reads back where it was to the grid,
+    // with its weights, and moves as it did.
     let moving = skinned::skinned_glb_animated(None);
     let (packed, report) = quantize(&moving, 0).unwrap();
-    assert_eq!(report.meshes, 0);
+    assert_eq!(report.meshes, 1);
     let (was, now) = (read(&moving), read(&packed));
-    assert_eq!(was.parts[0].solid.positions, now.parts[0].solid.positions);
-    assert_eq!(was.parts[0].solid.skin, now.parts[0].solid.skin);
+    let (a, b) = (&was.parts[0].solid, &now.parts[0].solid);
+    let m = a.measure();
+    let size = (m.bounds_max - m.bounds_min).max_element();
+    let off = a
+        .positions
+        .iter()
+        .zip(&b.positions)
+        .map(|(p, q)| (*p - *q).abs().max_element())
+        .fold(0.0, f64::max);
+    assert!(off <= size / 16383.0 * 0.51 + 1e-6, "{off} of {size}");
+    let (ka, kb) = (a.skin.as_ref().unwrap(), b.skin.as_ref().unwrap());
+    assert_eq!(ka.weights, kb.weights);
+    let (ca, cb) = (&was.parts[0].clips, &now.parts[0].clips);
+    assert_eq!(ca.len(), cb.len());
+    for (x, y) in ca.iter().zip(cb) {
+        assert_eq!(x.times, y.times);
+        // Each bone's matrix at each key carries the mesh's points to
+        // the same places.
+        for (px, py) in x.poses.iter().zip(&y.poses) {
+            for (mx, my) in px.iter().zip(py) {
+                for (p, q) in a.positions.iter().zip(&b.positions).step_by(7) {
+                    let at = |m: &[f64; 16], v: &DVec3| {
+                        DVec3::new(
+                            m[0] * v.x + m[4] * v.y + m[8] * v.z + m[12],
+                            m[1] * v.x + m[5] * v.y + m[9] * v.z + m[13],
+                            m[2] * v.x + m[6] * v.y + m[10] * v.z + m[14],
+                        )
+                    };
+                    let d = (at(mx, p) - at(my, q)).abs().max_element();
+                    assert!(d <= size / 16383.0 + 1e-6, "{d}");
+                }
+            }
+        }
+    }
+}
+
+/// A GLB reordered for the vertex cache is the same mesh: the same
+/// triangles between the same places with the same weights, in another
+/// order; and meshopt then takes it in fewer bytes than a mesh whose
+/// triangles come in no order.
+#[test]
+fn a_reordered_glb_is_the_same_mesh() {
+    use shape_tools::{compress, reorder};
+    let ball = shape_gen::solids::sphere(10.0).unwrap();
+    // The ball's triangles shuffled: an order no exporter left.
+    let mut shuffled = ball.clone();
+    let n = shuffled.triangles.len();
+    let mut state = 12345u64;
+    for i in (1..n).rev() {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let j = (state >> 33) as usize % (i + 1);
+        shuffled.triangles.swap(i, j);
+        shuffled.surfaces.swap(i, j);
+        shuffled.face_tags.swap(i, j);
+    }
+    let plain = glb_plain(
+        &shuffled,
+        &PlainGlb {
+            name: "ball",
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (ordered, report) = reorder(&plain).unwrap();
+    assert_eq!((report.primitives, report.reordered), (1, 1));
+    assert_eq!(ordered.len(), plain.len());
+    let read = |b: &[u8]| import(b, &Import::default(), &no_files).unwrap();
+    let corners = |s: &Solid| {
+        let mut out: Vec<[[u64; 3]; 3]> = s
+            .triangles
+            .iter()
+            .map(|t| {
+                let p = t.map(|v| {
+                    let q = s.positions[v as usize];
+                    [q.x.to_bits(), q.y.to_bits(), q.z.to_bits()]
+                });
+                let k = (0..3).min_by_key(|&k| p[k]).unwrap_or(0);
+                [p[k], p[(k + 1) % 3], p[(k + 2) % 3]]
+            })
+            .collect();
+        out.sort_unstable();
+        out
+    };
+    let (a, b) = (&read(&plain).parts[0].solid, &read(&ordered).parts[0].solid);
+    assert!(corners(a) == corners(b), "other triangles");
+    assert!(a.triangles != b.triangles);
+    let (was, now) = (
+        compress(&plain).unwrap().0.len(),
+        compress(&ordered).unwrap().0.len(),
+    );
+    assert!(now * 10 < was * 9, "{now} {was}");
+
+    let moving = skinned::skinned_glb_animated(None);
+    let (ordered, _) = reorder(&moving).unwrap();
+    let weighted = |s: &Solid| {
+        let k = s.skin.as_ref().unwrap();
+        let mut out: Vec<String> = s
+            .positions
+            .iter()
+            .zip(&k.weights)
+            .map(|(p, w)| format!("{p:?} {w:?}"))
+            .collect();
+        out.sort_unstable();
+        out
+    };
+    let (was, now) = (read(&moving), read(&ordered));
+    assert!(weighted(&was.parts[0].solid) == weighted(&now.parts[0].solid));
     assert_eq!(was.parts[0].clips, now.parts[0].clips);
 }

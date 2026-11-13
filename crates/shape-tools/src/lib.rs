@@ -83,6 +83,7 @@ mod place;
 mod png;
 mod polygon;
 mod preview;
+mod reorder;
 mod repair;
 mod sampler;
 mod skin;
@@ -125,6 +126,7 @@ pub use place::{
 };
 pub use png::png;
 pub use preview::{Image, Preview, ViewCamera, Views, preview, sheet, views};
+pub use reorder::{Reordered, reorder};
 pub use repair::{
     Floaters, Holes, LARGE_HOLE_EDGES, NonManifold, Repair, RepairError, RepairReport, Weld,
     apply_transform, close_holes, join, join_clips, orient, remove_degenerate, remove_floaters,
