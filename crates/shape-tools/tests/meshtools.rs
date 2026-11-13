@@ -1426,3 +1426,54 @@ fn a_draco_glb_reads_back_to_the_bits_kept() {
     assert_eq!(was.parts[0].clips, now.parts[0].clips);
     assert_eq!(was.parts[0].solid.triangles, now.parts[0].solid.triangles);
 }
+
+/// A quantized GLB reads back as the same mesh to the bits kept, the
+/// scale and offset that restore its positions on its node; a skinned
+/// mesh keeps its positions as they were; the meshopt pass then takes
+/// more off than it does without.
+#[test]
+fn a_quantized_glb_reads_back_to_the_bits_kept() {
+    use shape_tools::{compress, quantize};
+    let mut ball = shape_gen::solids::sphere(10.0).unwrap();
+    ball.map_positions(|p| p + DVec3::new(30.0, -5.0, 12.0), false);
+    let plain = glb_plain(
+        &ball,
+        &PlainGlb {
+            name: "ball",
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (small, report) = quantize(&plain, 0).unwrap();
+    assert_eq!(report.meshes, 1);
+    // Positions and normals: 12 bytes each to 8 and 4.
+    assert_eq!(report.accessors, 2);
+    assert_eq!(report.bytes_after * 2, report.bytes_before);
+    let read = |b: &[u8]| import(b, &Import::default(), &no_files).unwrap();
+    let place = |i: &shape_tools::Imported| shape_tools::apply_transform(&i.parts[0]).unwrap();
+    let (a, b) = (place(&read(&plain)), place(&read(&small)));
+    assert_eq!(a.triangles, b.triangles);
+    let step = 20.0 / 16383.0;
+    for (p, q) in a.positions.iter().zip(&b.positions) {
+        assert!(
+            (*p - *q).abs().max_element() <= step * 0.51 + 1e-9,
+            "{p} {q}"
+        );
+    }
+    assert!(quantize(&small, 0).unwrap_err().contains("already"));
+    let lossless = compress(&plain).unwrap().0.len();
+    let both = compress(&small).unwrap().0.len();
+    assert!(both * 10 < lossless * 8, "{both} {lossless}");
+    assert_eq!(
+        place(&read(&compress(&small).unwrap().0)).positions,
+        b.positions
+    );
+
+    let moving = skinned::skinned_glb_animated(None);
+    let (packed, report) = quantize(&moving, 0).unwrap();
+    assert_eq!(report.meshes, 0);
+    let (was, now) = (read(&moving), read(&packed));
+    assert_eq!(was.parts[0].solid.positions, now.parts[0].solid.positions);
+    assert_eq!(was.parts[0].solid.skin, now.parts[0].solid.skin);
+    assert_eq!(was.parts[0].clips, now.parts[0].clips);
+}

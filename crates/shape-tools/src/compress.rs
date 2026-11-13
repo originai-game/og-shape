@@ -471,3 +471,476 @@ pub fn compress(glb: &[u8]) -> Result<(Vec<u8>, Compressed), String> {
     out.extend_from_slice(&out_bin);
     Ok((out, report))
 }
+
+/// What [`quantize`] did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Quantized {
+    /// Accessors rewritten in fewer bytes.
+    pub accessors: usize,
+    /// Meshes whose positions became whole numbers (their nodes took
+    /// the scale and the offset).
+    pub meshes: usize,
+    /// Bytes of the rewritten accessors, before.
+    pub bytes_before: usize,
+    /// The same, after.
+    pub bytes_after: usize,
+}
+
+/// `glb` with its vertex attributes in fewer bytes
+/// (`KHR_mesh_quantization`), and what was done; lossy. Normals and
+/// tangents become signed bytes, texture coordinates within 0..1
+/// unsigned 16-bit, float colours unsigned bytes. Positions become
+/// whole numbers of `position_bits` bits (0 is 14) of the mesh's size,
+/// the scale and offset that restore them put on the mesh's nodes:
+/// only for a mesh with no skin and no morph targets whose nodes have
+/// no children and are not animated. What cannot be rewritten stays.
+pub fn quantize(glb: &[u8], position_bits: u8) -> Result<(Vec<u8>, Quantized), String> {
+    let word = |at: usize| -> Result<usize, String> {
+        let b = glb.get(at..at + 4).ok_or("the GLB is cut short")?;
+        Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
+    };
+    if !glb.starts_with(b"glTF") {
+        return Err("not a GLB file".into());
+    }
+    let json_len = word(12)?;
+    let json = glb.get(20..20 + json_len).ok_or("the GLB is cut short")?;
+    let bin_at = 20 + json_len;
+    let bin: &[u8] = if bin_at + 8 <= glb.len() {
+        let n = word(bin_at)?;
+        glb.get(bin_at + 8..bin_at + 8 + n)
+            .ok_or("the GLB is cut short")?
+    } else {
+        &[]
+    };
+    let mut doc = parse(json).map_err(|e| format!("the GLB's JSON: {e}"))?;
+    if doc.get("buffers").items().len() != 1 || !doc.get("buffers").at(0).get("uri").is_null() {
+        return Err("a GLB with one buffer, its own, is quantized".into());
+    }
+    if doc.get("extensionsUsed").items().iter().any(|e| {
+        e.str()
+            .is_some_and(|s| s.contains("compression") || s.contains("quantization"))
+    }) {
+        return Err("the GLB is compressed or quantized already".into());
+    }
+    let bits = if position_bits == 0 {
+        14
+    } else {
+        position_bits.clamp(2, 16)
+    };
+    let accessors = doc.get("accessors").items().to_vec();
+    // What reads each accessor: an attribute of one name (its stem), or
+    // something a rewrite would break.
+    let mut reader: Vec<Option<&str>> = vec![None; accessors.len()];
+    let mut fixed = vec![false; accessors.len()];
+    let mut note = |i: Option<usize>, stem: Option<&'static str>| {
+        let Some(i) = i.filter(|&i| i < fixed.len()) else {
+            return;
+        };
+        match (stem, reader[i]) {
+            (Some(s), None) => reader[i] = Some(s),
+            (Some(s), Some(r)) if s == r => {}
+            _ => fixed[i] = true,
+        }
+    };
+    const STEMS: [&str; 5] = ["POSITION", "NORMAL", "TANGENT", "TEXCOORD", "COLOR"];
+    for mesh in doc.get("meshes").items() {
+        for p in mesh.get("primitives").items() {
+            note(p.get("indices").index(), None);
+            for (name, a) in p.get("attributes").entries() {
+                let stem = name.split('_').next().unwrap_or("");
+                note(a.index(), STEMS.iter().copied().find(|s| *s == stem));
+            }
+            for t in p.get("targets").items() {
+                for (_, a) in t.entries() {
+                    note(a.index(), None);
+                }
+            }
+            if !p.get("extensions").is_null() {
+                for (_, a) in p.get("attributes").entries() {
+                    note(a.index(), None);
+                }
+            }
+        }
+    }
+    for skin in doc.get("skins").items() {
+        note(skin.get("inverseBindMatrices").index(), None);
+    }
+    for anim in doc.get("animations").items() {
+        for s in anim.get("samplers").items() {
+            note(s.get("input").index(), None);
+            note(s.get("output").index(), None);
+        }
+    }
+    // An accessor's floats, where it is plain float data in the buffer.
+    let floats_of = |i: usize| -> Option<(Vec<f32>, usize)> {
+        let a = &accessors[i];
+        if fixed[i] || !a.get("sparse").is_null() || a.get("componentType").index() != Some(5126) {
+            return None;
+        }
+        let n = match a.get("type").str()? {
+            "VEC2" => 2,
+            "VEC3" => 3,
+            "VEC4" => 4,
+            _ => return None,
+        };
+        let view = doc.get("bufferViews").at(a.get("bufferView").index()?);
+        let stride = view.get("byteStride").index().unwrap_or(4 * n);
+        let at =
+            view.get("byteOffset").index().unwrap_or(0) + a.get("byteOffset").index().unwrap_or(0);
+        let count = a.get("count").index()?;
+        let mut out = Vec::with_capacity(count * n);
+        for k in 0..count {
+            for c in 0..n {
+                let from = at + k * stride + c * 4;
+                let b = bin.get(from..from + 4)?;
+                out.push(f32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+            }
+        }
+        out.iter().all(|v| v.is_finite()).then_some((out, n))
+    };
+    // Which meshes' positions may become whole numbers: no skin, no
+    // morph targets, nodes without children that nothing animates, and
+    // position accessors no other mesh reads.
+    let nodes = doc.get("nodes").items().to_vec();
+    let mesh_count = doc.get("meshes").items().len();
+    let mut held = vec![false; mesh_count];
+    let mut animated = vec![false; nodes.len()];
+    for anim in doc.get("animations").items() {
+        for c in anim.get("channels").items() {
+            if let Some(n) = c
+                .get("target")
+                .get("node")
+                .index()
+                .filter(|&n| n < nodes.len())
+            {
+                animated[n] = true;
+            }
+        }
+    }
+    for (n, node) in nodes.iter().enumerate() {
+        if let Some(m) = node.get("mesh").index().filter(|&m| m < mesh_count)
+            && (!node.get("skin").is_null()
+                || !node.get("children").items().is_empty()
+                || animated[n]
+                || !node.get("camera").is_null())
+        {
+            held[m] = true;
+        }
+    }
+    let mut position_mesh: Vec<Option<usize>> = vec![None; accessors.len()];
+    for (m, mesh) in doc.get("meshes").items().iter().enumerate() {
+        for p in mesh.get("primitives").items() {
+            if !p.get("targets").is_null() {
+                held[m] = true;
+            }
+            if let Some(a) = p
+                .get("attributes")
+                .get("POSITION")
+                .index()
+                .filter(|&a| a < accessors.len())
+            {
+                match position_mesh[a] {
+                    None => position_mesh[a] = Some(m),
+                    Some(other) if other != m => {
+                        held[m] = true;
+                        held[other] = true;
+                    }
+                    _ => {}
+                }
+                if floats_of(a).is_none_or(|(_, n)| n != 3) {
+                    held[m] = true;
+                }
+            }
+        }
+    }
+    let mut frames: Vec<Option<([f32; 3], f32)>> = vec![None; mesh_count];
+    for (m, mesh) in doc.get("meshes").items().iter().enumerate() {
+        if held[m] {
+            continue;
+        }
+        let (mut low, mut high) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+        for p in mesh.get("primitives").items() {
+            if let Some((values, 3)) = p
+                .get("attributes")
+                .get("POSITION")
+                .index()
+                .and_then(floats_of)
+            {
+                for point in values.as_chunks::<3>().0 {
+                    for c in 0..3 {
+                        low[c] = low[c].min(point[c]);
+                        high[c] = high[c].max(point[c]);
+                    }
+                }
+            }
+        }
+        let extent = (0..3).map(|c| high[c] - low[c]).fold(0.0f32, f32::max);
+        if extent > 0.0 && extent.is_finite() {
+            frames[m] = Some((low, extent));
+        }
+    }
+    // Rewrite.
+    let mut report = Quantized::default();
+    let top = ((1u32 << bits) - 1) as f32;
+    let mut new_accessors = accessors.clone();
+    let mut fresh: Vec<(usize, Vec<u8>, usize)> = Vec::new();
+    for i in 0..accessors.len() {
+        let Some(stem) = reader[i] else { continue };
+        let Some((values, n)) = floats_of(i) else {
+            continue;
+        };
+        let count = values.len() / n;
+        // The bytes, an element's size (a multiple of 4), the component
+        // type, whether normalized, and whole-number bounds.
+        let mut bytes: Vec<u8> = Vec::new();
+        let (size, component, normalized, bounds) = match stem {
+            "POSITION" => {
+                let Some((low, extent)) = position_mesh[i].and_then(|m| frames[m]) else {
+                    continue;
+                };
+                let (mut least, mut most) = ([u16::MAX; 3], [0u16; 3]);
+                for point in values.as_chunks::<3>().0 {
+                    for c in 0..3 {
+                        let q = (((point[c] - low[c]) / extent * top + 0.5) as u32).min(top as u32)
+                            as u16;
+                        least[c] = least[c].min(q);
+                        most[c] = most[c].max(q);
+                        bytes.extend_from_slice(&q.to_le_bytes());
+                    }
+                    bytes.extend_from_slice(&[0, 0]);
+                }
+                (8, 5123, false, Some((least, most)))
+            }
+            "NORMAL" | "TANGENT" if (stem == "NORMAL") == (n == 3) => {
+                for point in values.chunks(n) {
+                    for &v in point {
+                        let q = (v.clamp(-1.0, 1.0) * 127.0).round() as i8;
+                        bytes.push(q as u8);
+                    }
+                    bytes.resize(bytes.len().next_multiple_of(4), 0);
+                }
+                (4, 5120, true, None)
+            }
+            "TEXCOORD" if n == 2 && values.iter().all(|v| (0.0..=1.0).contains(v)) => {
+                for &v in &values {
+                    bytes.extend_from_slice(&((v * 65535.0).round() as u16).to_le_bytes());
+                }
+                (4, 5123, true, None)
+            }
+            "COLOR" => {
+                for point in values.chunks(n) {
+                    for &v in point {
+                        bytes.push((v.clamp(0.0, 1.0) * 255.0).round() as u8);
+                    }
+                    bytes.resize(bytes.len().next_multiple_of(4), 0);
+                }
+                (4, 5121, true, None)
+            }
+            _ => continue,
+        };
+        report.accessors += 1;
+        report.bytes_before += count * n * 4;
+        report.bytes_after += bytes.len();
+        let a = &mut new_accessors[i];
+        if let Value::Obj(fields) = a {
+            fields.retain(|(k, _)| {
+                k != "byteOffset" && k != "min" && k != "max" && k != "normalized"
+            });
+        }
+        set(a, "componentType", num(component));
+        if normalized {
+            set(a, "normalized", Value::Bool(true));
+        }
+        if let Some((least, most)) = bounds {
+            set(
+                a,
+                "min",
+                Value::Arr(least.iter().map(|&v| num(v as usize)).collect()),
+            );
+            set(
+                a,
+                "max",
+                Value::Arr(most.iter().map(|&v| num(v as usize)).collect()),
+            );
+        }
+        fresh.push((i, bytes, size));
+    }
+    if report.accessors == 0 {
+        return Ok((glb.to_vec(), report));
+    }
+    // The nodes of the meshes whose positions changed take the scale
+    // and offset that restore them.
+    let mut new_nodes = nodes.clone();
+    for (m, frame) in frames.iter().enumerate() {
+        let Some((low, extent)) = frame else { continue };
+        let changed = fresh
+            .iter()
+            .any(|(i, _, _)| position_mesh[*i] == Some(m) && reader[*i] == Some("POSITION"));
+        if !changed {
+            continue;
+        }
+        report.meshes += 1;
+        let scale = f64::from(*extent) / f64::from(top);
+        let offset = low.map(f64::from);
+        for node in new_nodes
+            .iter_mut()
+            .filter(|n| n.get("mesh").index() == Some(m))
+        {
+            if let Some(mat) = node.get("matrix").nums().filter(|v| v.len() == 16) {
+                // Column-major: the new last column is M · (offset, 1).
+                let mut out = mat.clone();
+                for r in 0..4 {
+                    out[12 + r] = mat[r] * offset[0]
+                        + mat[4 + r] * offset[1]
+                        + mat[8 + r] * offset[2]
+                        + mat[12 + r];
+                    for c in 0..3 {
+                        out[c * 4 + r] = mat[c * 4 + r] * scale;
+                    }
+                }
+                set(
+                    node,
+                    "matrix",
+                    Value::Arr(out.into_iter().map(Value::Num).collect()),
+                );
+                continue;
+            }
+            let t = node
+                .get("translation")
+                .nums()
+                .filter(|v| v.len() == 3)
+                .unwrap_or(vec![0.0; 3]);
+            let q = node
+                .get("rotation")
+                .nums()
+                .filter(|v| v.len() == 4)
+                .unwrap_or(vec![0.0, 0.0, 0.0, 1.0]);
+            let s = node
+                .get("scale")
+                .nums()
+                .filter(|v| v.len() == 3)
+                .unwrap_or(vec![1.0; 3]);
+            // T R S · (offset, then scale): the offset scaled and turned.
+            let v = [s[0] * offset[0], s[1] * offset[1], s[2] * offset[2]];
+            let (x, y, z, w) = (q[0], q[1], q[2], q[3]);
+            let cross = [
+                y * v[2] - z * v[1],
+                z * v[0] - x * v[2],
+                x * v[1] - y * v[0],
+            ];
+            let twice = [
+                y * cross[2] - z * cross[1],
+                z * cross[0] - x * cross[2],
+                x * cross[1] - y * cross[0],
+            ];
+            let turned = [0, 1, 2].map(|c| v[c] + 2.0 * (w * cross[c] + twice[c]));
+            set(
+                node,
+                "translation",
+                Value::Arr((0..3).map(|c| Value::Num(t[c] + turned[c])).collect()),
+            );
+            set(
+                node,
+                "scale",
+                Value::Arr(s.iter().map(|v| Value::Num(v * scale)).collect()),
+            );
+        }
+    }
+    // The buffer again: views something still reads, then the new ones.
+    let old_views = doc.get("bufferViews").items().to_vec();
+    let rewritten: Vec<usize> = fresh.iter().map(|(i, _, _)| *i).collect();
+    let mut kept = vec![false; old_views.len()];
+    for (i, a) in new_accessors.iter().enumerate() {
+        if !rewritten.contains(&i)
+            && let Some(v) = a.get("bufferView").index().filter(|&v| v < kept.len())
+        {
+            kept[v] = true;
+        }
+    }
+    for image in doc.get("images").items() {
+        if let Some(v) = image.get("bufferView").index().filter(|&v| v < kept.len()) {
+            kept[v] = true;
+        }
+    }
+    let mut renumber = vec![usize::MAX; old_views.len()];
+    let mut out_bin: Vec<u8> = Vec::new();
+    let mut views = Vec::new();
+    for (i, view) in old_views.iter().enumerate() {
+        if !kept[i] {
+            continue;
+        }
+        let at = view.get("byteOffset").index().unwrap_or(0);
+        let len = view
+            .get("byteLength")
+            .index()
+            .ok_or("a buffer view with no length")?;
+        let data = at
+            .checked_add(len)
+            .and_then(|end| bin.get(at..end))
+            .ok_or("a buffer view outside the buffer")?;
+        out_bin.resize(out_bin.len().next_multiple_of(4), 0);
+        let mut view = view.clone();
+        set(&mut view, "byteOffset", num(out_bin.len()));
+        out_bin.extend_from_slice(data);
+        renumber[i] = views.len();
+        views.push(view);
+    }
+    for (i, a) in new_accessors.iter_mut().enumerate() {
+        if !rewritten.contains(&i)
+            && let Some(v) = a.get("bufferView").index()
+        {
+            set(a, "bufferView", num(renumber[v]));
+        }
+    }
+    for (i, bytes, size) in &fresh {
+        out_bin.resize(out_bin.len().next_multiple_of(4), 0);
+        set(&mut new_accessors[*i], "bufferView", num(views.len()));
+        views.push(obj(vec![
+            ("buffer", num(0)),
+            ("byteOffset", num(out_bin.len())),
+            ("byteLength", num(bytes.len())),
+            ("byteStride", num(*size)),
+            ("target", num(34962)),
+        ]));
+        out_bin.extend_from_slice(bytes);
+    }
+    out_bin.resize(out_bin.len().next_multiple_of(4), 0);
+    let mut images = doc.get("images").items().to_vec();
+    for image in &mut images {
+        if let Some(v) = image.get("bufferView").index() {
+            set(image, "bufferView", num(renumber[v]));
+        }
+    }
+    set(&mut doc, "accessors", Value::Arr(new_accessors));
+    set(&mut doc, "nodes", Value::Arr(new_nodes));
+    if !images.is_empty() {
+        set(&mut doc, "images", Value::Arr(images));
+    }
+    set(&mut doc, "bufferViews", Value::Arr(views));
+    set(
+        &mut doc,
+        "buffers",
+        Value::Arr(vec![obj(vec![("byteLength", num(out_bin.len()))])]),
+    );
+    for key in ["extensionsUsed", "extensionsRequired"] {
+        let mut names = doc.get(key).items().to_vec();
+        names.push(Value::Str("KHR_mesh_quantization".into()));
+        set(&mut doc, key, Value::Arr(names));
+    }
+    let mut text = String::new();
+    write(&doc, &mut text);
+    let mut json = text.into_bytes();
+    json.resize(json.len().next_multiple_of(4), b' ');
+    let total = 12 + 8 + json.len() + 8 + out_bin.len();
+    let mut out = Vec::with_capacity(total);
+    out.extend_from_slice(b"glTF");
+    out.extend_from_slice(&2u32.to_le_bytes());
+    out.extend_from_slice(&(total as u32).to_le_bytes());
+    out.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"JSON");
+    out.extend_from_slice(&json);
+    out.extend_from_slice(&(out_bin.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"BIN\0");
+    out.extend_from_slice(&out_bin);
+    Ok((out, report))
+}

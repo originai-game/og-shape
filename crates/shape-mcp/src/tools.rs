@@ -906,8 +906,18 @@ fn compress_schema() -> Value {
                 ),
             ),
             (
+                "quantize",
+                boolean(
+                    "Before meshopt, write the vertex attributes in fewer bytes \
+                     (`KHR_mesh_quantization`, lossy): normals and tangents as bytes, UVs \
+                     within 0..1 as 16 bits, colours as bytes, and positions as whole numbers \
+                     of `position_bits` of the mesh's size on meshes with no skin or morph \
+                     targets whose nodes have no children and no animation.",
+                ),
+            ),
+            (
                 "position_bits",
-                int("Draco: bits of a position's range; 0 is 14."),
+                int("Draco or quantize: bits of a position's range; 0 is 14."),
             ),
             (
                 "normal_bits",
@@ -1292,7 +1302,8 @@ fn compress_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec
         color_bits: bits("color_bits")?,
     };
     let d = CompressDesc {
-        draco: (a.flag("draco")? || draco != shape_tools::Draco::default()).then_some(draco),
+        draco: a.flag("draco")?.then_some(draco),
+        quantize: a.flag("quantize")?.then_some(draco.position_bits),
         input: a.mesh_input()?,
         out: a
             .path("out")?

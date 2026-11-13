@@ -610,6 +610,12 @@ fn compress_case(h: &mut OutputHash) -> Result<(), HashError> {
         shape_tools::compress(&skinned_support::skinned_glb_animated(None)).map_err(fail)?;
     h.u64(report.compressed as u64);
     h.bytes(&bytes);
+    // A plain mesh quantized, then under meshopt.
+    let ball = shape_gen::solids::sphere(10.0).map_err(fail)?;
+    let plain = shape_tools::glb_plain(&ball, &shape_tools::PlainGlb::default()).map_err(fail)?;
+    let (small, report) = shape_tools::quantize(&plain, 0).map_err(fail)?;
+    h.u64(report.accessors as u64);
+    h.bytes(&shape_tools::compress(&small).map_err(fail)?.0);
     // The same file under Draco (quantized in f32, rANS).
     let (bytes, report) = shape_tools::compress_draco(
         &skinned_support::skinned_glb_animated(None),

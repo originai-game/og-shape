@@ -22,8 +22,9 @@
 //! shape place    <mesh> [-o out] [--up AXIS] [--front AXIS] [--turn DEG]
 //!                [--longest L | --height L | --width L | --depth L | --scale F]
 //!                [--pivot base|center|X,Y,Z]
-//! shape compress <file.glb> -o out.glb [--draco [--position-bits N] [--normal-bits N]
-//!                [--uv-bits N] [--color-bits N]]
+//! shape compress <file.glb> -o out.glb [--quantize [--position-bits N]]
+//!                [--draco [--position-bits N] [--normal-bits N] [--uv-bits N]
+//!                [--color-bits N]]
 //! shape collide  <input> [-o out] [--hulls N] [--concavity MM]
 //!                [--max-vertices N]
 //! shape process  <mesh> [--budget N | --ratio R] [--merge-charts UV]
@@ -84,6 +85,7 @@ const USAGE: &str = "usage: shape <command> <input> [options]
            [--pivot base|center|X,Y,Z]      turn, size (L with a unit: 1.2m, 90cm,
                                                 900mm) and origin, before and after
   compress <file.glb> -o out.glb             meshopt, lossless (EXT_meshopt_compression)
+           [--quantize [--position-bits N]]     first: attributes in fewer bytes (lossy)
            [--draco [--position-bits N] [--normal-bits N] [--uv-bits N] [--color-bits N]]
                                                 Draco, quantized (KHR_draco_mesh_compression)
   collide  <input> [-o out] [--hulls N] [--concavity MM] [--max-vertices N]

@@ -9562,3 +9562,43 @@ exactly, and quantized floats within half a step);
 gate (its line moves: the Draco file is hashed with the meshopt one).
 Not checked: no file written here has been read by Draco's own
 decoder (it cannot be run in this environment).
+
+## 61. Quantized attributes before meshopt (2026-11-12)
+
+meshopt's lossless pass (§51) takes a quarter to two fifths off float
+geometry; most of what gltfpack gains comes from writing the
+attributes in fewer bytes first. `shape_tools::quantize` does that
+under `KHR_mesh_quantization`, on a finished GLB, for float accessors
+that only attributes of one kind read:
+
+| Attribute | Written as | When |
+| --- | --- | --- |
+| `NORMAL`, `TANGENT` | signed bytes, normalized (4 bytes a vertex) | always |
+| `TEXCOORD_n` | unsigned 16 bits, normalized | every value within 0..1 |
+| `COLOR_n` | unsigned bytes, normalized | float colours |
+| `POSITION` | unsigned 16 bits holding `position_bits` (14) of the mesh's widest extent, 8 bytes a vertex | the mesh has no skin and no morph targets; its nodes have no children, no camera and no animation; no other mesh reads the accessor |
+
+A position p becomes q = round((p − least) / extent × (2^bits − 1)),
+one grid for all of a mesh's primitives; the node that holds the mesh
+takes the scale extent / (2^bits − 1) and the offset: a matrix node's
+matrix times that transform; a node with translation, rotation and
+scale gets t + R(S ∘ least) and S × scale. The conditions are what
+keeps that sound: a skin's bind matrices and a morph target's offsets
+are in the mesh's own space, a child node or an animation channel
+reads the node's transform as it was.
+
+Measured, the whole file's bytes (images and all):
+
+| File | Plain | meshopt | quantized, then meshopt | Draco (§60) |
+| --- | --- | --- | --- | --- |
+| DamagedHelmet (3.2 MB of it images) | 3 773 916 | 3 646 512 | 3 479 092 | 3 369 284 |
+| Mixamo soldier (skinned: positions stay float) | 2 160 468 | 1 926 452 | 1 707 108 | 1 685 352 |
+| RobotExpressive (animation is most of it; Draco leaves it) | 463 988 | 343 476 | 292 224 | 346 940 |
+
+Each reads back with the same triangles, welds and boundary edges;
+volumes move in the fifth place. Not done: reordering vertices and
+triangles for the cache and for the encoder (gltfpack's other gain),
+positions of skinned or animated meshes, UVs outside 0..1. Checked:
+`a_quantized_glb_reads_back_to_the_bits_kept`; `meshtools.compress` in
+the gate (its line moves again: a quantized mesh under meshopt is
+hashed with the others).

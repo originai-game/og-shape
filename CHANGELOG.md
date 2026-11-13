@@ -1634,3 +1634,13 @@
   soldier's 841 → 426 kB, RobotExpressive's 172 → 57 kB, each reading
   back with the same triangles and welds. Primitives with morph
   targets and animation stay as they are (`docs/research.md` §60).
+- `shape compress --quantize` (MCP `quantize`,
+  `shape_tools::quantize`): before meshopt, vertex attributes in fewer
+  bytes under `KHR_mesh_quantization`: normals and tangents as signed
+  bytes, texture coordinates within 0..1 as 16 bits, float colours as
+  bytes, and positions as whole numbers of 14 bits (`--position-bits`)
+  of the mesh's size, their scale and offset on the mesh's nodes, for
+  meshes with no skin or morph targets whose nodes have no children
+  and no animation. RobotExpressive: 464 kB plain, 343 kB under
+  meshopt, 292 kB quantized under meshopt (Draco, which leaves
+  animation alone: 347 kB) (`docs/research.md` §61).
