@@ -1804,12 +1804,12 @@ fn thin<V: AsRef<[f64]>>(times: &[f64], values: &[V], tolerance: f64, whole: boo
 const KEEP_WEIGHT: f64 = 1e-4;
 
 /// A translation, a rotation (a unit quaternion x, y, z, w) and a scale.
-type Trs = ([f64; 3], [f64; 4], [f64; 3]);
+pub(crate) type Trs = ([f64; 3], [f64; 4], [f64; 3]);
 
 /// An affine matrix as a translation, a rotation (a unit quaternion x, y,
 /// z, w) and a scale: the columns' lengths are the scale (the first
 /// negative for a mirror), what is left the rotation.
-fn decompose(m: &Mat4) -> Trs {
+pub(crate) fn decompose(m: &Mat4) -> Trs {
     let col = |c: usize| DVec3::new(m[4 * c], m[4 * c + 1], m[4 * c + 2]);
     let (mut x, y, z) = (col(0), col(1), col(2));
     let mut scale = [x.length(), y.length(), z.length()];

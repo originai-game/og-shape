@@ -124,7 +124,7 @@ Run on `main` on 2026-11-10 to 12; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 170 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 415 pass | `scripts/check.sh test` |
+| Tests | 416 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -280,9 +280,12 @@ What a user might expect and will not find, as of 2026-11-12:
   closes stays open unless `--fuse` (or `--holes-through`) is given.
   The bench of 54 was run again at keep 10k only
   (`docs/research.md` §71).
-- **Formats.** USD is written as `.usda` text with meshes, materials
-  and maps: no joints, skins, morph targets or clips, no `.usdc` or
-  `.usdz`, and no USD tool has read a file here. URDF takes one
+- **Formats.** USD is written as text (`.usda`, or packed as
+  `.usdz`) with meshes, materials, maps, skeletons, blend shapes,
+  clips and joints, not as `.usdc` (so files are large, and Apple's
+  viewers may not open the `.usdz`); a skeleton's clips after the
+  first are written but not bound, and no USD tool has read a file
+  here (`docs/research.md` §73). URDF takes one
   density for every link (a solid, even one) and one effort and
   velocity for every joint; no URDF parser has read one here either. No STEP or other B-rep, by
   design: the kernel holds meshes only.

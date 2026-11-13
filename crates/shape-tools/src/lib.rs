@@ -138,5 +138,5 @@ pub use texture::{
 pub use thicken::{Thickened, thicken};
 pub use unwrap::{Unwrap, UnwrapError, Uvs, unwrap};
 pub use urdf::{Urdf, UrdfDesc, urdf, urdf_with};
-pub use usd::{Usd, usda};
+pub use usd::{Usd, usda, usda_clips, usdz};
 pub use uvview::{UvImage, UvView, uv_view};

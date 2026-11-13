@@ -641,5 +641,35 @@ fn a_usd_stage_holds_the_parts_as_built() {
         assert!((w - linear).abs() < 1e-6, "{w} {linear}");
     }
     assert!(u.textures.is_empty());
-    assert_eq!(u.not_written, ["joints (the parts stand as built)"]);
+    // The scene's joints: the hinge between the two parts' prims, with
+    // its pivot in both; a follower is named as not tied.
+    let at = t
+        .find("def PhysicsRevoluteJoint \"spin\"")
+        .expect("the hinge");
+    let hinge = &t[at..at + t[at..].find("        }\n").unwrap()];
+    assert!(
+        hinge.contains("rel physics:body0 = </cart/base>"),
+        "{hinge}"
+    );
+    assert!(
+        hinge.contains("rel physics:body1 = </cart/wheel>"),
+        "{hinge}"
+    );
+    assert!(hinge.contains("uniform token physics:axis = \"X\""));
+    assert_eq!(hinge.matches("physics:localPos").count(), 2);
+    assert_eq!(
+        u.not_written,
+        ["joint \"slide\" follows \"spin\" (USD has no such tie)"]
+    );
+    // Packed: a zip of the stage alone, stored, its bytes at a
+    // multiple of 64, with the directory and end record a zip has.
+    let z = shape_tools::usdz(&u, "cart.usda");
+    assert_eq!(&z[..4], b"PK\x03\x04");
+    let name_len = usize::from(u16::from_le_bytes([z[26], z[27]]));
+    let extra = usize::from(u16::from_le_bytes([z[28], z[29]]));
+    let data = 30 + name_len + extra;
+    assert_eq!(data % 64, 0);
+    assert_eq!(&z[30..30 + name_len], b"cart.usda");
+    assert_eq!(&z[data..data + t.len()], t.as_bytes());
+    assert_eq!(&z[z.len() - 22..z.len() - 18], b"PK\x05\x06");
 }

@@ -1664,3 +1664,134 @@ fn a_reordered_glb_is_the_same_mesh() {
     assert!(weighted(&was.parts[0].solid) == weighted(&now.parts[0].solid));
     assert_eq!(was.parts[0].clips, now.parts[0].clips);
 }
+
+/// A skinned, animated mesh as a USD stage: a `SkelRoot` with its
+/// bones as a `Skeleton`, each point's bones and weights on the mesh,
+/// and its clip as a `SkelAnimation` whose translations, rotations and
+/// scales, put together again down the joints' paths and taken from
+/// the bind transforms, are the clip's own skinning matrices.
+#[test]
+fn a_skinned_mesh_s_usd_stage_moves_as_its_clip() {
+    use shape_mesh::skin::{Mat4, affine_inverse, mat_mul};
+    let file = import(
+        &skinned::skinned_glb_animated(None),
+        &Import::default(),
+        &no_files,
+    )
+    .unwrap();
+    let part = &file.parts[0];
+    let skin = part.solid.skin.as_ref().unwrap();
+    let scene = shape_tools::Scene {
+        name: "leg".into(),
+        parts: vec![shape_tools::Part::new(&part.name, &part.solid)],
+    };
+    let u = shape_tools::usda_clips(&scene, "leg", &[(&part.name, &part.clips)]).unwrap();
+    let t = &u.text;
+    for (open, close) in [('{', '}'), ('[', ']'), ('(', ')')] {
+        assert_eq!(t.matches(open).count(), t.matches(close).count(), "{open}");
+    }
+    assert!(t.contains("def SkelRoot") && t.contains("timeCodesPerSecond = 60"));
+    // The numbers between `from` (after `key`) and the next `end`.
+    let numbers = |key: &str, end: &str| -> Vec<f64> {
+        let at = t.find(key).unwrap_or_else(|| panic!("{key}")) + key.len();
+        let to = at + t[at..].find(end).unwrap();
+        t[at..to]
+            .split(|c: char| !(c.is_ascii_digit() || "+-.e".contains(c)))
+            .filter(|x| !x.is_empty() && x.chars().any(|c| c.is_ascii_digit()))
+            .map(|x| x.parse().unwrap())
+            .collect()
+    };
+    let n = skin.bones.len();
+    let ids = numbers("int[] primvars:skel:jointIndices = [", "]");
+    let weights = numbers("float[] primvars:skel:jointWeights = [", "]");
+    assert_eq!(ids.len(), 4 * part.solid.positions.len());
+    for (v, w) in skin.weights.iter().enumerate() {
+        for k in 0..4 {
+            assert_eq!(ids[4 * v + k], f64::from(w.bones[k]));
+            assert!((weights[4 * v + k] - w.weights[k]).abs() < 1e-6);
+        }
+    }
+    // The joints' paths give each bone's parent.
+    let key = "uniform token[] joints = [";
+    let at = t.find(key).unwrap() + key.len();
+    let paths: Vec<&str> = t[at..at + t[at..].find(']').unwrap()]
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .collect();
+    assert_eq!(paths.len(), n);
+    let parent: Vec<Option<usize>> = paths
+        .iter()
+        .map(|p| {
+            p.rfind('/')
+                .map(|i| paths.iter().position(|q| *q == &p[..i]).unwrap())
+        })
+        .collect();
+    let binds = numbers("uniform matrix4d[] bindTransforms = [", "]");
+    assert_eq!(binds.len(), 16 * n);
+    let bind = |b: usize| -> Mat4 { core::array::from_fn(|i| binds[16 * b + i]) };
+    // The clip: at each key, each bone's translation, rotation (the
+    // real part first) and scale.
+    let clip = &part.clips[0];
+    let block = |key: &str| numbers(key, "            }");
+    let moves = block("float3[] translations.timeSamples = {");
+    let turns = block("quatf[] rotations.timeSamples = {");
+    let sizes = block("half3[] scales.timeSamples = {");
+    let keys = clip.times.len();
+    assert_eq!(moves.len(), keys * (1 + 3 * n));
+    assert_eq!(turns.len(), keys * (1 + 4 * n));
+    for k in 0..keys {
+        let (m, r, s) = (
+            &moves[k * (1 + 3 * n)..],
+            &turns[k * (1 + 4 * n)..],
+            &sizes[k * (1 + 3 * n)..],
+        );
+        assert!((m[0] - clip.times[k] * 60.0).abs() < 1e-9);
+        let mut world: Vec<Mat4> = Vec::new();
+        for b in 0..n {
+            let (w, x, y, z) = (r[1 + 4 * b], r[2 + 4 * b], r[3 + 4 * b], r[4 + 4 * b]);
+            let sc = [s[1 + 3 * b], s[2 + 3 * b], s[3 + 3 * b]];
+            // Columns of the rotation, each times its scale.
+            let cols = [
+                [
+                    1.0 - 2.0 * (y * y + z * z),
+                    2.0 * (x * y + w * z),
+                    2.0 * (x * z - w * y),
+                ],
+                [
+                    2.0 * (x * y - w * z),
+                    1.0 - 2.0 * (x * x + z * z),
+                    2.0 * (y * z + w * x),
+                ],
+                [
+                    2.0 * (x * z + w * y),
+                    2.0 * (y * z - w * x),
+                    1.0 - 2.0 * (x * x + y * y),
+                ],
+            ];
+            let mut local: Mat4 = [0.0; 16];
+            for c in 0..3 {
+                for row in 0..3 {
+                    local[4 * c + row] = cols[c][row] * sc[c];
+                }
+                local[12 + c] = m[1 + 3 * b + c];
+            }
+            local[15] = 1.0;
+            world.push(match parent[b] {
+                Some(p) => mat_mul(&world[p], &local),
+                None => local,
+            });
+        }
+        for b in 0..n {
+            let skinning = mat_mul(&world[b], &affine_inverse(&bind(b)).unwrap());
+            for i in 0..16 {
+                let want = clip.poses[k][b][i];
+                assert!(
+                    (skinning[i] - want).abs() < 1e-3 * want.abs().max(1.0),
+                    "key {k} bone {b} entry {i}: {} {want}",
+                    skinning[i]
+                );
+            }
+        }
+    }
+}

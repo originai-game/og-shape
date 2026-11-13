@@ -26,7 +26,7 @@ const fn crc_table() -> [u32; 256] {
     table
 }
 
-fn crc32(chunks: &[&[u8]]) -> u32 {
+pub(crate) fn crc32(chunks: &[&[u8]]) -> u32 {
     let mut c = 0xFFFF_FFFFu32;
     for bytes in chunks {
         for &b in *bytes {

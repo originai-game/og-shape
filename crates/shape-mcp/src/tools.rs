@@ -812,7 +812,8 @@ fn export_schema() -> Value {
              and limits), \
              or .usda (a USD stage in the kernel's space, Z up in millimetres: a mesh a part \
              with normals and UVs, UsdPreviewSurface materials, PNG and JPEG maps beside it; \
-             no joints, skins, morph targets or clips).",
+             a mesh file's skin, morph targets and clips as UsdSkel, a program's joints as \
+             UsdPhysics joints), or .usdz (the same in one file).",
         ),
     ));
     p.push(pose_prop());

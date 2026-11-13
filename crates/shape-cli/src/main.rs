@@ -3,7 +3,8 @@
 //!
 //! ```text
 //! shape build    <program.json>
-//! shape export   <input> -o <out.glb|out.obj|out.stl> [--atlas PX]
+//! shape export   <input> -o <out.glb|obj|stl|urdf|usda|usdz> [--atlas PX]
+//!                [--density KG_M3] [--effort E] [--velocity V]
 //! shape measure  <input> [--intersections]
 //! shape preview  <input> -o <out.png> [--views N] [--width PX]
 //!                [--height PX] [--columns N] [--elevation RAD]
@@ -57,7 +58,11 @@ const USAGE: &str = "usage: shape <command> <input> [options]
   front; default up +y, front +z) or --z-up (up +z, front -y); a program takes --uvs
   (build, export, measure, preview): every part it makes gets UVs
   build    <program.json>                       report the built model as JSON
-  export   <input> -o <out.glb|obj|stl>         write the posed model or the mesh;
+  export   <input> -o <out.glb|obj|stl|urdf|usda|usdz>
+                                                write the posed model or the mesh;
+                                                .urdf with --density KG_M3 (inertials),
+                                                --effort and --velocity (joint limits);
+                                                .usda and .usdz with skins and clips;
                                                 OBJ and STL at the pose if one is set;
                                                 --atlas PX: a program's parts' UVs in
                                                 one atlas, alike materials shared

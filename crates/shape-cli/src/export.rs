@@ -26,7 +26,7 @@ use crate::{Failure, Files, failed};
 
 fn bad_extension(out: &Path) -> Failure {
     Failure::Usage(format!(
-        "{}: name the output .glb, .obj, .stl, .urdf or .usda",
+        "{}: name the output .glb, .obj, .stl, .urdf, .usda or .usdz",
         out.display()
     ))
 }
@@ -79,7 +79,7 @@ pub fn export_with(
     if extension(out) == "urdf" {
         return export_urdf(files, source, out, robot);
     }
-    if extension(out) == "usda" {
+    if ["usda", "usdz"].contains(&extension(out).as_str()) {
         return export_usda(files, source, out);
     }
     let bytes = encode(source, out)?;
@@ -158,7 +158,8 @@ fn export_urdf(
 }
 
 /// Writes a program or a mesh as a USD stage: the `.usda` text to
-/// `out` and each map beside it. Reports the path, format and size, the
+/// `out` and each map beside it, or (`.usdz`) all of it in one file. A
+/// mesh file's skins, morph targets and clips go with it. Reports the path, format and size, the
 /// map files, and what the stage leaves out.
 fn export_usda(files: &dyn Files, source: &Source, out: &Path) -> Result<String, Failure> {
     let stem = out
@@ -172,20 +173,36 @@ fn export_usda(files: &dyn Files, source: &Source, out: &Path) -> Result<String,
             for (part, p) in s.parts.iter_mut().zip(&mesh.imported.parts) {
                 part.material = p.material.clone();
             }
-            shape_tools::usda(&s, &stem).map_err(failed)?
+            // Each part's clips, by the name the scene gives it.
+            let clips: Vec<(&str, &[shape_mesh::SkinClip])> = s
+                .parts
+                .iter()
+                .zip(&mesh.imported.parts)
+                .filter(|(_, p)| !p.clips.is_empty())
+                .map(|(part, p)| (part.name.as_str(), p.clips.as_slice()))
+                .collect();
+            shape_tools::usda_clips(&s, &stem, &clips).map_err(failed)?
         }
     };
-    files.write(out, usd.text.as_bytes())?;
+    let packed = extension(out) == "usdz";
     let mut names = Vec::new();
-    for (name, bytes) in &usd.textures {
-        files.write(&out.with_file_name(name), bytes)?;
-        names.push(string(name));
-    }
+    let bytes = if packed {
+        // One file: the stage and its maps inside.
+        names.extend(usd.textures.iter().map(|(name, _)| string(name)));
+        shape_tools::usdz(&usd, &format!("{stem}.usda"))
+    } else {
+        for (name, bytes) in &usd.textures {
+            files.write(&out.with_file_name(name), bytes)?;
+            names.push(string(name));
+        }
+        usd.text.clone().into_bytes()
+    };
+    files.write(out, &bytes)?;
     let lost: Vec<String> = usd.not_written.iter().map(|s| string(s)).collect();
     Ok(object(&[
         ("path", string(&out.display().to_string())),
-        ("format", string("usda")),
-        ("bytes", usd.text.len().to_string()),
+        ("format", string(if packed { "usdz" } else { "usda" })),
+        ("bytes", bytes.len().to_string()),
         ("geometry", string("rest")),
         ("textures", crate::report::array(&names)),
         ("not_written", crate::report::array(&lost)),
@@ -436,7 +453,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
     known.extend(IMPORT_OPTIONS);
     a.only(&known)?;
     let out = a.out()?;
-    if !["glb", "obj", "stl", "urdf", "usda"].contains(&extension(&out).as_str()) {
+    if !["glb", "obj", "stl", "urdf", "usda", "usdz"].contains(&extension(&out).as_str()) {
         return Err(bad_extension(&out));
     }
     let source = load_uvs(&Local, &a.input()?, &a.import()?, a.switch("--uvs"))?;

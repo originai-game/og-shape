@@ -10255,3 +10255,55 @@ numbers set by hand. Not checked by a URDF parser (nothing outside
 can be run here).
 
 Checked: `a_urdf_s_links_are_weighed`. No golden line moved.
+
+## 73. USD: skeletons, weights, blend shapes, clips, joints, and `.usdz` (2026-11-13)
+
+§54 wrote meshes, materials and maps and listed the rest as not
+written. Read for this: the UsdSkel, UsdPhysics and usdz pages of the
+OpenUSD documentation (schemas and their attribute names; no code).
+
+- **A skinned or morphing part** is a `SkelRoot` holding a `Skeleton`
+  (`joints` as paths, each bone under its parent; `bindTransforms`,
+  each bone in the world at bind time, the inverse of its inverse bind
+  matrix; `restTransforms`, each under its parent at rest), its mesh
+  with `SkelBindingAPI` (`primvars:skel:jointIndices` and
+  `jointWeights`, four a point; `skel:skeleton`), and one
+  `BlendShape` a morph target (`offsets`, a vector a point) named by
+  `skel:blendShapes` and `skel:blendShapeTargets`. A part with targets
+  and no skin gets a skeleton of no joints, which blend shapes need.
+- **Clips** (`usda_clips`) are `SkelAnimation`s: at each key, every
+  bone under its parent as a translation, a rotation (the same
+  decomposition the GLB writer uses, the short way from the last key)
+  and a scale, and the targets' weights; 60 time codes a second. A
+  skeleton plays one animation, so a part's first clip is bound
+  (`skel:animationSource`) and the others are written beside it and
+  listed as not bound.
+- **The scene's joints** (a program's hinges and sliders) are
+  `PhysicsRevoluteJoint`, `PhysicsPrismaticJoint` and
+  `PhysicsFixedJoint` prims between the two parts' meshes: the pivot
+  as `localPos0` and `localPos1` (the parts stand as built, so it is
+  the same point in both), a rotation that takes x to the axis, limits
+  in degrees or millimetres. A follower's tie to its leader has no
+  counterpart and is listed.
+- **Matrices.** USD multiplies row vectors, so a matrix is written as
+  the transpose of the kernel's column-vector one: the column-major
+  array as it stands, four to a row, the translation last.
+- **`.usdz`** (`usdz`): a zip archive, nothing compressed, the stage
+  first, each file's bytes at a multiple of 64 (padding in an extra
+  field), as the format asks. The stage inside is `.usda` text, which
+  the format allows; Apple's viewers have wanted `.usdc`, which is
+  not written.
+
+Measured: Soldier.glb → a 5.2 MB stage with two `SkelRoot`s, 4 clips
+each (one bound), its four JPEGs beside it; RobotExpressive →
+a 23 MB `.usdz` (text is large). Text is the cost: `.usdc`, the
+binary crate format, is not written.
+
+Not checked: by a USD tool (nothing outside can be run here). What is
+checked is that the stage says what the kernel holds:
+`a_skinned_mesh_s_usd_stage_moves_as_its_clip` reads the stage's text
+back, composes each key's translations, rotations and scales down the
+joints' paths, takes them from the bind transforms, and gets the
+clip's own skinning matrices to a thousandth;
+`a_usd_stage_holds_the_parts_as_built` holds the hinge between its
+two prims and the zip's layout. No golden line moved.

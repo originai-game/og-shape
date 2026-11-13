@@ -1760,3 +1760,10 @@
   each closed link gets its `inertial` (mass, centre of mass and
   inertia of an even solid of that density, from its mesh) and the
   joints their limits (`docs/research.md` §72).
+- USD export: a skinned or morphing mesh file is written as UsdSkel
+  (a `SkelRoot` with its `Skeleton`, weights on the mesh, a
+  `BlendShape` a morph target, a `SkelAnimation` a clip, the first
+  bound), a program's joints as UsdPhysics joints, and `.usdz` packs
+  the stage and its maps into one file (`shape export in.glb -o
+  out.usdz`; `shape_tools::usda_clips`, `usdz`; `docs/research.md`
+  §73).
