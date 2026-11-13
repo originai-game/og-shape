@@ -989,6 +989,12 @@ fn process_schema() -> Value {
                      on a GPU, and seconds of work per 1024² map."),
         ),
         (
+            "etc1s",
+            boolean("Write every map kept as KTX2 of ETC1S blocks (BasisLZ; \
+                     `KHR_texture_basisu`'s small mode): a fraction of `ktx2`'s bytes and of a \
+                     second per 1024² map, at a lower quality (about 33 dB on a colour grid)."),
+        ),
+        (
             "bake",
             int("Bake the repaired mesh's look into new maps this many texels across, on fresh \
                  UVs packed into one atlas: decimate without UVs or vertex colours, pack, and \
@@ -1286,6 +1292,7 @@ fn process_tool(server: &Server, a: &Args, p: &mut dyn Progress) -> Result<Vec<V
         fresh_uvs: a.flag("fresh_uvs")?,
         texture_max: a.u32("texture_max")?,
         ktx2: a.flag("ktx2")?,
+        etc1s: a.flag("etc1s")?,
         bake: a.u32("bake")?,
         bake_distance: a.num("bake_distance")?,
         out: a.path("out")?,

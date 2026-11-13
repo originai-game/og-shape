@@ -9370,3 +9370,70 @@ surface, recomputed on import), not the file's, so a normal map that
 came with a file is read in MikkTSpace of other normals than its
 author's. Golden: `mcp.process.bake` moves (the baked normal map and
 the `TANGENT` it is written with); nothing else.
+
+## 57. ETC1S under BasisLZ (2026-11-12)
+
+`KHR_texture_basisu`'s other mode. An ETC1S block is one base colour
+(5 bits a channel) and one of ETC1's eight intensity tables for all
+sixteen texels, each texel one of the table's four steps. BasisLZ
+stores a file's blocks as references into two codebooks the whole file
+shares (endpoints: colour and table; selectors: sixteen steps), with
+Huffman codes. Read and written from the KTX 2.0 specification's two
+BasisLZ appendices, which give the layouts and the slice decoder as
+code; Basis Universal's encoder was not read.
+
+**Read** (`etc1s.rs`, `ktx2::decode`). The global data: counts,
+lengths, an image a level with its slices' places; the endpoint
+codebook (differences from the entry before, the colour's Huffman
+table chosen by the last value's range); the selector codebook (plain,
+or each row's xor with the entry before); the slices' four tables and
+the history size. A slice: for each 2×2 group of blocks one symbol
+says, two bits a block, where each block's endpoint comes from (the
+block to the left, above, above left, or a coded difference from the
+last), with a symbol for a run of the same; each block's selector is a
+codebook index, a place in a list of recent ones (a value used moves
+halfway to the front; a new one overwrites the second half in turn),
+or a run of the most recent. Huffman codes are Deflate's canonical
+ones, read highest bit first; a table is its code lengths under a
+small table of 21 symbols with runs. A second slice a level holds
+alpha (or, where the descriptor says the first is one channel, a
+second channel). Texture video (P frames) is not read.
+
+Run by hand on Khronos' files (not kept): toktx's
+`color_grid_basis.ktx2` (1024², 1 991 endpoints, 1 293 selectors)
+32.78 dB against `color_grid.png` over its colour channels;
+`alpha_simple_basis.ktx2` (two slices) with its alpha of 128;
+FlightHelmet's `LensesMat_BaseColor.ktx2` (11 levels).
+
+**Write** (`etc1s_write.rs`, `ktx2::encode_etc1s`). Each block is
+fitted: for each table, the mean colour to 5 bits, each texel's
+nearest step, the colour again as the mean of texels less their steps,
+three rounds; the least error kept. The fitted endpoints, as points
+(three colours and the table's reach), are split into a codebook: the
+group that spreads most along one axis is cut at its mean there, until
+there are as many groups as asked; an entry is its group's mean colour
+and commonest table. Each block's steps are fitted again to its entry
+and split the same way in sixteen dimensions; an entry is the mean
+step at each texel. Codebook sizes follow the blocks (a fortieth and a
+sixtieth of them, 256 to 8 192), which lands near toktx's default on
+that image. The slices use the predictions (left, above, above left,
+else a difference) and the recent list; the run-length symbols are
+not written, the tables are Huffman's with counts halved until no
+code is over 16 bits. Levels share the codebooks; alpha is a second
+slice of grey.
+
+Measured (x86-64, release):
+
+| Input | Result |
+| --- | --- |
+| `color_grid.png` 1024², codebooks 2 000 / 1 300 | 85 841 bytes, 33.27 dB, 0.13 s (toktx's file: 71 120 bytes, 32.78 dB) |
+| the same, codebooks unbounded (4 096 and more) | 90 221 bytes, 33.39 dB |
+| DamagedHelmet, five 2048² maps with levels, `process --etc1s` | 7.4 s; 3.77 MB → 3.18 MB (UASTC: 61 s, 16.9 MB) |
+
+Checked: `slices_read_back` (with codebooks large enough the decoder
+gives exactly each block's own fit; with 24 entries it stays near);
+`an_etc1s_file_reads_back` (header, levels, alpha's slice, a file cut
+anywhere is an error); `meshtools.look.etc1s` in the gate. Not
+checked: the written files have not been through the Basis transcoder
+(§50 says why); the reader that reads them back is the one that reads
+toktx's files.

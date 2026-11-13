@@ -32,6 +32,10 @@ pub fn cases() -> Vec<Case> {
             name: "meshtools.look.ktx2",
             run: ktx2_case,
         },
+        Case {
+            name: "meshtools.look.etc1s",
+            run: etc1s_case,
+        },
     ]
 }
 
@@ -323,6 +327,25 @@ fn ktx2_case(h: &mut OutputHash) -> Result<(), HashError> {
             .map_err(fail)?
             .ok_or(HashError::NaN)?;
         h.str(&k.name);
+        h.bytes(&k.bytes);
+        h.bytes(&decode(&k.bytes).map_err(fail)?.rgba);
+    }
+    Ok(())
+}
+
+/// Maps written as KTX2 of ETC1S blocks: the files' bytes (blocks
+/// fitted and codebooks split in f64, Huffman tables) and what they
+/// decode to.
+fn etc1s_case(h: &mut OutputHash) -> Result<(), HashError> {
+    let jpg = include_bytes!("../../../golden/meshes/stripes_420.jpg");
+    let tex = [
+        (Texture::from_bytes("stripes.jpg", jpg.to_vec()), true),
+        (Texture::from_bytes("noise.png", png(9, 37, 23)), false),
+    ];
+    for (t, color) in &tex {
+        let k = shape_tools::to_ktx2_etc1s(t, *color)
+            .map_err(fail)?
+            .ok_or(HashError::NaN)?;
         h.bytes(&k.bytes);
         h.bytes(&decode(&k.bytes).map_err(fail)?.rgba);
     }

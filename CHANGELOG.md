@@ -1602,3 +1602,11 @@
   Blender's own tangents on Khronos' NormalTangentMirrorTest: 15 720
   corners within 0.03°, every sign equal. Baked normal maps change
   (`docs/research.md` §56).
+- KTX2 of ETC1S blocks (BasisLZ, `KHR_texture_basisu`'s small mode) is
+  decoded, colour with its alpha slice, so such maps are drawn, baked
+  and resized; and written: `process --etc1s` (MCP `etc1s`,
+  `shape_tools::to_ktx2_etc1s`). Reading checked on Khronos' files
+  (toktx's 1024² colour grid: 32.8 dB against its source). Writing on
+  the same image: 33.3 dB in 86 kB and 0.13 s (toktx: 71 kB);
+  DamagedHelmet's five 2048² maps with their levels 3.8 → 3.2 MB in
+  7 s, where UASTC takes 16.9 MB and 61 s (`docs/research.md` §57).

@@ -87,6 +87,9 @@ pub struct ProcessDesc {
     /// Write every map kept as KTX2 (UASTC blocks with mip levels,
     /// Zstandard: `KHR_texture_basisu`), after any shrinking.
     pub ktx2: bool,
+    /// Write every map kept as KTX2 of ETC1S blocks under BasisLZ: far
+    /// smaller files than `ktx2`'s UASTC, at a lower quality.
+    pub etc1s: bool,
     /// Bake the source's look into maps of this many texels across, on
     /// fresh UVs (implies `fresh_uvs`); 0 does not bake.
     pub bake: u32,
@@ -133,7 +136,8 @@ fn map_size(i: &ImageInfo) -> String {
 /// Shrinks the material's maps to `max` texels (0: none) and, with
 /// `ktx2`, writes each as KTX2; per map, its kind, name, size before
 /// and after (null when kept as it was), and why it could not be read.
-fn texture_budget(m: &mut Material, max: u32, ktx2: bool) -> String {
+fn texture_budget(m: &mut Material, max: u32, ktx2: bool, etc1s: bool) -> String {
+    let ktx2 = ktx2 || etc1s;
     if max == 0 && !ktx2 {
         return "null".into();
     }
@@ -149,7 +153,12 @@ fn texture_budget(m: &mut Material, max: u32, ktx2: bool) -> String {
             if !ktx2 {
                 return Ok(small);
             }
-            let packed = shape_tools::to_ktx2(small.as_ref().unwrap_or(t), d.color)?;
+            let from = small.as_ref().unwrap_or(t);
+            let packed = if etc1s {
+                shape_tools::to_ktx2_etc1s(from, d.color)?
+            } else {
+                shape_tools::to_ktx2(from, d.color)?
+            };
             Ok(packed.or(small))
         });
         let (after, error) = match changed {
@@ -281,7 +290,7 @@ pub fn process_steps(
         "null".to_string()
     };
     step(4)?;
-    let textures = texture_budget(&mut material, d.texture_max, d.ktx2);
+    let textures = texture_budget(&mut material, d.texture_max, d.ktx2, d.etc1s);
     step(5)?;
     let images: Vec<ImageInfo> = material
         .maps()
@@ -422,6 +431,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         "--unwrap",
         "--texture-max",
         "--ktx2",
+        "--etc1s",
         "--bake",
         "--bake-distance",
     ];
@@ -448,6 +458,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
             intersections: a.switch("--intersections"),
             texture_max: a.number("--texture-max")?.unwrap_or(0),
             ktx2: a.switch("--ktx2"),
+            etc1s: a.switch("--etc1s"),
             bake: a.number("--bake")?.unwrap_or(0),
             bake_distance: a.number("--bake-distance")?.unwrap_or(0.0),
             out: a.out_opt()?,

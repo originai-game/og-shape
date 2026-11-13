@@ -90,6 +90,18 @@ pub fn downsize(t: &Texture, d: &Downsize) -> Result<Option<Texture>, TextureErr
 /// a KTX2 file already. `color` as in [`Downsize::color`]: the texels
 /// are sRGB, and the levels are averaged in linear light.
 pub fn to_ktx2(t: &Texture, color: bool) -> Result<Option<Texture>, TextureError> {
+    ktx2_of(t, color, false)
+}
+
+/// As [`to_ktx2`] with ETC1S blocks under BasisLZ: the small mode of
+/// `KHR_texture_basisu`, a fraction of UASTC's bytes at a lower
+/// quality (one colour and one intensity table a block, from codebooks
+/// the whole file shares).
+pub fn to_ktx2_etc1s(t: &Texture, color: bool) -> Result<Option<Texture>, TextureError> {
+    ktx2_of(t, color, true)
+}
+
+fn ktx2_of(t: &Texture, color: bool, small: bool) -> Result<Option<Texture>, TextureError> {
     if t.mime == "image/ktx2" {
         return Ok(None);
     }
@@ -106,14 +118,33 @@ pub fn to_ktx2(t: &Texture, color: bool) -> Result<Option<Texture>, TextureError
         Some((stem, _)) => format!("{stem}.ktx2"),
         None => format!("{}.ktx2", t.name),
     };
+    let bytes = if small {
+        // Codebooks by how many blocks there are, as the reference
+        // tool's default comes out on a 1024² image (about 2 000
+        // endpoints and 1 300 selectors).
+        let blocks: usize = levels
+            .iter()
+            .map(|l| (l.width as usize).div_ceil(4) * (l.height as usize).div_ceil(4))
+            .sum::<usize>()
+            * if alpha { 2 } else { 1 };
+        crate::ktx2::encode_etc1s(
+            &levels,
+            color,
+            alpha,
+            (blocks / 40).clamp(256, 8192),
+            (blocks / 60).clamp(256, 8192),
+        )
+    } else {
+        crate::ktx2::encode(&levels, color, alpha)
+    };
     Ok(Some(Texture {
         name,
         mime: "image/ktx2".into(),
-        bytes: crate::ktx2::encode(&levels, color, alpha),
+        bytes,
     }))
 }
 
-/// Decodes a PNG, a JPEG or a KTX2 file of UASTC blocks to RGBA8.
+/// Decodes a PNG, a JPEG or a KTX2 file (UASTC, or ETC1S under BasisLZ) to RGBA8.
 pub fn decode(bytes: &[u8]) -> Result<Image, TextureError> {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         decode_png(bytes)
@@ -123,7 +154,7 @@ pub fn decode(bytes: &[u8]) -> Result<Image, TextureError> {
         crate::ktx2::decode(bytes).map_err(TextureError::Unsupported)
     } else {
         Err(TextureError::Unsupported(
-            "only PNG, JPEG and KTX2 (UASTC) are decoded".into(),
+            "only PNG, JPEG and KTX2 are decoded".into(),
         ))
     }
 }

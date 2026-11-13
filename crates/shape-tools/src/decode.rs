@@ -1,4 +1,4 @@
-//! Decodes a texture's PNG, JPEG or KTX2 (UASTC) bytes to RGBA8, for the preview to
+//! Decodes a texture's PNG, JPEG or KTX2 bytes to RGBA8, for the preview to
 //! sample (`docs/research.md` §30, §33).
 //!
 //! The decoding is the texture budget's ([`crate::texture::decode`],
@@ -7,7 +7,7 @@
 //! extended sequential and progressive JPEG, one or three components,
 //! integer inverse DCT. Colour-space chunks (`gAMA`, `iCCP`, `sRGB`) are ignored: the
 //! bytes are taken as sRGB, as glTF says a base-colour image is.
-//! Arithmetic-coded and lossless JPEG, WebP and KTX2 of ETC1S blocks are refused with
+//! Arithmetic-coded and lossless JPEG and WebP are refused with
 //! the reason, as is an image over [`MAX_PIXELS`] (read from its header,
 //! before anything is decoded).
 //!
