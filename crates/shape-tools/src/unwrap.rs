@@ -12,7 +12,9 @@
 //!    most cos `angle`.
 //!    With [`Unwrap::conformal`], charts that bend are first flattened
 //!    keeping their angles ([`conformal`]) where that works; the rest
-//!    is projected.
+//!    is projected. With [`Unwrap::seams`], a chart is first all the
+//!    smooth surface round its seed, cut open along seams until it
+//!    flattens ([`seamed`]).
 //! 3. **Packing.** Each chart is turned to its smallest bounding rectangle
 //!    (rotating calipers over its exact convex hull), laid wide, and
 //!    packed tallest first by a bottom-left skyline. One scale (texels per
@@ -58,6 +60,12 @@ pub struct Unwrap {
     /// area past twice or under half; what is left is projected as
     /// without it. A curved surface then takes fewer, larger charts.
     pub conformal: bool,
+    /// As [`Unwrap::conformal`], and a chart is first tried as all the
+    /// surface joined to its seed across edges no sharper than `angle`,
+    /// cut open along seams chosen here ([`seamed`]) until it flattens:
+    /// a closed or tubular surface becomes one chart with seams in it,
+    /// not several charts.
+    pub seams: bool,
 }
 
 /// Texture coordinates for a solid.
@@ -168,7 +176,33 @@ pub(crate) fn check(s: &Solid, d: &Unwrap) -> Result<(u32, f64), UnwrapError> {
 /// normal stays within the angle and the projection does not fold): each
 /// chart's triangles, each triangle's chart, and each triangle projected
 /// on its chart's plane (millimetres).
-pub(crate) fn form(s: &Solid, d: &Unwrap) -> (Vec<Vec<u32>>, Vec<u32>, Vec<[DVec2; 3]>) {
+pub(crate) fn form(s: &Solid, d: &Unwrap) -> Formed {
+    let formed = form_as(s, d);
+    if !(d.conformal || d.seams) {
+        return formed;
+    }
+    // Flattened charts are kept where they are fewer than projected
+    // ones: on a rough surface they can be more.
+    let plain = form_as(
+        s,
+        &Unwrap {
+            conformal: false,
+            seams: false,
+            ..*d
+        },
+    );
+    if plain.0.len() <= formed.0.len() {
+        plain
+    } else {
+        formed
+    }
+}
+
+/// What [`form`] gives: each chart's triangles, each triangle's chart,
+/// and each triangle on its chart's plane (millimetres).
+pub(crate) type Formed = (Vec<Vec<u32>>, Vec<u32>, Vec<[DVec2; 3]>);
+
+fn form_as(s: &Solid, d: &Unwrap) -> Formed {
     let angle = if d.angle == 0.0 { 66.0 } else { d.angle };
     let n = s.triangles.len();
     let cos_limit = trig::cos(trig::to_radians(angle));
@@ -202,7 +236,9 @@ pub(crate) fn form(s: &Solid, d: &Unwrap) -> (Vec<Vec<u32>>, Vec<u32>, Vec<[DVec
     let mut chart_of = vec![u32::MAX; n];
     let mut flat: Vec<[DVec2; 3]> = vec![[DVec2::ZERO; 3]; n];
     let mut charts: Vec<Vec<u32>> = Vec::new();
-    if d.conformal {
+    let mut tried = vec![false; n];
+    let mut work = 0usize;
+    if d.conformal || d.seams {
         // Charts over wider turns of the surface, flattened keeping
         // their angles; the triangles they leave are projected below.
         // A chart grows from its seed taking, of the triangles on its
@@ -211,12 +247,82 @@ pub(crate) fn form(s: &Solid, d: &Unwrap) -> (Vec<Vec<u32>>, Vec<u32>, Vec<[DVec
         // the whole does not flatten, its first half is tried, then a
         // quarter, then an eighth.
         let cos_wide = trig::cos(trig::to_radians((angle * 1.6).min(150.0)));
-        let mut spent = 0usize;
         for &seed in &seeds {
-            if spent > 6 * n {
+            if work > SOLVE_WORK * n {
                 break;
             }
             if chart_of[seed] != u32::MAX || normals[seed] == DVec3::ZERO {
+                continue;
+            }
+            // All that is joined to the seed across edges no sharper
+            // than the angle, cut open until it flattens; while only a
+            // part of it does and the seed is not in that part, what
+            // is left around the seed again.
+            let mut taken = false;
+            while d.seams && !tried[seed] && work <= SOLVE_WORK * n {
+                let mut region = vec![seed as u32];
+                tried[seed] = true;
+                let mut head = 0;
+                while head < region.len() {
+                    let i = region[head];
+                    head += 1;
+                    let t = s.triangles[i as usize];
+                    for k in 0..3 {
+                        let users = &by_edge[&edge_key(t[k], t[(k + 1) % 3])];
+                        if users.len() != 2 || region.len() == SEAM_REGION {
+                            continue;
+                        }
+                        let j = if users[0] == i { users[1] } else { users[0] } as usize;
+                        if chart_of[j] != u32::MAX
+                            || tried[j]
+                            || normals[j] == DVec3::ZERO
+                            || normals[j].dot(normals[i as usize]) < cos_limit
+                        {
+                            continue;
+                        }
+                        tried[j] = true;
+                        region.push(j as u32);
+                    }
+                }
+                if region.len() < 2 {
+                    break;
+                }
+                let cut = Cut {
+                    s,
+                    by_edge: &by_edge,
+                    normals: &normals,
+                    areas: &areas,
+                    cos_limit,
+                    cell,
+                };
+                let id = charts.len() as u32;
+                match seamed(&cut, &region, &mut work) {
+                    Seamed::Whole(laid) => {
+                        for (&i, f) in region.iter().zip(laid) {
+                            chart_of[i as usize] = id;
+                            flat[i as usize] = f;
+                        }
+                        charts.push(region);
+                    }
+                    Seamed::Part(which, laid) => {
+                        for &i in &region {
+                            tried[i as usize] = false;
+                        }
+                        let some: Vec<u32> = which.iter().map(|&k| region[k]).collect();
+                        for (&i, f) in some.iter().zip(laid) {
+                            chart_of[i as usize] = id;
+                            flat[i as usize] = f;
+                        }
+                        charts.push(some);
+                    }
+                    Seamed::Nothing => break,
+                }
+                if chart_of[seed] != u32::MAX {
+                    taken = true;
+                    break;
+                }
+            }
+            if taken {
                 continue;
             }
             let mut rim: std::collections::BTreeSet<(u64, u32)> = std::collections::BTreeSet::new();
@@ -266,7 +372,7 @@ pub(crate) fn form(s: &Solid, d: &Unwrap) -> (Vec<Vec<u32>>, Vec<u32>, Vec<[DVec
                     break;
                 }
                 let some = &members[..take];
-                if let Some(laid) = conformal(s, some, &normals, &areas, cell) {
+                if let Some(laid) = conformal(s, some, &normals, &areas, cell, &mut work) {
                     let id = charts.len() as u32;
                     for (&i, f) in some.iter().zip(laid) {
                         chart_of[i as usize] = id;
@@ -275,7 +381,6 @@ pub(crate) fn form(s: &Solid, d: &Unwrap) -> (Vec<Vec<u32>>, Vec<u32>, Vec<[DVec
                     charts.push(some.to_vec());
                     break;
                 }
-                spent += take;
             }
         }
     }
@@ -370,6 +475,7 @@ fn conformal(
     normals: &[DVec3],
     areas: &[f64],
     cell: f64,
+    turns: &mut usize,
 ) -> Option<Vec<[DVec2; 3]>> {
     // The chart's vertices, numbered in the order met.
     let mut number: BTreeMap<u32, usize> = BTreeMap::new();
@@ -385,213 +491,335 @@ fn conformal(
             })
         })
         .collect();
-    let count = points.len();
-    // The pins: the vertex furthest from the first, and the one
-    // furthest from that.
-    let furthest = |from: usize| {
-        let mut best = (0.0, from);
-        for (i, p) in points.iter().enumerate() {
-            let d = (*p - points[from]).length_squared();
-            if d > best.0 {
-                best = (d, i);
-            }
+    let patch = Patch::new(points, tris, members, normals, areas);
+    let x = patch.solve(turns)?;
+    let judged = patch.judge(&x, cell);
+    judged.well.then_some(judged.laid)
+}
+
+/// A chart to flatten: its vertices (a vertex of the solid once, or
+/// once on each side of a seam), its triangles over them, each
+/// triangle's area and the unit sum of their normals.
+struct Patch {
+    points: Vec<DVec3>,
+    tris: Vec<[usize; 3]>,
+    areas: Vec<f64>,
+    mean: DVec3,
+}
+
+impl Patch {
+    fn new(
+        points: Vec<DVec3>,
+        tris: Vec<[usize; 3]>,
+        members: &[u32],
+        normals: &[DVec3],
+        areas: &[f64],
+    ) -> Self {
+        let mean = unit(
+            members
+                .iter()
+                .map(|&i| normals[i as usize] * areas[i as usize])
+                .sum::<DVec3>(),
+        );
+        Self {
+            points,
+            tris,
+            areas: members.iter().map(|&i| areas[i as usize]).collect(),
+            mean,
         }
-        best.1
-    };
-    let a = furthest(0);
-    let b = furthest(a);
-    let apart = (points[b] - points[a]).length();
-    if a == b || apart == 0.0 {
-        return None;
     }
-    // Where to start: the projection on the mean plane, turned and
-    // scaled to put the pins where they are held.
-    let mean = unit(
-        members
-            .iter()
-            .map(|&i| normals[i as usize] * areas[i as usize])
-            .sum::<DVec3>(),
-    );
-    let (eu, ev) = if mean == DVec3::ZERO {
-        (DVec3::X, DVec3::Y)
-    } else {
-        basis(mean)
-    };
-    let mut x: Vec<DVec2> = points
-        .iter()
-        .map(|p| DVec2::new(p.dot(eu), p.dot(ev)))
-        .collect();
-    let span = x[b] - x[a];
-    let length = span.length_squared();
-    let origin = x[a];
-    for q in &mut x {
-        let d = *q - origin;
-        *q = if length > 0.0 {
-            // d / span as complex numbers, times the true distance.
-            DVec2::new(d.x * span.x + d.y * span.y, d.y * span.x - d.x * span.y) * (apart / length)
-        } else {
-            DVec2::ZERO
+
+    /// Each vertex's place in the plane by the least squares conformal
+    /// map (not yet to the surface's scale); `None` where there is
+    /// nothing to solve. `turns` counts the work: triangles times
+    /// steps of the solver.
+    fn solve(&self, turns: &mut usize) -> Option<Vec<DVec2>> {
+        let (points, tris) = (&self.points, &self.tris);
+        let count = points.len();
+        // The pins: the vertex furthest from the first, and the one
+        // furthest from that.
+        let furthest = |from: usize| {
+            let mut best = (0.0, from);
+            for (i, p) in points.iter().enumerate() {
+                let d = (*p - points[from]).length_squared();
+                if d > best.0 {
+                    best = (d, i);
+                }
+            }
+            best.1
         };
-    }
-    x[a] = DVec2::ZERO;
-    x[b] = DVec2::new(apart, 0.0);
-    // Unknowns: each free vertex's u, then its v.
-    let mut slot = vec![usize::MAX; count];
-    let mut free = 0;
-    for (i, sl) in slot.iter_mut().enumerate() {
-        if i != a && i != b {
-            *sl = free;
-            free += 1;
+        let a = furthest(0);
+        let b = furthest(a);
+        let apart = (points[b] - points[a]).length();
+        if a == b || apart == 0.0 {
+            return None;
         }
-    }
-    if free == 0 {
-        return None;
-    }
-    // Per triangle, its corners as complex weights (the opposite edge
-    // in the triangle's own plane, over the root of twice its area).
-    let mut weights: Vec<[DVec2; 3]> = Vec::with_capacity(tris.len());
-    for t in &tris {
-        let [p0, p1, p2] = t.map(|v| points[v]);
-        let e = p1 - p0;
-        let len = e.length();
-        let normal = e.cross(p2 - p0);
-        let double = normal.length();
-        if len == 0.0 || double == 0.0 {
-            weights.push([DVec2::ZERO; 3]);
-            continue;
+        // Where to start: the projection on the mean plane, turned and
+        // scaled to put the pins where they are held.
+        let mean = self.mean;
+        let (eu, ev) = if mean == DVec3::ZERO {
+            (DVec3::X, DVec3::Y)
+        } else {
+            basis(mean)
+        };
+        let mut x: Vec<DVec2> = points
+            .iter()
+            .map(|p| DVec2::new(p.dot(eu), p.dot(ev)))
+            .collect();
+        let span = x[b] - x[a];
+        let length = span.length_squared();
+        let origin = x[a];
+        for q in &mut x {
+            let d = *q - origin;
+            *q = if length > 0.0 {
+                // d / span as complex numbers, times the true distance.
+                DVec2::new(d.x * span.x + d.y * span.y, d.y * span.x - d.x * span.y)
+                    * (apart / length)
+            } else {
+                DVec2::ZERO
+            };
         }
-        let ex = e / len;
-        let ey = normal.cross(e) / (double * len);
-        let q = [
-            DVec2::ZERO,
-            DVec2::new(len, 0.0),
-            DVec2::new((p2 - p0).dot(ex), (p2 - p0).dot(ey)),
-        ];
-        let root = double.sqrt();
-        weights.push([
-            (q[2] - q[1]) / root,
-            (q[0] - q[2]) / root,
-            (q[1] - q[0]) / root,
-        ]);
-    }
-    // A x (two rows a triangle) and its transpose, over the free
-    // unknowns; `held` is what the pins put on the right-hand side.
-    let apply = |x: &[f64], out: &mut [f64]| {
-        for (k, (t, w)) in tris.iter().zip(&weights).enumerate() {
-            let (mut re, mut im) = (0.0, 0.0);
-            for j in 0..3 {
-                let sl = slot[t[j]];
-                if sl == usize::MAX {
-                    continue;
+        x[a] = DVec2::ZERO;
+        x[b] = DVec2::new(apart, 0.0);
+        // Unknowns: each free vertex's u, then its v.
+        let mut slot = vec![usize::MAX; count];
+        let mut free = 0;
+        for (i, sl) in slot.iter_mut().enumerate() {
+            if i != a && i != b {
+                *sl = free;
+                free += 1;
+            }
+        }
+        if free == 0 {
+            return None;
+        }
+        // Per triangle, its corners as complex weights (the opposite edge
+        // in the triangle's own plane, over the root of twice its area).
+        let mut weights: Vec<[DVec2; 3]> = Vec::with_capacity(tris.len());
+        for t in tris {
+            let [p0, p1, p2] = t.map(|v| points[v]);
+            let e = p1 - p0;
+            let len = e.length();
+            let normal = e.cross(p2 - p0);
+            let double = normal.length();
+            if len == 0.0 || double == 0.0 {
+                weights.push([DVec2::ZERO; 3]);
+                continue;
+            }
+            let ex = e / len;
+            let ey = normal.cross(e) / (double * len);
+            let q = [
+                DVec2::ZERO,
+                DVec2::new(len, 0.0),
+                DVec2::new((p2 - p0).dot(ex), (p2 - p0).dot(ey)),
+            ];
+            let root = double.sqrt();
+            weights.push([
+                (q[2] - q[1]) / root,
+                (q[0] - q[2]) / root,
+                (q[1] - q[0]) / root,
+            ]);
+        }
+        // A x (two rows a triangle) and its transpose, over the free
+        // unknowns; `held` is what the pins put on the right-hand side.
+        let apply = |x: &[f64], out: &mut [f64]| {
+            for (k, (t, w)) in tris.iter().zip(&weights).enumerate() {
+                let (mut re, mut im) = (0.0, 0.0);
+                for j in 0..3 {
+                    let sl = slot[t[j]];
+                    if sl == usize::MAX {
+                        continue;
+                    }
+                    let (u, v) = (x[sl], x[free + sl]);
+                    re += w[j].x * u - w[j].y * v;
+                    im += w[j].y * u + w[j].x * v;
                 }
-                let (u, v) = (x[sl], x[free + sl]);
-                re += w[j].x * u - w[j].y * v;
-                im += w[j].y * u + w[j].x * v;
+                out[2 * k] = re;
+                out[2 * k + 1] = im;
             }
-            out[2 * k] = re;
-            out[2 * k + 1] = im;
-        }
-    };
-    let transpose = |r: &[f64], out: &mut [f64]| {
-        out.fill(0.0);
-        for (k, (t, w)) in tris.iter().zip(&weights).enumerate() {
-            let (re, im) = (r[2 * k], r[2 * k + 1]);
-            for j in 0..3 {
-                let sl = slot[t[j]];
-                if sl == usize::MAX {
-                    continue;
+        };
+        let transpose = |r: &[f64], out: &mut [f64]| {
+            out.fill(0.0);
+            for (k, (t, w)) in tris.iter().zip(&weights).enumerate() {
+                let (re, im) = (r[2 * k], r[2 * k + 1]);
+                for j in 0..3 {
+                    let sl = slot[t[j]];
+                    if sl == usize::MAX {
+                        continue;
+                    }
+                    out[sl] += w[j].x * re + w[j].y * im;
+                    out[free + sl] += w[j].x * im - w[j].y * re;
                 }
-                out[sl] += w[j].x * re + w[j].y * im;
-                out[free + sl] += w[j].x * im - w[j].y * re;
+            }
+        };
+        let rows = 2 * tris.len();
+        let mut held = vec![0.0; rows];
+        for (k, (t, w)) in tris.iter().zip(&weights).enumerate() {
+            for j in 0..3 {
+                if t[j] == b {
+                    // The pin at (apart, 0); the one at the origin adds nothing.
+                    held[2 * k] -= w[j].x * apart;
+                    held[2 * k + 1] -= w[j].y * apart;
+                }
             }
         }
-    };
-    let rows = 2 * tris.len();
-    let mut held = vec![0.0; rows];
-    for (k, (t, w)) in tris.iter().zip(&weights).enumerate() {
-        for j in 0..3 {
-            if t[j] == b {
-                // The pin at (apart, 0); the one at the origin adds nothing.
-                held[2 * k] -= w[j].x * apart;
-                held[2 * k + 1] -= w[j].y * apart;
+        let mut sol = vec![0.0; 2 * free];
+        for (i, &sl) in slot.iter().enumerate() {
+            if sl != usize::MAX {
+                sol[sl] = x[i].x;
+                sol[free + sl] = x[i].y;
             }
         }
-    }
-    let mut sol = vec![0.0; 2 * free];
-    for (i, &sl) in slot.iter().enumerate() {
-        if sl != usize::MAX {
-            sol[sl] = x[i].x;
-            sol[free + sl] = x[i].y;
+        let dot = |p: &[f64], q: &[f64]| p.iter().zip(q).map(|(a, b)| a * b).sum::<f64>();
+        let mut r = vec![0.0; rows];
+        apply(&sol, &mut r);
+        for (ri, h) in r.iter_mut().zip(&held) {
+            *ri = h - *ri;
         }
-    }
-    let dot = |p: &[f64], q: &[f64]| p.iter().zip(q).map(|(a, b)| a * b).sum::<f64>();
-    let mut r = vec![0.0; rows];
-    apply(&sol, &mut r);
-    for (ri, h) in r.iter_mut().zip(&held) {
-        *ri = h - *ri;
-    }
-    let mut g = vec![0.0; 2 * free];
-    transpose(&r, &mut g);
-    let mut dir = g.clone();
-    let mut gamma = dot(&g, &g);
-    let first = gamma;
-    let mut q = vec![0.0; rows];
-    for _ in 0..(4 * free + 100).min(8000) {
-        if gamma <= first * 1e-20 || gamma == 0.0 {
-            break;
-        }
-        apply(&dir, &mut q);
-        let qq = dot(&q, &q);
-        if qq == 0.0 {
-            break;
-        }
-        let step = gamma / qq;
-        for (v, d) in sol.iter_mut().zip(&dir) {
-            *v += step * d;
-        }
-        for (ri, qi) in r.iter_mut().zip(&q) {
-            *ri -= step * qi;
-        }
+        // Each unknown is weighed by the inverse of its column's
+        // squared length (the solver's steps then depend less on how
+        // the triangles' sizes differ).
+        let weigh: Vec<f64> = {
+            let mut col = vec![0.0; 2 * free];
+            for (t, w) in tris.iter().zip(&weights) {
+                for j in 0..3 {
+                    let sl = slot[t[j]];
+                    if sl != usize::MAX {
+                        let l = w[j].length_squared();
+                        col[sl] += l;
+                        col[free + sl] += l;
+                    }
+                }
+            }
+            col.iter()
+                .map(|&l| if l > 0.0 { 1.0 / l } else { 1.0 })
+                .collect()
+        };
+        let weighed = |g: &mut [f64]| {
+            for (gi, wi) in g.iter_mut().zip(&weigh) {
+                *gi *= wi;
+            }
+        };
+        let mut g = vec![0.0; 2 * free];
+        let mut z = vec![0.0; 2 * free];
         transpose(&r, &mut g);
-        let next = dot(&g, &g);
-        let turn = next / gamma;
-        gamma = next;
-        for (d, gi) in dir.iter_mut().zip(&g) {
-            *d = gi + turn * *d;
+        z.copy_from_slice(&g);
+        weighed(&mut z);
+        let mut dir = z.clone();
+        let mut gamma = dot(&g, &z);
+        let first = gamma;
+        let mut q = vec![0.0; rows];
+        for _ in 0..(4 * free + 100).min(8000) {
+            if gamma <= first * 1e-12 || gamma == 0.0 {
+                break;
+            }
+            *turns += tris.len();
+            apply(&dir, &mut q);
+            let qq = dot(&q, &q);
+            if qq == 0.0 {
+                break;
+            }
+            let step = gamma / qq;
+            for (v, d) in sol.iter_mut().zip(&dir) {
+                *v += step * d;
+            }
+            for (ri, qi) in r.iter_mut().zip(&q) {
+                *ri -= step * qi;
+            }
+            transpose(&r, &mut g);
+            z.copy_from_slice(&g);
+            weighed(&mut z);
+            let next = dot(&g, &z);
+            let turn = next / gamma;
+            gamma = next;
+            for (d, zi) in dir.iter_mut().zip(&z) {
+                *d = zi + turn * *d;
+            }
         }
-    }
-    for (i, &sl) in slot.iter().enumerate() {
-        if sl != usize::MAX {
-            x[i] = DVec2::new(sol[sl], sol[free + sl]);
+        for (i, &sl) in slot.iter().enumerate() {
+            if sl != usize::MAX {
+                x[i] = DVec2::new(sol[sl], sol[free + sl]);
+            }
         }
+        if x.iter().any(|q| !q.is_finite()) {
+            return None;
+        }
+        Some(x)
     }
-    if x.iter().any(|q| !q.is_finite()) {
-        return None;
+
+    /// The triangles at `x`, scaled to the surface's own area; each
+    /// one's flat area over its own (0 for one that folds, −1 for the
+    /// first found lying over another); and whether the chart is well:
+    /// none folds, none's area is past twice or under half its own, and
+    /// none lies over another. No triangles where the whole is flat to
+    /// nothing.
+    fn judge(&self, x: &[DVec2], cell: f64) -> Judged {
+        let mut laid: Vec<[DVec2; 3]> = self.tris.iter().map(|t| t.map(|v| x[v])).collect();
+        let flat_area = |t: &[DVec2; 3]| (t[1] - t[0]).perp_dot(t[2] - t[0]);
+        let (mut on_surface, mut on_plane) = (0.0, 0.0);
+        for (&area, t) in self.areas.iter().zip(&laid) {
+            on_surface += area;
+            on_plane += flat_area(t);
+        }
+        if !(on_plane > 0.0 && on_surface > 0.0) {
+            return Judged::default();
+        }
+        let scale = (on_surface / on_plane).sqrt();
+        for t in &mut laid {
+            *t = t.map(|q| q * scale);
+        }
+        let mut shrunk = vec![1.0; laid.len()];
+        let mut well = true;
+        let (mut least, mut most) = (f64::INFINITY, 0.0f64);
+        for (k, (&area, t)) in self.areas.iter().zip(&laid).enumerate() {
+            if orient2d(t[0], t[1], t[2]) != Ordering::Greater {
+                shrunk[k] = 0.0;
+                well = false;
+                continue;
+            }
+            let ratio = flat_area(t) / area;
+            if area > 0.0 {
+                shrunk[k] = ratio;
+                least = least.min(ratio);
+                most = most.max(ratio);
+            }
+        }
+        if well && most > 0.0 && !(least >= 0.5 && most <= 2.0) {
+            // Out at the surface's own area, but within four of each
+            // other: the chart a little larger or smaller holds all.
+            if most <= least * 3.999 {
+                let fit = 1.0 / (least * most).sqrt();
+                let side = fit.sqrt();
+                for t in &mut laid {
+                    *t = t.map(|q| q * side);
+                }
+                for r in &mut shrunk {
+                    *r *= fit;
+                }
+            } else {
+                well = false;
+            }
+        }
+        if well && let Some(k) = first_over(&laid, cell) {
+            shrunk[k] = -1.0;
+            well = false;
+        }
+        Judged { laid, shrunk, well }
     }
-    // To the surface's own area, then: no fold, no stretch, no overlap.
-    let mut laid: Vec<[DVec2; 3]> = tris.iter().map(|t| t.map(|v| x[v])).collect();
-    let flat_area = |t: &[DVec2; 3]| (t[1] - t[0]).perp_dot(t[2] - t[0]);
-    let (mut on_surface, mut on_plane) = (0.0, 0.0);
-    for (&i, t) in members.iter().zip(&laid) {
-        on_surface += areas[i as usize];
-        on_plane += flat_area(t);
-    }
-    if !(on_plane > 0.0 && on_surface > 0.0) {
-        return None;
-    }
-    let scale = (on_surface / on_plane).sqrt();
-    for t in &mut laid {
-        *t = t.map(|q| q * scale);
-    }
+}
+
+/// What [`Patch::judge`] found.
+#[derive(Default)]
+struct Judged {
+    laid: Vec<[DVec2; 3]>,
+    shrunk: Vec<f64>,
+    well: bool,
+}
+
+/// The first of `laid` that lies over one before it.
+fn first_over(laid: &[[DVec2; 3]], cell: f64) -> Option<usize> {
     let mut grid: BTreeMap<Cell, Vec<u32>> = BTreeMap::new();
-    for (k, (&i, t)) in members.iter().zip(&laid).enumerate() {
-        if orient2d(t[0], t[1], t[2]) != Ordering::Greater {
-            return None;
-        }
-        let ratio = flat_area(t) / areas[i as usize];
-        if areas[i as usize] > 0.0 && !(0.5..=2.0).contains(&ratio) {
-            return None;
-        }
+    for (k, t) in laid.iter().enumerate() {
         let mut near: Vec<u32> = cells(t, cell)
             .filter_map(|c| grid.get(&c))
             .flatten()
@@ -600,13 +828,411 @@ fn conformal(
         near.sort_unstable();
         near.dedup();
         if near.iter().any(|&o| tris_overlap_2d(*t, laid[o as usize])) {
-            return None;
+            return Some(k);
         }
         for c in cells(t, cell) {
             grid.entry(c).or_default().push(k as u32);
         }
     }
-    Some(laid)
+    None
+}
+
+/// The work the conformal charts of a solid may take in all
+/// ([`Patch::solve`]'s count), a triangle of it.
+const SOLVE_WORK: usize = 20_000;
+
+/// The most triangles [`seamed`] is given as one region.
+const SEAM_REGION: usize = 8192;
+
+/// How many rounds of cuts a region is given.
+const SEAM_ROUNDS: usize = 16;
+
+/// What [`seamed`] reads of the solid.
+struct Cut<'a> {
+    s: &'a Solid,
+    by_edge: &'a BTreeMap<(u32, u32), Vec<u32>>,
+    normals: &'a [DVec3],
+    areas: &'a [f64],
+    cos_limit: f64,
+    cell: f64,
+}
+
+/// What [`seamed`] made of a region.
+enum Seamed {
+    /// The whole region as one chart: each triangle, in its order.
+    Whole(Vec<[DVec2; 3]>),
+    /// A part of it as one chart: which of the region's triangles (by
+    /// their place in it), and each of those.
+    Part(Vec<usize>, Vec<[DVec2; 3]>),
+    /// Nothing worth a chart.
+    Nothing,
+}
+
+/// The triangles `region` (joined across edges of two triangles)
+/// flattened as one chart, cut open along seams; or, where cutting
+/// stops helping, the largest part of it that did flatten. `spent`
+/// counts the triangles solved for.
+///
+/// 1. **To a disk.** A tree is grown over the triangles from the first,
+///    breadth first, across the region's edges that are not sharp. The
+///    edges it did not cross, less every one that ends at a vertex with
+///    no other (taken away in turn), are the fewest that open the
+///    region to a disk: none on a patch, one line between the two rims
+///    of a tube, two loops on a ring. A closed surface with no handle
+///    is left none, and is cut between two vertices far apart.
+/// 2. **Until it flattens.** The disk is flattened ([`Patch::solve`]).
+///    Where a triangle folds or its area is past twice or under half
+///    its own, the shortest path of edges from the triangle shrunk most
+///    to the seam or rim nearest it is cut as well (a sharp edge counts
+///    half its length, so seams take creases), and the chart is
+///    flattened again. This is the cutting of Gu, Gortler and Hoppe's
+///    geometry images (2002), with this chart's own measure of what is
+///    shrunk (`docs/research.md` §65).
+/// 3. **Or a part.** After sixteen cuts, or six that left no more
+///    triangles well than the best before them, the triangles that are well and lie
+///    over none before them are gathered across uncut edges, and the
+///    largest such part (by area) is the chart, flattened again by
+///    itself where that is well too. The rest is the caller's to try
+///    again: fingers and ears leave a body this way.
+fn seamed(c: &Cut, region: &[u32], spent: &mut usize) -> Seamed {
+    let s = c.s;
+    let local: BTreeMap<u32, usize> = region.iter().enumerate().map(|(k, &i)| (i, k)).collect();
+    // The region's inner edges (its two triangles, whether sharp), and
+    // how many rim edges meet at each vertex.
+    let mut inner: BTreeMap<(u32, u32), (usize, usize, bool)> = BTreeMap::new();
+    let mut rim: BTreeMap<u32, u32> = BTreeMap::new();
+    for (k, &i) in region.iter().enumerate() {
+        let t = s.triangles[i as usize];
+        for j in 0..3 {
+            let e = edge_key(t[j], t[(j + 1) % 3]);
+            let users = &c.by_edge[&e];
+            let other = if users.len() == 2 {
+                let o = if users[0] == i { users[1] } else { users[0] };
+                local.get(&o).copied().filter(|&o| o != k)
+            } else {
+                None
+            };
+            match other {
+                Some(o) => {
+                    let sharp =
+                        c.normals[i as usize].dot(c.normals[region[o] as usize]) < c.cos_limit;
+                    inner.insert(e, (k.min(o), k.max(o), sharp));
+                }
+                None => {
+                    *rim.entry(e.0).or_default() += 1;
+                    *rim.entry(e.1).or_default() += 1;
+                }
+            }
+        }
+    }
+    // The tree over the triangles, and the edges it crossed.
+    let mut crossed: std::collections::BTreeSet<(u32, u32)> = std::collections::BTreeSet::new();
+    let mut reached = vec![false; region.len()];
+    reached[0] = true;
+    let mut queue = vec![0usize];
+    let mut head = 0;
+    while head < queue.len() {
+        let k = queue[head];
+        head += 1;
+        let t = s.triangles[region[k] as usize];
+        for j in 0..3 {
+            let e = edge_key(t[j], t[(j + 1) % 3]);
+            let Some(&(a, b, sharp)) = inner.get(&e) else {
+                continue;
+            };
+            let o = if a == k { b } else { a };
+            if sharp || reached[o] {
+                continue;
+            }
+            reached[o] = true;
+            crossed.insert(e);
+            queue.push(o);
+        }
+    }
+    // What it did not cross, pruned of its loose ends.
+    let mut cut: std::collections::BTreeSet<(u32, u32)> = inner
+        .keys()
+        .filter(|e| !crossed.contains(e))
+        .copied()
+        .collect();
+    let mut degree = rim.clone();
+    let mut at: BTreeMap<u32, Vec<(u32, u32)>> = BTreeMap::new();
+    for e in &cut {
+        for v in [e.0, e.1] {
+            *degree.entry(v).or_default() += 1;
+            at.entry(v).or_default().push(*e);
+        }
+    }
+    let mut loose: Vec<u32> = degree
+        .iter()
+        .filter(|(_, d)| **d == 1)
+        .map(|(v, _)| *v)
+        .collect();
+    while let Some(v) = loose.pop() {
+        if degree[&v] != 1 {
+            continue;
+        }
+        let Some(e) = at
+            .get(&v)
+            .and_then(|l| l.iter().find(|e| cut.contains(e)))
+            .copied()
+        else {
+            continue;
+        };
+        cut.remove(&e);
+        for w in [e.0, e.1] {
+            let d = degree.get_mut(&w).expect("counted above");
+            *d -= 1;
+            if *d == 1 {
+                loose.push(w);
+            }
+        }
+    }
+    // The shortest path of uncut inner edges from `from` to a vertex
+    // that `ends` it, as edges.
+    let length = |e: &(u32, u32), sharp: bool| {
+        let l = (s.positions[e.0 as usize] - s.positions[e.1 as usize]).length();
+        if sharp { l * 0.5 } else { l }
+    };
+    let mut around: BTreeMap<u32, Vec<(u32, u32)>> = BTreeMap::new();
+    for e in inner.keys() {
+        around.entry(e.0).or_default().push(*e);
+        around.entry(e.1).or_default().push(*e);
+    }
+    let path = |from: u32,
+                cut: &std::collections::BTreeSet<(u32, u32)>,
+                ends: &dyn Fn(u32) -> bool|
+     -> Option<Vec<(u32, u32)>> {
+        let mut best: BTreeMap<u32, (f64, (u32, u32))> = BTreeMap::new();
+        let mut open: std::collections::BTreeSet<(u64, u32)> = std::collections::BTreeSet::new();
+        best.insert(from, (0.0, (from, from)));
+        open.insert((0, from));
+        while let Some((bits, v)) = open.pop_first() {
+            let far = f64::from_bits(bits);
+            if far > best[&v].0 {
+                continue;
+            }
+            if v != from && ends(v) {
+                let mut edges = Vec::new();
+                let mut w = v;
+                while w != from {
+                    let e = best[&w].1;
+                    edges.push(e);
+                    w = if e.0 == w { e.1 } else { e.0 };
+                }
+                return Some(edges);
+            }
+            for e in around.get(&v).into_iter().flatten() {
+                if cut.contains(e) {
+                    continue;
+                }
+                let w = if e.0 == v { e.1 } else { e.0 };
+                let next = far + length(e, inner[e].2);
+                if best.get(&w).is_none_or(|b| next < b.0) {
+                    best.insert(w, (next, *e));
+                    open.insert((next.to_bits(), w));
+                }
+            }
+        }
+        None
+    };
+    if rim.is_empty() && cut.is_empty() {
+        // Closed, no handle: between the vertex furthest from the
+        // first triangle's and the one furthest from that.
+        let verts: Vec<u32> = around.keys().copied().collect();
+        let furthest = |from: u32| {
+            let mut best = (0.0, from);
+            for &v in &verts {
+                let d = (s.positions[v as usize] - s.positions[from as usize]).length_squared();
+                if d > best.0 {
+                    best = (d, v);
+                }
+            }
+            best.1
+        };
+        let a = furthest(s.triangles[region[0] as usize][0]);
+        let b = furthest(a);
+        match path(a, &cut, &|v| v == b) {
+            Some(more) => cut.extend(more),
+            None => return Seamed::Nothing,
+        }
+    }
+    // The chart of some of the region's triangles (`inside`), split
+    // along `cut`: a corner is one with its neighbour's across every
+    // edge that is not cut.
+    let split = |inside: &[bool], cut: &std::collections::BTreeSet<(u32, u32)>| {
+        let mut parent: Vec<usize> = (0..3 * region.len()).collect();
+        fn find(parent: &mut [usize], mut x: usize) -> usize {
+            while parent[x] != x {
+                parent[x] = parent[parent[x]];
+                x = parent[x];
+            }
+            x
+        }
+        let corner = |k: usize, v: u32| {
+            let t = s.triangles[region[k] as usize];
+            3 * k + t.iter().position(|&w| w == v).expect("the edge's vertex")
+        };
+        for (e, &(a, b, _)) in &inner {
+            if cut.contains(e) || !inside[a] || !inside[b] {
+                continue;
+            }
+            for v in [e.0, e.1] {
+                let (x, y) = (
+                    find(&mut parent, corner(a, v)),
+                    find(&mut parent, corner(b, v)),
+                );
+                parent[x.max(y)] = x.min(y);
+            }
+        }
+        let mut number: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut points: Vec<DVec3> = Vec::new();
+        let mut members: Vec<u32> = Vec::new();
+        let mut tris: Vec<[usize; 3]> = Vec::new();
+        for (k, &i) in region.iter().enumerate() {
+            if !inside[k] {
+                continue;
+            }
+            let t = s.triangles[i as usize];
+            members.push(i);
+            tris.push([0, 1, 2].map(|j| {
+                let root = find(&mut parent, 3 * k + j);
+                *number.entry(root).or_insert_with(|| {
+                    points.push(s.positions[t[j] as usize]);
+                    points.len() - 1
+                })
+            }));
+        }
+        Patch::new(points, tris, &members, c.normals, c.areas)
+    };
+    let all = vec![true; region.len()];
+    let fine = |r: f64| (0.5..=2.0).contains(&r);
+    // The flattening with the most triangles well, and its cuts.
+    let mut kept: Option<(usize, Judged)> = None;
+    let mut kept_cut = cut.clone();
+    let mut stale = 0;
+    for _ in 0..=SEAM_ROUNDS {
+        let patch = split(&all, &cut);
+        let Some(x) = patch.solve(spent) else {
+            break;
+        };
+        let judged = patch.judge(&x, c.cell);
+        if judged.well {
+            return Seamed::Whole(judged.laid);
+        }
+        if judged.laid.is_empty() {
+            break;
+        }
+        let bad = judged.shrunk.clone();
+        let well = bad.iter().filter(|r| fine(**r)).count();
+        if kept.as_ref().is_none_or(|k| well > k.0) {
+            kept = Some((well, judged));
+            kept_cut = cut.clone();
+            stale = 0;
+        } else {
+            stale += 1;
+            if stale == 6 {
+                break;
+            }
+        }
+        // From the triangle shrunk most (the one furthest, as the flat
+        // chart measures, from any seam) that has a vertex off every
+        // seam and rim, to the nearest of them.
+        let on_edge = |v: u32, cut: &std::collections::BTreeSet<(u32, u32)>| {
+            rim.contains_key(&v)
+                || around
+                    .get(&v)
+                    .is_some_and(|l| l.iter().any(|e| cut.contains(e)))
+        };
+        let mut order: Vec<usize> = (0..bad.len()).collect();
+        order.sort_by(|&a, &b| bad[a].total_cmp(&bad[b]).then(a.cmp(&b)));
+        let Some(from) = order.iter().find_map(|&k| {
+            s.triangles[region[k] as usize]
+                .into_iter()
+                .find(|&v| !on_edge(v, &cut))
+        }) else {
+            break;
+        };
+        match path(from, &cut, &|v| on_edge(v, &cut)) {
+            Some(more) => cut.extend(more),
+            None => break,
+        }
+    }
+    let Some((_, judged)) = kept else {
+        return Seamed::Nothing;
+    };
+    let cut = kept_cut;
+    // The triangles that are well and over none before them.
+    let mut well: Vec<bool> = judged.shrunk.iter().map(|r| fine(*r)).collect();
+    let mut grid: BTreeMap<Cell, Vec<u32>> = BTreeMap::new();
+    for (k, t) in judged.laid.iter().enumerate() {
+        if !well[k] {
+            continue;
+        }
+        let mut near: Vec<u32> = cells(t, c.cell)
+            .filter_map(|c| grid.get(&c))
+            .flatten()
+            .copied()
+            .collect();
+        near.sort_unstable();
+        near.dedup();
+        if near
+            .iter()
+            .any(|&o| tris_overlap_2d(*t, judged.laid[o as usize]))
+        {
+            well[k] = false;
+            continue;
+        }
+        for cl in cells(t, c.cell) {
+            grid.entry(cl).or_default().push(k as u32);
+        }
+    }
+    // Gathered across uncut edges; the largest part.
+    let mut part_of = vec![usize::MAX; region.len()];
+    let mut best = (0.0, usize::MAX);
+    let mut parts = 0;
+    for k in 0..region.len() {
+        if !well[k] || part_of[k] != usize::MAX {
+            continue;
+        }
+        let mut area = 0.0;
+        let mut stack = vec![k];
+        part_of[k] = parts;
+        while let Some(k) = stack.pop() {
+            area += c.areas[region[k] as usize];
+            let t = s.triangles[region[k] as usize];
+            for j in 0..3 {
+                let e = edge_key(t[j], t[(j + 1) % 3]);
+                let Some(&(a, b, _)) = inner.get(&e) else {
+                    continue;
+                };
+                let o = if a == k { b } else { a };
+                if cut.contains(&e) || !well[o] || part_of[o] != usize::MAX {
+                    continue;
+                }
+                part_of[o] = parts;
+                stack.push(o);
+            }
+        }
+        if area > best.0 {
+            best = (area, parts);
+        }
+        parts += 1;
+    }
+    let inside: Vec<bool> = part_of.iter().map(|&p| p == best.1).collect();
+    let which: Vec<usize> = (0..region.len()).filter(|&k| inside[k]).collect();
+    if best.1 == usize::MAX || which.len() < 2 {
+        return Seamed::Nothing;
+    }
+    let patch = split(&inside, &cut);
+    if let Some(x) = patch.solve(spent) {
+        let again = patch.judge(&x, c.cell);
+        if again.well {
+            return Seamed::Part(which, again.laid);
+        }
+    }
+    let laid = which.iter().map(|&k| judged.laid[k]).collect();
+    Seamed::Part(which, laid)
 }
 
 /// Projection directions for the whole solid, and each triangle's (an
@@ -1075,5 +1701,49 @@ mod tests {
         assert_eq!(unrolled.chart_count, 4);
         assert!(kept(&projected) < 0.9, "{}", kept(&projected));
         assert!((kept(&unrolled) - 1.0).abs() < 1e-6, "{}", kept(&unrolled));
+    }
+
+    #[test]
+    fn seams_open_closed_surfaces() {
+        let seams = Unwrap {
+            seams: true,
+            ..Default::default()
+        };
+        let conformal = Unwrap {
+            conformal: true,
+            ..Default::default()
+        };
+        // Each triangle's area in the atlas over its own, least and most.
+        let stretch = |s: &Solid, uv: &Uvs| {
+            let (mut lo, mut hi) = (f64::INFINITY, 0.0f64);
+            for (t, c) in s.triangles.iter().zip(&uv.corners) {
+                let [a, b, d] = t.map(|v| s.positions[v as usize]);
+                let own = (b - a).cross(d - a).length();
+                let flat = (c[1] - c[0]).perp_dot(c[2] - c[0]) / (uv.scale * uv.scale);
+                lo = lo.min(flat / own);
+                hi = hi.max(flat / own);
+            }
+            (lo, hi)
+        };
+        let ball = shape_gen::solids::sphere_desc(&shape_gen::solids::SphereDesc {
+            radius: 10.0,
+            segments: 16,
+            ..Default::default()
+        })
+        .unwrap();
+        let ring = shape_gen::solids::torus_desc(&shape_gen::solids::TorusDesc {
+            radius: 20.0,
+            tube_radius: 5.0,
+            segments: 24,
+            tube_segments: 12,
+            ..Default::default()
+        })
+        .unwrap();
+        for (s, without, with) in [(&ball, 4, 1), (&ring, 8, 3)] {
+            let (a, b) = (check_with(s, &conformal), check_with(s, &seams));
+            let (lo, hi) = stretch(s, &b);
+            assert_eq!((a.chart_count, b.chart_count), (without, with));
+            assert!(lo >= 0.5 - 1e-9 && hi <= 2.0 + 1e-9, "{lo} {hi}");
+        }
     }
 }

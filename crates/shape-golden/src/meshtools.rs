@@ -58,6 +58,10 @@ pub fn cases() -> Vec<Case> {
             run: unwrap_case,
         },
         Case {
+            name: "meshtools.unwrap.seams",
+            run: seams_case,
+        },
+        Case {
             name: "meshtools.measure.json",
             run: measure_case,
         },
@@ -456,8 +460,20 @@ fn unwrap_case(h: &mut OutputHash) -> Result<(), HashError> {
         padding: 4.0,
         shared: false,
         conformal: false,
+        seams: false,
     };
     hash_unwrap(h, &unwrap(&mut b.clone(), &d).map_err(fail)?)
+}
+
+fn seams_case(h: &mut OutputHash) -> Result<(), HashError> {
+    let d = Unwrap {
+        seams: true,
+        ..Default::default()
+    };
+    let ball = sphere(10.0).map_err(fail)?;
+    hash_unwrap(h, &unwrap(&mut ball.clone(), &d).map_err(fail)?)?;
+    let ring = torus(20.0, 5.0).map_err(fail)?;
+    hash_unwrap(h, &unwrap(&mut ring.clone(), &d).map_err(fail)?)
 }
 
 fn measure_case(h: &mut OutputHash) -> Result<(), HashError> {

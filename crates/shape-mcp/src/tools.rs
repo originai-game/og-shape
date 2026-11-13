@@ -426,6 +426,7 @@ impl Args<'_> {
             padding: self.num("padding")?,
             shared: self.flag("shared")?,
             conformal: self.flag("conformal")?,
+            seams: self.flag("seams")?,
         })
     }
 }
@@ -669,6 +670,14 @@ fn unwrap_props() -> Vec<(&'static str, Value)> {
                 "Flatten charts that bend keeping their angles (least squares conformal maps) \
                  where that neither folds nor stretches an area past twice or under half: fewer, \
                  larger charts on curved surfaces, at the surface's true area.",
+            ),
+        ),
+        (
+            "seams",
+            boolean(
+                "As conformal, and a chart is first all the surface joined to its seed across \
+                 edges no sharper than the angle, cut open along seams chosen here until it \
+                 flattens: a closed or tubular surface becomes one chart with seams in it.",
             ),
         ),
     ]

@@ -55,12 +55,13 @@ pub fn unwrap(files: &dyn Files, d: &UnwrapDesc) -> Result<String, Failure> {
 }
 
 /// The unwrap options of the command line.
-pub const OPTIONS: [&str; 5] = [
+pub const OPTIONS: [&str; 6] = [
     "--angle",
     "--resolution",
     "--padding",
     "--shared",
     "--conformal",
+    "--seams",
 ];
 
 /// [`OPTIONS`] read into an unwrap desc.
@@ -71,6 +72,7 @@ pub fn options(a: &Args) -> Result<Unwrap, Failure> {
         padding: a.number("--padding")?.unwrap_or(0.0),
         shared: a.switch("--shared"),
         conformal: a.switch("--conformal"),
+        seams: a.switch("--seams"),
     })
 }
 

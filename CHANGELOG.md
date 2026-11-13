@@ -1679,3 +1679,16 @@
   `mesh_after.png` no longer shows chart seams as lines: the preview
   stopped drawing them before this, and the picture had not been
   redrawn since.
+- `shape unwrap --seams` (the MCP's `seams`, `Unwrap::seams`): a chart
+  is first all the surface joined to its seed across edges no sharper
+  than the angle, cut open along seams chosen here until it flattens,
+  so a closed or tubular surface becomes one chart with seams in it:
+  a subdivided box 1 chart (2 with `--conformal`), Soldier 381 (458),
+  DamagedHelmet 261 (472). Where cutting stops helping, the largest
+  part that flattened is the chart and the rest is tried again.
+  `--conformal` and `--seams` now keep their charts only where they
+  are fewer than the projected ones, share one limit on the solver's
+  work (a rough mesh of 50 000 triangles: 22 s, was 49 s), and a
+  chart's scale may differ from the surface's by up to √2 where that
+  holds every triangle within half and twice its area
+  (`docs/research.md` §65).

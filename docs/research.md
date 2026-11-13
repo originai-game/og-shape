@@ -9735,3 +9735,78 @@ shells and 2 434 edits, unchanged line for line. Checked:
 `edits_answer_the_crossing_pairs_they_leave` holds the ⌀8, 21 deep
 shell at 3 (closed, volume 51 050) and the ⌀6, 30 deep one at 5. No
 golden line moved.
+
+## 65. Seams cut by the unwrap (2026-11-13)
+
+`Unwrap::seams` (`shape unwrap --seams`, the MCP's `seams`) makes a
+chart of all the surface joined to its seed across edges no sharper
+than the angle, and cuts it open until it flattens. Read: Gu, Gortler
+and Hoppe, *Geometry Images* (2002), §3: cut a surface to a disk,
+flatten it, and add to the cut the shortest path from the place the
+flattening serves worst to the cut, until it stops helping. Written
+here from that description, with this unwrap's own measure and
+flattening (§55).
+
+- **To a disk.** A tree over the region's triangles, breadth first
+  from the seed, across edges that are not sharp. The edges it did not
+  cross, less every edge that ends at a vertex with no other (taken
+  away in turn), are the fewest that open the region to a disk: none
+  on a patch, a line between the rims of a tube, two loops on a ring.
+  A closed surface with no handle is left none and is cut between two
+  vertices far apart.
+- **Until it flattens.** The disk is flattened (LSCM). The chart is
+  well when no triangle folds, none lies over another, and every
+  triangle's flat area is within half and twice its own; a chart whose
+  triangles are within four of each other is scaled to hold them all
+  (so a chart's scale can differ from the surface's by up to √2, a
+  triangle's never by more than 2). Otherwise the shortest path of
+  edges from the triangle shrunk most to the nearest seam or rim is
+  cut (a sharp edge counts half its length, so seams take creases),
+  and it is flattened again: up to sixteen cuts.
+- **Or a part.** Fingers on a hand are shrunk to a millionth and want
+  a cut each. After sixteen cuts, or six that left no more triangles
+  well than the best before, the triangles that are well and over
+  none before them are gathered across uncut edges; the largest part
+  (by area) is the chart, and the rest is tried again as regions of
+  its own.
+- **The solver.** Conjugate gradients on the least squares problem,
+  each unknown now weighed by the inverse of its column's squared
+  length (half to two thirds of the steps), to 10⁻¹² of the first
+  squared gradient. The work of all the charts of a solid (triangles
+  times steps) is held to 20 000 a triangle, and a region to 8 192
+  triangles; the conformal charts of §55 take the same solver and the
+  same limit (they had a looser one: 49 s on the last row below).
+- **No worse than projected.** Flattened charts (`conformal` or
+  `seams`) are kept where they are fewer than the projected ones.
+
+Measured (charts: projected, `--conformal`, `--seams`; seconds for
+`--seams`):
+
+| Mesh | Triangles | Projected | Conformal | Seams | s |
+| --- | --- | --- | --- | --- | --- |
+| a box subdivided three times (closed, smooth) | 768 | 6 | 2 | 1 | 0.05 |
+| a can, its top rounded | 576 | 20 | 3 | 2 | 0.04 |
+| a cylinder | 188 | 6 | 4 | 3 | 0.03 |
+| a sphere of 16 segments | 224 | 6 | 3 | 1 | 0.02 |
+| a ring of 24 by 12 | 576 | 11 | 6 | 5 | 0.07 |
+| RobotExpressive | 3 234 | 418 | 239 | 206 | 0.1 |
+| Soldier | 11 376 | 650 | 458 | 381 | 1.5 |
+| DamagedHelmet | 15 452 | 643 | 472 | 261 | 0.6 |
+| a TRELLIS mesh (rough) | 50 666 | 1 157 | 1 157 | 1 157 | 37 |
+
+On Soldier the triangles in charts of more than 64 go from 5 183 to
+8 245 of 11 376. On the rough mesh neither flattening leaves fewer
+charts than projecting, the projected ones are kept, and the 37 s are
+spent finding that out. (The sphere and the ring are read from a GLB
+here; built in memory, as the test below builds them, they are 4 to 1
+and 8 to 3.)
+
+Not done: the cut follows the tree's far side, not the least visible
+line (no visibility, no symmetry); small charts are left round a large
+one where its rim did not flatten; the solver has no better
+preconditioner than the diagonal, so a region over a few thousand
+triangles costs seconds a cut.
+
+Checked: `seams_open_closed_surfaces` (a sphere 4 charts to 1, a ring
+8 to 3, every triangle's area within half and twice). Golden:
+`meshtools.unwrap.seams` is new; no other line moved.

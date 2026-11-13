@@ -166,7 +166,11 @@ import → join → repair → decimate → place → unwrap → measure → pre
    whichever report has fewer charts and more `coverage`. `conformal`
    (`--conformal`) flattens charts that bend keeping their angles, at
    the surface's true area: fewer charts on curved parts and even texel
-   density, but shapes that pack looser (lower `coverage`). `shape process` keeps a textured
+   density, but shapes that pack looser (lower `coverage`). `seams`
+   (`--seams`) goes further on smooth closed or tubular surfaces (a
+   pebble, a limb, a helmet): the surface is cut open along seams and
+   flattened as one chart; it is slower (seconds on 10 000 triangles),
+   and on a rough generated mesh it changes nothing. `shape process` keeps a textured
    mesh's UVs unless given `--unwrap`, or `--bake PX`, which unwraps,
    packs and bakes the old maps into new ones (below, "Keep the UVs or
    bake").
