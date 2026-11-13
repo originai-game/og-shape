@@ -242,9 +242,34 @@ fn fit(px: &[[u8; 4]; 16], members: &[usize], comps: &[usize], range: &Range, ta
         }
         let mut weights = [0u8; 16];
         let mut err = 0u32;
+        // Where along the line each texel falls says which weights can
+        // be nearest: those two either side of it.
+        let mut along = [0.0f64; 4];
+        let mut length = 0.0;
+        for &c in comps {
+            along[c] = f64::from(qh[c]) - f64::from(ql[c]);
+            length += along[c] * along[c];
+        }
+        let last = table.len() - 1;
         for &i in members {
             let mut least = u32::MAX;
-            for (k, shade) in shades[..table.len()].iter().enumerate() {
+            let (from, to) = if length > 0.0 && last > 7 {
+                let t = comps
+                    .iter()
+                    .map(|&c| (f64::from(px[i][c]) - f64::from(ql[c])) * along[c])
+                    .sum::<f64>()
+                    / length;
+                let near = (t.clamp(0.0, 1.0) * last as f64 + 0.5) as usize;
+                (near.saturating_sub(2), (near + 2).min(last))
+            } else {
+                (0, last)
+            };
+            for (k, shade) in shades[..table.len()]
+                .iter()
+                .enumerate()
+                .take(to + 1)
+                .skip(from)
+            {
                 let mut e = 0u32;
                 for &c in comps {
                     let d = u32::from(shade[c].abs_diff(px[i][c]));
@@ -449,25 +474,30 @@ fn etc1_wide(v: i32, diff: bool) -> i32 {
 }
 
 /// The least squared error of 8 texels drawn from one base colour, and
-/// the table that gives it.
+/// the table that gives it. A step `m` on all three channels of a
+/// texel `d` away from the base costs Σd² − 2m Σd + 3m² (taking no
+/// channel to clip at black or white, which a hint may).
 fn etc1_half(px: &[[u8; 4]; 16], texels: &[usize; 8], base: [i32; 3]) -> (u32, u8) {
+    let mut sums = [(0i32, 0i32); 8];
+    for (slot, &i) in sums.iter_mut().zip(texels) {
+        for c in 0..3 {
+            let d = i32::from(px[i][c]) - base[c];
+            slot.0 += d;
+            slot.1 += d * d;
+        }
+    }
     let mut best = (u32::MAX, 0u8);
     for (t, table) in ETC1_TABLES.iter().enumerate() {
-        let mut err = 0u32;
-        for &i in texels {
-            let mut least = u32::MAX;
+        let mut err = 0i32;
+        for &(first, second) in &sums {
+            let mut least = i32::MAX;
             for &m in table {
-                let mut e = 0u32;
-                for c in 0..3 {
-                    let d = (base[c] + m).clamp(0, 255) - i32::from(px[i][c]);
-                    e += (d * d) as u32;
-                }
-                least = least.min(e);
+                least = least.min(second - 2 * m * first + 3 * m * m);
             }
             err += least;
         }
-        if err < best.0 {
-            best = (err, t as u8);
+        if (err.max(0) as u32) < best.0 {
+            best = (err.max(0) as u32, t as u8);
         }
     }
     best

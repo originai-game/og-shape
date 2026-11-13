@@ -989,6 +989,12 @@ fn process_schema() -> Value {
                      on a GPU, and seconds of work per 1024² map."),
         ),
         (
+            "ktx2_rdo",
+            num("With `ktx2` (which it implies): let a UASTC block be a copy of a neighbour where \
+                 that costs at most this much squared error a channel of a texel; 1 to 4 trade \
+                 about 0.3 to 2.4 dB for 5 to 30 % fewer bytes. 0 does not."),
+        ),
+        (
             "etc1s",
             boolean("Write every map kept as KTX2 of ETC1S blocks (BasisLZ; \
                      `KHR_texture_basisu`'s small mode): a fraction of `ktx2`'s bytes and of a \
@@ -1293,6 +1299,7 @@ fn process_tool(server: &Server, a: &Args, p: &mut dyn Progress) -> Result<Vec<V
         texture_max: a.u32("texture_max")?,
         ktx2: a.flag("ktx2")?,
         etc1s: a.flag("etc1s")?,
+        ktx2_rdo: a.num("ktx2_rdo")?,
         bake: a.u32("bake")?,
         bake_distance: a.num("bake_distance")?,
         out: a.path("out")?,

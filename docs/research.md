@@ -9466,3 +9466,46 @@ error); `meshtools.look.webp` in the gate decodes on the three
 targets. The lossy path has no file in the gate: it is integer
 arithmetic in the crate, and no lossy file with a licence this project
 takes was at hand.
+
+## 59. UASTC: a rate-distortion pass, and time (2026-11-12)
+
+**Rate against distortion.** UASTC is 16 bytes a block whatever the
+block; what Zstandard can find afterwards decides the file's size.
+`uastc::encode_rdo` lets a block be written as the bytes of one
+written shortly before it (the four to its left, the three above and
+the one two rows up) where the copy's squared error is at most the
+block's own best plus `rdo` × 64 (so `rdo` is squared error a channel
+of a texel); the nearest that passes is taken. Equal 16-byte runs at
+such distances are what an LZ pass finds.
+
+Measured at 1024², this encoder's Zstandard (ruzstd's fastest level),
+level 0 only:
+
+| `rdo` | colour grid: bytes, dB | DamagedHelmet base colour: bytes, dB |
+| --- | --- | --- |
+| 0 | 224 977, 48.60 | 959 699, 46.60 |
+| 0.5 | 184 312, 48.00 | 950 119, 46.57 |
+| 1 | 176 684, 47.63 | 937 628, 46.50 |
+| 2 | 163 389, 46.66 | 915 204, 46.28 |
+| 4 | 158 034, 46.23 | 867 705, 45.53 |
+
+It helps flat and repeating content and does little for photographs:
+Basis Universal's pass also matches parts of blocks (a block that
+shares its first bytes with another), which this does not, and a
+stronger Zstandard level would find more in either. That is the gap
+that is left.
+
+**Time.** Half of the encoder's time was the search for the ETC1
+hints: for each of up to 36 choices of flip, mode and bias, each
+half-block's eight tables were tried texel by texel and channel by
+channel. A step `m` on all channels of a texel `d` from the base costs
+Σd² − 2mΣd + 3m², so a half-block's two sums a texel give every
+table's error at once (taking no channel to clip, which a hint may).
+1024² colour grid: 3.0 s → 2.0 s; the helmet's map: 4.6 s → 3.7 s (the
+rest is the fits). Narrowing each texel's weight search to the five
+weights round its place on the line saved nothing measurable and is
+kept only for the modes of 16 and 32 weights.
+
+The hints differ from §50's in the blocks where a clipped channel
+decided, so `meshtools.look.ktx2` moves: the written files' bytes, not
+what they decode to. Checked: `copies_of_neighbours_cost_fewer_bytes`.

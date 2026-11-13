@@ -211,17 +211,19 @@ fn etc1s(b: &[u8], h: &Header) -> Result<Image, String> {
 }
 
 /// A KTX2 file of UASTC blocks: `levels` from the largest down (each
-/// its width, height and RGBA texels), compressed with Zstandard.
+/// its width, height and RGBA texels), compressed with Zstandard, with
+/// `rdo` as [`crate::uastc::encode_rdo`] takes it.
 /// `srgb` says the texels are colour; `alpha` that they are not all
 /// opaque.
-pub(crate) fn encode(levels: &[Image], srgb: bool, alpha: bool) -> Vec<u8> {
+pub(crate) fn encode(levels: &[Image], srgb: bool, alpha: bool, rdo: f64) -> Vec<u8> {
     let Some(first) = levels.first() else {
         return Vec::new();
     };
     let data: Vec<(Vec<u8>, usize)> = levels
         .iter()
         .map(|l| {
-            let blocks = crate::uastc::encode(&l.rgba, l.width as usize, l.height as usize);
+            let blocks =
+                crate::uastc::encode_rdo(&l.rgba, l.width as usize, l.height as usize, rdo);
             let full = blocks.len();
             let packed = ruzstd::encoding::compress_to_vec(
                 blocks.as_slice(),
@@ -550,5 +552,48 @@ mod tests {
         for cut in 0..k.bytes.len() {
             assert!(decode(&k.bytes[..cut]).is_err(), "cut at {cut}");
         }
+    }
+
+    /// With a rate-distortion allowance, blocks that may be copies of
+    /// their neighbours are: a faintly noisy image takes fewer bytes,
+    /// and each texel stays within what the allowance lets a block move.
+    #[test]
+    fn copies_of_neighbours_cost_fewer_bytes() {
+        let (w, h) = (64u32, 64u32);
+        let mut state = 7u32;
+        let rgba: Vec<u8> = (0..w * h)
+            .flat_map(|i| {
+                state = state.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                let v = (100 + (i % w) / 16 * 20 + ((state >> 16) & 3)) as u8;
+                [v, v, 200, 255]
+            })
+            .collect();
+        let t = Texture::from_bytes(
+            "n.png",
+            crate::png(&Image {
+                width: w,
+                height: h,
+                rgba: rgba.clone(),
+            }),
+        );
+        let plain = crate::texture::to_ktx2(&t, false).unwrap().unwrap();
+        let tight = crate::texture::to_ktx2_rdo(&t, false, 2.0)
+            .unwrap()
+            .unwrap();
+        assert!(
+            tight.bytes.len() * 10 < plain.bytes.len() * 8,
+            "{} {}",
+            tight.bytes.len(),
+            plain.bytes.len()
+        );
+        let back = decode(&tight.bytes).unwrap();
+        let worst = back
+            .rgba
+            .iter()
+            .zip(&rgba)
+            .map(|(a, b)| a.abs_diff(*b))
+            .max();
+        assert!(worst <= Some(6), "{worst:?}");
+        assert_eq!(crate::texture::to_ktx2_rdo(&t, false, 0.0), Ok(Some(plain)));
     }
 }

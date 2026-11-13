@@ -127,7 +127,7 @@ pub use repair::{
     apply_transform, close_holes, join, join_clips, orient, remove_degenerate, remove_floaters,
     repair, repair_owned, split_non_manifold, weld,
 };
-pub use texture::{Downsize, TextureError, decode, downsize, to_ktx2, to_ktx2_etc1s};
+pub use texture::{Downsize, TextureError, decode, downsize, to_ktx2, to_ktx2_etc1s, to_ktx2_rdo};
 pub use thicken::{Thickened, thicken};
 pub use unwrap::{Unwrap, UnwrapError, Uvs, unwrap};
 pub use urdf::{Urdf, urdf};

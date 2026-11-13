@@ -347,8 +347,12 @@ mod encode;
 pub use encode::{Ranges, encode_block};
 
 /// An RGBA image (4 bytes a texel, rows from the top) as blocks, rows
-/// of ⌈width/4⌉; texels past an edge repeat the edge's.
-pub fn encode(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
+/// of ⌈width/4⌉; texels past an edge repeat the edge's. A block may be
+/// written as a copy of one written shortly before it where that costs
+/// it no more than `rdo` in squared error a channel of a texel over
+/// its own best (0: never): equal blocks are what the compression
+/// after this finds.
+pub fn encode_rdo(rgba: &[u8], width: usize, height: usize, rdo: f64) -> Vec<u8> {
     let ranges = Ranges::new();
     let (across, down) = (width.div_ceil(4), height.div_ceil(4));
     let mut out = Vec::with_capacity(across * down * 16);
@@ -360,7 +364,52 @@ pub fn encode(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
                 let at = (y * width + x) * 4;
                 [rgba[at], rgba[at + 1], rgba[at + 2], rgba[at + 3]]
             });
-            out.extend_from_slice(&encode_block(&px, &ranges));
+            let own = encode_block(&px, &ranges);
+            let mut block = own;
+            if rdo > 0.0 {
+                let error = |b: &[u8; 16]| -> u32 {
+                    decode_block(b).map_or(u32::MAX, |t| {
+                        t.iter()
+                            .zip(&px)
+                            .flat_map(|(p, q)| {
+                                (0..4).map(move |c| u32::from(p[c].abs_diff(q[c])).pow(2))
+                            })
+                            .sum()
+                    })
+                };
+                // The blocks to the left, and above with its neighbours.
+                let allowed = f64::from(error(&own)) + rdo * 64.0;
+                let at = out.len() / 16;
+                let mut best = allowed;
+                for back in [
+                    1,
+                    2,
+                    3,
+                    4,
+                    across,
+                    across + 1,
+                    across.saturating_sub(1),
+                    2 * across,
+                ] {
+                    if back == 0 || back > at {
+                        continue;
+                    }
+                    let from = (at - back) * 16;
+                    let Ok(candidate) = <[u8; 16]>::try_from(&out[from..from + 16]) else {
+                        continue;
+                    };
+                    let e = f64::from(error(&candidate));
+                    if e <= best {
+                        // The nearest that is good enough; among
+                        // equals, the first tried.
+                        if e < best || block == own {
+                            block = candidate;
+                            best = e;
+                        }
+                    }
+                }
+            }
+            out.extend_from_slice(&block);
         }
     }
     out

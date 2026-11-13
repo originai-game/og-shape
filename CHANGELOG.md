@@ -1615,3 +1615,12 @@
   on Google's gallery files: the lossless one equal to its PNG at
   every visible texel, the lossy one 32.4 dB from its source. An
   animated WebP is refused; none is encoded (`docs/research.md` §58).
+- UASTC: `process --ktx2-rdo Q` (MCP `ktx2_rdo`,
+  `shape_tools::to_ktx2_rdo`) lets a block be a copy of one beside or
+  above it where that costs at most `Q` squared error a channel of a
+  texel, which the Zstandard pass stores as a reference: on a colour
+  grid 18 to 30 % fewer bytes for 0.6 to 2.4 dB (Q 0.5 to 4), on a
+  photographic map 1 to 10 % for 0.03 to 1.1 dB. The encoder is a
+  third faster (its ETC1 hint search); the hints it writes change, so
+  UASTC files differ from before in those bits (`docs/research.md`
+  §59).

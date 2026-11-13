@@ -90,7 +90,19 @@ pub fn downsize(t: &Texture, d: &Downsize) -> Result<Option<Texture>, TextureErr
 /// a KTX2 file already. `color` as in [`Downsize::color`]: the texels
 /// are sRGB, and the levels are averaged in linear light.
 pub fn to_ktx2(t: &Texture, color: bool) -> Result<Option<Texture>, TextureError> {
-    ktx2_of(t, color, false)
+    ktx2_of(t, color, false, 0.0)
+}
+
+/// As [`to_ktx2`], trading quality for bytes: a block may be written
+/// as a copy of one just before it or above it where that costs it at
+/// most `rdo` in squared error a channel of a texel over its own best,
+/// and the Zstandard pass then stores the copy as a reference. 0 is
+/// [`to_ktx2`]; 1 to 4 are useful.
+pub fn to_ktx2_rdo(t: &Texture, color: bool, rdo: f64) -> Result<Option<Texture>, TextureError> {
+    if !(rdo >= 0.0 && rdo.is_finite()) {
+        return Err(bad("the rate-distortion allowance must be 0 or more"));
+    }
+    ktx2_of(t, color, false, rdo)
 }
 
 /// As [`to_ktx2`] with ETC1S blocks under BasisLZ: the small mode of
@@ -98,10 +110,15 @@ pub fn to_ktx2(t: &Texture, color: bool) -> Result<Option<Texture>, TextureError
 /// quality (one colour and one intensity table a block, from codebooks
 /// the whole file shares).
 pub fn to_ktx2_etc1s(t: &Texture, color: bool) -> Result<Option<Texture>, TextureError> {
-    ktx2_of(t, color, true)
+    ktx2_of(t, color, true, 0.0)
 }
 
-fn ktx2_of(t: &Texture, color: bool, small: bool) -> Result<Option<Texture>, TextureError> {
+fn ktx2_of(
+    t: &Texture,
+    color: bool,
+    small: bool,
+    rdo: f64,
+) -> Result<Option<Texture>, TextureError> {
     if t.mime == "image/ktx2" {
         return Ok(None);
     }
@@ -135,7 +152,7 @@ fn ktx2_of(t: &Texture, color: bool, small: bool) -> Result<Option<Texture>, Tex
             (blocks / 60).clamp(256, 8192),
         )
     } else {
-        crate::ktx2::encode(&levels, color, alpha)
+        crate::ktx2::encode(&levels, color, alpha, rdo)
     };
     Ok(Some(Texture {
         name,

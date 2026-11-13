@@ -87,6 +87,10 @@ pub struct ProcessDesc {
     /// Write every map kept as KTX2 (UASTC blocks with mip levels,
     /// Zstandard: `KHR_texture_basisu`), after any shrinking.
     pub ktx2: bool,
+    /// With `ktx2` (which it implies): let a UASTC block be a copy of a
+    /// neighbour where that costs at most this much squared error a
+    /// channel of a texel (`shape_tools::to_ktx2_rdo`); 0 does not.
+    pub ktx2_rdo: f64,
     /// Write every map kept as KTX2 of ETC1S blocks under BasisLZ: far
     /// smaller files than `ktx2`'s UASTC, at a lower quality.
     pub etc1s: bool,
@@ -136,8 +140,8 @@ fn map_size(i: &ImageInfo) -> String {
 /// Shrinks the material's maps to `max` texels (0: none) and, with
 /// `ktx2`, writes each as KTX2; per map, its kind, name, size before
 /// and after (null when kept as it was), and why it could not be read.
-fn texture_budget(m: &mut Material, max: u32, ktx2: bool, etc1s: bool) -> String {
-    let ktx2 = ktx2 || etc1s;
+fn texture_budget(m: &mut Material, max: u32, ktx2: bool, etc1s: bool, rdo: f64) -> String {
+    let ktx2 = ktx2 || etc1s || rdo > 0.0;
     if max == 0 && !ktx2 {
         return "null".into();
     }
@@ -157,7 +161,7 @@ fn texture_budget(m: &mut Material, max: u32, ktx2: bool, etc1s: bool) -> String
             let packed = if etc1s {
                 shape_tools::to_ktx2_etc1s(from, d.color)?
             } else {
-                shape_tools::to_ktx2(from, d.color)?
+                shape_tools::to_ktx2_rdo(from, d.color, rdo)?
             };
             Ok(packed.or(small))
         });
@@ -290,7 +294,7 @@ pub fn process_steps(
         "null".to_string()
     };
     step(4)?;
-    let textures = texture_budget(&mut material, d.texture_max, d.ktx2, d.etc1s);
+    let textures = texture_budget(&mut material, d.texture_max, d.ktx2, d.etc1s, d.ktx2_rdo);
     step(5)?;
     let images: Vec<ImageInfo> = material
         .maps()
@@ -432,6 +436,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         "--texture-max",
         "--ktx2",
         "--etc1s",
+        "--ktx2-rdo",
         "--bake",
         "--bake-distance",
     ];
@@ -459,6 +464,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
             texture_max: a.number("--texture-max")?.unwrap_or(0),
             ktx2: a.switch("--ktx2"),
             etc1s: a.switch("--etc1s"),
+            ktx2_rdo: a.number("--ktx2-rdo")?.unwrap_or(0.0),
             bake: a.number("--bake")?.unwrap_or(0),
             bake_distance: a.number("--bake-distance")?.unwrap_or(0.0),
             out: a.out_opt()?,

@@ -207,7 +207,9 @@ import → join → repair → decimate → place → unwrap → measure → pre
    memory (one byte a texel, where RGBA8 takes four;
    `decoded_bytes_with_mips` still counts RGBA8), and the levels come
    with the file. The file grows: about a byte a texel with the levels,
-   several times a JPEG. It takes about 3 s a megatexel. `--etc1s` (MCP `etc1s`) writes ETC1S blocks instead: one
+   several times a JPEG. It takes about 2 s a megatexel. `--ktx2-rdo Q`
+   (MCP `ktx2_rdo`, 1 to 4) lets a block be a copy of a neighbour for
+   5 to 30 % fewer bytes at 0.3 to 2.4 dB. `--etc1s` (MCP `etc1s`) writes ETC1S blocks instead: one
    colour and one intensity table a block from codebooks the file
    shares, a twentieth of UASTC's bytes and a tenth of its time, at a
    visibly lower quality (about 33 dB; fine for base colour at a
