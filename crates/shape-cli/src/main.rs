@@ -24,7 +24,7 @@
 //!                [--pivot base|center|X,Y,Z]
 //! shape compress <file.glb> -o out.glb [--quantize [--position-bits N]]
 //!                [--draco [--position-bits N] [--normal-bits N] [--uv-bits N]
-//!                [--color-bits N]]
+//!                [--color-bits N] [--weight-bits N] [--sequential]]
 //! shape collide  <input> [-o out] [--hulls N] [--concavity MM]
 //!                [--max-vertices N]
 //! shape process  <mesh> [--budget N | --ratio R] [--merge-charts UV]
@@ -86,8 +86,10 @@ const USAGE: &str = "usage: shape <command> <input> [options]
                                                 900mm) and origin, before and after
   compress <file.glb> -o out.glb             meshopt, lossless (EXT_meshopt_compression)
            [--quantize [--position-bits N]]     first: attributes in fewer bytes (lossy)
-           [--draco [--position-bits N] [--normal-bits N] [--uv-bits N] [--color-bits N]]
-                                                Draco, quantized (KHR_draco_mesh_compression)
+           [--draco [--position-bits N] [--normal-bits N] [--uv-bits N] [--color-bits N]
+            [--weight-bits N] [--sequential]]   Draco, quantized (KHR_draco_mesh_compression):
+                                                an EdgeBreaker walk where the mesh can be
+                                                walked, or with --sequential in the file's order
   collide  <input> [-o out] [--hulls N] [--concavity MM] [--max-vertices N]
                                                 convex hulls over each part: colliders
   process  <mesh> [--budget N | --ratio R] [--merge-charts UV] [--cross-color-borders]

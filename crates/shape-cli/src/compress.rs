@@ -43,6 +43,8 @@ pub fn compress(files: &dyn Files, d: &CompressDesc) -> Result<String, Failure> 
         return Ok(object(&[
             ("primitives", c.primitives.to_string()),
             ("compressed", c.compressed.to_string()),
+            ("walked", c.walked.to_string()),
+            ("mended", c.mended.to_string()),
             ("bytes_before", c.bytes_before.to_string()),
             ("bytes_after", c.bytes_after.to_string()),
             ("file_before", bytes.len().to_string()),
@@ -83,11 +85,13 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         "-o",
         "--out",
         "--draco",
+        "--sequential",
         "--quantize",
         "--position-bits",
         "--normal-bits",
         "--uv-bits",
         "--color-bits",
+        "--weight-bits",
     ])?;
     let bits = |name: &str| a.number::<u8>(name).map(|v| v.unwrap_or(0));
     let draco = shape_tools::Draco {
@@ -95,6 +99,8 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         normal_bits: bits("--normal-bits")?,
         uv_bits: bits("--uv-bits")?,
         color_bits: bits("--color-bits")?,
+        weight_bits: bits("--weight-bits")?,
+        sequential: a.switch("--sequential"),
     };
     compress(
         &Local,

@@ -9877,3 +9877,105 @@ approximation.
 Checked: `a_skin_rides_booleans_edits_bevels_and_subdivision`
 (shape-skin), `a_fillet_keeps_the_targets`,
 `a_subdivided_solid_keeps_its_targets`. No golden line moved.
+
+## 67. Draco written as an EdgeBreaker walk (2026-11-13)
+
+§60 wrote Draco in the sequential mode with the difference prediction
+and said EdgeBreaker and the parallelogram were what Draco's own
+encoder had over it. Read and ported for this:
+`mesh_edgebreaker_encoder_impl.cc` and
+`mesh_edgebreaker_traversal_encoder.h` of Draco 1.5.7 (Apache-2.0,
+`third_party/draco/`); the rest is the mirror of what `draco.rs`
+reads.
+
+- **The walk** (`draco_edge.rs`, `walk`). A corner table of the
+  triangles; open boundaries found and numbered; from each face not
+  yet reached, a start (a face with no vertex on a boundary is an
+  interior start and is not a symbol; else the walk starts on the
+  boundary) and then the standard traversal: `C` for a tip never seen
+  and not on a boundary, `R`, `L`, `E` by which neighbours are done,
+  `S` where neither is, with the right one first and the left on a
+  stack. A face reached whose done neighbour is an `S` face is a
+  topology split event (the source symbol, the split symbol, which
+  edge). Written: the counts, the events (varints and a bit each), the
+  symbols last to first (`C` one bit, the rest three), the start
+  configurations under the binary ANS coder.
+- **The order of the values.** The decoder makes its points in the
+  order of a depth-first traversal from each face it decodes; the
+  writer runs the same traversal on its own table from the symbols'
+  corners reversed, then the start faces, and writes each attribute's
+  values in that order. The decoded mesh therefore has the same
+  triangles between the same points under other indices.
+- **The parallelogram.** A point's whole numbers are predicted from
+  the triangle across the edge the walk reached it by (next + previous
+  − opposite) where those three are already written, else from the
+  point before. Each attribute is coded both ways (difference alone,
+  and this) and the shorter is kept.
+- **The raw symbol scheme.** Besides the tagged one of §60, every
+  number entropy coded as it is (up to 2¹⁸ different ones; the table's
+  precision from how many are in use). The shorter of the two is
+  written. It made little difference on the files below: the tagged
+  scheme was already the shorter on most attributes.
+- **What cannot be walked is mended** (`mended`). A corner table holds
+  no triangle with a vertex twice, no edge of three triangles, no
+  vertex whose triangles are two fans, and the walk drops a point no
+  triangle uses. Such a primitive has those triangles dropped, the
+  triangles at such an edge unjoined, a point a fan, and the unused
+  points dropped: the same surface with other counts, so the primitive
+  gets accessors of its own with the new counts. 15 of the 79
+  primitives below needed it.
+- **In the file's order still** (`--sequential`, `Draco::sequential`):
+  for a reader that wants the points where the file had them. A
+  primitive with morph targets is not compressed at all, as before:
+  its targets are a point a vertex in the file's order.
+- **Weights.** Skin weights are kept as they are, 16 bytes a vertex,
+  unless `--weight-bits N` is given; they then need not sum to 1 to
+  the last bit.
+
+Measured, the compressed primitives' geometry in bytes (default bits
+14, 10, 12, 8, weights as they are):
+
+| File | Primitives walked (mended) | Before | §60 (in order) | Walked |
+| --- | --- | --- | --- | --- |
+| DamagedHelmet | 1 (0) | 558 504 | 153 934 | 110 580 |
+| Mixamo soldier | 2 (0) | 841 392 | 425 788 | 271 945 |
+| RobotExpressive | 16 (2) | 172 482 | 56 654 | 51 337 |
+| BrainStem | 59 (12) | 2 009 628 | | 780 515 |
+| CesiumMan | 1 (1) | 211 320 | | 83 237 |
+| Duck | 1 (0) | 102 040 | | 19 981 |
+
+Against the files Khronos publishes of the same models compressed by
+Draco's own encoder (whose settings are not stated; at positions 11,
+normals 8, UVs 10 bits, which is gltf-pipeline's default):
+
+| File | Khronos's | Here, 11/8/10 | Here, and weights 8 bits |
+| --- | --- | --- | --- |
+| Duck | 10 366 | 14 385 | |
+| Avocado | 8 722 | 4 001 | |
+| Box | 118 | 152 | |
+| BrainStem | 706 440 | 719 538 | 172 212 |
+| CesiumMan | 48 166 | 75 966 | 25 237 |
+
+So between 0.5 and 1.6 times Khronos's, depending on what their
+settings were. What Draco's own encoder has and this does not:
+normals as two octahedral numbers with the geometric prediction, UVs
+predicted from the positions, the multi-parallelogram, and the
+valence-coded symbols.
+
+Read back (`shape measure` before and after): the same triangles,
+welded positions, boundary edges, skins and parts on Helmet, Soldier
+and CesiumMan (3 273 vertices become 3 572 where fans were split);
+Robot loses 3 triangles that had a vertex twice; BrainStem's welded
+positions go from 32 559 to 32 525 where the 14-bit grid puts two on
+one place.
+
+Not checked: by Draco's own decoder (nothing outside can be run
+here). The walk reads back through `draco.rs`, which reads Draco's
+own EdgeBreaker test files (§44), so the two agree where those files
+reach: boundaries, handles, several pieces.
+
+Checked: `a_walked_mesh_reads_back` (a holed sheet, a ring, a tube,
+two pieces, a notched sheet: the same triangles between the same
+points, each in fewer bytes than in order),
+`what_cannot_be_walked_is_mended`. Golden: `meshtools.compress` moved
+(its Draco part is a walk now).

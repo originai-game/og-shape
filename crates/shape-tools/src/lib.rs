@@ -62,6 +62,7 @@ mod compress;
 mod decimate;
 mod decode;
 mod draco;
+mod draco_edge;
 mod draco_write;
 mod etc1s;
 mod etc1s_write;

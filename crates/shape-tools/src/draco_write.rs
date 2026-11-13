@@ -1,15 +1,17 @@
-//! Writes Draco: a triangle list with its attributes quantized, each
-//! value coded as its difference from the one before
-//! (`docs/research.md` §60).
+//! Writes Draco: a triangle mesh with its attributes quantized, each
+//! value coded as its difference from a prediction
+//! (`docs/research.md` §60, §67).
 //!
 //! Entry: [`encode`] (one mesh) and [`compress_draco`] (a GLB's
 //! primitives under `KHR_draco_mesh_compression`). The bitstream is
-//! version 2.2 with the sequential connectivity: points and triangles
-//! keep their order, so the file's accessors still count right. This
-//! is the mirror of what `draco.rs` reads; Draco's own encoder was not
-//! read.
+//! version 2.2. The connectivity is an EdgeBreaker walk
+//! (`draco_edge.rs`, ported from Draco's encoder) with the
+//! parallelogram prediction, or sequential: points and triangles in
+//! the file's order, each value predicted by the one before. The rest
+//! is the mirror of what `draco.rs` reads.
 
 use crate::compress::{num, obj, set, write};
+use crate::draco_edge::{Walk, mended, walk};
 use crate::jsonread::{Value, parse};
 
 /// One attribute to write.
@@ -21,6 +23,40 @@ pub(crate) struct Attribute {
     pub id: u32,
     pub components: usize,
     pub data: Data,
+}
+
+impl Attribute {
+    /// The attribute over other points: point `i` of the result is
+    /// this one's point `from[i]`.
+    fn picked(&self, from: &[u32]) -> Attribute {
+        let n = self.components;
+        fn pick<T: Copy>(values: &[T], from: &[u32], n: usize) -> Vec<T> {
+            from.iter()
+                .flat_map(|&v| values[v as usize * n..v as usize * n + n].iter().copied())
+                .collect()
+        }
+        Attribute {
+            kind: self.kind,
+            id: self.id,
+            components: n,
+            data: match &self.data {
+                Data::Quantized {
+                    values,
+                    bits,
+                    frame,
+                } => Data::Quantized {
+                    values: pick(values, from, n),
+                    bits: *bits,
+                    frame: frame.clone(),
+                },
+                Data::Whole { values, wide } => Data::Whole {
+                    values: pick(values, from, n),
+                    wide: *wide,
+                },
+                Data::Plain(values) => Data::Plain(pick(values, from, n)),
+            },
+        }
+    }
 }
 
 /// An attribute's values, a point after a point.
@@ -47,23 +83,75 @@ fn varint(out: &mut Vec<u8>, mut v: u64) {
     out.push(v as u8);
 }
 
-/// Symbols under the tagged scheme: `components` numbers a point, each
-/// point's numbers written in as many bits as its largest needs, that
-/// bit count entropy coded (rANS over a table of 4 096).
+/// Symbols, under whichever of Draco's two schemes takes fewer bytes:
+/// tagged (`components` numbers a point, each point's numbers written
+/// in as many bits as its largest needs, that bit count entropy
+/// coded), or raw (every number entropy coded as it is, which wins
+/// where few values are common, as corrections to a good prediction
+/// are).
 fn symbols(out: &mut Vec<u8>, values: &[u32], components: usize) {
-    const PRECISION: u32 = 4096;
-    const BASE: u32 = 16384;
     let sizes: Vec<u32> = values
         .chunks(components)
         .map(|p| p.iter().map(|v| 32 - v.leading_zeros()).max().unwrap_or(0))
         .collect();
+    let mut tagged = vec![0u8];
     let count = sizes.iter().max().map_or(1, |m| *m as usize + 1);
+    rans(&mut tagged, &sizes, count, 12);
+    // The numbers, the low bit of each byte first.
+    let mut used = 0usize;
+    let start = tagged.len();
+    for (point, &size) in values.chunks(components).zip(&sizes) {
+        for &v in point {
+            for k in 0..size as usize {
+                if used.is_multiple_of(8) {
+                    tagged.push(0);
+                }
+                if (v >> k) & 1 == 1 {
+                    let at = start + used / 8;
+                    tagged[at] |= 1 << (used % 8);
+                }
+                used += 1;
+            }
+        }
+    }
+    // Raw: up to 2¹⁸ different numbers; the table's precision follows
+    // from how many are in use, as the decoder works it out.
+    let most = values.iter().copied().max().unwrap_or(0);
+    if most < 1 << 18 && !values.is_empty() {
+        let mut in_use = vec![false; most as usize + 1];
+        for &v in values {
+            in_use[v as usize] = true;
+        }
+        let distinct = in_use.iter().filter(|u| **u).count() as u32;
+        let bits = (32 - distinct.leading_zeros()).clamp(1, 18);
+        let mut raw = vec![1u8, bits as u8];
+        rans(
+            &mut raw,
+            values,
+            most as usize + 1,
+            (3 * bits / 2).clamp(12, 20),
+        );
+        if raw.len() < tagged.len() {
+            out.extend_from_slice(&raw);
+            return;
+        }
+    }
+    out.extend_from_slice(&tagged);
+}
+
+/// `symbols` (each under `count`) entropy coded: how many there can
+/// be, the table of their probabilities (summing to 2^`precision_bits`,
+/// none of a used symbol nothing), the size, and the rANS bytes (the
+/// symbols run last to first; the decoder reads the bytes from the
+/// end).
+fn rans(out: &mut Vec<u8>, symbols: &[u32], count: usize, precision_bits: u32) {
+    let precision = 1u32 << precision_bits;
+    let base = precision * 4;
     let mut uses = vec![0u64; count];
-    for &s in &sizes {
+    for &s in symbols {
         uses[s as usize] += 1;
     }
-    // Probabilities that sum to the table's precision, none of a used
-    // symbol nothing: the largest takes up the rounding.
+    // The largest takes up the rounding.
     let total: u64 = uses.iter().sum::<u64>().max(1);
     let mut probs: Vec<u32> = uses
         .iter()
@@ -71,17 +159,17 @@ fn symbols(out: &mut Vec<u8>, values: &[u32], components: usize) {
             if u == 0 {
                 0
             } else {
-                ((u * u64::from(PRECISION) / total) as u32).max(1)
+                ((u * u64::from(precision) / total) as u32).max(1)
             }
         })
         .collect();
     let sum: i64 = probs.iter().map(|&p| i64::from(p)).sum();
     if let Some(most) = (0..count).max_by_key(|&i| (probs[i], core::cmp::Reverse(i))) {
-        probs[most] = (i64::from(probs[most]) + i64::from(PRECISION) - sum).max(1) as u32;
+        probs[most] = (i64::from(probs[most]) + i64::from(precision) - sum).max(1) as u32;
     }
     // If the largest could not absorb it (many rare symbols), take the
     // excess from the others in turn.
-    let mut over = probs.iter().map(|&p| i64::from(p)).sum::<i64>() - i64::from(PRECISION);
+    let mut over = probs.iter().map(|&p| i64::from(p)).sum::<i64>() - i64::from(precision);
     while over > 0 {
         for p in probs.iter_mut().filter(|p| **p > 1) {
             if over == 0 {
@@ -91,7 +179,6 @@ fn symbols(out: &mut Vec<u8>, values: &[u32], components: usize) {
             over -= 1;
         }
     }
-    out.push(0);
     varint(out, count as u64);
     let mut i = 0;
     while i < count {
@@ -120,19 +207,17 @@ fn symbols(out: &mut Vec<u8>, values: &[u32], components: usize) {
         *s = cum;
         cum += p;
     }
-    // rANS, the symbols last to first; the decoder reads the bytes from
-    // the end.
     let mut coded: Vec<u8> = Vec::new();
-    let mut state = BASE;
-    for &s in sizes.iter().rev() {
+    let mut state = base;
+    for &s in symbols.iter().rev() {
         let p = probs[s as usize];
-        while u64::from(state) >= u64::from(BASE / PRECISION) * 256 * u64::from(p) {
+        while u64::from(state) >= 1024 * u64::from(p) {
             coded.push(state as u8);
             state >>= 8;
         }
-        state = (state / p) * PRECISION + state % p + starts[s as usize];
+        state = (state / p) * precision + state % p + starts[s as usize];
     }
-    let rest = state - BASE;
+    let rest = state - base;
     if rest < 1 << 6 {
         coded.push(rest as u8);
     } else if rest < 1 << 14 {
@@ -144,28 +229,16 @@ fn symbols(out: &mut Vec<u8>, values: &[u32], components: usize) {
     }
     varint(out, coded.len() as u64);
     out.extend_from_slice(&coded);
-    // The numbers, the low bit of each byte first.
-    let mut used = 0usize;
-    let start = out.len();
-    for (point, &size) in values.chunks(components).zip(&sizes) {
-        for &v in point {
-            for k in 0..size as usize {
-                if used % 8 == 0 {
-                    out.push(0);
-                }
-                if (v >> k) & 1 == 1 {
-                    let at = start + used / 8;
-                    out[at] |= 1 << (used % 8);
-                }
-                used += 1;
-            }
-        }
-    }
 }
 
-/// Whole numbers as differences from the point before, wrapped into
-/// their range, signed into symbols.
-fn differences(out: &mut Vec<u8>, ints: &[i32], components: usize) {
+/// Whole numbers, a point after a point in the order they are
+/// written, each as its difference from a prediction, wrapped into
+/// their range and signed into symbols. The prediction is the point
+/// before; or, with a walk, the parallelogram across the edge the
+/// walk reached the point by where its three points are already
+/// written (the point before where they are not), if that takes
+/// fewer bytes.
+fn predicted(out: &mut Vec<u8>, ints: &[i32], components: usize, walk: Option<&Walk>) {
     let (min, max) = ints
         .iter()
         .fold((i32::MAX, i32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
@@ -176,57 +249,132 @@ fn differences(out: &mut Vec<u8>, ints: &[i32], components: usize) {
     if span % 2 == 0 {
         most -= 1;
     }
-    let mut coded = Vec::with_capacity(ints.len());
-    for (p, point) in ints.chunks(components).enumerate() {
-        for (c, &v) in point.iter().enumerate() {
-            let before = if p == 0 {
-                0
-            } else {
-                ints[(p - 1) * components + c]
-            };
-            let mut d = i64::from(v) - i64::from(before.clamp(min, max));
-            if d > most {
-                d -= span;
-            } else if d < least {
-                d += span;
+    let n = components;
+    let code = |parallelograms: Option<&Walk>| -> Vec<u8> {
+        let mut coded = Vec::with_capacity(ints.len());
+        let mut guess = vec![0i64; n];
+        for p in 0..ints.len() / n {
+            let mut found = false;
+            if let Some(w) = parallelograms
+                && p > 0
+            {
+                let across = w.opposite[w.entry_corner[p] as usize];
+                if across >= 0 {
+                    let at = |c: i32| w.vertex_entry[w.vertex[c as usize] as usize] as usize;
+                    let corner = |k: i32| 3 * (across / 3) + (across % 3 + k) % 3;
+                    let (o, a, b) = (at(across), at(corner(1)), at(corner(2)));
+                    if o < p && a < p && b < p {
+                        for c in 0..n {
+                            guess[c] = i64::from(
+                                ints[a * n + c]
+                                    .wrapping_add(ints[b * n + c])
+                                    .wrapping_sub(ints[o * n + c]),
+                            );
+                        }
+                        found = true;
+                    }
+                }
             }
-            coded.push(if d >= 0 {
-                (d as u32) << 1
-            } else {
-                (((-d - 1) as u32) << 1) | 1
-            });
+            if !found {
+                for c in 0..n {
+                    guess[c] = if p == 0 {
+                        0
+                    } else {
+                        i64::from(ints[(p - 1) * n + c])
+                    };
+                }
+            }
+            for c in 0..n {
+                let mut d =
+                    i64::from(ints[p * n + c]) - guess[c].clamp(i64::from(min), i64::from(max));
+                if d > most {
+                    d -= span;
+                } else if d < least {
+                    d += span;
+                }
+                coded.push(if d >= 0 {
+                    (d as u32) << 1
+                } else {
+                    (((-d - 1) as u32) << 1) | 1
+                });
+            }
+        }
+        // The prediction (0 the difference, 1 the parallelogram), the
+        // wrap transform, compressed symbols.
+        let mut bytes = vec![u8::from(parallelograms.is_some()), 1, 1];
+        symbols(&mut bytes, &coded, n);
+        bytes
+    };
+    let mut best = code(None);
+    if let Some(w) = walk {
+        let other = code(Some(w));
+        if other.len() < best.len() {
+            best = other;
         }
     }
-    // Difference prediction, the wrap transform, compressed symbols.
-    out.extend_from_slice(&[0, 1, 1]);
-    symbols(out, &coded, components);
+    out.extend_from_slice(&best);
     out.extend_from_slice(&min.to_le_bytes());
     out.extend_from_slice(&max.to_le_bytes());
 }
 
 /// A mesh as Draco: `faces` over `points` points, each attribute a
-/// value a point.
-pub(crate) fn encode(faces: &[[u32; 3]], points: usize, attributes: &[Attribute]) -> Vec<u8> {
+/// value a point. With `walked`, and where the mesh can be walked
+/// ([`walk`]), the triangles are an EdgeBreaker walk and the points go
+/// in the walk's order (so the decoded mesh has other indices for the
+/// same triangles); otherwise the connectivity is sequential and every
+/// point and triangle keeps its place. The second value says which.
+pub(crate) fn encode(
+    faces: &[[u32; 3]],
+    points: usize,
+    attributes: &[Attribute],
+    walked: bool,
+) -> (Vec<u8>, bool) {
+    let walk = if walked { walk(faces, points) } else { None };
+    let walk = walk.as_ref();
     let mut out = b"DRACO".to_vec();
-    // Version 2.2, a triangle mesh, sequential, no flags.
-    out.extend_from_slice(&[2, 2, 1, 0, 0, 0]);
-    varint(&mut out, faces.len() as u64);
-    varint(&mut out, points as u64);
-    // The indices, each as its signed difference from the last.
-    out.push(0);
-    let mut last = 0i64;
-    let steps: Vec<u32> = faces
-        .iter()
-        .flatten()
-        .map(|&v| {
-            let d = i64::from(v) - last;
-            last = i64::from(v);
-            ((d.unsigned_abs() as u32) << 1) | u32::from(d < 0)
-        })
-        .collect();
-    symbols(&mut out, &steps, 1);
+    // Version 2.2, a triangle mesh, sequential or EdgeBreaker, no flags.
+    out.extend_from_slice(&[2, 2, 1, u8::from(walk.is_some()), 0, 0]);
     // One decoder for every attribute.
-    out.push(1);
+    match walk {
+        Some(w) => {
+            out.extend_from_slice(&w.bytes);
+            // On the positions' own connectivity, a value a vertex,
+            // depth first.
+            out.extend_from_slice(&[1, 0xff, 0, 0]);
+        }
+        None => {
+            varint(&mut out, faces.len() as u64);
+            varint(&mut out, points as u64);
+            // The indices, each as its signed difference from the last.
+            out.push(0);
+            let mut last = 0i64;
+            let steps: Vec<u32> = faces
+                .iter()
+                .flatten()
+                .map(|&v| {
+                    let d = i64::from(v) - last;
+                    last = i64::from(v);
+                    ((d.unsigned_abs() as u32) << 1) | u32::from(d < 0)
+                })
+                .collect();
+            symbols(&mut out, &steps, 1);
+            out.push(1);
+        }
+    }
+    // A point's values, in the order the points are written.
+    let ordered = |n: usize| -> Vec<usize> {
+        match walk {
+            Some(w) => w
+                .entry_corner
+                .iter()
+                .flat_map(|&c| {
+                    let v = w.vertex[c as usize] as usize;
+                    v * n..v * n + n
+                })
+                .collect(),
+            None => (0..points * n).collect(),
+        }
+    };
     varint(&mut out, attributes.len() as u64);
     for a in attributes {
         let data_type = match &a.data {
@@ -250,14 +398,17 @@ pub(crate) fn encode(faces: &[[u32; 3]], points: usize, attributes: &[Attribute]
     for a in attributes {
         match &a.data {
             Data::Plain(values) => {
-                for v in values {
-                    out.extend_from_slice(&v.to_le_bytes());
+                for i in ordered(a.components) {
+                    out.extend_from_slice(&values[i].to_le_bytes());
                 }
                 ranges.push(None);
             }
             Data::Whole { values, .. } => {
-                let ints: Vec<i32> = values.iter().map(|&v| v as i32).collect();
-                differences(&mut out, &ints, a.components);
+                let ints: Vec<i32> = ordered(a.components)
+                    .into_iter()
+                    .map(|i| values[i] as i32)
+                    .collect();
+                predicted(&mut out, &ints, a.components, walk);
                 ranges.push(None);
             }
             Data::Quantized {
@@ -286,14 +437,13 @@ pub(crate) fn encode(faces: &[[u32; 3]], points: usize, attributes: &[Attribute]
                 };
                 let range = if range > 0.0 { range } else { 1.0 };
                 let top = ((1u32 << bits) - 1) as f32;
-                let ints: Vec<i32> = values
-                    .iter()
-                    .enumerate()
-                    .map(|(i, v)| {
-                        (((v - min[i % n]) / range * top + 0.5) as i32).clamp(0, top as i32)
+                let ints: Vec<i32> = ordered(n)
+                    .into_iter()
+                    .map(|i| {
+                        (((values[i] - min[i % n]) / range * top + 0.5) as i32).clamp(0, top as i32)
                     })
                     .collect();
-                differences(&mut out, &ints, n);
+                predicted(&mut out, &ints, n, walk);
                 ranges.push(Some((min, range, *bits)));
             }
         }
@@ -305,7 +455,7 @@ pub(crate) fn encode(faces: &[[u32; 3]], points: usize, attributes: &[Attribute]
         out.extend_from_slice(&r.1.to_le_bytes());
         out.push(r.2);
     }
-    out
+    (out, walk.is_some())
 }
 
 /// How finely [`compress_draco`] keeps each kind of value; a 0 takes
@@ -320,6 +470,14 @@ pub struct Draco {
     pub uv_bits: u8,
     /// Bits of a colour's [8].
     pub color_bits: u8,
+    /// Bits of a skin weight's; 0 keeps the weights as they are (a
+    /// reader that wants them to sum to 1 exactly gets that).
+    pub weight_bits: u8,
+    /// Every primitive keeps its points and triangles in the file's
+    /// order (the sequential connectivity). Off, a primitive that can
+    /// be walked is written as an EdgeBreaker walk, in fewer bytes and
+    /// in the walk's order.
+    pub sequential: bool,
 }
 
 /// What [`compress_draco`] did.
@@ -329,6 +487,13 @@ pub struct DracoReport {
     pub primitives: usize,
     /// How many of them were compressed.
     pub compressed: usize,
+    /// How many of those as an EdgeBreaker walk (the rest keep the
+    /// file's order).
+    pub walked: usize,
+    /// How many of the walked were mended first ([`mended`]): they
+    /// have other counts of points and triangles than the file had,
+    /// for the same surface.
+    pub mended: usize,
     /// Bytes of the compressed primitives' geometry, before.
     pub bytes_before: usize,
     /// The same, after.
@@ -431,6 +596,8 @@ pub fn compress_draco(glb: &[u8], d: &Draco) -> Result<(Vec<u8>, DracoReport), S
     // still reads from the buffer.
     let accessor_count = doc.get("accessors").items().len();
     let mut packed_accessors = vec![false; accessor_count];
+    // Accessors made here, for primitives whose counts changed.
+    let mut added: Vec<Value> = Vec::new();
     let mut meshes = doc.get("meshes").items().to_vec();
     let first_new_view = doc.get("bufferViews").items().len();
     for mesh in &mut meshes {
@@ -474,7 +641,7 @@ pub fn compress_draco(glb: &[u8], d: &Draco) -> Result<(Vec<u8>, DracoReport), S
                 .map(|t| [t[0] as u32, t[1] as u32, t[2] as u32])
                 .collect();
             let mut attributes = Vec::new();
-            let mut names: Vec<(&str, Value)> = Vec::new();
+            let mut names: Vec<(String, Value)> = Vec::new();
             let mut touched = vec![indices];
             let mut points = None;
             let mut before = doc
@@ -546,6 +713,14 @@ pub fn compress_draco(glb: &[u8], d: &Draco) -> Result<(Vec<u8>, DracoReport), S
                             wide: kind == 5123,
                         },
                     ),
+                    ("WEIGHTS", 5126) if d.weight_bits > 0 => (
+                        4,
+                        Data::Quantized {
+                            values: as_f32(),
+                            bits: d.weight_bits.clamp(2, 30),
+                            frame: None,
+                        },
+                    ),
                     (_, 5126) => (4, Data::Plain(as_f32())),
                     _ => {
                         whole = false;
@@ -559,7 +734,7 @@ pub fn compress_draco(glb: &[u8], d: &Draco) -> Result<(Vec<u8>, DracoReport), S
                     components: n,
                     data,
                 });
-                names.push((name.as_str(), num(id as usize)));
+                names.push((name.clone(), num(id as usize)));
                 touched.push(index);
             }
             let Some(points) = points.filter(|_| whole) else {
@@ -568,8 +743,45 @@ pub fn compress_draco(glb: &[u8], d: &Draco) -> Result<(Vec<u8>, DracoReport), S
             if faces.iter().flatten().any(|&v| v as usize >= points) {
                 continue;
             }
-            let stream = encode(&faces, points, &attributes);
+            // As it is where it can be walked; else mended, if that
+            // can be; else in the file's order.
+            let (mut stream, mut walked) = encode(&faces, points, &attributes, !d.sequential);
+            if !walked && !d.sequential {
+                let (faces, from) = mended(&faces, points);
+                let picked: Vec<Attribute> = attributes.iter().map(|a| a.picked(&from)).collect();
+                let (again, did) = encode(&faces, from.len(), &picked, true);
+                if did {
+                    (stream, walked) = (again, true);
+                    report.mended += 1;
+                    // Other counts: accessors of this primitive's own.
+                    let renew = |index: usize, count: usize, added: &mut Vec<Value>| {
+                        let mut a = doc.get("accessors").at(index).clone();
+                        set(&mut a, "count", num(count));
+                        if let Value::Obj(fields) = &mut a {
+                            fields.retain(|(k, _)| k != "bufferView" && k != "byteOffset");
+                        }
+                        added.push(a);
+                        num(accessor_count + added.len() - 1)
+                    };
+                    let at = renew(indices, faces.len() * 3, &mut added);
+                    set(p, "indices", at);
+                    let entries: Vec<(String, Value)> = p
+                        .get("attributes")
+                        .entries()
+                        .iter()
+                        .map(|(name, a)| {
+                            let at = match a.index() {
+                                Some(i) => renew(i, from.len(), &mut added),
+                                None => a.clone(),
+                            };
+                            (name.clone(), at)
+                        })
+                        .collect();
+                    set(p, "attributes", Value::Obj(entries));
+                }
+            }
             report.compressed += 1;
+            report.walked += usize::from(walked);
             report.bytes_before += before;
             report.bytes_after += stream.len();
             for i in touched {
@@ -577,7 +789,7 @@ pub fn compress_draco(glb: &[u8], d: &Draco) -> Result<(Vec<u8>, DracoReport), S
             }
             let ext = obj(vec![
                 ("bufferView", num(first_new_view + streams.len())),
-                ("attributes", obj(names)),
+                ("attributes", Value::Obj(names)),
             ]);
             set(
                 p,
@@ -629,6 +841,7 @@ pub fn compress_draco(glb: &[u8], d: &Draco) -> Result<(Vec<u8>, DracoReport), S
             fields.retain(|(k, _)| k != "bufferView" && k != "byteOffset");
         }
     }
+    accessors.extend(added);
     let old_views = doc.get("bufferViews").items().to_vec();
     let mut kept = vec![false; old_views.len()];
     for a in &accessors {
@@ -808,7 +1021,7 @@ mod tests {
                 data: Data::Plain(weights.clone()),
             },
         ];
-        let bytes = encode(&faces, points, &attributes);
+        let (bytes, _) = encode(&faces, points, &attributes, false);
         let back = crate::draco::decode(&bytes).unwrap();
         assert_eq!(back.faces, faces);
         assert_eq!(back.points, points);
@@ -840,5 +1053,187 @@ mod tests {
         // in a GLB, noise as they are.
         let plain = points * (12 + 8 + 4 + 16) + faces.len() * 6;
         assert!(bytes.len() * 3 < plain * 2, "{} of {plain}", bytes.len());
+    }
+
+    /// A grid of `w` by `h` squares over a surface, its triangles, and
+    /// which squares are left out; `wrap_u` and `wrap_v` join its
+    /// edges.
+    fn grid(
+        w: u32,
+        h: u32,
+        (wrap_u, wrap_v): (bool, bool),
+        at: impl Fn(f32, f32) -> [f32; 3],
+        skip: impl Fn(u32, u32) -> bool,
+    ) -> (Vec<f32>, Vec<[u32; 3]>) {
+        let (cols, rows) = (
+            if wrap_u { w } else { w + 1 },
+            if wrap_v { h } else { h + 1 },
+        );
+        let mut positions = Vec::new();
+        for j in 0..rows {
+            for i in 0..cols {
+                positions.extend(at(i as f32 / w as f32, j as f32 / h as f32));
+            }
+        }
+        let id = |i: u32, j: u32| (j % rows) * cols + (i % cols);
+        let mut faces = Vec::new();
+        for j in 0..h {
+            for i in 0..w {
+                if skip(i, j) {
+                    continue;
+                }
+                let (a, b, c, d) = (id(i, j), id(i + 1, j), id(i + 1, j + 1), id(i, j + 1));
+                faces.push([a, b, c]);
+                faces.push([a, c, d]);
+            }
+        }
+        (positions, faces)
+    }
+
+    /// Walked meshes read back as the same triangles between the same
+    /// points, in the walk's order: a sheet with a hole in it (open
+    /// boundaries), a ring (a handle: topology splits), two pieces,
+    /// and a sheet with squares gone from its sides. Each takes fewer bytes than in the file's order.
+    #[test]
+    fn a_walked_mesh_reads_back() {
+        use shape_core::trig::{cos, sin};
+        let tau = 2.0 * shape_core::trig::PI;
+        let sheet = |u: f32, v: f32| {
+            let bump = sin(f64::from(u) * 9.0) * cos(f64::from(v) * 7.0) * 3.0;
+            [u * 40.0, v * 30.0, bump as f32]
+        };
+        let ring = |u: f32, v: f32| {
+            let (a, b) = (f64::from(u) * tau, f64::from(v) * tau);
+            let r = 20.0 + 5.0 * cos(b);
+            [
+                (r * cos(a)) as f32,
+                (r * sin(a)) as f32,
+                (5.0 * sin(b)) as f32,
+            ]
+        };
+        let mut two = grid(12, 9, (false, false), sheet, |_, _| false);
+        let far = grid(24, 12, (true, true), ring, |_, _| false);
+        let base = (two.0.len() / 3) as u32;
+        two.0.extend(
+            far.0
+                .iter()
+                .enumerate()
+                .map(|(i, v)| v + if i % 3 == 0 { 100.0 } else { 0.0 }),
+        );
+        two.1.extend(far.1.iter().map(|t| t.map(|v| v + base)));
+        let cases = [
+            (
+                "holed sheet",
+                grid(20, 16, (false, false), sheet, |i, j| {
+                    (i == 8 && j == 6) || (i == 3 && j == 11)
+                }),
+            ),
+            ("ring", grid(24, 12, (true, true), ring, |_, _| false)),
+            ("tube", grid(24, 12, (true, false), ring, |_, _| false)),
+            ("two pieces", two),
+            (
+                "notched sheet",
+                grid(9, 7, (false, false), sheet, |i, j| {
+                    (i == 0 || i == 8) && j == 3
+                }),
+            ),
+        ];
+        for (name, (positions, faces)) in cases {
+            let points = positions.len() / 3;
+            let tags: Vec<u32> = (0..points as u32).map(|i| i % 200).collect();
+            let attributes = [
+                Attribute {
+                    kind: 0,
+                    id: 0,
+                    components: 3,
+                    data: Data::Quantized {
+                        values: positions.clone(),
+                        bits: 14,
+                        frame: None,
+                    },
+                },
+                Attribute {
+                    kind: 4,
+                    id: 1,
+                    components: 1,
+                    data: Data::Whole {
+                        values: tags.clone(),
+                        wide: false,
+                    },
+                },
+                Attribute {
+                    kind: 4,
+                    id: 2,
+                    components: 3,
+                    data: Data::Plain(positions.clone()),
+                },
+            ];
+            let (bytes, walked) = encode(&faces, points, &attributes, true);
+            assert!(walked, "{name}");
+            let back = crate::draco::decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(
+                (back.points, back.faces.len()),
+                (points, faces.len()),
+                "{name}"
+            );
+            let of = |id: u32| &back.attributes.iter().find(|a| a.id == id).unwrap().values;
+            // Each decoded point's first tag and exact position say
+            // which of the file's it is.
+            let key = |p: &[f32]| p.iter().map(|v| v.to_bits()).collect::<Vec<u32>>();
+            let mut index = std::collections::BTreeMap::new();
+            for (i, p) in positions.chunks(3).enumerate() {
+                index.insert(key(p), i as u32);
+            }
+            let to_file: Vec<u32> = of(2)
+                .chunks(3)
+                .map(|p| index[&key(&[p[0] as f32, p[1] as f32, p[2] as f32])])
+                .collect();
+            for (i, &v) in to_file.iter().enumerate() {
+                assert_eq!(of(1)[i], f64::from(tags[v as usize]), "{name}: tag of {i}");
+            }
+            // The same triangles, each from its own first corner on.
+            let turned = |t: [u32; 3]| {
+                let k = (0..3).min_by_key(|&k| t[k]).unwrap_or(0);
+                [t[k], t[(k + 1) % 3], t[(k + 2) % 3]]
+            };
+            let mut got: Vec<[u32; 3]> = back
+                .faces
+                .iter()
+                .map(|t| turned(t.map(|v| to_file[v as usize])))
+                .collect();
+            let mut want: Vec<[u32; 3]> = faces.iter().map(|t| turned(*t)).collect();
+            got.sort_unstable();
+            want.sort_unstable();
+            assert!(got == want, "{name}: other triangles");
+            let (kept, _) = encode(&faces, points, &attributes, false);
+            assert!(
+                bytes.len() < kept.len(),
+                "{name}: {} {}",
+                bytes.len(),
+                kept.len()
+            );
+        }
+    }
+
+    /// What cannot be walked as it is, and is walked once mended: an
+    /// edge of three triangles, a point no triangle uses, two triangles
+    /// that meet at one vertex only, a triangle with a vertex twice.
+    /// Mended, the triangles are the same between the same places.
+    #[test]
+    fn what_cannot_be_walked_is_mended() {
+        let fin = [[0, 1, 2], [1, 0, 3], [0, 1, 4]];
+        assert!(walk(&fin, 5).is_none());
+        assert!(walk(&[[0, 1, 2]], 4).is_none());
+        assert!(walk(&[[0, 1, 2], [0, 3, 4]], 5).is_none());
+        assert!(walk(&[[0, 1, 2], [2, 1, 3]], 4).is_some());
+        let faces = [[0, 1, 2], [1, 0, 3], [0, 1, 4], [4, 4, 5], [2, 6, 7]];
+        let (mesh, from) = mended(&faces, 9);
+        assert!(walk(&mesh, from.len()).is_some());
+        let back: Vec<[u32; 3]> = mesh.iter().map(|t| t.map(|v| from[v as usize])).collect();
+        assert_eq!(back, [[0, 1, 2], [1, 0, 3], [0, 1, 4], [2, 6, 7]]);
+        // Three triangles on one edge come apart, and the one at the
+        // tip is on points of its own: four triangles, three points
+        // each; the unused point is gone.
+        assert_eq!(from.len(), 12);
     }
 }

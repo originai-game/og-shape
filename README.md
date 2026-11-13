@@ -124,7 +124,7 @@ Run on `main` on 2026-11-10 to 12; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 170 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 407 pass | `scripts/check.sh test` |
+| Tests | 409 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -233,10 +233,12 @@ What a user might expect and will not find, as of 2026-11-12:
   positions only on meshes with no skin, morph targets, child nodes or
   animation, and vertices are not reordered for the cache as gltfpack
   does; or
-  with `--draco` Draco: quantized, in the sequential mode with the
-  difference prediction, so about half to two thirds of what Draco's
-  own encoder (EdgeBreaker, parallelogram prediction) reaches. No
-  written Draco file has been read by Draco's decoder here.
+  with `--draco` Draco: quantized, an EdgeBreaker walk with the
+  parallelogram prediction, without the octahedral normals, the UV
+  prediction and the valence symbols of Draco's own encoder: 0.5 to
+  1.6 times the size of Khronos's Draco samples of the same models,
+  whose settings are not stated (`docs/research.md` §67). No written
+  Draco file has been read by Draco's decoder here.
 - **Morph targets and skins in the kernel.** Booleans and edits carry
   a solid's morph targets and its skin by reading each new vertex's
   offsets and weights from the nearest point of the old surface: a

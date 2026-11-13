@@ -8,6 +8,15 @@ What is here:
       sequential and EdgeBreaker, compression levels 3, 4 and 10) and the
       Wavefront files they were made from. Used by the decoder's tests.
 
+What was ported:
+  src/draco/compression/mesh/mesh_edgebreaker_encoder_impl.cc and
+  mesh_edgebreaker_traversal_encoder.h (the standard EdgeBreaker
+  traversal, its topology split events, start faces and boundaries),
+  and the binary ANS coder's writing side (core/ans.h,
+  compression/bit_coders/rans_bit_encoder.cc), into
+  crates/shape-tools/src/draco_edge.rs (2026-11-13,
+  docs/research.md §67).
+
 What was read:
   The Draco bitstream specification (https://google.github.io/draco/spec/,
   version 2.2). crates/shape-tools/src/draco.rs is written from it and

@@ -245,7 +245,11 @@ import → join → repair → decimate → place → unwrap → measure → pre
    and lossy (positions to 14 bits of the mesh's size, normals 10, UVs
    12, colours 8; `--position-bits` and the others change that), with
    animation left as it is; choose it where download size matters more
-   than exact vertices. Not for a file a texturing or modelling tool
+   than exact vertices. Points and triangles come back in another
+   order (the report's `walked`; `mended` counts primitives whose
+   vertex or triangle counts changed for the same surface);
+   `--sequential` keeps the file's order in more bytes, and
+   `--weight-bits N` also quantizes skin weights. Not for a file a texturing or modelling tool
    will open next.
 
 ## Keep the UVs or bake

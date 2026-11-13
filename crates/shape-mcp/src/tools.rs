@@ -924,6 +924,14 @@ fn compress_schema() -> Value {
                 ),
             ),
             (
+                "sequential",
+                boolean(
+                    "With draco: keep every primitive's points and triangles in the file's \
+                     order (larger). Off, a primitive that can be walked is written as an \
+                     EdgeBreaker walk, in the walk's order; `walked` counts them.",
+                ),
+            ),
+            (
                 "quantize",
                 boolean(
                     "Before meshopt, write the vertex attributes in fewer bytes \
@@ -946,6 +954,10 @@ fn compress_schema() -> Value {
                 int("Draco: bits of a texture coordinate's; 0 is 12."),
             ),
             ("color_bits", int("Draco: bits of a colour's; 0 is 8.")),
+            (
+                "weight_bits",
+                int("Draco: bits of a skin weight's; 0 keeps the weights as they are."),
+            ),
         ],
         &["path", "out"],
     )
@@ -1318,6 +1330,8 @@ fn compress_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec
         normal_bits: bits("normal_bits")?,
         uv_bits: bits("uv_bits")?,
         color_bits: bits("color_bits")?,
+        weight_bits: bits("weight_bits")?,
+        sequential: a.flag("sequential")?,
     };
     let d = CompressDesc {
         draco: a.flag("draco")?.then_some(draco),

@@ -1704,3 +1704,13 @@
   are exact where the operation makes the same mesh of the solid at
   the target: the two are matched vertex to vertex whatever order
   each is kept in (`docs/research.md` §66).
+- `shape compress --draco` writes each primitive as an EdgeBreaker
+  walk with the parallelogram prediction (Helmet 153 934 → 110 580
+  bytes, the soldier 425 788 → 271 945), in the walk's order of points
+  and triangles; a primitive that cannot be walked as it is (an edge
+  of three triangles, a vertex of two fans, an unused point, a
+  triangle with a vertex twice) is mended first and gets accessors
+  with its new counts. The report adds `walked` and `mended`.
+  `--sequential` keeps the file's order as before; `--weight-bits N`
+  quantizes skin weights (`docs/research.md` §67). Golden
+  `meshtools.compress` moved.

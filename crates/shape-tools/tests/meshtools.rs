@@ -1373,9 +1373,11 @@ fn a_compressed_glb_reads_back_the_same() {
 }
 
 /// A GLB compressed with Draco reads back as the same mesh to the
-/// bits kept: the same triangles and welds, each position within half
-/// a step of the grid; a skinned file keeps its bones and weights; it
-/// says what it requires and is not compressed twice.
+/// bits kept: in the file's order, the same triangles and welds, each
+/// position within half a step of the grid; walked, the same triangles
+/// between the same places in another order, in fewer bytes; a skinned
+/// file keeps its bones and weights; it says what it requires and is
+/// not compressed twice.
 #[test]
 fn a_draco_glb_reads_back_to_the_bits_kept() {
     use shape_tools::{Draco, compress_draco};
@@ -1388,13 +1390,20 @@ fn a_draco_glb_reads_back_to_the_bits_kept() {
         },
     )
     .unwrap();
-    let (small, report) = compress_draco(&plain, &Draco::default()).unwrap();
-    assert_eq!((report.primitives, report.compressed), (1, 1));
+    let in_order = Draco {
+        sequential: true,
+        ..Default::default()
+    };
+    let (small, report) = compress_draco(&plain, &in_order).unwrap();
+    assert_eq!(
+        (report.primitives, report.compressed, report.walked),
+        (1, 1, 0)
+    );
     assert!(report.bytes_after * 2 < report.bytes_before, "{report:?}");
     let read = |b: &[u8]| import(b, &Import::default(), &no_files).unwrap();
     let (was, now) = (read(&plain), read(&small));
     let (a, b) = (&was.parts[0].solid, &now.parts[0].solid);
-    assert_eq!(a.triangles, b.triangles);
+    assert!(a.triangles == b.triangles);
     assert_eq!(a.positions.len(), b.positions.len());
     // 20 mm across 14 bits: a step of 1.2 µm.
     let step = 20.0 / 16383.0;
@@ -1415,16 +1424,63 @@ fn a_draco_glb_reads_back_to_the_bits_kept() {
     // Fewer bits, fewer bytes.
     let coarse = Draco {
         position_bits: 8,
-        ..Default::default()
+        ..in_order
     };
     assert!(compress_draco(&plain, &coarse).unwrap().0.len() < small.len());
 
+    // Walked: each triangle, as the grid cells of its corners from the
+    // least on, is one of the file's.
+    let (walked, report) = compress_draco(&plain, &Draco::default()).unwrap();
+    assert_eq!((report.walked, report.mended), (1, 0));
+    assert!(
+        walked.len() < small.len(),
+        "{} {}",
+        walked.len(),
+        small.len()
+    );
+    let c = &read(&walked).parts[0].solid;
+    let cells = |s: &Solid| {
+        let mut out: Vec<[[i64; 3]; 3]> = s
+            .triangles
+            .iter()
+            .map(|t| {
+                let p = t.map(|v| {
+                    let q = s.positions[v as usize] / step;
+                    [q.x.round() as i64, q.y.round() as i64, q.z.round() as i64]
+                });
+                let k = (0..3).min_by_key(|&k| p[k]).unwrap_or(0);
+                [p[k], p[(k + 1) % 3], p[(k + 2) % 3]]
+            })
+            .collect();
+        out.sort_unstable();
+        out
+    };
+    assert!(cells(b) == cells(c), "other triangles");
+    assert_eq!(b.positions.len(), c.positions.len());
+    assert!(measure(c, &Measure::default()).closed);
+
     let moving = skinned::skinned_glb_animated(None);
-    let (packed, _) = compress_draco(&moving, &Draco::default()).unwrap();
+    let (packed, _) = compress_draco(&moving, &in_order).unwrap();
     let (was, now) = (read(&moving), read(&packed));
     assert_eq!(was.parts[0].solid.skin, now.parts[0].solid.skin);
     assert_eq!(was.parts[0].clips, now.parts[0].clips);
-    assert_eq!(was.parts[0].solid.triangles, now.parts[0].solid.triangles);
+    assert!(was.parts[0].solid.triangles == now.parts[0].solid.triangles);
+    // Walked, each vertex has the weights it had, wherever it now is.
+    let (packed, _) = compress_draco(&moving, &Draco::default()).unwrap();
+    let (was, now) = (now, read(&packed));
+    assert_eq!(was.parts[0].clips, now.parts[0].clips);
+    let weighted = |s: &Solid| {
+        let k = s.skin.as_ref().unwrap();
+        let mut out: Vec<String> = s
+            .positions
+            .iter()
+            .zip(&k.weights)
+            .map(|(p, w)| format!("{:.3} {:.3} {:.3} {w:?}", p.x, p.y, p.z))
+            .collect();
+        out.sort_unstable();
+        out
+    };
+    assert!(weighted(&was.parts[0].solid) == weighted(&now.parts[0].solid));
 }
 
 /// A quantized GLB reads back as the same mesh to the bits kept, the
