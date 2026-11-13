@@ -155,7 +155,7 @@ impl std::fmt::Display for BoolError {
             ),
             BoolError::Skinned(w) => write!(
                 f,
-                "the {w} is skinned or has morph targets; booleans do not carry those yet: build the solid first, then skin it"
+                "the {w} is skinned; booleans do not carry a skin yet: build the solid first, then skin it"
             ),
         }
     }
@@ -279,6 +279,14 @@ pub fn components(s: &Solid) -> Vec<Solid> {
         .collect()
 }
 
+/// `s` without its morph targets.
+fn plain(s: &Solid) -> Solid {
+    Solid {
+        morphs: None,
+        ..s.clone()
+    }
+}
+
 /// Fuses a solid made of several closed shells (`merge`, or a provider's
 /// interpenetrating parts) into one: each shell that passes through itself
 /// is untangled first ([`self_union`]), then the shells are joined in
@@ -286,8 +294,13 @@ pub fn components(s: &Solid) -> Vec<Solid> {
 /// instead, so the void stays. A solid of one shell that does not pass
 /// through itself comes back as it is.
 pub fn fuse(s: &Solid) -> Result<Solid, BoolError> {
-    if s.skin.is_some() || s.morphs.is_some() {
+    if s.skin.is_some() {
         return Err(BoolError::Skinned("target"));
+    }
+    if s.morphs.is_some() {
+        let mut out = fuse(&plain(s))?;
+        out.morphs = shape_mesh::carried(&[s], &out);
+        return Ok(out);
     }
     // A shell that crosses itself only by rounding (an earlier boolean's
     // output) may not untangle closed; it is then joined as it is, and the
@@ -388,8 +401,13 @@ pub fn crossing_pairs(s: &Solid) -> usize {
 /// Refused: a skinned solid, one that is not closed and oriented after
 /// welding, an empty result, or an open one.
 pub fn self_union(s: &Solid) -> Result<Solid, BoolError> {
-    if s.skin.is_some() || s.morphs.is_some() {
+    if s.skin.is_some() {
         return Err(BoolError::Skinned("target"));
+    }
+    if s.morphs.is_some() {
+        let mut out = self_union(&plain(s))?;
+        out.morphs = shape_mesh::carried(&[s], &out);
+        return Ok(out);
     }
     let u = self_union_points((&s.positions, &s.triangles)).map_err(|e| match e {
         OperandError::NotClosed(_) => BoolError::NotClosed("target"),
@@ -438,11 +456,18 @@ pub fn boolean_report(
     tool: &Solid,
     d: &Boolean,
 ) -> Result<(Solid, BoolReport), BoolError> {
-    if target.skin.is_some() || target.morphs.is_some() {
+    if target.skin.is_some() {
         return Err(BoolError::Skinned("target"));
     }
-    if tool.skin.is_some() || tool.morphs.is_some() {
+    if tool.skin.is_some() {
         return Err(BoolError::Skinned("tool"));
+    }
+    if target.morphs.is_some() || tool.morphs.is_some() {
+        // Morph targets ride the result: each of its vertices moves as
+        // the operand's surface it lies on does there.
+        let (mut out, report) = boolean_report(&plain(target), &plain(tool), d)?;
+        out.morphs = shape_mesh::carried(&[target, tool], &out);
+        return Ok((out, report));
     }
     let fused = |s: &Solid| {
         if components(s).len() > 1 {

@@ -70,8 +70,44 @@ struct Cage {
 /// and manifold (every edge between exactly two faces), with no skin, UVs
 /// or vertex colours: those are refused, not dropped.
 pub fn subdivide(s: &Solid, d: &Subdivide) -> Result<Solid, EditError> {
-    if s.skin.is_some() || s.morphs.is_some() {
+    if s.skin.is_some() {
         return Err(EditError::Skinned);
+    }
+    if let Some(morphs) = &s.morphs {
+        // Subdividing is linear in the positions for a given mesh, so
+        // each target is exactly what subdividing the shape at that
+        // target gives, less the rest shape subdivided.
+        let rest = Solid {
+            morphs: None,
+            ..s.clone()
+        };
+        let mut out = subdivide(&rest, d)?;
+        let mut targets = Vec::with_capacity(morphs.targets.len());
+        for t in &morphs.targets {
+            let mut moved = rest.clone();
+            for (p, delta) in moved.positions.iter_mut().zip(&t.deltas) {
+                *p += *delta;
+            }
+            let at = subdivide(&moved, d)?;
+            if at.triangles != out.triangles || at.positions.len() != out.positions.len() {
+                // The target changed the order the result is kept in:
+                // carried from the surface instead.
+                out.morphs = shape_mesh::carried(&[s], &out);
+                return Ok(out);
+            }
+            targets.push(shape_mesh::Morph {
+                name: t.name.clone(),
+                weight: t.weight,
+                deltas: at
+                    .positions
+                    .iter()
+                    .zip(&out.positions)
+                    .map(|(a, b)| *a - *b)
+                    .collect(),
+            });
+        }
+        out.morphs = Some(shape_mesh::Morphs { targets });
+        return Ok(out);
     }
     if s.uvs.is_some() || s.colors.is_some() {
         return Err(EditError::Unsupported(

@@ -123,7 +123,7 @@ impl std::fmt::Display for BevelError {
                 names.join(", ")
             ),
             BevelError::Skinned => f.write_str(
-                "the solid is skinned or has morph targets; bevels do not carry those yet: bevel first, then skin it",
+                "the solid is skinned; bevels do not carry a skin yet: bevel first, then skin it",
             ),
         }
     }
@@ -273,8 +273,17 @@ fn run(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
 /// Rounds the named edges with a superellipse profile (a circle by
 /// default). New faces are named `fillet`.
 pub fn fillet(s: &Solid, d: &Fillet) -> Result<Solid, BevelError> {
-    if s.skin.is_some() || s.morphs.is_some() {
+    if s.skin.is_some() {
         return Err(BevelError::Skinned);
+    }
+    if s.morphs.is_some() {
+        let bare = Solid {
+            morphs: None,
+            ..s.clone()
+        };
+        let mut out = fillet(&bare, d)?;
+        out.morphs = shape_mesh::carried(&[s], &out);
+        return Ok(out);
     }
     let r = positive(d.radius, "radius")?;
     let profile = if d.profile == 0.0 { 0.5 } else { d.profile };
@@ -299,8 +308,17 @@ pub fn fillet(s: &Solid, d: &Fillet) -> Result<Solid, BevelError> {
 
 /// Bevels the named edges flat. New faces are named `chamfer`.
 pub fn chamfer(s: &Solid, d: &Chamfer) -> Result<Solid, BevelError> {
-    if s.skin.is_some() || s.morphs.is_some() {
+    if s.skin.is_some() {
         return Err(BevelError::Skinned);
+    }
+    if s.morphs.is_some() {
+        let bare = Solid {
+            morphs: None,
+            ..s.clone()
+        };
+        let mut out = chamfer(&bare, d)?;
+        out.morphs = shape_mesh::carried(&[s], &out);
+        return Ok(out);
     }
     let d1 = positive(d.distance, "distance")?;
     let offsets = if d.angle != 0.0 {
@@ -333,8 +351,17 @@ pub fn chamfer(s: &Solid, d: &Chamfer) -> Result<Solid, BevelError> {
 /// A fillet of `radius` on every edge sharper than `angle` (or on the
 /// named ones). A solid with no such edge comes back unchanged.
 pub fn soften(s: &Solid, d: &Soften) -> Result<Solid, BevelError> {
-    if s.skin.is_some() || s.morphs.is_some() {
+    if s.skin.is_some() {
         return Err(BevelError::Skinned);
+    }
+    if s.morphs.is_some() {
+        let bare = Solid {
+            morphs: None,
+            ..s.clone()
+        };
+        let mut out = soften(&bare, d)?;
+        out.morphs = shape_mesh::carried(&[s], &out);
+        return Ok(out);
     }
     let r = positive(d.radius, "radius")?;
     let angle = if d.angle == 0.0 {

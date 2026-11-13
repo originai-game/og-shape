@@ -5,9 +5,15 @@
 //! Entry: [`Morphs`]. A solid's `morphs` follow its vertices as its
 //! skin's weights do: a new vertex has no offset until it is given one,
 //! and vertices welded into one take the mean of their offsets.
+//! [`carried`] gives a solid made from others (cut, joined, bevelled)
+//! their targets.
+
+use std::collections::BTreeMap;
 
 use shape_core::DVec3;
 use shape_core::order::cmp_dvec3;
+
+use crate::Solid;
 
 /// One target: where every vertex goes at weight 1, as an offset from
 /// its rest position.
@@ -215,6 +221,197 @@ fn weld(copies: &mut [DVec3]) -> DVec3 {
         sum += *c;
     }
     sum / copies.len() as f64
+}
+
+/// The closest point of triangle `t` to `p`, as weights of its corners.
+fn closest(p: DVec3, t: [DVec3; 3]) -> [f64; 3] {
+    let (ab, ac, ap) = (t[1] - t[0], t[2] - t[0], p - t[0]);
+    let (d1, d2) = (ab.dot(ap), ac.dot(ap));
+    if d1 <= 0.0 && d2 <= 0.0 {
+        return [1.0, 0.0, 0.0];
+    }
+    let bp = p - t[1];
+    let (d3, d4) = (ab.dot(bp), ac.dot(bp));
+    if d3 >= 0.0 && d4 <= d3 {
+        return [0.0, 1.0, 0.0];
+    }
+    let vc = d1 * d4 - d3 * d2;
+    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
+        let v = if d1 - d3 != 0.0 { d1 / (d1 - d3) } else { 0.0 };
+        return [1.0 - v, v, 0.0];
+    }
+    let cp = p - t[2];
+    let (d5, d6) = (ab.dot(cp), ac.dot(cp));
+    if d6 >= 0.0 && d5 <= d6 {
+        return [0.0, 0.0, 1.0];
+    }
+    let vb = d5 * d2 - d1 * d6;
+    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
+        let w = if d2 - d6 != 0.0 { d2 / (d2 - d6) } else { 0.0 };
+        return [1.0 - w, 0.0, w];
+    }
+    let va = d3 * d6 - d5 * d4;
+    if va <= 0.0 && d4 - d3 >= 0.0 && d5 - d6 >= 0.0 {
+        let sum = (d4 - d3) + (d5 - d6);
+        let w = if sum != 0.0 { (d4 - d3) / sum } else { 0.0 };
+        return [0.0, 1.0 - w, w];
+    }
+    let sum = va + vb + vc;
+    if sum == 0.0 {
+        return [1.0, 0.0, 0.0];
+    }
+    [va / sum, vb / sum, vc / sum]
+}
+
+/// The morph targets of `sources` carried onto `onto`, a solid made
+/// from them (cut, joined, bevelled): each of its vertices takes, for
+/// each target, the offset of the nearest point of the sources'
+/// surfaces, blended from that triangle's corners. A vertex that was a
+/// source's own keeps its offsets exactly; one a cut made on a face
+/// moves as the face does there; one on a source without a target does
+/// not move for it. Targets are those of every source, by name, in the
+/// order met. `None` when no source has any.
+pub fn carried(sources: &[&Solid], onto: &Solid) -> Option<Morphs> {
+    let mut names: Vec<(String, f64)> = Vec::new();
+    for s in sources {
+        for t in s.morphs.iter().flat_map(|m| &m.targets) {
+            if !names.iter().any(|(n, _)| *n == t.name) {
+                names.push((t.name.clone(), t.weight));
+            }
+        }
+    }
+    if names.is_empty() {
+        return None;
+    }
+    // Each source's targets, by the result's order (a missing one: none).
+    let slots: Vec<Vec<Option<usize>>> = sources
+        .iter()
+        .map(|s| {
+            names
+                .iter()
+                .map(|(n, _)| {
+                    s.morphs
+                        .as_ref()
+                        .and_then(|m| m.targets.iter().position(|t| t.name == *n))
+                })
+                .collect()
+        })
+        .collect();
+    // A grid of the sources' triangles.
+    let mut edge_sum = 0.0;
+    let mut count = 0usize;
+    for s in sources {
+        for t in &s.triangles {
+            let [a, b, c] = t.map(|v| s.positions[v as usize]);
+            edge_sum += (b - a).length() + (c - b).length() + (a - c).length();
+            count += 3;
+        }
+    }
+    let cell = if count > 0 && edge_sum > 0.0 {
+        edge_sum / count as f64 * 2.0
+    } else {
+        1.0
+    };
+    let key = |p: DVec3| {
+        (
+            (p.x / cell).floor() as i64,
+            (p.y / cell).floor() as i64,
+            (p.z / cell).floor() as i64,
+        )
+    };
+    let mut grid: BTreeMap<(i64, i64, i64), Vec<(u32, u32)>> = BTreeMap::new();
+    let (mut low, mut high) = (
+        (i64::MAX, i64::MAX, i64::MAX),
+        (i64::MIN, i64::MIN, i64::MIN),
+    );
+    for (si, s) in sources.iter().enumerate() {
+        for (ti, t) in s.triangles.iter().enumerate() {
+            let [a, b, c] = t.map(|v| s.positions[v as usize]);
+            let (lo, hi) = (key(a.min(b).min(c)), key(a.max(b).max(c)));
+            for x in lo.0..=hi.0 {
+                for y in lo.1..=hi.1 {
+                    for z in lo.2..=hi.2 {
+                        grid.entry((x, y, z))
+                            .or_default()
+                            .push((si as u32, ti as u32));
+                    }
+                }
+            }
+            low = (low.0.min(lo.0), low.1.min(lo.1), low.2.min(lo.2));
+            high = (high.0.max(hi.0), high.1.max(hi.1), high.2.max(hi.2));
+        }
+    }
+    let reach = if count > 0 {
+        (high.0 - low.0).max(high.1 - low.1).max(high.2 - low.2) + 2
+    } else {
+        0
+    };
+    let mut targets: Vec<Morph> = names
+        .into_iter()
+        .map(|(name, weight)| Morph {
+            name,
+            weight,
+            deltas: vec![DVec3::ZERO; onto.positions.len()],
+        })
+        .collect();
+    for (v, &p) in onto.positions.iter().enumerate() {
+        let at = key(p);
+        // The nearest triangle: rings of cells outward until none
+        // further out can be nearer.
+        let mut best: Option<(f64, u32, u32, [f64; 3])> = None;
+        let start = (at.0.clamp(low.0, high.0) - at.0)
+            .abs()
+            .max((at.1.clamp(low.1, high.1) - at.1).abs())
+            .max((at.2.clamp(low.2, high.2) - at.2).abs());
+        let mut ring = start;
+        while ring <= start + reach {
+            if let Some((d, ..)) = best
+                && d <= ((ring - 1).max(0) as f64 * cell) * ((ring - 1).max(0) as f64 * cell)
+            {
+                break;
+            }
+            for dx in -ring..=ring {
+                for dy in -ring..=ring {
+                    for dz in -ring..=ring {
+                        if dx.abs().max(dy.abs()).max(dz.abs()) != ring {
+                            continue;
+                        }
+                        let cell_key = (at.0 + dx, at.1 + dy, at.2 + dz);
+                        for &(si, ti) in grid.get(&cell_key).into_iter().flatten() {
+                            let s = sources[si as usize];
+                            let t = s.triangles[ti as usize].map(|i| s.positions[i as usize]);
+                            let w = closest(p, t);
+                            let q = t[0] * w[0] + t[1] * w[1] + t[2] * w[2];
+                            let d = (q - p).length_squared();
+                            let nearer = match best {
+                                None => true,
+                                Some((b, bs, bt, _)) => d < b || (d == b && (si, ti) < (bs, bt)),
+                            };
+                            if nearer {
+                                best = Some((d, si, ti, w));
+                            }
+                        }
+                    }
+                }
+            }
+            ring += 1;
+        }
+        let Some((_, si, ti, w)) = best else { continue };
+        let s = sources[si as usize];
+        let corners = s.triangles[ti as usize];
+        for (k, target) in targets.iter_mut().enumerate() {
+            let Some(slot) = slots[si as usize][k] else {
+                continue;
+            };
+            let Some(deltas) = s.morphs.as_ref().map(|m| &m.targets[slot].deltas) else {
+                continue;
+            };
+            target.deltas[v] = deltas[corners[0] as usize] * w[0]
+                + deltas[corners[1] as usize] * w[1]
+                + deltas[corners[2] as usize] * w[2];
+        }
+    }
+    Some(Morphs { targets })
 }
 
 #[cfg(test)]

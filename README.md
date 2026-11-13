@@ -123,7 +123,7 @@ Run on `main` on 2026-11-10 to 12; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 169 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 400 pass | `scripts/check.sh test` |
+| Tests | 404 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -233,10 +233,13 @@ What a user might expect and will not find, as of 2026-11-12:
   difference prediction, so about half to two thirds of what Draco's
   own encoder (EdgeBreaker, parallelogram prediction) reaches. No
   written Draco file has been read by Draco's decoder here.
-- **Morph targets in the kernel.** A solid with morph targets goes
-  through import, repair, decimation, preview and export; booleans,
-  bevels, edits and `subdivide` refuse it. A target's
-  normals and a second UV set are not read.
+- **Morph targets in the kernel.** Booleans, bevels, edits and
+  `subdivide` carry a solid's morph targets by reading each new
+  vertex's offset from the nearest point of the old surface: exact
+  where a vertex is the solid's own or lies on one of its faces, an
+  approximation on a rounded or subdivided surface that has left it.
+  A skinned solid is still refused there. A target's normals and a
+  second UV set are not read.
 - **FBX.** Animation layers are checked on a hand-written file, not on
   one from an authoring tool. NURBS and other geometry that is not a
   mesh, and FBX 6 and older, are not read.

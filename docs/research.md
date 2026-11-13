@@ -9602,3 +9602,51 @@ positions of skinned or animated meshes, UVs outside 0..1. Checked:
 `a_quantized_glb_reads_back_to_the_bits_kept`; `meshtools.compress` in
 the gate (its line moves again: a quantized mesh under meshopt is
 hashed with the others).
+
+## 62. Morph targets through the kernel's operations (2026-11-12)
+
+§43 let morph targets through import, repair, decimation and export
+and refused them in booleans, bevels, edits and `subdivide`: those
+make new vertices, and a target is an offset a vertex.
+
+`shape_mesh::carried(sources, onto)` gives a solid made from others
+their targets: each of its vertices takes, for each target, the offset
+at the nearest point of the sources' surfaces, blended from that
+triangle's three corners (a uniform grid of the triangles, rings of
+cells outward until none further can be nearer; ties to the earlier
+source and triangle). Targets are those of every source by name; a
+source without one moves nothing for it. Each operation, given a solid
+with targets, runs on its rest shape and carries them onto the result;
+a skinned solid is still refused.
+
+What that is, case by case:
+
+- a vertex the result kept from a source: its own offsets, exactly
+  (the nearest point is that vertex);
+- a vertex a cut made on a source's face (a hole's rim, a split's
+  section): the face's offsets blended there, which is where that
+  point of the face goes: exact for a face that moves as a plane;
+- a vertex on the tool's surface, inside the target (a hole's wall):
+  the tool's offsets, none if it has no such target; where both
+  surfaces pass through it, the target's;
+- a vertex a bevel or a subdivision put off the old surface: the
+  offsets of the old surface's nearest point, an approximation that
+  is as good as the target is smooth over the bevel's width.
+  `subdivide` first tries the exact way (it is linear in the
+  positions, so a target is the moved shape subdivided less the rest
+  shape subdivided) and keeps it where both come out in one vertex
+  order; a solid's vertices are kept in the order of their positions,
+  so they usually do not, and the offsets are then carried.
+
+Checked with a box whose target is a field linear in position (so the
+right offset anywhere on it is known): after a hole and after a split
+every vertex's offset is the field's to 1e-9, and the holed box at the
+target is closed with the field's determinant of its volume
+(`crates/shape-edit/tests/morphs.rs`); after a fillet of 3 mm every
+vertex is within the field's change over 3 mm and those still on the
+box's faces exact (`crates/shape-bevel/tests/morphs.rs`); a subdivided
+box at its target has the moved box's subdivided volume to 2 %.
+Not done: a skin through these operations (weights could be carried
+the same way; bones' rest frames would then need checking against the
+new shape), and a target whose shape should change the cut itself (a
+hole stays where the rest shape has it).

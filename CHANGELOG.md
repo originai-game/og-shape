@@ -1644,3 +1644,11 @@
   and no animation. RobotExpressive: 464 kB plain, 343 kB under
   meshopt, 292 kB quantized under meshopt (Draco, which leaves
   animation alone: 347 kB) (`docs/research.md` §61).
+- Morph targets ride the kernel's operations: booleans (`boolean`,
+  `fuse`, `self_union`), bevels (`fillet`, `chamfer`, `soften`), edits
+  (`split`, `hole`, `pocket`, `seat`, `shell`, `dent`) and `subdivide`
+  took no solid with morph targets; they now work on the rest shape
+  and give each vertex of the result the offset of the nearest point
+  of the surface it came from (`shape_mesh::carried`), a tool without
+  the target adding none. A skinned solid is still refused
+  (`docs/research.md` §62).
