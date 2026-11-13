@@ -10123,3 +10123,45 @@ Checked: `runs_are_a_symbol_and_a_count`, `a_webp_image_is_written`
 (a PNG to WebP and back texel for texel; a WebP shrunk stays WebP; an
 animation of two frames put together by hand gives its first).
 Golden: `meshtools.look.etc1s` moved (its slices have runs now).
+
+## 70. Three holes through one point; the shell that is left (2026-11-13)
+
+**Three holes.** §48 left "three holes through one point are refused
+by `hole` itself (three faces on one edge)": three bores of one
+diameter along the three axes. The third's wall, a polygon of the
+same segments, runs exactly through the edges where the first two
+meet, so its cut leaves an edge with more than two faces and the
+boolean refuses it (it never returns such a result). `hole` now tries
+the cut as it stands and, where it comes out open or not manifold,
+again with all of the hole's tools (bore, counterbore, countersink)
+turned about the hole's axis by a seventh, a third and three fifths of
+one segment. The turn moves the polygon's corners off the edge and
+changes no measure of the hole. A hole that cut cleanly before is cut
+as before: the turn is only tried after a refusal. The block of §48
+with three ⌀8 holes: closed, one piece, 136 760.8 mm³; its shell at 3:
+closed, two surfaces (the outside with the bores, and the hollow the
+sleeves close off).
+
+**The shell that is left** (1 of 126: a ⌀8 hole 26 deep from the top
+into a ⌀8 through hole, wall 2). Tried: larger nudges (a thousandth,
+three thousandths, a hundredth of each vertex's move). The inner copy
+then untangles and the cut closes with no crossing pair, but wrongly:
+8 pieces where its neighbours in the sweep have 2, and 36 326 mm³
+where depths 23 and 30 give 35 061 and 35 467. Measured on the
+untangled inner solid: its nearest vertex is 0.012 mm from the outside
+where the wall asked for is 2. So a nudged shell is now kept only
+where every vertex of its inner solid is at least a quarter of the
+wall from the solid's surface (`shape_mesh::morph::distances`); the
+four nudged shells of §64 pass (0.28 and 0.31 of their walls at the
+crossing: the planes' copy is not a true offset where two bores of
+one diameter meet), this one is refused as before, and the larger
+nudges are not in the tree. The sweep: 125 of 126, as §64.
+
+Found on the way: `nearest` (§62) walked rings of grid cells out from
+a vertex's own cell; a vertex far outside the grid (an inner copy's
+vertex thrown far by nearly parallel planes) made the first ring
+astronomically large and the search did not end. Such a vertex now
+goes through all the triangles instead.
+
+Checked: `three_holes_cross_at_one_point` (shape-edit); the sweep of
+126. No golden line moved.

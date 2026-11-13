@@ -124,7 +124,7 @@ Run on `main` on 2026-11-10 to 12; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 170 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 412 pass | `scripts/check.sh test` |
+| Tests | 413 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -255,10 +255,13 @@ What a user might expect and will not find, as of 2026-11-12:
   one from an authoring tool. NURBS and other geometry that is not a
   mesh, and FBX 6 and older, are not read.
 - **Shells and booleans.** 1 of 126 swept shells of crossing and
-  blind holes still stops at the boolean's own limit, and four build
-  only with their walls off by up to a millionth of their thickness
-  (tangent surfaces nudged apart); three holes through one point fail
-  in `hole` (`docs/research.md` §48, §64).
+  blind holes is still refused (larger nudges untangle it wrongly,
+  which is now measured and refused), and four build only with their
+  walls off by up to a millionth of their thickness (tangent surfaces
+  nudged apart). Where two bores of one diameter cross, a shell's
+  wall is down to 0.28 of what was asked: the inner copy is moved by
+  its faces' planes, which is not a true offset there
+  (`docs/research.md` §48, §64, §70).
 - **Unwrap and bake.** `--seams` cuts a smooth surface open until it
   flattens as one chart (a pebble, a limb), but the seams go where
   the surface is furthest from the chart's seed, not where they show

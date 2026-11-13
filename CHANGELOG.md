@@ -1740,3 +1740,10 @@
   areas take a symbol and a count (2 % off two maps tried, a flat
   plane 79 bytes). Golden `meshtools.look.etc1s` moved
   (`docs/research.md` §69).
+- `hole`: a hole whose wall runs through an edge two faces already
+  meet on (a third hole of one diameter through the crossing of two)
+  is cut with its tool turned a share of one segment about its axis,
+  where it was refused as not manifold.
+- `shell`: a shell built only by nudging tangent surfaces apart is
+  kept only where its inner solid stays a quarter of the wall from the
+  outside everywhere (`docs/research.md` §70).

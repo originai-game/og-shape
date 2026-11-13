@@ -542,6 +542,23 @@ fn matched(a: &Solid, b: &Solid, guess: &[DVec3]) -> Option<Vec<u32>> {
     to.iter().all(|&w| w != u32::MAX).then_some(to)
 }
 
+/// How far each vertex of `onto` is from the nearest point of the
+/// sources' surfaces; infinite when no source has a triangle.
+pub fn distances(sources: &[&Solid], onto: &Solid) -> Vec<f64> {
+    nearest(sources, onto)
+        .into_iter()
+        .zip(&onto.positions)
+        .map(|(near, p)| match near {
+            Some((si, ti, w)) => {
+                let s = sources[si as usize];
+                let t = s.triangles[ti as usize].map(|i| s.positions[i as usize]);
+                (t[0] * w[0] + t[1] * w[1] + t[2] * w[2] - *p).length()
+            }
+            None => f64::INFINITY,
+        })
+        .collect()
+}
+
 /// For each vertex of `onto`, the nearest point of the sources'
 /// surfaces: the source, its triangle, and the point as weights of the
 /// triangle's corners. Of points equally near, the first source's
@@ -610,9 +627,10 @@ fn nearest(sources: &[&Solid], onto: &Solid) -> Vec<Option<(u32, u32, [f64; 3])>
                 .max((at.2.clamp(low.2, high.2) - at.2).abs());
             let mut ring = start;
             while count > 0 && ring <= start + reach {
-                if best.is_none() && ring > start + 2 {
-                    // Far from every surface: all the triangles in
-                    // turn cost less than the empty cells between.
+                if best.is_none() && (ring > start + 2 || start > 2) {
+                    // Far from every surface (or from the grid
+                    // itself): all the triangles in turn cost less
+                    // than the empty cells between.
                     for (si, s) in sources.iter().enumerate() {
                         for (ti, t) in s.triangles.iter().enumerate() {
                             let t = t.map(|i| s.positions[i as usize]);

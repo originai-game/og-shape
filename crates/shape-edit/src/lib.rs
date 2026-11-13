@@ -461,58 +461,99 @@ pub fn hole_report(s: &Solid, d: &Hole) -> Result<(Solid, EditReport), EditError
         let widest = r.max(d.counterbore.0 / 2.0).max(d.countersink.0 / 2.0);
         let n = shape_2d::curve::segments(widest, shape_core::trig::TAU);
         let uvs = s.uvs.is_some();
-        let mut tools = vec![bore(e, &axis, 0.0, r, r, depth, over, n, uvs)?];
-        let (cb_d, cb_depth) = d.counterbore;
-        if cb_d > 0.0 && cb_depth > 0.0 {
-            tools.push(bore(
-                e,
-                &axis,
-                0.0,
-                cb_d / 2.0,
-                cb_d / 2.0,
-                cb_depth,
-                over,
-                n,
-                uvs,
-            )?);
+        // The tools turned by `turn` about the hole's axis.
+        let tools_at = |turn: f64| -> Result<Vec<Solid>, EditError> {
+            let mut tools = vec![bore(e, &axis, turn, r, r, depth, over, n, uvs)?];
+            let (cb_d, cb_depth) = d.counterbore;
+            if cb_d > 0.0 && cb_depth > 0.0 {
+                tools.push(bore(
+                    e,
+                    &axis,
+                    turn,
+                    cb_d / 2.0,
+                    cb_d / 2.0,
+                    cb_depth,
+                    over,
+                    n,
+                    uvs,
+                )?);
+            }
+            let (cs_d, cs_angle) = d.countersink;
+            if cs_d > 2.0 * r && cs_angle > 0.0 {
+                // The cone runs on below the bore's radius (to 0.9 r), so it
+                // crosses the bore wall instead of touching it along a ring.
+                // It is turned half a segment about the axis: its generators
+                // then run between the bore's columns, so no rim point is made
+                // twice an ulp apart (column through cone, generator through
+                // wall), and the rim does not cross itself in either cut order
+                // (`docs/research.md` §18.5, §23).
+                let slope = shape_core::trig::tan(cs_angle / 2.0);
+                let h = (cs_d / 2.0 - 0.9 * r) / slope;
+                tools.push(bore(
+                    e,
+                    &axis,
+                    turn + shape_core::trig::PI / n as f64,
+                    0.9 * r,
+                    cs_d / 2.0 + over * slope,
+                    h,
+                    over,
+                    n,
+                    uvs,
+                )?);
+            }
+            Ok(tools)
+        };
+        // As it stands; and where the cut comes out open or not
+        // manifold (the tool's wall through an edge two other faces
+        // already meet on: a third hole through the crossing of two),
+        // again with the tool turned a share of one of its segments
+        // about its axis, which moves its corners off that edge and
+        // changes no measure of the hole.
+        let step = shape_core::trig::TAU / n as f64;
+        let mut first: Option<EditError> = None;
+        let mut cut = None;
+        for share in [0.0, 1.0 / 7.0, 1.0 / 3.0, 3.0 / 5.0] {
+            let attempt = (|| {
+                let mut at = out.clone();
+                let mut r = EditReport::default();
+                for t in tools_at(share * step)? {
+                    let (next, b) = uv_boolean(
+                        &at,
+                        &t,
+                        &Boolean {
+                            op: BoolOp::Cut,
+                            target: "",
+                            tool: "hole",
+                        },
+                        "the hole",
+                    )?;
+                    at = next;
+                    r.add(&b);
+                }
+                Ok((at, r))
+            })();
+            match attempt {
+                Ok(done) => {
+                    cut = Some(done);
+                    break;
+                }
+                Err(
+                    e @ EditError::Bool(
+                        BoolError::NotManifold { .. }
+                        | BoolError::OpenResult { .. }
+                        | BoolError::OpenTouching { .. },
+                    ),
+                ) => {
+                    first.get_or_insert(e);
+                }
+                Err(e) => return Err(e),
+            }
         }
-        let (cs_d, cs_angle) = d.countersink;
-        if cs_d > 2.0 * r && cs_angle > 0.0 {
-            // The cone runs on below the bore's radius (to 0.9 r), so it
-            // crosses the bore wall instead of touching it along a ring.
-            // It is turned half a segment about the axis: its generators
-            // then run between the bore's columns, so no rim point is made
-            // twice an ulp apart (column through cone, generator through
-            // wall), and the rim does not cross itself in either cut order
-            // (`docs/research.md` §18.5, §23).
-            let slope = shape_core::trig::tan(cs_angle / 2.0);
-            let h = (cs_d / 2.0 - 0.9 * r) / slope;
-            tools.push(bore(
-                e,
-                &axis,
-                shape_core::trig::PI / n as f64,
-                0.9 * r,
-                cs_d / 2.0 + over * slope,
-                h,
-                over,
-                n,
-                uvs,
-            )?);
-        }
-        for t in tools {
-            let (next, r) = uv_boolean(
-                &out,
-                &t,
-                &Boolean {
-                    op: BoolOp::Cut,
-                    target: "",
-                    tool: "hole",
-                },
-                "the hole",
-            )?;
-            out = next;
-            report.add(&r);
-        }
+        let Some((next, r)) = cut else {
+            return Err(first.unwrap_or(EditError::NotClosed));
+        };
+        out = next;
+        report.crossing_pairs += r.crossing_pairs;
     }
     Ok((out, report))
 }
@@ -996,6 +1037,15 @@ pub fn shell_report(s: &Solid, d: &Shell) -> Result<(Solid, EditReport), EditErr
         }
         let e = self_union(&nudged)
             .ok()
+            .filter(|u| {
+                // A nudge can also untangle wrongly; then some of the
+                // inner solid lies against the outside. What is kept
+                // has a quarter of the wall everywhere.
+                let least = shape_mesh::morph::distances(&[s], u)
+                    .into_iter()
+                    .fold(f64::INFINITY, f64::min);
+                least >= 0.25 * t
+            })
             .and_then(|u| cut(&u).ok())
             .filter(|(_, r)| r.touching_edges == 0)
             .map(|(out, _)| counted(out));
