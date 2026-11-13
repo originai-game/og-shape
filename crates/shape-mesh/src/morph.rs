@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use shape_core::DVec3;
 use shape_core::order::cmp_dvec3;
 
-use crate::Solid;
+use crate::{Skin, Solid, Weights};
 
 /// One target: where every vertex goes at weight 1, as an offset from
 /// its rest position.
@@ -297,6 +297,257 @@ pub fn carried(sources: &[&Solid], onto: &Solid) -> Option<Morphs> {
                 .collect()
         })
         .collect();
+    let mut targets: Vec<Morph> = names
+        .into_iter()
+        .map(|(name, weight)| Morph {
+            name,
+            weight,
+            deltas: vec![DVec3::ZERO; onto.positions.len()],
+        })
+        .collect();
+    for (v, near) in nearest(sources, onto).into_iter().enumerate() {
+        let Some((si, ti, w)) = near else { continue };
+        let s = sources[si as usize];
+        let corners = s.triangles[ti as usize];
+        for (k, target) in targets.iter_mut().enumerate() {
+            let Some(slot) = slots[si as usize][k] else {
+                continue;
+            };
+            let Some(deltas) = s.morphs.as_ref().map(|m| &m.targets[slot].deltas) else {
+                continue;
+            };
+            target.deltas[v] = deltas[corners[0] as usize] * w[0]
+                + deltas[corners[1] as usize] * w[1]
+                + deltas[corners[2] as usize] * w[2];
+        }
+    }
+    Some(Morphs { targets })
+}
+
+/// Two sources are skinned, by skeletons that differ: one solid has one
+/// skin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SkinsDiffer;
+
+/// The skin of `sources` carried onto `onto`, a solid made from them:
+/// each of its vertices takes the weights of the nearest point of the
+/// skinned sources' surfaces, blended from that triangle's corners
+/// (the four largest kept, summing to 1). A vertex that was a skinned
+/// source's own keeps its weights; one a cut made, or one of a source
+/// with no skin, moves with the skinned surface nearest it. `None` when
+/// no source is skinned; refused when two are, by different skeletons.
+pub fn carried_skin(sources: &[&Solid], onto: &Solid) -> Result<Option<Skin>, SkinsDiffer> {
+    let skinned: Vec<&Solid> = sources
+        .iter()
+        .copied()
+        .filter(|s| s.skin.is_some())
+        .collect();
+    let Some(bones) = skinned
+        .first()
+        .and_then(|s| s.skin.as_ref())
+        .map(|k| &k.bones)
+    else {
+        return Ok(None);
+    };
+    if skinned
+        .iter()
+        .any(|s| s.skin.as_ref().is_some_and(|k| k.bones != *bones))
+    {
+        return Err(SkinsDiffer);
+    }
+    let weights = nearest(&skinned, onto)
+        .into_iter()
+        .map(|near| {
+            let Some((si, ti, w)) = near else {
+                return Weights::single(0);
+            };
+            let s = skinned[si as usize];
+            let of = &s.skin.as_ref().expect("skinned above").weights;
+            let corners = s.triangles[ti as usize];
+            // At a corner: the corner's own weights, to the bit.
+            if let Some(k) = w.iter().position(|&x| x == 1.0) {
+                return of[corners[k] as usize];
+            }
+            Weights::blend(&[
+                (of[corners[0] as usize], w[0]),
+                (of[corners[1] as usize], w[1]),
+                (of[corners[2] as usize], w[2]),
+            ])
+        })
+        .collect();
+    Ok(Some(Skin {
+        bones: bones.clone(),
+        weights,
+    }))
+}
+
+/// Whether `sources` can be made into one solid: refused when two are
+/// skinned by different skeletons. An operation asks before its work,
+/// and [`carry`] then cannot fail.
+pub fn one_skin(sources: &[&Solid]) -> Result<(), SkinsDiffer> {
+    let mut bones = sources
+        .iter()
+        .filter_map(|s| s.skin.as_ref())
+        .map(|k| &k.bones);
+    match bones.next() {
+        Some(first) if bones.any(|b| b != first) => Err(SkinsDiffer),
+        _ => Ok(()),
+    }
+}
+
+/// `s` at rest and bare: without its morph targets and its skin, as an
+/// operation that carries them afterwards ([`carry`]) works on it.
+pub fn bare(s: &Solid) -> Solid {
+    Solid {
+        morphs: None,
+        skin: None,
+        ..s.clone()
+    }
+}
+
+/// Whether `s` has morph targets or a skin for [`carry`] to carry.
+pub fn rides(s: &Solid) -> bool {
+    s.morphs.is_some() || s.skin.is_some()
+}
+
+/// Gives `onto`, made from `sources` at rest ([`bare`]), their morph
+/// targets ([`carried`]) and their skin ([`carried_skin`]).
+pub fn carry(sources: &[&Solid], onto: &mut Solid) -> Result<(), SkinsDiffer> {
+    onto.morphs = carried(sources, onto);
+    onto.skin = carried_skin(sources, onto)?;
+    Ok(())
+}
+
+/// [`carry`] for an operation on one solid that moves with it (a
+/// bevel, a subdivision): each morph target is what `redo` (the
+/// operation again) makes of the solid at that target, less `onto`,
+/// where that is the same mesh ([`matched`]: the same triangles
+/// between the same vertices, in whatever order each keeps them); a
+/// target whose mesh comes out otherwise stays as [`carried`] left it.
+pub fn carry_redone(
+    source: &Solid,
+    onto: &mut Solid,
+    redo: &dyn Fn(&Solid) -> Option<Solid>,
+) -> Result<(), SkinsDiffer> {
+    carry(&[source], onto)?;
+    let (Some(from), Some(mut to)) = (&source.morphs, onto.morphs.take()) else {
+        return Ok(());
+    };
+    let rest = bare(source);
+    for (t, target) in from.targets.iter().zip(&mut to.targets) {
+        let mut moved = rest.clone();
+        for (p, delta) in moved.positions.iter_mut().zip(&t.deltas) {
+            *p += *delta;
+        }
+        let Some(at) = redo(&moved) else { continue };
+        let guess: Vec<DVec3> = onto
+            .positions
+            .iter()
+            .zip(&target.deltas)
+            .map(|(p, d)| *p + *d)
+            .collect();
+        if let Some(to_at) = matched(onto, &at, &guess) {
+            for (v, delta) in target.deltas.iter_mut().enumerate() {
+                *delta = at.positions[to_at[v] as usize] - onto.positions[v];
+            }
+        }
+    }
+    onto.morphs = Some(to);
+    Ok(())
+}
+
+/// For each vertex of `a`, the vertex of `b` that is the same one, when
+/// the two are one mesh: the same triangles between the same vertices,
+/// whatever order each solid keeps them in. `guess` says about where
+/// each of `a`'s vertices is in `b`; it only chooses where to start
+/// (and, on a mesh alike from several sides, which side), and the rest
+/// follows from triangle to triangle across edges. `None` when they
+/// are not one mesh, or an edge has more than two triangles.
+fn matched(a: &Solid, b: &Solid, guess: &[DVec3]) -> Option<Vec<u32>> {
+    if a.positions.len() != b.positions.len() || a.triangles.len() != b.triangles.len() {
+        return None;
+    }
+    // Each directed edge's triangle, by its third vertex.
+    let across = |s: &Solid| -> Option<BTreeMap<(u32, u32), (u32, u32)>> {
+        let mut m = BTreeMap::new();
+        for (i, t) in s.triangles.iter().enumerate() {
+            for k in 0..3 {
+                let e = (t[k], t[(k + 1) % 3]);
+                if m.insert(e, (t[(k + 2) % 3], i as u32)).is_some() {
+                    return None;
+                }
+            }
+        }
+        Some(m)
+    };
+    let (ea, eb) = (across(a)?, across(b)?);
+    let nearest = |p: DVec3| {
+        let mut best = (f64::INFINITY, 0u32);
+        for (i, q) in b.positions.iter().enumerate() {
+            let d = (*q - p).length_squared();
+            if d < best.0 {
+                best = (d, i as u32);
+            }
+        }
+        best.1
+    };
+    let mut to = vec![u32::MAX; a.positions.len()];
+    let mut from = vec![u32::MAX; b.positions.len()];
+    let mut done = vec![false; a.triangles.len()];
+    let mut used = vec![false; b.triangles.len()];
+    for (i, t) in a.triangles.iter().enumerate() {
+        if done[i] {
+            continue;
+        }
+        // A piece not yet reached: its first triangle, where the guess
+        // puts it.
+        let [x, y, z] = t.map(|v| nearest(guess[v as usize]));
+        let &(third, j) = eb.get(&(x, y))?;
+        if third != z {
+            return None;
+        }
+        let mut queue = vec![(i as u32, j, [(t[0], x), (t[1], y), (t[2], z)])];
+        while let Some((i, j, pairs)) = queue.pop() {
+            if done[i as usize] || used[j as usize] {
+                if done[i as usize] && used[j as usize] {
+                    continue;
+                }
+                return None;
+            }
+            done[i as usize] = true;
+            used[j as usize] = true;
+            for (v, w) in pairs {
+                if to[v as usize] == u32::MAX && from[w as usize] == u32::MAX {
+                    to[v as usize] = w;
+                    from[w as usize] = v;
+                } else if to[v as usize] != w || from[w as usize] != v {
+                    return None;
+                }
+            }
+            for k in 0..3 {
+                let ((v0, w0), (v1, w1)) = (pairs[k], pairs[(k + 1) % 3]);
+                let (Some(&(v2, ni)), Some(&(w2, nj))) = (ea.get(&(v1, v0)), eb.get(&(w1, w0)))
+                else {
+                    if ea.contains_key(&(v1, v0)) || eb.contains_key(&(w1, w0)) {
+                        return None;
+                    }
+                    continue;
+                };
+                if !done[ni as usize] {
+                    queue.push((ni, nj, [(v1, w1), (v0, w0), (v2, w2)]));
+                }
+            }
+        }
+    }
+    to.iter().all(|&w| w != u32::MAX).then_some(to)
+}
+
+/// For each vertex of `onto`, the nearest point of the sources'
+/// surfaces: the source, its triangle, and the point as weights of the
+/// triangle's corners. Of points equally near, the first source's
+/// first triangle. `None` for every vertex when no source has a
+/// triangle.
+fn nearest(sources: &[&Solid], onto: &Solid) -> Vec<Option<(u32, u32, [f64; 3])>> {
     // A grid of the sources' triangles.
     let mut edge_sum = 0.0;
     let mut count = 0usize;
@@ -346,72 +597,71 @@ pub fn carried(sources: &[&Solid], onto: &Solid) -> Option<Morphs> {
     } else {
         0
     };
-    let mut targets: Vec<Morph> = names
-        .into_iter()
-        .map(|(name, weight)| Morph {
-            name,
-            weight,
-            deltas: vec![DVec3::ZERO; onto.positions.len()],
-        })
-        .collect();
-    for (v, &p) in onto.positions.iter().enumerate() {
-        let at = key(p);
-        // The nearest triangle: rings of cells outward until none
-        // further out can be nearer.
-        let mut best: Option<(f64, u32, u32, [f64; 3])> = None;
-        let start = (at.0.clamp(low.0, high.0) - at.0)
-            .abs()
-            .max((at.1.clamp(low.1, high.1) - at.1).abs())
-            .max((at.2.clamp(low.2, high.2) - at.2).abs());
-        let mut ring = start;
-        while ring <= start + reach {
-            if let Some((d, ..)) = best
-                && d <= ((ring - 1).max(0) as f64 * cell) * ((ring - 1).max(0) as f64 * cell)
-            {
-                break;
-            }
-            for dx in -ring..=ring {
-                for dy in -ring..=ring {
-                    for dz in -ring..=ring {
-                        if dx.abs().max(dy.abs()).max(dz.abs()) != ring {
-                            continue;
-                        }
-                        let cell_key = (at.0 + dx, at.1 + dy, at.2 + dz);
-                        for &(si, ti) in grid.get(&cell_key).into_iter().flatten() {
-                            let s = sources[si as usize];
-                            let t = s.triangles[ti as usize].map(|i| s.positions[i as usize]);
+    onto.positions
+        .iter()
+        .map(|&p| {
+            let at = key(p);
+            // The nearest triangle: rings of cells outward until none
+            // further out can be nearer.
+            let mut best: Option<(f64, u32, u32, [f64; 3])> = None;
+            let start = (at.0.clamp(low.0, high.0) - at.0)
+                .abs()
+                .max((at.1.clamp(low.1, high.1) - at.1).abs())
+                .max((at.2.clamp(low.2, high.2) - at.2).abs());
+            let mut ring = start;
+            while count > 0 && ring <= start + reach {
+                if best.is_none() && ring > start + 2 {
+                    // Far from every surface: all the triangles in
+                    // turn cost less than the empty cells between.
+                    for (si, s) in sources.iter().enumerate() {
+                        for (ti, t) in s.triangles.iter().enumerate() {
+                            let t = t.map(|i| s.positions[i as usize]);
                             let w = closest(p, t);
                             let q = t[0] * w[0] + t[1] * w[1] + t[2] * w[2];
                             let d = (q - p).length_squared();
-                            let nearer = match best {
-                                None => true,
-                                Some((b, bs, bt, _)) => d < b || (d == b && (si, ti) < (bs, bt)),
-                            };
-                            if nearer {
-                                best = Some((d, si, ti, w));
+                            if best.is_none_or(|(b, ..)| d < b) {
+                                best = Some((d, si as u32, ti as u32, w));
+                            }
+                        }
+                    }
+                    break;
+                }
+                if let Some((d, ..)) = best
+                    && d <= ((ring - 1).max(0) as f64 * cell) * ((ring - 1).max(0) as f64 * cell)
+                {
+                    break;
+                }
+                for dx in -ring..=ring {
+                    for dy in -ring..=ring {
+                        for dz in -ring..=ring {
+                            if dx.abs().max(dy.abs()).max(dz.abs()) != ring {
+                                continue;
+                            }
+                            let cell_key = (at.0 + dx, at.1 + dy, at.2 + dz);
+                            for &(si, ti) in grid.get(&cell_key).into_iter().flatten() {
+                                let s = sources[si as usize];
+                                let t = s.triangles[ti as usize].map(|i| s.positions[i as usize]);
+                                let w = closest(p, t);
+                                let q = t[0] * w[0] + t[1] * w[1] + t[2] * w[2];
+                                let d = (q - p).length_squared();
+                                let nearer = match best {
+                                    None => true,
+                                    Some((b, bs, bt, _)) => {
+                                        d < b || (d == b && (si, ti) < (bs, bt))
+                                    }
+                                };
+                                if nearer {
+                                    best = Some((d, si, ti, w));
+                                }
                             }
                         }
                     }
                 }
+                ring += 1;
             }
-            ring += 1;
-        }
-        let Some((_, si, ti, w)) = best else { continue };
-        let s = sources[si as usize];
-        let corners = s.triangles[ti as usize];
-        for (k, target) in targets.iter_mut().enumerate() {
-            let Some(slot) = slots[si as usize][k] else {
-                continue;
-            };
-            let Some(deltas) = s.morphs.as_ref().map(|m| &m.targets[slot].deltas) else {
-                continue;
-            };
-            target.deltas[v] = deltas[corners[0] as usize] * w[0]
-                + deltas[corners[1] as usize] * w[1]
-                + deltas[corners[2] as usize] * w[2];
-        }
-    }
-    Some(Morphs { targets })
+            best.map(|(_, si, ti, w)| (si, ti, w))
+        })
+        .collect()
 }
 
 #[cfg(test)]

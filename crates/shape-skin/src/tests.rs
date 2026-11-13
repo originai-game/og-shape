@@ -203,46 +203,92 @@ fn rig_errors_are_values() {
 }
 
 #[test]
-fn operations_that_do_not_carry_skins_refuse_them() {
+fn a_skin_rides_booleans_edits_bevels_and_subdivision() {
     let s = skin(&arm(), &rig(20.0)).unwrap();
-    let plain = arm();
-    assert_eq!(
-        boolean(&s, &plain, &Boolean::default()),
-        Err(shape_bool::BoolError::Skinned("target"))
-    );
-    assert_eq!(
-        boolean(&plain, &s, &Boolean::default()),
-        Err(shape_bool::BoolError::Skinned("tool"))
-    );
-    assert_eq!(
-        shape_bool::fuse(&s),
-        Err(shape_bool::BoolError::Skinned("target"))
-    );
-    assert_eq!(
-        shape_edit::split(&s, &Frame::IDENTITY, shape_edit::Keep::default()),
-        Err(shape_edit::EditError::Skinned)
-    );
-    assert_eq!(
-        shape_edit::shell(
-            &s,
-            &shape_edit::Shell {
-                thickness: 1.0,
-                ..Default::default()
+    let of = s.skin.as_ref().unwrap();
+    // Every vertex of `out` is weighted, and one that was the arm's own
+    // has the arm's weights there.
+    let rides = |out: &Solid, what: &str| {
+        let k = out
+            .skin
+            .as_ref()
+            .unwrap_or_else(|| panic!("{what}: no skin"));
+        assert_eq!(k.bones, of.bones, "{what}");
+        assert_eq!(k.check(out.positions.len()), Ok(()), "{what}");
+        let mut own = 0;
+        for (p, w) in out.positions.iter().zip(&k.weights) {
+            if let Some(i) = s.positions.iter().position(|q| q == p) {
+                assert_eq!(*w, of.weights[i], "{what} at {p}");
+                own += 1;
             }
-        ),
-        Err(shape_edit::EditError::Skinned)
+        }
+        assert!(own > 0, "{what}: none of the arm's vertices left");
+        assert!(pose(out, &Pose::default()).is_ok(), "{what}");
+    };
+    // A plain block cut from the elbow: the cut's vertices take the
+    // weights of the arm's surface there, between the two bones.
+    let mut block = shape_gen::solids::cuboid(&shape_gen::solids::BoxDesc {
+        width: 8.0,
+        depth: 40.0,
+        height: 10.0,
+    })
+    .unwrap();
+    block.map_positions(|p| p + DVec3::new(10.0, 0.0, 52.0), false);
+    let cut = boolean(
+        &s,
+        &block,
+        &Boolean {
+            op: shape_bool::BoolOp::Cut,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    rides(&cut, "difference");
+    let k = cut.skin.as_ref().unwrap();
+    assert!(
+        cut.positions
+            .iter()
+            .zip(&k.weights)
+            .any(|(p, w)| !s.positions.contains(p) && w.weights[1] > 0.0),
+        "no new vertex is blended between the bones"
     );
-    assert_eq!(
-        shape_bevel::fillet(
+    // The tool skinned, the target not: the result moves with the tool's
+    // skin.
+    rides(&boolean(&block, &s, &Boolean::default()).unwrap(), "union");
+    rides(&shape_bool::fuse(&s).unwrap(), "fuse");
+    rides(
+        &shape_edit::split(
+            &s,
+            &Frame {
+                origin: DVec3::new(0.0, 0.0, 30.0),
+                ..Frame::IDENTITY
+            },
+            shape_edit::Keep::default(),
+        )
+        .unwrap(),
+        "split",
+    );
+    rides(
+        &shape_bevel::fillet(
             &s,
             &shape_bevel::Fillet {
                 radius: 1.0,
-                edges: vec!["top".into()],
+                edges: vec!["bottom".into()],
                 ..Default::default()
-            }
-        ),
-        Err(shape_bevel::BevelError::Skinned)
+            },
+        )
+        .unwrap(),
+        "fillet",
     );
+    // Two skins by different skeletons: one solid has one skin.
+    let mut other = rig(20.0);
+    other.bones[1].name = "hand".into();
+    let t = skin(&arm(), &other).unwrap();
+    assert_eq!(
+        boolean(&s, &t, &Boolean::default()),
+        Err(shape_bool::BoolError::TwoSkins)
+    );
+    assert_eq!(shape_mesh::one_skin(&[&s, &block, &s]), Ok(()));
     // Pieces carry their part of the skin.
     let pieces = shape_bool::components(&s);
     assert_eq!(pieces.len(), 1);

@@ -23,8 +23,9 @@
 //! skeletons by bone name. What cannot be kept is an error value
 //! ([`RepairError::Skinned`]): a scaled or mirroring transform on a
 //! skinned part, bones of one name that disagree, skinned and unskinned
-//! parts joined. The self-union of [`Repair::fuse`] refuses skins (the
-//! report says so).
+//! parts joined. The self-union of [`Repair::fuse`] carries the skin as
+//! `shape_bool` does: a new vertex takes the weights of the skinned
+//! surface nearest it.
 //!
 //! UVs (`Solid::uvs`, per triangle corner) are carried through every
 //! step: a kept triangle keeps its corners' UVs (welding moves positions,

@@ -10,7 +10,10 @@ mod names;
 pub mod skin;
 
 pub use measure::Measures;
-pub use morph::{Morph, MorphError, Morphs, carried};
+pub use morph::{
+    Morph, MorphError, Morphs, SkinsDiffer, bare, carried, carried_skin, carry, carry_redone,
+    one_skin, rides,
+};
 pub use names::{LookupError, Names, Tag};
 pub use skin::{Bone, Skin, SkinClip, SkinError, Weights};
 

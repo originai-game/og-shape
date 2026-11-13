@@ -9810,3 +9810,70 @@ triangles costs seconds a cut.
 Checked: `seams_open_closed_surfaces` (a sphere 4 charts to 1, a ring
 8 to 3, every triangle's area within half and twice). Golden:
 `meshtools.unwrap.seams` is new; no other line moved.
+
+## 66. A skin through the kernel's operations, and targets exact after a bevel (2026-11-13)
+
+§62 left two things: a skinned solid was refused by booleans, bevels,
+edits and `subdivide`, and a target on a rounded or subdivided surface
+was read from the old surface near it.
+
+**The skin.** `shape_mesh::carried_skin(sources, onto)` gives a solid
+made from others their skin, as `carried` gives targets: each vertex
+takes the weights at the nearest point of the *skinned* sources'
+surfaces, blended from that triangle's corners, the four largest kept
+and summed to 1. So:
+
+- a vertex the result kept from a skinned source has its own weights,
+  to the bit (at a corner nothing is blended);
+- a vertex a cut made, on the skinned source's face or on the tool's,
+  takes the weights of the skinned surface there: a notch cut across
+  an elbow is weighted between the two bones as the arm round it is;
+- a source with no skin (a tool, a part joined on) moves with the
+  skinned surface nearest each of its vertices: a plain block joined
+  to an arm is the arm's from then on;
+- two sources skinned by skeletons that differ are refused before any
+  work (`BoolError::TwoSkins`, `EditError::TwoSkins`): one solid has
+  one skin. The same skeleton twice is one skin.
+
+The bones are not changed: rest frames and inverse bind matrices are
+the skeleton's, not the surface's. `fuse`, `self_union`, the boolean,
+`split`, `hole`, `pocket`, `seat`, `shell`, `dent`, the three bevels
+and `subdivide` all do this; `repair --fuse` therefore fuses a skinned
+mesh now. A vertex far from every skinned surface (more than two
+cells of the grid away) is found by going through all the triangles,
+which is quicker than the empty cells between.
+
+**Targets after a bevel or a subdivision.** These move with the solid:
+the right target is what the operation makes of the solid at that
+target, less what it makes of the rest shape. §62 had this for
+`subdivide` only where both came out in one vertex order, which a
+solid kept in the order of its positions rarely gives. Now the two
+meshes are matched (`matched`): the first triangle of each piece is
+found in the other by where the carried offsets say its corners went,
+and the rest follows across edges, a vertex at a time; a mismatch
+anywhere (another count, another neighbour, an edge of three
+triangles) and the target stays as carried. `fillet`, `chamfer`,
+`soften` and `subdivide` do this (`carry_redone`).
+
+- a subdivided box at its target: every vertex within 1e-9 of the
+  moved box subdivided (was: the volume within 2 %);
+- a box filleted by 3: for a target that stretches it by a quarter,
+  the mesh is the same and every vertex is within 1e-9 of the
+  stretched box filleted (the rounds keep their radius, which carrying
+  from the surface did not give); for a target that leans it, the
+  leaned box's rounds have other segment counts, the meshes differ,
+  and the offsets are carried as before.
+
+Booleans and edits keep the carried offsets on purpose: a hole is
+where the rest shape has it and rides the face, where redoing the cut
+on the moved solid would leave the hole behind.
+
+Not done: bones are not checked against the new shape (a bone whose
+part was cut away stays in the skeleton); weights on a part joined
+far from the skinned surface are the nearest surface's, which is a
+guess; a target that changes a bevel's mesh is still an
+approximation.
+
+Checked: `a_skin_rides_booleans_edits_bevels_and_subdivision`
+(shape-skin), `a_fillet_keeps_the_targets`,
+`a_subdivided_solid_keeps_its_targets`. No golden line moved.

@@ -1692,3 +1692,15 @@
   chart's scale may differ from the surface's by up to √2 where that
   holds every triangle within half and twice its area
   (`docs/research.md` §65).
+- A skinned solid goes through booleans, `fuse`, `split`, `hole`,
+  `pocket`, `seat`, `shell`, `dent`, the bevels and `subdivide`: each
+  vertex of the result takes the weights of the skinned surface
+  nearest it (its own, to the bit, where it was the solid's vertex),
+  and a part with no skin joined on moves with the skin it is joined
+  to. `repair --fuse` now fuses a skinned mesh. Two operands skinned
+  by different skeletons are refused (`TwoSkins`; `BoolError::Skinned`,
+  `EditError::Skinned` and `BevelError::Skinned` are gone).
+- Morph targets after `fillet`, `chamfer`, `soften` and `subdivide`
+  are exact where the operation makes the same mesh of the solid at
+  the target: the two are matched vertex to vertex whatever order
+  each is kept in (`docs/research.md` §66).

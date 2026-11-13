@@ -53,9 +53,9 @@ pub enum EditError {
     NotFlat(String),
     /// The part shares no volume with the host.
     NoOverlap,
-    /// The solid is skinned: edits do not carry skins yet, and never drop
-    /// one silently.
-    Skinned,
+    /// The host and the part are skinned, by skeletons that differ: one
+    /// solid has one skin.
+    TwoSkins,
     /// The solid has UVs and the part it is cut with has none (the part
     /// named), so the cut's new faces would have none: give the part UVs
     /// too, or neither.
@@ -124,8 +124,8 @@ impl std::fmt::Display for EditError {
             ),
             EditError::NotFlat(n) => write!(f, "the faces {n} are not flat; cut them flat first"),
             EditError::NoOverlap => f.write_str("the part shares no volume with the host"),
-            EditError::Skinned => f.write_str(
-                "the solid is skinned; edits do not carry a skin yet: edit first, then skin it",
+            EditError::TwoSkins => f.write_str(
+                "the host and the part are skinned by different skeletons, and one solid has one skin: skin them alike, or seat first and skin the result",
             ),
             EditError::NotClosed => f.write_str(
                 "the solid is not closed and manifold (an edge is not between exactly two faces)",
@@ -157,24 +157,6 @@ impl std::fmt::Display for EditError {
 }
 
 impl std::error::Error for EditError {}
-
-fn unskinned(solids: &[&Solid]) -> Result<(), EditError> {
-    if solids.iter().any(|s| s.skin.is_some()) {
-        Err(EditError::Skinned)
-    } else {
-        Ok(())
-    }
-}
-
-/// `s` without its morph targets: an edit works on the rest shape, and
-/// the targets are carried onto what it makes
-/// ([`shape_mesh::carried`]).
-fn bare(s: &Solid) -> Solid {
-    Solid {
-        morphs: None,
-        ..s.clone()
-    }
-}
 
 /// Finite and above zero (NaN fails).
 fn positive(v: f64) -> bool {
@@ -346,10 +328,9 @@ pub enum Keep {
 
 /// The solid cut by the plane through `frame.origin` normal to `frame.z`.
 pub fn split(s: &Solid, frame: &Frame, keep: Keep) -> Result<Solid, EditError> {
-    unskinned(&[s])?;
-    if s.morphs.is_some() {
-        let mut out = split(&bare(s), frame, keep)?;
-        out.morphs = shape_mesh::carried(&[s], &out);
+    if shape_mesh::rides(s) {
+        let mut out = split(&shape_mesh::bare(s), frame, keep)?;
+        let _ = shape_mesh::carry(&[s], &mut out);
         return Ok(out);
     }
     let l = 4.0 * size(s)
@@ -458,10 +439,9 @@ pub fn hole(s: &Solid, d: &Hole) -> Result<Solid, EditError> {
 
 /// [`hole`], with what the result alone does not say ([`EditReport`]).
 pub fn hole_report(s: &Solid, d: &Hole) -> Result<(Solid, EditReport), EditError> {
-    unskinned(&[s])?;
-    if s.morphs.is_some() {
-        let (mut out, report) = hole_report(&bare(s), d)?;
-        out.morphs = shape_mesh::carried(&[s], &out);
+    if shape_mesh::rides(s) {
+        let (mut out, report) = hole_report(&shape_mesh::bare(s), d)?;
+        let _ = shape_mesh::carry(&[s], &mut out);
         return Ok((out, report));
     }
     if !positive(d.diameter) {
@@ -558,10 +538,9 @@ pub fn pocket(s: &Solid, d: &Pocket) -> Result<Solid, EditError> {
 
 /// [`pocket`], with what the result alone does not say ([`EditReport`]).
 pub fn pocket_report(s: &Solid, d: &Pocket) -> Result<(Solid, EditReport), EditError> {
-    unskinned(&[s])?;
-    if s.morphs.is_some() {
-        let (mut out, report) = pocket_report(&bare(s), d)?;
-        out.morphs = shape_mesh::carried(&[s], &out);
+    if shape_mesh::rides(s) {
+        let (mut out, report) = pocket_report(&shape_mesh::bare(s), d)?;
+        let _ = shape_mesh::carry(&[s], &mut out);
         return Ok((out, report));
     }
     let span = size(s);
@@ -619,10 +598,11 @@ pub fn seat_report(
     part: &Solid,
     part_name: &str,
 ) -> Result<(Solid, EditReport), EditError> {
-    unskinned(&[host, part])?;
-    if host.morphs.is_some() || part.morphs.is_some() {
-        let (mut out, report) = seat_report(&bare(host), &bare(part), part_name)?;
-        out.morphs = shape_mesh::carried(&[host, part], &out);
+    if shape_mesh::rides(host) || shape_mesh::rides(part) {
+        shape_mesh::one_skin(&[host, part]).map_err(|_| EditError::TwoSkins)?;
+        let (mut out, report) =
+            seat_report(&shape_mesh::bare(host), &shape_mesh::bare(part), part_name)?;
+        let _ = shape_mesh::carry(&[host, part], &mut out);
         return Ok((out, report));
     }
     let shared = boolean(
@@ -834,10 +814,9 @@ pub fn shell(s: &Solid, d: &Shell) -> Result<Solid, EditError> {
 
 /// [`shell`], with what the result alone does not say ([`EditReport`]).
 pub fn shell_report(s: &Solid, d: &Shell) -> Result<(Solid, EditReport), EditError> {
-    unskinned(&[s])?;
-    if s.morphs.is_some() {
-        let (mut out, report) = shell_report(&bare(s), d)?;
-        out.morphs = shape_mesh::carried(&[s], &out);
+    if shape_mesh::rides(s) {
+        let (mut out, report) = shell_report(&shape_mesh::bare(s), d)?;
+        let _ = shape_mesh::carry(&[s], &mut out);
         return Ok((out, report));
     }
     let t = d.thickness;
@@ -1088,10 +1067,9 @@ pub fn dent_report(s: &Solid, d: &Dent) -> Result<(Solid, EditReport), EditError
 }
 
 fn dent_built(s: &Solid, d: &Dent) -> Result<Solid, EditError> {
-    unskinned(&[s])?;
-    if s.morphs.is_some() {
-        let mut out = dent_built(&bare(s), d)?;
-        out.morphs = shape_mesh::carried(&[s], &out);
+    if shape_mesh::rides(s) {
+        let mut out = dent_built(&shape_mesh::bare(s), d)?;
+        let _ = shape_mesh::carry(&[s], &mut out);
         return Ok(out);
     }
     if !positive(d.radius) {

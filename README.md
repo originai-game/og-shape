@@ -237,13 +237,17 @@ What a user might expect and will not find, as of 2026-11-12:
   difference prediction, so about half to two thirds of what Draco's
   own encoder (EdgeBreaker, parallelogram prediction) reaches. No
   written Draco file has been read by Draco's decoder here.
-- **Morph targets in the kernel.** Booleans, bevels, edits and
-  `subdivide` carry a solid's morph targets by reading each new
-  vertex's offset from the nearest point of the old surface: exact
-  where a vertex is the solid's own or lies on one of its faces, an
-  approximation on a rounded or subdivided surface that has left it.
-  A skinned solid is still refused there. A target's normals and a
-  second UV set are not read.
+- **Morph targets and skins in the kernel.** Booleans and edits carry
+  a solid's morph targets and its skin by reading each new vertex's
+  offsets and weights from the nearest point of the old surface: a
+  cut rides the face it is in. Bevels and `subdivide` give each
+  target what the operation makes of the solid at that target, where
+  that is the same mesh; a target that changes a bevel's mesh (other
+  angles, so other segments) is still read from the surface. Bones
+  are not checked against the new shape, and a part with no skin
+  joined far from the skinned one gets the nearest surface's weights,
+  which is a guess. A target's normals and a second UV set are not
+  read (`docs/research.md` §66).
 - **FBX.** Animation layers are checked on a hand-written file, not on
   one from an authoring tool. NURBS and other geometry that is not a
   mesh, and FBX 6 and older, are not read.

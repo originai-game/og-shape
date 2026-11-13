@@ -106,7 +106,8 @@ import → join → repair → decimate → place → unwrap → measure → pre
      thickness folds its second sheet: check `intersections`.
    - `fuse: true` joins interpenetrating closed parts and untangles a
      shell that passes through itself; the report says when it could
-     not (always on a skinned mesh: booleans carry no skin). Untangling
+     not. On a skinned mesh the new vertices take the weights of the
+     skinned surface nearest them. Untangling
      can leave pockets the surface folded round as shells of their own:
      `pockets` counts them, and those that are floaters by `floaters`
      are dropped (`pockets_dropped`).

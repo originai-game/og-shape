@@ -79,8 +79,9 @@ fn a_split_keeps_the_target_on_the_half_kept() {
 }
 
 /// A subdivided morphing box has a target on every new vertex, and at
-/// the target it is the shape the moved box subdivides to, nearly: the
-/// offsets are read from the cage's surface.
+/// the target it is the shape the moved box subdivides to: subdividing
+/// is linear in the positions, and the two meshes are matched vertex
+/// to vertex though each keeps its vertices in its own order.
 #[test]
 fn a_subdivided_solid_keeps_its_targets() {
     let s = leaning();
@@ -90,10 +91,17 @@ fn a_subdivided_solid_keeps_its_targets() {
     let mut moved = s.clone();
     moved.morphs = None;
     moved.map_positions(|p| p + field(p), false);
-    let want = subdivide(&moved, &Subdivide::default())
-        .unwrap()
-        .measure()
-        .volume;
-    let got = fine.morphed(&[1.0]).measure().volume;
-    assert!((got - want).abs() < 0.02 * want, "{got} {want}");
+    let want = subdivide(&moved, &Subdivide::default()).unwrap();
+    let got = fine.morphed(&[1.0]);
+    let sorted = |s: &Solid| {
+        let mut p = s.positions.clone();
+        p.sort_by(|a, b| shape_core::order::cmp_dvec3(*a, *b));
+        p
+    };
+    let off = sorted(&got)
+        .iter()
+        .zip(&sorted(&want))
+        .map(|(a, b)| (*a - *b).length())
+        .fold(0.0, f64::max);
+    assert!(off < 1e-9, "{off}");
 }

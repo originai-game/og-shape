@@ -72,9 +72,6 @@ pub enum BevelError {
     TooLarge(DVec3),
     /// A configuration this version does not bevel, at this vertex.
     Unsupported(DVec3, &'static str),
-    /// The solid is skinned: bevels do not carry skins yet, and never drop
-    /// one silently.
-    Skinned,
     /// A field holds a value it does not take (the field and why).
     Invalid(&'static str),
     /// An edge joins more than two faces (its ends given), as where two
@@ -121,9 +118,6 @@ impl std::fmt::Display for BevelError {
                 f,
                 "the edge {a}–{b} is a piece of a longer crease whose neighbours are not bevelled, and its bevel, tapering to a tip at both ends, does not fit: select the whole crease (named {})",
                 names.join(", ")
-            ),
-            BevelError::Skinned => f.write_str(
-                "the solid is skinned; bevels do not carry a skin yet: bevel first, then skin it",
             ),
         }
     }
@@ -273,16 +267,10 @@ fn run(s: &Solid, spec: &Spec) -> Result<Solid, BevelError> {
 /// Rounds the named edges with a superellipse profile (a circle by
 /// default). New faces are named `fillet`.
 pub fn fillet(s: &Solid, d: &Fillet) -> Result<Solid, BevelError> {
-    if s.skin.is_some() {
-        return Err(BevelError::Skinned);
-    }
-    if s.morphs.is_some() {
-        let bare = Solid {
-            morphs: None,
-            ..s.clone()
-        };
-        let mut out = fillet(&bare, d)?;
-        out.morphs = shape_mesh::carried(&[s], &out);
+    if shape_mesh::rides(s) {
+        // Morph targets and the skin ride the result ([`carry_redone`]).
+        let mut out = fillet(&shape_mesh::bare(s), d)?;
+        let _ = shape_mesh::carry_redone(s, &mut out, &|moved| fillet(moved, d).ok());
         return Ok(out);
     }
     let r = positive(d.radius, "radius")?;
@@ -308,16 +296,10 @@ pub fn fillet(s: &Solid, d: &Fillet) -> Result<Solid, BevelError> {
 
 /// Bevels the named edges flat. New faces are named `chamfer`.
 pub fn chamfer(s: &Solid, d: &Chamfer) -> Result<Solid, BevelError> {
-    if s.skin.is_some() {
-        return Err(BevelError::Skinned);
-    }
-    if s.morphs.is_some() {
-        let bare = Solid {
-            morphs: None,
-            ..s.clone()
-        };
-        let mut out = chamfer(&bare, d)?;
-        out.morphs = shape_mesh::carried(&[s], &out);
+    if shape_mesh::rides(s) {
+        // Morph targets and the skin ride the result ([`carry_redone`]).
+        let mut out = chamfer(&shape_mesh::bare(s), d)?;
+        let _ = shape_mesh::carry_redone(s, &mut out, &|moved| chamfer(moved, d).ok());
         return Ok(out);
     }
     let d1 = positive(d.distance, "distance")?;
@@ -351,16 +333,10 @@ pub fn chamfer(s: &Solid, d: &Chamfer) -> Result<Solid, BevelError> {
 /// A fillet of `radius` on every edge sharper than `angle` (or on the
 /// named ones). A solid with no such edge comes back unchanged.
 pub fn soften(s: &Solid, d: &Soften) -> Result<Solid, BevelError> {
-    if s.skin.is_some() {
-        return Err(BevelError::Skinned);
-    }
-    if s.morphs.is_some() {
-        let bare = Solid {
-            morphs: None,
-            ..s.clone()
-        };
-        let mut out = soften(&bare, d)?;
-        out.morphs = shape_mesh::carried(&[s], &out);
+    if shape_mesh::rides(s) {
+        // Morph targets and the skin ride the result ([`carry_redone`]).
+        let mut out = soften(&shape_mesh::bare(s), d)?;
+        let _ = shape_mesh::carry_redone(s, &mut out, &|moved| soften(moved, d).ok());
         return Ok(out);
     }
     let r = positive(d.radius, "radius")?;
