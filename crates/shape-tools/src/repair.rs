@@ -97,6 +97,10 @@ pub struct Repair {
     pub non_manifold: bool,
     /// Closes holes whose rim has at most this many edges (0: none).
     pub max_hole_edges: usize,
+    /// Closes a larger hole that no clear fill closes all the same, by
+    /// a fill that crosses the mesh (a mesh with faces behind its
+    /// holes); set `fuse` too, which untangles what that leaves.
+    pub holes_through: bool,
     /// Gives every piece still open after the holes are closed a second
     /// sheet this far under it, in mm, and a rim along its open edges
     /// ([`crate::thicken`]; 0: none), so a sheet encloses a volume.
@@ -138,9 +142,13 @@ pub struct RepairReport {
     pub non_manifold: Option<NonManifold>,
     /// Holes closed, and triangles added to close them.
     pub holes_filled: usize,
-    /// Of `holes_filled`, holes with more than `max_hole_edges` edges,
-    /// closed because their fill is flat and crosses nothing.
+    /// Of `holes_filled`, holes with more than `max_hole_edges` edges:
+    /// closed by a fill that is flat and crosses nothing, by a fan from
+    /// a lifted centre that crosses nothing, or (`holes_through`) by a
+    /// fill that crosses.
     pub large_holes_filled: usize,
+    /// Of those, the ones whose fill crosses the mesh.
+    pub crossing_fills: usize,
     /// Triangles added by closing holes.
     pub fill_triangles: usize,
     /// Holes left open: too large, or with a rim that does not close (it
@@ -1217,33 +1225,61 @@ pub fn split_non_manifold(s: &Solid) -> Result<(Solid, NonManifold), RepairError
         touched.iter().map(|&v| (v, fans_of(v, &none))).collect();
     let runs = |t: [u32; 3], a: u32, b: u32| (0..3).any(|k| t[k] == a && t[(k + 1) % 3] == b);
     // Per non-manifold edge, the pairs of faces that are one sheet.
+    // Edges are taken in turn, those first whose faces the surface
+    // already pairs round their ends (through manifold edges and the
+    // edges paired so far): along a chain of such edges each then pairs
+    // as the one before it did, and the sheets come apart at the
+    // vertices between. (Each on its own, an edge in the middle of a
+    // chain was paired by its faces' order round it, which could join
+    // what its neighbours kept apart: the house's 3 edges of §32.2.)
     let mut pairs: BTreeMap<(u32, u32), Vec<(u32, u32)>> = BTreeMap::new();
-    for &(a, b) in &wide {
-        let faces = &by_edge[&(a, b)];
-        let k = faces.len();
-        // Faces the surface already joins round either end, through
-        // manifold edges: those pairs are given.
-        let fan = |v: u32, t: u32| {
-            let tris = &around[&v];
-            manifold[&v][tris.binary_search(&t).unwrap_or(0)]
+    let mut waiting: Vec<(u32, u32)> = wide.clone();
+    while !waiting.is_empty() {
+        // The fans round the ends of the edges waiting, as paired so far.
+        let mut ends: Vec<u32> = waiting.iter().flat_map(|&(a, b)| [a, b]).collect();
+        ends.sort_unstable();
+        ends.dedup();
+        let so_far: BTreeMap<u32, Vec<u32>> = if pairs.is_empty() {
+            ends.iter().map(|&v| (v, manifold[&v].clone())).collect()
+        } else {
+            ends.iter().map(|&v| (v, fans_of(v, &pairs))).collect()
         };
-        let mut sheet: Vec<(u32, u32)> = Vec::new();
-        let mut paired = vec![false; k];
-        let mut clash = false;
-        for i in 0..k {
-            for j in i + 1..k {
-                let (f, g) = (faces[i], faces[j]);
-                if fan(a, f) == fan(a, g) || fan(b, f) == fan(b, g) {
-                    if paired[i] || paired[j] {
-                        clash = true;
+        let given_of = |a: u32, b: u32| -> (Vec<(u32, u32)>, Vec<bool>, bool) {
+            let faces = &by_edge[&(a, b)];
+            let fan = |v: u32, t: u32| so_far[&v][around[&v].binary_search(&t).unwrap_or(0)];
+            let mut sheet: Vec<(u32, u32)> = Vec::new();
+            let mut paired = vec![false; faces.len()];
+            let mut clash = false;
+            for i in 0..faces.len() {
+                for j in i + 1..faces.len() {
+                    let (f, g) = (faces[i], faces[j]);
+                    if fan(a, f) == fan(a, g) || fan(b, f) == fan(b, g) {
+                        if paired[i] || paired[j] {
+                            clash = true;
+                        }
+                        paired[i] = true;
+                        paired[j] = true;
+                        sheet.push((f, g));
                     }
-                    paired[i] = true;
-                    paired[j] = true;
-                    sheet.push((f, g));
                 }
             }
-        }
-        if clash {
+            (sheet, paired, clash)
+        };
+        // The first edge wholly paired by what is there; else the first.
+        let pick = waiting
+            .iter()
+            .position(|&(a, b)| {
+                let (_, paired, clash) = given_of(a, b);
+                !clash && paired.iter().all(|&p| p)
+            })
+            .unwrap_or(0);
+        let (a, b) = waiting.remove(pick);
+        let faces = &by_edge[&(a, b)];
+        let k = faces.len();
+        let (given, given_paired, given_clash) = given_of(a, b);
+        let mut sheet = given;
+        let paired = given_paired;
+        if given_clash {
             r.left += 1;
             continue;
         }
@@ -1395,6 +1431,9 @@ pub struct Holes {
     /// [`LARGE_HOLE_EDGES`]): their least-area fill turns no triangle
     /// against the fill's mean normal and crosses nothing.
     pub large: usize,
+    /// Of the large holes closed, those whose fill crosses the mesh
+    /// (only with [`close_holes_through`]'s `through`).
+    pub crossing: usize,
     /// Holes left open: larger than `max_edges` and not flat or clear
     /// enough to fill, larger than [`LARGE_HOLE_EDGES`], or with a rim
     /// that does not close (it runs into a non-manifold edge).
@@ -1431,6 +1470,18 @@ pub const LARGE_HOLE_EDGES: usize = 512;
 /// and a fan through it would stretch across the texture's atlas: such
 /// a fill takes its first rim vertex's UV at every corner instead.
 pub fn close_holes(s: &Solid, max_edges: usize) -> Result<(Solid, Holes), RepairError> {
+    close_holes_through(s, max_edges, false)
+}
+
+/// [`close_holes`]; with `through`, a large hole no clear fill closes
+/// is closed all the same by its least-area fill, which then crosses
+/// the mesh ([`Holes::crossing`] counts those): for a mesh with faces
+/// behind its holes, to be untangled by `fuse` afterwards.
+pub fn close_holes_through(
+    s: &Solid,
+    max_edges: usize,
+    through: bool,
+) -> Result<(Solid, Holes), RepairError> {
     let mut s = s.clone();
     s.canonicalize()?;
     let mut directed: BTreeMap<(u32, u32), u32> = BTreeMap::new();
@@ -1498,17 +1549,61 @@ pub fn close_holes(s: &Solid, max_edges: usize) -> Result<(Solid, Holes), Repair
             continue;
         }
         let large = rim.len() > max_edges;
-        let large_fill = if large {
-            match fill(&s, &rim, &undirected) {
-                Some(tris) if flat(&s, &tris) && !crosses(&s, &tris, &new_tris) => Some(tris),
-                _ => None,
+        // A large hole: its least-area fill where that is flat and
+        // clear; else a fan from its centre lifted a little along the
+        // fill's mean normal, either way, where one is clear; else,
+        // if asked, the least-area fill though it crosses.
+        let mut large_fill = None;
+        let mut fan_from = None;
+        if large {
+            let least = fill(&s, &rim, &undirected);
+            match &least {
+                Some(tris) if flat(&s, tris) && !crosses(&s, tris, &new_tris) => {
+                    large_fill = least.clone();
+                }
+                _ => {
+                    let centre = rim.iter().map(|&v| s.positions[v as usize]).sum::<DVec3>()
+                        / rim.len() as f64;
+                    let radius = rim
+                        .iter()
+                        .map(|&v| (s.positions[v as usize] - centre).length())
+                        .fold(0.0, f64::max);
+                    let mean: DVec3 = least
+                        .iter()
+                        .flatten()
+                        .map(|t| {
+                            let [a, b, c] = t.map(|v| s.positions[v as usize]);
+                            (b - a).cross(c - a)
+                        })
+                        .sum();
+                    let along = mean.try_normalize().unwrap_or(DVec3::ZERO);
+                    for lift in [0.05, 0.15, -0.05, -0.15, 0.0, 0.3] {
+                        let at = centre + along * (lift * radius);
+                        let mut tried = Solid {
+                            positions: s.positions.clone(),
+                            triangles: s.triangles.clone(),
+                            ..Default::default()
+                        };
+                        let ci = tried.positions.len() as u32;
+                        tried.positions.push(at);
+                        let fan: Vec<[u32; 3]> = (0..rim.len())
+                            .map(|k| [rim[k], rim[(k + 1) % rim.len()], ci])
+                            .collect();
+                        if !crosses(&tried, &fan, &new_tris) {
+                            fan_from = Some(at);
+                            break;
+                        }
+                    }
+                    if fan_from.is_none() && through {
+                        large_fill = least.clone();
+                        h.crossing += usize::from(least.is_some());
+                    }
+                }
             }
-        } else {
-            None
-        };
-        if large && large_fill.is_none() {
-            h.left += 1;
-            continue;
+            if large_fill.is_none() && fan_from.is_none() {
+                h.left += 1;
+                continue;
+            }
         }
         // Each rim vertex's UV in its rim triangles: leaving (j) and
         // arriving (j − 1).
@@ -1537,12 +1632,20 @@ pub fn close_holes(s: &Solid, max_edges: usize) -> Result<(Solid, Holes), Repair
         let centre_color: [f64; 4] =
             core::array::from_fn(|ch| rim_color.iter().map(|c| c[ch]).sum::<f64>() / n as f64);
         let tris = large_fill
-            .or_else(|| fill(&s, &rim, &undirected))
+            .or_else(|| {
+                if fan_from.is_some() {
+                    None
+                } else {
+                    fill(&s, &rim, &undirected)
+                }
+            })
             .unwrap_or_else(|| {
-                // Every chord already exists: fan from a new vertex at the
-                // rim's centre, whose edges are all new.
-                let c =
-                    rim.iter().map(|&v| s.positions[v as usize]).sum::<DVec3>() / rim.len() as f64;
+                // Every chord already exists (or a large hole took a
+                // fan): fan from a new vertex at the rim's centre,
+                // whose edges are all new.
+                let c = fan_from.unwrap_or_else(|| {
+                    rim.iter().map(|&v| s.positions[v as usize]).sum::<DVec3>() / rim.len() as f64
+                });
                 let ci = s.push_vertex(c);
                 if let Some(k) = &mut s.skin {
                     // The centre takes the blend of its rim's weights.
@@ -2040,11 +2143,12 @@ pub fn repair_owned(s: Solid, d: &Repair) -> Result<(Solid, RepairReport), Repai
         r.non_manifold = Some(nm);
     }
     if d.max_hole_edges > 0 {
-        let (next, h) = close_holes(&s, d.max_hole_edges)?;
+        let (next, h) = close_holes_through(&s, d.max_hole_edges, d.holes_through)?;
         s = next;
         r.uv_seam_fills = h.uv_seam_fills;
         r.holes_filled = h.filled;
         r.large_holes_filled = h.large;
+        r.crossing_fills = h.crossing;
         r.fill_triangles = h.triangles;
         r.holes_left = h.left;
         // Filling can join pieces that were apart; orient once more.
@@ -2404,6 +2508,113 @@ mod tests {
         // Within the limit it is an ordinary fill.
         let (_, h) = close_holes(&s, 4).unwrap();
         assert_eq!((h.filled, h.large), (1, 0));
+    }
+
+    /// A closed tetrahedron standing on z = `base` at (5, 5), its tip at
+    /// z = `tip`.
+    fn spike(base: f64, tip: f64) -> Solid {
+        let mut s = Solid::default();
+        for p in [
+            DVec3::new(4.5, 4.7, base),
+            DVec3::new(5.5, 4.7, base),
+            DVec3::new(5.0, 5.6, base),
+            DVec3::new(5.0, 5.0, tip),
+        ] {
+            s.push_vertex(p);
+        }
+        for t in [[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]] {
+            s.push_triangle(t, 9, &["spike"]);
+        }
+        s
+    }
+
+    /// A large hole with something in its way: a spike that just pokes
+    /// through the flat fill is cleared by a fan from a lifted centre;
+    /// one that stands far through is closed only when asked, by a fill
+    /// that crosses it, and counted.
+    #[test]
+    fn a_large_hole_is_fanned_round_what_pokes_through_it() {
+        let mut open = cube(DVec3::ZERO, 10.0);
+        // Without its top (the second quad).
+        for k in [3, 2] {
+            open.triangles.remove(k);
+            open.surfaces.remove(k);
+            open.face_tags.remove(k);
+        }
+        let with = |spike: &Solid| {
+            let mut s = open.clone();
+            s.append(spike);
+            s
+        };
+        let low = with(&spike(9.0, 10.2));
+        let (out, h) = close_holes(&low, 3).unwrap();
+        assert_eq!(
+            (h.filled, h.large, h.crossing, h.left),
+            (1, 1, 0, 0),
+            "{h:?}"
+        );
+        assert_eq!(out.triangles.len(), low.triangles.len() + 4);
+        // Whether the fill crosses the rest of the mesh.
+        let fill_crosses = |s: &Solid| -> bool {
+            let fill = s.faces(&["fill"]).unwrap();
+            let rest = Solid {
+                positions: s.positions.clone(),
+                triangles: (0..s.triangles.len() as u32)
+                    .filter(|t| !fill.contains(t))
+                    .map(|t| s.triangles[t as usize])
+                    .collect(),
+                ..Default::default()
+            };
+            let tris: Vec<[u32; 3]> = fill.iter().map(|&t| s.triangles[t as usize]).collect();
+            crosses(&rest, &tris, &[])
+        };
+        assert!(!fill_crosses(&out));
+        let tall = with(&spike(9.0, 15.0));
+        let (_, h) = close_holes(&tall, 3).unwrap();
+        assert_eq!((h.filled, h.left), (0, 1), "{h:?}");
+        let (out, h) = close_holes_through(&tall, 3, true).unwrap();
+        assert_eq!(
+            (h.filled, h.large, h.crossing, h.left),
+            (1, 1, 1, 0),
+            "{h:?}"
+        );
+        assert!(fill_crosses(&out));
+    }
+
+    /// Two columns that touch along one edge, three edges long: each of
+    /// the three has four faces, and the two in the middle of the chain
+    /// have such an edge at both ends. All three split, and the columns
+    /// come apart closed.
+    #[test]
+    fn a_chain_of_non_manifold_edges_splits_along_its_length() {
+        let mut s = Solid::default();
+        for (ox, oy) in [(0.0, 0.0), (1.0, 1.0)] {
+            for z in 0..3 {
+                let c = cube(DVec3::new(ox, oy, f64::from(z)), 1.0);
+                let base = s.positions.len() as u32;
+                for p in &c.positions {
+                    s.push_vertex(*p);
+                }
+                for (i, t) in c.triangles.iter().enumerate() {
+                    // The faces between the cubes of a column go.
+                    let bottom = i < 2 && z > 0;
+                    let top = (2..4).contains(&i) && z < 2;
+                    if !bottom && !top {
+                        s.push_triangle(t.map(|v| v + base), c.surfaces[i], &["column"]);
+                    }
+                }
+            }
+        }
+        s.canonicalize().unwrap();
+        let (out, nm) = split_non_manifold(&s).unwrap();
+        assert_eq!(
+            (nm.edges, nm.split, nm.left, nm.unpaired),
+            (3, 3, 0, 0),
+            "{nm:?}"
+        );
+        let m = crate::measure(&out, &crate::Measure::default());
+        assert!(m.closed && m.non_manifold_edges == 0, "{m:?}");
+        assert_eq!(m.pieces.len(), 2);
     }
 
     /// A skin may hold only part of the skeleton: Mixamo's soldier has a

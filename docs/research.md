@@ -9650,3 +9650,57 @@ Not done: a skin through these operations (weights could be carried
 the same way; bones' rest frames would then need checking against the
 new shape), and a target whose shape should change the cut itself (a
 hole stays where the rest shape has it).
+
+## 63. Repair: chains of non-manifold edges, and large holes with faces behind them (2026-11-12)
+
+§32.2 left two of TRELLIS's six meshes open: the house kept 3 of its
+41 non-manifold edges, the cabinet its 3 large holes.
+
+**Chains.** The house's three edges are each the middle of a chain of
+three four-face edges (two sheets touching along a line). An edge at
+the end of a chain is paired by what the surface already joins round
+its free end, which is right; the middle edge was paired on its own,
+by its faces' order round it, and that pairing can join at the shared
+vertex what its neighbour's kept apart: both sheets then fall into one
+fan there, no vertex is copied, and the edge stays. Edges are now
+paired in turn: at each step the fans round the ends of the edges
+still waiting are taken with the pairs made so far, and an edge all
+of whose faces those fans already pair goes first (else the first
+waiting, by the old rule). Along a chain each edge then pairs as the
+one before it did. The house: 41 of 41 split, 73 vertices copied,
+closed; the bear (19 edges) and the armchair (10) as before.
+
+**Large holes.** The cabinet's holes (65, 74 and 97 edges) have
+least-area fills that are nearly flat (1 to 2 % of their area faces
+against the mean) but cross the mesh: 8 to 31 of their triangles each,
+because the cabinet has faces just behind the openings. Two things:
+
+- a fan from the rim's centre lifted along the fill's mean normal by
+  0.05, 0.15, −0.05, −0.15, 0 or 0.3 of the rim's radius, the first
+  that crosses nothing (exactly): a shallow cone clears what only
+  pokes through a flat fill. It closes the 97-edge hole (lift 0.05);
+  on the other two every such fan still crosses 2 to 26 triangles;
+- `Repair::holes_through` (`--holes-through`, off by default): a hole
+  neither closes is closed by its least-area fill though it crosses,
+  counted (`crossing_fills`), for `fuse` to untangle. The cabinet
+  with `--holes-through`: closed, 312 crossing pairs; with `--fuse`
+  too: closed, 0 crossing pairs, 9 shells joined, the volume the same
+  to 1 part in 10 000.
+
+It is off by default because a fill that crosses is a wrong surface
+until something untangles it, and `fuse` does not always end closed
+(§32.5). Fills are still least-area or a fan, not fair: a large hole
+on a curved surface closes flat.
+
+Run again: the six TRELLIS meshes (`shape repair --non-manifold
+--holes 64`): five closed where four were; the cabinet closed with
+`--holes-through --fuse`. The other 48 files of the bench were not
+run again; their repairs use neither a chain's pairing nor a large
+hole's second try unless they had what these change. Checked:
+`a_chain_of_non_manifold_edges_splits_along_its_length` (two columns
+touching along three edges come apart closed),
+`a_large_hole_is_fanned_round_what_pokes_through_it`. Golden: the
+repair and `process` lines that hash a report move for its new fields
+(`meshtools.repair.large_hole`, `.non_manifold`, `.pockets`,
+`.seam_fill`, `mcp.process.bake`, `.ball_defects`, `.look`,
+`place.process`).

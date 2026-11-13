@@ -11,7 +11,7 @@
 //!                [--unlit] [--each] [--uv [--uv-size PX]]
 //! shape import   <mesh> [-o out]
 //! shape repair   <mesh> [-o out] [--weld MM] [--weld-all] [--floaters F]
-//!                [--floater-size MM] [--non-manifold] [--holes N]
+//!                [--floater-size MM] [--non-manifold] [--holes N [--holes-through]]
 //!                [--thicken MM] [--fuse] [--min-edge MM] [--intersections]
 //! shape decimate <mesh> (--ratio R | --target N | --lod-ratios A,B,…)
 //!                [--max-error MM]
@@ -74,7 +74,7 @@ const USAGE: &str = "usage: shape <command> <input> [options]
                                                 --uv: each material's UV layout instead
   import   <mesh> [-o out.glb|obj|stl]          parts, images and what was skipped
   repair   <mesh> [-o out] [--weld MM] [--weld-all] [--floaters FRACTION]
-           [--floater-size MM] [--non-manifold] [--holes N] [--thicken MM] [--fuse]
+           [--floater-size MM] [--non-manifold] [--holes N [--holes-through]] [--thicken MM] [--fuse]
            [--min-edge MM] [--intersections]
   decimate <mesh> (--ratio R | --target N | --lod-ratios A,B,…) [--max-error MM]
            [--lock-border]

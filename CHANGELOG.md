@@ -1652,3 +1652,14 @@
   of the surface it came from (`shape_mesh::carried`), a tool without
   the target adding none. A skinned solid is still refused
   (`docs/research.md` §62).
+- Repair: a chain of non-manifold edges is split along its whole
+  length (edges are paired in turn, each as the ones already paired
+  round its ends were, where each was paired on its own before):
+  TRELLIS's house, which kept 3 of its 41 such edges, now ends closed.
+  A large hole whose least-area fill is not flat or crosses the mesh
+  is tried as a fan from its centre lifted along the fill's normal;
+  `--holes-through` (MCP `holes_through`, `Repair::holes_through`)
+  closes what still crosses by a fill that does, counted in the
+  report's new `crossing_fills`, for `--fuse` to untangle: TRELLIS's
+  cabinet, 2 of whose 3 large holes have faces behind them, ends
+  closed with no self-intersection (`docs/research.md` §63).

@@ -89,7 +89,10 @@ import → join → repair → decimate → place → unwrap → measure → pre
      made cross (the fuse step untangles them on a closed shell).
    - `max_hole_edges: 64`: closes holes up to 64 edges round, and larger
      ones (up to 512) whose fill is flat and crosses nothing
-     (`large_holes_filled`); the rest stay in `holes_left`. Fills are
+     (`large_holes_filled`); the rest stay in `holes_left`. If a
+     mesh must end closed and has faces behind its holes, add
+     `holes_through` with `fuse`: those holes close by a fill that
+     crosses (`crossing_fills`) and the fuse untangles it. Fills are
      named `fill`; preview them. A fill whose rim crosses a UV seam
      takes one UV (`uv_seam_fills`): one colour, the rim's, instead of a
      fan across the texture.

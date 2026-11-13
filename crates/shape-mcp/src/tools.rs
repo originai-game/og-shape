@@ -411,6 +411,7 @@ impl Args<'_> {
             floaters,
             non_manifold: self.flag("non_manifold")?,
             max_hole_edges: self.uint("max_hole_edges")? as usize,
+            holes_through: self.flag("holes_through")?,
             thicken: self.num("thicken")?,
             fuse: self.flag("fuse")?,
             min_edge: self.num("min_edge")?,
@@ -613,6 +614,14 @@ fn repair_props() -> Vec<(&'static str, Value)> {
         (
             "max_hole_edges",
             int("Close holes whose rim has at most this many edges (0: none)."),
+        ),
+        (
+            "holes_through",
+            boolean(
+                "Close a larger hole that no clear fill closes all the same, by a fill that \
+                 crosses the mesh (faces behind the hole); set `fuse` too, which untangles it. \
+                 The report's `crossing_fills` counts them.",
+            ),
         ),
         (
             "thicken",
