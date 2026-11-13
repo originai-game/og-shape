@@ -94,6 +94,10 @@ pub struct ProcessDesc {
     /// Write every map kept as KTX2 of ETC1S blocks under BasisLZ: far
     /// smaller files than `ktx2`'s UASTC, at a lower quality.
     pub etc1s: bool,
+    /// Write every map that is not KTX2 as lossless WebP
+    /// (`EXT_texture_webp`, `shape_tools::to_webp`): every texel as it
+    /// is. Not with `ktx2` or `etc1s`.
+    pub webp: bool,
     /// Bake the source's look into maps of this many texels across, on
     /// fresh UVs (implies `fresh_uvs`); 0 does not bake.
     pub bake: u32,
@@ -140,9 +144,14 @@ fn map_size(i: &ImageInfo) -> String {
 /// Shrinks the material's maps to `max` texels (0: none) and, with
 /// `ktx2`, writes each as KTX2; per map, its kind, name, size before
 /// and after (null when kept as it was), and why it could not be read.
-fn texture_budget(m: &mut Material, max: u32, ktx2: bool, etc1s: bool, rdo: f64) -> String {
+fn texture_budget(
+    m: &mut Material,
+    max: u32,
+    (ktx2, etc1s, rdo): (bool, bool, f64),
+    webp: bool,
+) -> String {
     let ktx2 = ktx2 || etc1s || rdo > 0.0;
-    if max == 0 && !ktx2 {
+    if max == 0 && !ktx2 && !webp {
         return "null".into();
     }
     let mut out = Vec::new();
@@ -154,10 +163,14 @@ fn texture_budget(m: &mut Material, max: u32, ktx2: bool, etc1s: bool, rdo: f64)
             color: Material::is_color_map(kind),
         };
         let changed = downsize(t, &d).and_then(|small| {
-            if !ktx2 {
-                return Ok(small);
-            }
             let from = small.as_ref().unwrap_or(t);
+            if !ktx2 {
+                return Ok(if webp {
+                    shape_tools::to_webp(from)?.or(small)
+                } else {
+                    small
+                });
+            }
             let packed = if etc1s {
                 shape_tools::to_ktx2_etc1s(from, d.color)?
             } else {
@@ -294,7 +307,12 @@ pub fn process_steps(
         "null".to_string()
     };
     step(4)?;
-    let textures = texture_budget(&mut material, d.texture_max, d.ktx2, d.etc1s, d.ktx2_rdo);
+    let textures = texture_budget(
+        &mut material,
+        d.texture_max,
+        (d.ktx2, d.etc1s, d.ktx2_rdo),
+        d.webp,
+    );
     step(5)?;
     let images: Vec<ImageInfo> = material
         .maps()
@@ -436,6 +454,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         "--texture-max",
         "--ktx2",
         "--etc1s",
+        "--webp",
         "--ktx2-rdo",
         "--bake",
         "--bake-distance",
@@ -464,6 +483,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
             texture_max: a.number("--texture-max")?.unwrap_or(0),
             ktx2: a.switch("--ktx2"),
             etc1s: a.switch("--etc1s"),
+            webp: a.switch("--webp"),
             ktx2_rdo: a.number("--ktx2-rdo")?.unwrap_or(0.0),
             bake: a.number("--bake")?.unwrap_or(0),
             bake_distance: a.number("--bake-distance")?.unwrap_or(0.0),

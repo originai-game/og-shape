@@ -10063,3 +10063,63 @@ vertices to the grid, the weights, every bone's matrix at every key
 carrying them to the same places), `a_compressed_glb_reads_back_the_same`
 (all three views now). Golden: `meshtools.compress` moved (its index
 views are compressed now).
+
+## 69. Textures: ETC1S runs, WebP written, and parts of UASTC blocks tried (2026-11-13)
+
+**ETC1S runs** (§57 wrote neither). The format has two run codes, and
+the reader (§57) already took both: prediction symbol 256 says "the
+last symbol again for the next n groups" (n − 3 in chunks of 4 bits),
+and the selector symbol after the history says "the most recent
+selector again for n blocks" (n − 3 under its own Huffman table, 63
+and over in chunks of 7 bits). The writer now finds runs of three or
+more in each slice and writes them so. A flat plane of 9 600 blocks is
+79 bytes of slice (it was a bit or more a block, 1 500 and over).
+
+| Input (with its levels) | §57 | With runs |
+| --- | --- | --- |
+| `color_grid.png` 1024² | 118 469 | 116 581 |
+| FlightHelmet lens base colour 2048² | 235 899 | 230 674 |
+
+Same texels, so the same 32.22 and 40.27 dB. No rate-distortion pass
+for ETC1S (choosing a worse selector because it continues a run) was
+written.
+
+**WebP written.** `image-webp`'s encoder (lossless VP8L, pure Rust,
+MIT/Apache-2.0, already a dependency for reading). `to_webp` writes a
+map as lossless WebP and keeps it only where it is smaller than the
+bytes it had (a JPEG kept lossless is several times its size:
+DamagedHelmet's five JPEGs would go from 3.8 MB to 14.6 MB, so they
+stay); `shape process --webp` does this for every map that is not
+KTX2, and a WebP map that `--texture-max` shrinks is written back as
+WebP, not PNG. DamagedHelmet at `--texture-max 512`: 2 003 928 bytes
+with PNG maps, 1 792 152 with `--webp`. An animated WebP now gives its
+first frame (the crate's `read_image` does) instead of an error.
+Lossy WebP (VP8) is not written: the crate has no VP8 encoder.
+
+**Parts of UASTC blocks: tried, not kept.** §59 left "Basis
+Universal's pass also matches parts of blocks". Tried here: where no
+whole neighbouring block passes, a run of a neighbour's bytes in place
+of the block's own (12, 8 or 6 of the 16, at the block's start or
+end, from the same eight neighbours), the longest that keeps the
+squared error within the allowance. On the colour grid, with levels:
+
+| `rdo` | Whole blocks only (§59) | With parts, any place | With parts, from the start |
+| --- | --- | --- | --- |
+| 0.5 | 304 326, 48.00 dB | 318 082, 47.90 | 305 269, 47.98 |
+| 1 | 290 998, 47.63 | 301 831, 47.42 | 291 739, 47.58 |
+| 2 | 273 292, 46.66 | 278 124, 46.47 | 271 423, 46.57 |
+| 4 | 266 851, 46.23 | 289 726, 44.14 | 264 755, 46.05 |
+
+More bytes at less quality, or the same curve to within its noise.
+The Zstandard here is ruzstd's only level ("fastest"), whose matcher
+does not find short matches that begin in the middle of a block, and
+a changed block is a worse source for the whole-block copies after
+it. Basis Universal's pass chooses with a model of the LZ coder's
+cost; without one, and without a stronger Zstandard, parts do not
+pay. The code is not in the tree. What is left of the gap to the
+reference tool is therefore the Zstandard level, not the pass.
+
+Checked: `runs_are_a_symbol_and_a_count`, `a_webp_image_is_written`
+(a PNG to WebP and back texel for texel; a WebP shrunk stays WebP; an
+animation of two frames put together by hand gives its first).
+Golden: `meshtools.look.etc1s` moved (its slices have runs now).

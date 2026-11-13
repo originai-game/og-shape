@@ -195,6 +195,20 @@ struct Out {
 }
 
 impl Out {
+    /// A number in chunks of `width` bits, each with one more bit that
+    /// says another follows.
+    fn chunks(&mut self, mut v: u32, width: u32) {
+        loop {
+            let chunk = v & ((1 << width) - 1);
+            v >>= width;
+            if v == 0 {
+                self.put(chunk, width + 1);
+                return;
+            }
+            self.put(chunk | (1 << width), width + 1);
+        }
+    }
+
     fn put(&mut self, v: u32, n: u32) {
         for k in 0..n {
             if self.used % 8 == 0 {
@@ -552,18 +566,29 @@ pub(crate) fn encode(planes: &[Plane], endpoints: usize, selectors: usize) -> En
     // to be written, for the tables' counts; then the bits.
     enum Item {
         Pred(u32),
+        /// The last prediction symbol again, for this many groups.
+        PredRepeat(u32),
         Delta(u32),
         Selector(u32),
+        /// The most recent selector again, for this many blocks.
+        SelectorRun(u32),
+        /// Written by the run before it.
+        Skip,
     }
     let (endpoint_count, selector_count) = (book.len(), selector_book.len());
     let mut pred_counts = vec![0u32; 257];
     let mut delta_counts = vec![0u32; endpoint_count.max(1)];
     let mut selector_counts = vec![0u32; selector_count + HISTORY + 1];
+    let mut run_counts = vec![0u32; 64];
     let mut streams: Vec<Vec<Item>> = Vec::new();
     let mut first = 0;
     for &(across, down) in &sizes {
         let at = |bx: usize, by: usize| first + by * across + bx;
         let mut items = Vec::new();
+        // Where each group's prediction and each block's selector are
+        // among the items, and what they are.
+        let mut pred_at: Vec<(usize, u32)> = Vec::new();
+        let mut selector_at: Vec<(usize, u32)> = Vec::new();
         let mut recent = Recent {
             values: vec![0; HISTORY],
             rover: HISTORY / 2,
@@ -603,12 +628,11 @@ pub(crate) fn encode(planes: &[Plane], endpoints: usize, selectors: usize) -> En
                             sym |= preds[(by + dy) * across + bx + dx] << (2 * k);
                         }
                     }
-                    pred_counts[sym as usize] += 1;
+                    pred_at.push((items.len(), sym));
                     items.push(Item::Pred(sym));
                 }
                 if preds[by * across + bx] == 3 {
                     let d = deltas[by * across + bx];
-                    delta_counts[d as usize] += 1;
                     items.push(Item::Delta(d));
                 }
                 let s = selector_of[at(bx, by)];
@@ -627,8 +651,56 @@ pub(crate) fn encode(planes: &[Plane], endpoints: usize, selectors: usize) -> En
                         s
                     }
                 };
-                selector_counts[sym as usize] += 1;
+                selector_at.push((items.len(), sym));
                 items.push(Item::Selector(sym));
+            }
+        }
+        // Runs: three or more groups whose prediction symbol is the
+        // last one written, and three or more blocks whose selector is
+        // the most recent, are one symbol and a count.
+        let mut last = 0u32;
+        let mut i = 0;
+        while i < pred_at.len() {
+            if pred_at[i].1 != last {
+                last = pred_at[i].1;
+                i += 1;
+                continue;
+            }
+            let run = pred_at[i..].iter().take_while(|p| p.1 == last).count();
+            if run >= 3 {
+                items[pred_at[i].0] = Item::PredRepeat(run as u32);
+                for p in &pred_at[i + 1..i + run] {
+                    items[p.0] = Item::Skip;
+                }
+            }
+            i += run;
+        }
+        let newest = selector_count as u32;
+        let mut i = 0;
+        while i < selector_at.len() {
+            let run = selector_at[i..]
+                .iter()
+                .take_while(|s| s.1 == newest)
+                .count();
+            if run >= 3 {
+                items[selector_at[i].0] = Item::SelectorRun(run as u32);
+                for s in &selector_at[i + 1..i + run] {
+                    items[s.0] = Item::Skip;
+                }
+            }
+            i += run.max(1);
+        }
+        for item in &items {
+            match item {
+                Item::Pred(s) => pred_counts[*s as usize] += 1,
+                Item::PredRepeat(_) => pred_counts[256] += 1,
+                Item::Delta(d) => delta_counts[*d as usize] += 1,
+                Item::Selector(s) => selector_counts[*s as usize] += 1,
+                Item::SelectorRun(n) => {
+                    selector_counts[selector_count + HISTORY] += 1;
+                    run_counts[(*n as usize - 3).min(63)] += 1;
+                }
+                Item::Skip => {}
             }
         }
         streams.push(items);
@@ -637,7 +709,11 @@ pub(crate) fn encode(planes: &[Plane], endpoints: usize, selectors: usize) -> En
     let pred_code = Code::new(&pred_counts, 16);
     let delta_code = Code::new(&delta_counts, 16);
     let selector_code = Code::new(&selector_counts, 16);
-    let run_code = Code::new(&[1], 16);
+    let run_code = if run_counts.iter().any(|c| *c > 0) {
+        Code::new(&run_counts, 16)
+    } else {
+        Code::new(&[1], 16)
+    };
     let mut out = Out::default();
     pred_code.write(&mut out);
     delta_code.write(&mut out);
@@ -652,8 +728,22 @@ pub(crate) fn encode(planes: &[Plane], endpoints: usize, selectors: usize) -> En
             for item in items {
                 match item {
                     Item::Pred(s) => pred_code.put(&mut out, *s as usize),
+                    Item::PredRepeat(n) => {
+                        pred_code.put(&mut out, 256);
+                        out.chunks(n - 3, 4);
+                    }
                     Item::Delta(d) => delta_code.put(&mut out, *d as usize),
                     Item::Selector(s) => selector_code.put(&mut out, *s as usize),
+                    Item::SelectorRun(n) => {
+                        selector_code.put(&mut out, selector_count + HISTORY);
+                        if n - 3 < 63 {
+                            run_code.put(&mut out, (n - 3) as usize);
+                        } else {
+                            run_code.put(&mut out, 63);
+                            out.chunks(n - 3, 7);
+                        }
+                    }
+                    Item::Skip => {}
                 }
             }
             out.bytes
@@ -768,5 +858,58 @@ mod tests {
                 assert!(rms > 0.0 && rms < 16.0, "{rms}");
             }
         }
+    }
+
+    /// A flat plane is runs: groups that repeat the last prediction
+    /// symbol and blocks that repeat the most recent selector, a symbol
+    /// and a count each (counts past 66 in chunks). 9 600 blocks take a
+    /// few bytes and read back flat; a mark in the middle breaks the
+    /// runs and is still read.
+    #[test]
+    fn runs_are_a_symbol_and_a_count() {
+        let (w, h) = (512usize, 300usize);
+        let flat = Plane {
+            width: w,
+            height: h,
+            rgb: [40u8, 120, 200].repeat(w * h),
+        };
+        let mut marked = flat.rgb.clone();
+        for y in 152..156 {
+            for x in 256..260 {
+                marked[(y * w + x) * 3..(y * w + x) * 3 + 3].copy_from_slice(&[250, 250, 10]);
+            }
+        }
+        let planes = [
+            flat,
+            Plane {
+                width: w,
+                height: h,
+                rgb: marked,
+            },
+        ];
+        let e = encode(&planes, 16_000, 16_000);
+        let books = Codebooks::read(
+            e.endpoint_count,
+            e.selector_count,
+            &e.endpoints,
+            &e.selectors,
+            &e.tables,
+        )
+        .unwrap();
+        assert!(e.slices[0].len() < 160, "{}", e.slices[0].len());
+        assert!(e.slices[1].len() < 256, "{}", e.slices[1].len());
+        let back = books.slice(&e.slices[0], w, h).unwrap();
+        assert!(back.chunks(3).all(|p| p == &back[..3]));
+        assert!(
+            back[..3]
+                .iter()
+                .zip([40u8, 120, 200])
+                .all(|(a, b)| a.abs_diff(b) < 8)
+        );
+        let back = books.slice(&e.slices[1], w, h).unwrap();
+        let at = |x: usize, y: usize| &back[(y * w + x) * 3..(y * w + x) * 3 + 3];
+        assert!(at(257, 153)[0] > 200 && at(257, 153)[2] < 60);
+        assert_eq!(at(0, 0), at(511, 299));
+        assert_eq!(at(0, 0), at(300, 153));
     }
 }

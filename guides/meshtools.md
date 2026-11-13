@@ -222,7 +222,10 @@ import → join → repair → decimate → place → unwrap → measure → pre
    shares, a twentieth of UASTC's bytes and a tenth of its time, at a
    visibly lower quality (about 33 dB; fine for base colour at a
    distance, poor for normal maps). Use either for a game that loads
-   KTX2; leave both off for texturing tools, which want PNG.
+   KTX2; leave both off for texturing tools, which want PNG. `--webp`
+   (MCP `webp`) writes each map as lossless WebP where that is smaller
+   than what it was (a JPEG stays a JPEG): every texel kept, about a
+   tenth under PNG, for viewers that read `EXT_texture_webp`.
 10. **Export** `glb_plain` for texturing (with `material` to keep the
    file's look), or `glb` for parts, joints and skins (a part's
    `material`). OBJ and STL hold the mesh only: the output's

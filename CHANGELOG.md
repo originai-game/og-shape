@@ -1732,3 +1732,11 @@
   quantized as above, or by gltfpack) comes in with its vertices where
   the bind pose puts them, not in grid steps (`docs/research.md` §68).
   Golden `meshtools.compress` moved.
+- `shape process --webp` (the MCP's `webp`, `shape_tools::to_webp`):
+  every map that is not KTX2 is written as lossless WebP where that is
+  smaller than the bytes it had; a WebP map shrunk by `--texture-max`
+  stays WebP. An animated WebP gives its first frame.
+- ETC1S (`--etc1s`) is written with the format's run codes: flat
+  areas take a symbol and a count (2 % off two maps tried, a flat
+  plane 79 bytes). Golden `meshtools.look.etc1s` moved
+  (`docs/research.md` §69).

@@ -58,8 +58,9 @@ fn bad(what: impl Into<String>) -> TextureError {
     TextureError::Format(what.into())
 }
 
-/// `t` shrunk so its longest side is at most `d.max`, as PNG; `None` when
-/// it already fits (or `d.max` is 0), so the original bytes stay.
+/// `t` shrunk so its longest side is at most `d.max`, as PNG (as
+/// lossless WebP where `t` is WebP); `None` when it already fits (or
+/// `d.max` is 0), so the original bytes stay.
 pub fn downsize(t: &Texture, d: &Downsize) -> Result<Option<Texture>, TextureError> {
     if d.max == 0 {
         return Ok(None);
@@ -74,6 +75,9 @@ pub fn downsize(t: &Texture, d: &Downsize) -> Result<Option<Texture>, TextureErr
         (v as u32).max(1)
     };
     let small = resize(&image, scale(image.width), scale(image.height), d.color);
+    if t.mime == "image/webp" {
+        return Ok(Some(webp_of(&t.name, &small)));
+    }
     let name = match t.name.rsplit_once('.') {
         Some((stem, _)) => format!("{stem}.png"),
         None => t.name.clone(),
@@ -83,6 +87,51 @@ pub fn downsize(t: &Texture, d: &Downsize) -> Result<Option<Texture>, TextureErr
         mime: "image/png".into(),
         bytes: crate::png(&small),
     }))
+}
+
+/// `t` as a lossless WebP file (`EXT_texture_webp`): every texel as it
+/// is, in fewer bytes than PNG on most maps; `None` when it is WebP or
+/// KTX2 already, or when the WebP would not be smaller (a JPEG kept
+/// lossless is several times its size).
+pub fn to_webp(t: &Texture) -> Result<Option<Texture>, TextureError> {
+    if t.mime == "image/webp" || t.mime == "image/ktx2" {
+        return Ok(None);
+    }
+    let packed = webp_of(&t.name, &decode(&t.bytes)?);
+    Ok((packed.bytes.len() < t.bytes.len()).then_some(packed))
+}
+
+/// `image` as a lossless WebP texture named after `name` (by the
+/// `image-webp` crate's encoder): three channels where every texel is
+/// opaque, four otherwise.
+fn webp_of(name: &str, image: &Image) -> Texture {
+    let opaque = image.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255);
+    let (data, color) = if opaque {
+        (
+            image
+                .rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .flat_map(|p| [p[0], p[1], p[2]])
+                .collect(),
+            image_webp::ColorType::Rgb8,
+        )
+    } else {
+        (image.rgba.clone(), image_webp::ColorType::Rgba8)
+    };
+    let mut bytes = Vec::new();
+    // Writing to a vector does not fail, and the sizes are the image's.
+    let _ =
+        image_webp::WebPEncoder::new(&mut bytes).encode(&data, image.width, image.height, color);
+    Texture {
+        name: match name.rsplit_once('.') {
+            Some((stem, _)) => format!("{stem}.webp"),
+            None => name.to_string(),
+        },
+        mime: "image/webp".into(),
+        bytes,
+    }
 }
 
 /// `t` as a KTX2 file of UASTC blocks with its mip levels
@@ -179,15 +228,11 @@ pub fn decode(bytes: &[u8]) -> Result<Image, TextureError> {
     }
 }
 
-/// A WebP image (lossy, lossless, with or without alpha; the first
-/// frame of an animation is not taken: it is refused) by the
-/// `image-webp` crate.
+/// A WebP image (lossy, lossless, with or without alpha; of an
+/// animation, its first frame) by the `image-webp` crate.
 fn decode_webp(bytes: &[u8]) -> Result<Image, TextureError> {
     let webp = |e: image_webp::DecodingError| bad(format!("WebP: {e}"));
     let mut d = image_webp::WebPDecoder::new(std::io::Cursor::new(bytes)).map_err(webp)?;
-    if d.is_animated() {
-        return Err(TextureError::Unsupported("an animated WebP".into()));
-    }
     let (width, height) = d.dimensions();
     if u64::from(width) * u64::from(height) > crate::decode::MAX_PIXELS {
         return Err(TextureError::Unsupported(format!(
@@ -1340,8 +1385,8 @@ mod webp_tests {
     use super::*;
 
     /// A WebP image decodes to the texels it was made from (a lossless
-    /// one, with alpha and without); an animation and a broken file
-    /// are refused with the reason.
+    /// one, with alpha and without); a broken file is refused with the
+    /// reason.
     #[test]
     fn a_webp_image_is_decoded() {
         let (w, h) = (23u32, 17u32);
@@ -1383,5 +1428,89 @@ mod webp_tests {
         for cut in [12, 20, with_alpha.len() / 2] {
             assert!(decode(&with_alpha[..cut]).is_err(), "cut at {cut}");
         }
+    }
+
+    /// A map written as WebP is every texel it was, in fewer bytes than
+    /// its PNG; a WebP that is shrunk stays WebP; and an animation
+    /// gives its first frame.
+    #[test]
+    fn a_webp_image_is_written() {
+        let (w, h) = (64u32, 48u32);
+        let rgba: Vec<u8> = (0..w * h)
+            .flat_map(|i| {
+                let (x, y) = (i % w, i / w);
+                [
+                    (x * 4) as u8,
+                    (y * 5) as u8,
+                    ((x / 8 + y / 8) % 2 * 200) as u8,
+                    255,
+                ]
+            })
+            .collect();
+        let image = Image {
+            width: w,
+            height: h,
+            rgba: rgba.clone(),
+        };
+        let png = Texture::from_bytes("map.png", crate::png(&image));
+        let packed = to_webp(&png).unwrap().expect("smaller than its PNG");
+        assert_eq!(
+            (packed.name.as_str(), packed.mime.as_str()),
+            ("map.webp", "image/webp")
+        );
+        assert!(packed.bytes.len() < png.bytes.len());
+        assert_eq!(decode(&packed.bytes).unwrap(), image);
+        assert!(to_webp(&packed).unwrap().is_none());
+        let small = downsize(
+            &packed,
+            &Downsize {
+                max: 16,
+                color: true,
+            },
+        )
+        .unwrap()
+        .expect("64 is over 16");
+        assert_eq!(small.mime, "image/webp");
+        assert_eq!(decode(&small.bytes).unwrap().width, 16);
+        // An animation of two frames, put together by hand from two
+        // stills' VP8L chunks: the first frame is what is read.
+        let still = |color: [u8; 4]| {
+            let mut out = Vec::new();
+            image_webp::WebPEncoder::new(&mut out)
+                .encode(&color.repeat(8 * 8), 8, 8, image_webp::ColorType::Rgba8)
+                .unwrap();
+            out[12..].to_vec()
+        };
+        let u24 = |v: u32| v.to_le_bytes()[..3].to_vec();
+        let chunk = |tag: &[u8; 4], body: Vec<u8>| {
+            let mut out = tag.to_vec();
+            out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            out.extend_from_slice(&body);
+            if body.len() % 2 == 1 {
+                out.push(0);
+            }
+            out
+        };
+        let frame = |color: [u8; 4]| {
+            let mut body = [u24(0), u24(0), u24(7), u24(7), u24(100)].concat();
+            // Not blended with what was there.
+            body.push(2);
+            body.extend(still(color));
+            chunk(b"ANMF", body)
+        };
+        let mut body = b"WEBP".to_vec();
+        body.extend(chunk(
+            b"VP8X",
+            [vec![0x12, 0, 0, 0], u24(7), u24(7)].concat(),
+        ));
+        body.extend(chunk(b"ANIM", vec![0, 0, 0, 0, 0, 0]));
+        body.extend(frame([200, 10, 20, 255]));
+        body.extend(frame([0, 250, 0, 255]));
+        let mut file = b"RIFF".to_vec();
+        file.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        file.extend(body);
+        let first = decode(&file).unwrap();
+        assert_eq!((first.width, first.height), (8, 8));
+        assert_eq!(&first.rgba[..4], &[200, 10, 20, 255]);
     }
 }

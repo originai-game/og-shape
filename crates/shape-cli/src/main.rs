@@ -30,7 +30,7 @@
 //! shape process  <mesh> [--budget N | --ratio R] [--merge-charts UV]
 //!                [--cross-color-borders] [-o out.glb]
 //!                [repair, unwrap and place options] [--intersections]
-//!                [--unwrap] [--texture-max PX] [--ktx2 | --ktx2-rdo Q | --etc1s]
+//!                [--unwrap] [--texture-max PX] [--ktx2 | --ktx2-rdo Q | --etc1s | --webp]
 //!                [--bake PX [--bake-distance MM]]
 //! ```
 //!
@@ -98,7 +98,7 @@ const USAGE: &str = "usage: shape <command> <input> [options]
   process  <mesh> [--budget N | --ratio R] [--merge-charts UV] [--cross-color-borders]
            [-o out.glb]
            [repair, unwrap and place options]
-           [--intersections] [--unwrap] [--texture-max PX] [--ktx2 | --ktx2-rdo Q | --etc1s]
+           [--intersections] [--unwrap] [--texture-max PX] [--ktx2 | --ktx2-rdo Q | --etc1s | --webp]
            [--bake PX [--bake-distance MM]]    --bake: fresh UVs packed at PX², the
                                                 look baked into new maps";
 

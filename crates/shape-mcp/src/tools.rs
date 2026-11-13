@@ -1071,6 +1071,11 @@ fn process_schema() -> Value {
                      second per 1024² map, at a lower quality (about 33 dB on a colour grid)."),
         ),
         (
+            "webp",
+            boolean("Write every map kept as lossless WebP (`EXT_texture_webp`): every texel as \
+                     it is, in fewer bytes than PNG on most maps. Not with `ktx2` or `etc1s`."),
+        ),
+        (
             "bake",
             int("Bake the repaired mesh's look into new maps this many texels across, on fresh \
                  UVs packed into one atlas: decimate without UVs or vertex colours, pack, and \
@@ -1381,6 +1386,7 @@ fn process_tool(server: &Server, a: &Args, p: &mut dyn Progress) -> Result<Vec<V
         texture_max: a.u32("texture_max")?,
         ktx2: a.flag("ktx2")?,
         etc1s: a.flag("etc1s")?,
+        webp: a.flag("webp")?,
         ktx2_rdo: a.num("ktx2_rdo")?,
         bake: a.u32("bake")?,
         bake_distance: a.num("bake_distance")?,
