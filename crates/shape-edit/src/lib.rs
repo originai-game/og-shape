@@ -1213,8 +1213,9 @@ fn dent_built(s: &Solid, d: &Dent) -> Result<Solid, EditError> {
     let dent_tag = out.names.intern("dent");
     for (i, t) in out.triangles.iter().enumerate() {
         if t.iter().any(|&v| moved[v as usize]) && !out.face_tags[i].contains(&dent_tag) {
-            out.face_tags[i].push(dent_tag);
-            out.face_tags[i].sort_unstable();
+            let tags = std::sync::Arc::make_mut(&mut out.face_tags[i]);
+            tags.push(dent_tag);
+            tags.sort_unstable();
         }
     }
     out.canonicalize()

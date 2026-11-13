@@ -1442,6 +1442,7 @@ fn extrude_until(
         .collect();
     for tags in &mut s.face_tags {
         if tags.iter().any(|x| made.contains(x)) && !tags.contains(&top) {
+            let tags = std::sync::Arc::make_mut(tags);
             tags.push(top);
             tags.sort_unstable();
         }

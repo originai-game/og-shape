@@ -639,7 +639,7 @@ fn cuboid_with(d: &BoxDesc, uvs: bool) -> Result<Solid, GenError> {
         .collect();
     for (i, n) in names {
         let id = s.names.intern(n);
-        let tags = &mut s.face_tags[i as usize];
+        let tags = std::sync::Arc::make_mut(&mut s.face_tags[i as usize]);
         tags.push(id);
         tags.sort_unstable();
     }
@@ -857,7 +857,7 @@ fn flat_bottom(s: &mut Solid) {
     let bottom = s.names.intern("bottom");
     for (i, t) in s.triangles.iter().enumerate() {
         if t.iter().all(|&v| s.positions[v as usize].y == 0.0) {
-            s.face_tags[i] = vec![bottom];
+            s.face_tags[i] = vec![bottom].into();
             if let Some(u) = &mut s.uvs {
                 u[i] = t.map(|v| {
                     let p = s.positions[v as usize];

@@ -1778,3 +1778,8 @@
   `_iridescence`, their factors): read from and written to GLB, set by
   a program's `material` op, and drawn by the preview
   (`docs/research.md` §74).
+- `Solid::face_tags` is a list of `Tags` (`Arc<Vec<Tag>>`): triangles
+  with the same face names hold one list. A mesh of 819 000 coloured
+  triangles is 151 MiB resident after import (was 190). Code that
+  changes one triangle's names in place uses `Arc::make_mut`; reading
+  is as before (`docs/research.md` §75).

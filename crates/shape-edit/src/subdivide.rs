@@ -55,7 +55,7 @@ pub const MAX_LEVELS: u32 = 6;
 #[derive(Clone)]
 struct Face {
     corners: Vec<u32>,
-    tags: Vec<Tag>,
+    tags: shape_mesh::Tags,
     surface: u32,
 }
 

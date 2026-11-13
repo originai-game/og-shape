@@ -1423,7 +1423,7 @@ pub fn split_non_manifold(s: &Solid) -> Result<(Solid, NonManifold), RepairError
 }
 
 /// A fill triangle: corners, surface, names, UVs.
-type Fill = ([u32; 3], u32, Vec<Tag>, [DVec2; 3], CornerColors);
+type Fill = ([u32; 3], u32, shape_mesh::Tags, [DVec2; 3], CornerColors);
 
 /// What [`close_holes`] did.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1728,10 +1728,12 @@ pub fn close_holes_through(
             });
         let mut tags: Vec<Tag> = vec![s.names.intern("fill")];
         for &t in &rim_tris {
-            tags.extend(&s.face_tags[t as usize]);
+            tags.extend(s.face_tags[t as usize].iter());
         }
         tags.sort_unstable();
         tags.dedup();
+        // One list for all of the fill's triangles.
+        let tags: shape_mesh::Tags = tags.into();
         let surface = s.surfaces[rim_tris[0] as usize];
         let uv_of = |v: u32| {
             if seam {

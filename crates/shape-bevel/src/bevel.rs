@@ -1644,7 +1644,7 @@ fn finish(mut b: Build<'_>, inserts: &BTreeMap<(usize, u32), Vec<u32>>) -> Resul
                 if cos < cos10 {
                     names.push(kind.to_string());
                     let old = if ux.is_none() { x.2 } else { y.2 };
-                    for &tag in &s.face_tags[old] {
+                    for &tag in s.face_tags[old].iter() {
                         let name = s.names.name(tag);
                         if is_cap(name) {
                             names.push(name.to_string());

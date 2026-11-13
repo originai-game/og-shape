@@ -530,7 +530,7 @@ fn boolean_once(
         let names = |s: &Solid, tris: &mut dyn Iterator<Item = u32>| {
             let mut v: Vec<String> = Vec::new();
             for t in tris {
-                for &x in &s.face_tags[t as usize] {
+                for &x in s.face_tags[t as usize].iter() {
                     let n = s.names.name(x).to_string();
                     if !v.contains(&n) {
                         v.push(n);
@@ -722,7 +722,7 @@ fn named_result(
             }
             for &t in ts {
                 let (solid, _) = operands[origins[t].0 as usize];
-                for &x in &solid.face_tags[origins[t].1 as usize] {
+                for &x in solid.face_tags[origins[t].1 as usize].iter() {
                     let n = solid.names.name(x);
                     if CAPS.contains(&n) {
                         names.push(n.to_string());

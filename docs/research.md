@@ -10364,3 +10364,48 @@ DamagedHelmet under a drawn sky with a red wall
 Not done: specular, IOR, volume, anisotropy and dispersion; maps
 inside the four extensions; refraction. It is still for checking a
 model, not a render.
+
+## 75. A solid's memory, measured again; face names shared (2026-11-13)
+
+§36 said a `Solid` of 600 000 coloured triangles is about 300 MiB.
+Measured on Unique3D's bear as it is fetched now (819 426 triangles,
+409 711 vertices, vertex colours, one name on every triangle), the
+resident memory after `import`, the file's bytes dropped: **190 MiB**,
+232 bytes a triangle:
+
+| What | Bytes a triangle | MiB |
+| --- | --- | --- |
+| corner colours, 3 × 4 `f64` | 96 | 75 |
+| face names: a `Vec` a triangle (24) and its own allocation (about 32) | 56 | 44 |
+| corners | 12 | 9 |
+| positions (half a vertex a triangle, 24 each) | 12 | 9 |
+| surface | 4 | 3 |
+| the rest (the import's materials and what the allocator keeps) | | 50 |
+
+So §36's 300 was too high by half; and room a list keeps beyond its
+length is not resident (giving it back changed nothing measured).
+
+**Face names shared.** Every triangle had its own list of names, and
+on a mesh from a file they are all the same list. `face_tags` is now
+a list of `Tags` (`Arc<Vec<Tag>>`): a triangle's names read as before,
+and triangles with the same names hold one list. `push_triangle`
+gives a triangle the list of the one before it when the names are the
+same; `canonicalize` renumbers each distinct list once and makes equal
+lists one (so every operation's result shares again);
+`tag_all_faces` adds to each distinct list once. The few places that
+change one triangle's names copy its list first (`Arc::make_mut`).
+
+| The bear | Before | After |
+| --- | --- | --- |
+| resident after import | 190 MiB | 151 MiB |
+| face-name lists | 819 426 | 1 |
+| `shape repair --non-manifold`, peak | 910 MiB | 837 MiB |
+
+The repaired GLB is byte for byte the same, and no golden line moved.
+
+What is left is the colours (96 of the 183 bytes a triangle now) and
+that nothing streams: every tool holds the whole mesh, and the steps
+that drop triangles hold two. Colours as 32-bit floats, or as the
+bytes they were read from, would halve or eighth them; that changes
+every hash a colour reaches and 95 places that compute with them, and
+was not done.

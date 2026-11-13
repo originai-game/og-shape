@@ -184,7 +184,7 @@ fn owners(s: &Solid, rig: &Rig) -> Result<Vec<u32>, RigError> {
     let all: BTreeSet<&str> = s
         .face_tags
         .iter()
-        .flatten()
+        .flat_map(|t| t.iter())
         .map(|&t| s.names.name(t))
         .collect();
     let missing: Vec<String> = rig

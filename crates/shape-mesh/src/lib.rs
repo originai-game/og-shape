@@ -14,7 +14,7 @@ pub use morph::{
     Morph, MorphError, Morphs, SkinsDiffer, bare, carried, carried_skin, carry, carry_redone,
     one_skin, rides,
 };
-pub use names::{LookupError, Names, Tag};
+pub use names::{LookupError, Names, Tag, Tags};
 pub use skin::{Bone, Skin, SkinClip, SkinError, Weights};
 
 use std::collections::BTreeMap;
@@ -79,7 +79,7 @@ pub struct Solid {
     /// Per triangle, its surface id.
     pub surfaces: Vec<u32>,
     /// Per triangle, its face names (sorted tags).
-    pub face_tags: Vec<Vec<Tag>>,
+    pub face_tags: Vec<Tags>,
     /// Names of real edges (sorted tags).
     pub edge_tags: BTreeMap<EdgeKey, Vec<Tag>>,
     /// The strings behind the tags.
@@ -103,7 +103,12 @@ impl Solid {
         ids.dedup();
         self.triangles.push(t);
         self.surfaces.push(surface);
-        self.face_tags.push(ids);
+        // The same names as the triangle before: the same list.
+        let tags = match self.face_tags.last() {
+            Some(last) if **last == ids => last.clone(),
+            _ => Tags::new(ids),
+        };
+        self.face_tags.push(tags);
         if let Some(uvs) = &mut self.uvs {
             uvs.resize(self.triangles.len(), [DVec2::ZERO; 3]);
         }
@@ -221,17 +226,28 @@ impl Solid {
     /// Adds names to every face of the solid, e.g. its part name.
     pub fn tag_all_faces(&mut self, tag: &str) {
         let id = self.names.intern(tag);
+        // Each list once: triangles that shared one share the new one.
+        let mut done: BTreeMap<usize, (Tags, Tags)> = BTreeMap::new();
         for t in &mut self.face_tags {
-            if let Err(i) = t.binary_search(&id) {
-                t.insert(i, id);
+            let key = std::sync::Arc::as_ptr(t) as usize;
+            if let Some((_, with)) = done.get(&key) {
+                *t = with.clone();
+                continue;
             }
+            let mut with = (**t).clone();
+            if let Err(i) = with.binary_search(&id) {
+                with.insert(i, id);
+            }
+            let with = Tags::new(with);
+            done.insert(key, (t.clone(), with.clone()));
+            *t = with;
         }
     }
 
     /// Triangles whose face carries any of `names`. A name that no face
     /// carries is an error that lists the names faces do carry.
     pub fn faces(&self, names: &[&str]) -> Result<Vec<u32>, LookupError> {
-        let ids = self.lookup(names, self.face_tags.iter().flatten().copied())?;
+        let ids = self.lookup(names, self.face_tags.iter().flat_map(|t| t.iter()).copied())?;
         Ok((0..self.triangles.len() as u32)
             .filter(|&i| self.face_tags[i as usize].iter().any(|t| ids.contains(t)))
             .collect())
@@ -368,7 +384,7 @@ impl Solid {
         }
         // 2. Triangles: renumbered, degenerate ones dropped, each rotated
         // to start at its smallest index (winding kept).
-        type Tri = ([u32; 3], u32, Vec<Tag>, CornerUvs, CornerColors);
+        type Tri = ([u32; 3], u32, Tags, CornerUvs, CornerColors);
         let mut tris: Vec<Tri> = Vec::with_capacity(self.triangles.len());
         for (i, t) in self.triangles.iter().enumerate() {
             let t = t.map(|v| remap[v as usize]);

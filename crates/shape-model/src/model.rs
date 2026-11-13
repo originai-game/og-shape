@@ -806,7 +806,7 @@ impl Model {
         let faces: Vec<String> = s
             .face_tags
             .iter()
-            .flatten()
+            .flat_map(|t| t.iter())
             .map(|&t| s.names.name(t).to_string())
             .collect::<BTreeSet<_>>()
             .into_iter()

@@ -174,11 +174,10 @@ silent returns a result with no error:
   roughness as a highlight and a sky over a ground, or a picture all
   round (`--env`); clearcoat, sheen, transmission and iridescence as
   factors.
-- A mesh of 600 000 triangles with colours is about 300 MiB in memory
-  as a `Solid`, and `process` holds the file and two of them at its
-  peak: 0.9 GiB on Unique3D's 620 000-triangle bear, 1.5 GiB with
-  `--fuse` (`docs/research.md` §36). Only that file was measured after
-  the change.
+- A mesh of 819 000 triangles with colours is 151 MiB in memory
+  as a `Solid`, and `repair` holds the file and two of them at its
+  peak: 0.84 GiB on Unique3D's bear of that size, more with `--fuse`
+  (`docs/research.md` §36, §75). Only that file was measured.
 - Keeping a file's UVs, decimation stops at about three triangles a UV
   island: 14 of 54 generated meshes miss 2 000 triangles (the report's
   `blocked` says why); merging rigidly matching islands lowers that
@@ -291,8 +290,10 @@ What a user might expect and will not find, as of 2026-11-12:
   density for every link (a solid, even one) and one effort and
   velocity for every joint; no URDF parser has read one here either. No STEP or other B-rep, by
   design: the kernel holds meshes only.
-- **Size.** A `Solid` of 600 000 coloured triangles is about 300 MiB;
-  nothing streams.
+- **Size.** A `Solid` of 819 000 coloured triangles is 151 MiB
+  resident (183 bytes a triangle, 96 of them its corner colours as
+  64-bit floats), and `repair` peaks at 837 MiB on it; nothing
+  streams (`docs/research.md` §75).
 
 ## Use it
 
