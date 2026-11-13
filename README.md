@@ -216,7 +216,7 @@ silent returns a result with no error:
 
 ## Not done
 
-What a user might expect and will not find, as of 2026-11-12:
+What a user might expect and will not find, as of 2026-11-13:
 
 - **Textures.** WebP is written lossless only (no lossy VP8), and
   baked maps leave as PNG unless `--webp` or `--ktx2` is given.
