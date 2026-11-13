@@ -737,6 +737,15 @@ fn preview_schema() -> Value {
             json!({"type": "string", "description": "Morph targets of a mesh file set to                 weights: `NAME=WEIGHT[,NAME=WEIGHT…]` (the names are in `import`'s parts'                 `morphs`), over the file's rest weights and a clip's."}),
         ),
         (
+            "env",
+            path(
+                "A picture of what is all round the scene, in the workspace, to light it by: \
+                 an equirectangular Radiance .hdr, or a PNG, JPEG, WebP or KTX2 taken as sRGB. \
+                 Surfaces reflect it and take its colour from each side; without one, a plain \
+                 sky over a ground.",
+            ),
+        ),
+        (
             "time",
             num("Seconds into the clip, from its first key (held past its ends)."),
         ),
@@ -1226,6 +1235,10 @@ fn preview_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<
         morph: shape_cli::preview::morph_weights(a.string("morph")?.unwrap_or(""))?,
         time: a.num("time")?,
         frames: a.u32("frames")?,
+        environment: match a.path("env")? {
+            Some(path) => Some(shape_cli::preview::environment(&server.ws, &path)?),
+            None => None,
+        },
     };
     let rendered = render(&loaded(server, a)?, &d)?;
     let out = a.path("out")?;

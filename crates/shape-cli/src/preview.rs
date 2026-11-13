@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
-use shape_tools::{Part, Preview, Scene, UvView, ViewCamera, uv_view, views};
+use shape_tools::{Part, Preview, Scene, UvView, ViewCamera, uv_view};
 
 use crate::args::{Args, IMPORT_OPTIONS};
 use crate::export::written;
@@ -47,6 +47,23 @@ pub struct PreviewDesc {
     /// (the end left out, so a loop does not repeat a frame), one image
     /// each, the camera still; 0 draws one pose at `time`.
     pub frames: u32,
+    /// A picture of what is all round the scene, to light it by in
+    /// place of the plain sky over the ground ([`environment`]).
+    pub environment: Option<shape_tools::Environment>,
+}
+
+/// The picture at `path` as the light all round a scene: an
+/// equirectangular Radiance `.hdr`, or a PNG, JPEG, WebP or KTX2 image
+/// taken as sRGB.
+pub fn environment(files: &dyn Files, path: &Path) -> Result<shape_tools::Environment, Failure> {
+    let bytes = files.read(path)?;
+    let why = |e: String| Failure::Usage(format!("{}: {e}", path.display()));
+    if bytes.starts_with(b"#?") {
+        return shape_tools::Environment::from_hdr(&bytes).map_err(why);
+    }
+    let image = shape_tools::decode(&bytes).map_err(|e| why(e.to_string()))?;
+    shape_tools::Environment::from_image(&image)
+        .ok_or_else(|| why("a picture with no light in it".into()))
 }
 
 /// The most frames of one clip drawn at once.
@@ -363,7 +380,7 @@ fn render_pose(
                 undrawn: array(&undrawn),
             });
         }
-        let v = views(scene, &d.preview).map_err(failed)?;
+        let v = shape_tools::views_in(scene, &d.preview, d.environment.as_ref()).map_err(failed)?;
         let undrawn = array(
             &v.undrawn
                 .iter()
@@ -460,6 +477,7 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         "--morph",
         "--time",
         "--frames",
+        "--env",
         IMPORT_OPTIONS[0],
         IMPORT_OPTIONS[1],
         IMPORT_OPTIONS[2],
@@ -502,6 +520,10 @@ pub fn run(a: &Args) -> Result<String, Failure> {
         morph: morph_weights(a.value(&["--morph"])?.unwrap_or(""))?,
         time: a.number("--time")?.unwrap_or(0.0),
         frames: a.number("--frames")?.unwrap_or(0),
+        environment: match a.value(&["--env"])? {
+            Some(path) => Some(environment(&Local, Path::new(path))?),
+            None => None,
+        },
     };
     let source = load_uvs(&Local, &a.input()?, &a.import()?, a.switch("--uvs"))?;
     write(&Local, &out, &render(&source, &d)?)

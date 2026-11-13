@@ -124,7 +124,7 @@ Run on `main` on 2026-11-10 to 12; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 170 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 416 pass | `scripts/check.sh test` |
+| Tests | 419 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -171,8 +171,9 @@ silent returns a result with no error:
   flattens as one chart; none has fewer charts everywhere). The preview
   draws base-colour and normal maps (PNG, JPEG, KTX2 of UASTC blocks), vertex colours
   and the emissive colour and map, occlusion, and metalness and
-  roughness as a highlight and a sky over a ground: no image-based
-  lighting, clearcoat, transmission or sheen.
+  roughness as a highlight and a sky over a ground, or a picture all
+  round (`--env`); clearcoat, sheen, transmission and iridescence as
+  factors.
 - A mesh of 600 000 triangles with colours is about 300 MiB in memory
   as a `Solid`, and `process` holds the file and two of them at its
   peak: 0.9 GiB on Unique3D's 620 000-triangle bear, 1.5 GiB with
@@ -270,10 +271,11 @@ What a user might expect and will not find, as of 2026-11-12:
   triangles takes seconds a cut (`docs/research.md` §65). The baked normal map's frame is
   MikkTSpace, but from this kernel's recomputed normals, not the
   file's own.
-- **Preview.** One light, a sky over a ground for reflections, no
-  environment image; none of glTF's material extensions (clearcoat,
-  transmission, sheen, iridescence). It is for checking a model, not a
-  render.
+- **Preview.** One light and a sky over a ground, or a picture all
+  round (`--env`) picked by roughness, not prefiltered; clearcoat,
+  sheen, transmission and iridescence as factors (no maps inside
+  them, no refraction, no IOR, specular or volume). It is for checking
+  a model, not a render (`docs/research.md` §74).
 - **Repair.** A large hole on a curved surface closes round by a
   guess at the tilt of the surface at its rim (right for a ball, wrong
   for a hole that was an opening); a hole that only a crossing fill

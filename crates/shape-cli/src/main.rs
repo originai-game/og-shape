@@ -9,7 +9,7 @@
 //! shape preview  <input> -o <out.png> [--views N] [--width PX]
 //!                [--height PX] [--columns N] [--elevation RAD]
 //!                [--azimuth RAD] [--no-edges] [--no-ground] [--fov RAD]
-//!                [--unlit] [--each] [--uv [--uv-size PX]]
+//!                [--unlit] [--each] [--uv [--uv-size PX]] [--env PICTURE]
 //! shape import   <mesh> [-o out]
 //! shape repair   <mesh> [-o out] [--weld MM] [--weld-all] [--floaters F]
 //!                [--floater-size MM] [--non-manifold] [--holes N [--holes-through]]
@@ -73,7 +73,7 @@ const USAGE: &str = "usage: shape <command> <input> [options]
                                                 each way and where its mass sits
   preview  <input> -o <out.png> [--views N] [--width PX] [--height PX]
            [--columns N] [--elevation RAD] [--azimuth RAD] [--no-edges] [--no-ground]
-           [--fov RAD] [--unlit] [--each] [--uv [--uv-size PX]]
+           [--fov RAD] [--unlit] [--each] [--uv [--uv-size PX]] [--env PICTURE]
                                                 draws base-colour maps and vertex colours;
                                                 --each: a PNG a view with its camera;
                                                 --uv: each material's UV layout instead

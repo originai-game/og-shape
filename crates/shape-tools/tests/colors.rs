@@ -278,6 +278,12 @@ fn a_material_and_colours_survive_both_glb_writers() {
         emissive_map: Some(png(3)),
         ao_map: Some(png(4)),
         ao_map_intensity: Some(0.75),
+        clearcoat: 0.75,
+        clearcoat_roughness: 0.25,
+        sheen: [0.5, 0.25, 0.125],
+        sheen_roughness: 0.5,
+        transmission: 0.375,
+        iridescence: 0.625,
     };
     let mut part = Part::new("ball", &s);
     part.material = m.clone();

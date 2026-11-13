@@ -673,3 +673,53 @@ fn a_usd_stage_holds_the_parts_as_built() {
     assert_eq!(&z[data..data + t.len()], t.as_bytes());
     assert_eq!(&z[z.len() - 22..z.len() - 18], b"PK\x05\x06");
 }
+
+/// A material's clear coat, sheen, transmission and thin film go into
+/// a GLB under their extensions and come back as they were.
+#[test]
+fn material_extensions_go_through_a_glb() {
+    let (base, _) = solids();
+    let material = Material {
+        clearcoat: 0.75,
+        clearcoat_roughness: 0.25,
+        sheen: [0.5, 0.25, 0.125],
+        sheen_roughness: 0.5,
+        transmission: 0.375,
+        iridescence: 0.625,
+        ..Default::default()
+    };
+    let scene = Scene {
+        name: "t".into(),
+        parts: vec![Part {
+            material: material.clone(),
+            ..Part::new("p", &base)
+        }],
+    };
+    let bytes = shape_tools::glb(&scene).unwrap();
+    let text = String::from_utf8_lossy(&bytes).to_string();
+    for name in [
+        "KHR_materials_clearcoat",
+        "KHR_materials_sheen",
+        "KHR_materials_transmission",
+        "KHR_materials_iridescence",
+    ] {
+        assert!(text.matches(name).count() >= 2, "{name}");
+    }
+    assert!(!text.contains("extensionsRequired"));
+    let back = shape_tools::import(&bytes, &shape_tools::Import::default(), &|_: &str| {
+        Err("no files".to_string())
+    })
+    .unwrap();
+    let m = &back.parts[0].material;
+    assert_eq!(
+        (
+            m.clearcoat,
+            m.clearcoat_roughness,
+            m.sheen,
+            m.sheen_roughness
+        ),
+        (0.75, 0.25, [0.5, 0.25, 0.125], 0.5)
+    );
+    assert_eq!((m.transmission, m.iridescence), (0.375, 0.625));
+    assert!(back.skipped.is_empty(), "{:?}", back.skipped);
+}

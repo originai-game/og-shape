@@ -82,6 +82,24 @@ pub struct Material {
     /// The occlusion's strength (glTF `occlusionTexture.strength`, three.js
     /// `aoMapIntensity`); `None` is 1.
     pub ao_map_intensity: Option<f64>,
+    /// A clear layer over the surface, 0 none to 1
+    /// (`KHR_materials_clearcoat`'s factor; three.js `clearcoat`).
+    pub clearcoat: f64,
+    /// That layer's roughness, 0 mirror to 1 (three.js
+    /// `clearcoatRoughness`).
+    pub clearcoat_roughness: f64,
+    /// The colour of the soft light cloth gives at grazing angles,
+    /// linear (`KHR_materials_sheen`'s colour; three.js `sheenColor`
+    /// with `sheen` 1). Black is none.
+    pub sheen: [f64; 3],
+    /// How wide that light spreads, 0 to 1 (three.js `sheenRoughness`).
+    pub sheen_roughness: f64,
+    /// How much of the light that is not reflected passes through, 0
+    /// to 1 (`KHR_materials_transmission`; three.js `transmission`).
+    pub transmission: f64,
+    /// A thin film's colours over the reflection, 0 none to 1
+    /// (`KHR_materials_iridescence`'s factor; three.js `iridescence`).
+    pub iridescence: f64,
 }
 
 /// The kinds of map a [`Material`] carries, in the order reports list
@@ -673,7 +691,7 @@ pub(crate) fn material_json(
     m: &Material,
     part: &str,
     maps: MapIndices,
-) -> Result<(Json, bool), ExportError> {
+) -> Result<(Json, Vec<&'static str>), ExportError> {
     let name = if m.name.is_empty() { part } else { &m.name };
     let what = || format!("material {name:?}");
     let color = m.color.unwrap_or([1.0; 3]);
@@ -747,16 +765,52 @@ pub(crate) fn material_json(
         fields.push(("doubleSided", Json::Bool(true)));
     }
     let strength = m.emissive_intensity.filter(|&x| x != 1.0);
+    let mut extensions: Vec<(&'static str, Json)> = Vec::new();
     if let Some(x) = strength {
-        fields.push((
-            "extensions",
-            Json::Obj(vec![(
-                "KHR_materials_emissive_strength",
-                Json::Obj(vec![("emissiveStrength", Json::Num(x.max(0.0)))]),
-            )]),
+        extensions.push((
+            "KHR_materials_emissive_strength",
+            Json::Obj(vec![("emissiveStrength", Json::Num(x.max(0.0)))]),
         ));
     }
-    Ok((Json::Obj(fields), strength.is_some()))
+    let unit = |v: f64| Json::Num(v.clamp(0.0, 1.0));
+    if m.clearcoat > 0.0 {
+        extensions.push((
+            "KHR_materials_clearcoat",
+            Json::Obj(vec![
+                ("clearcoatFactor", unit(m.clearcoat)),
+                ("clearcoatRoughnessFactor", unit(m.clearcoat_roughness)),
+            ]),
+        ));
+    }
+    if m.sheen.iter().any(|c| *c > 0.0) {
+        extensions.push((
+            "KHR_materials_sheen",
+            Json::Obj(vec![
+                (
+                    "sheenColorFactor",
+                    nums(&m.sheen.map(|c| c.clamp(0.0, 1.0))),
+                ),
+                ("sheenRoughnessFactor", unit(m.sheen_roughness)),
+            ]),
+        ));
+    }
+    if m.transmission > 0.0 {
+        extensions.push((
+            "KHR_materials_transmission",
+            Json::Obj(vec![("transmissionFactor", unit(m.transmission))]),
+        ));
+    }
+    if m.iridescence > 0.0 {
+        extensions.push((
+            "KHR_materials_iridescence",
+            Json::Obj(vec![("iridescenceFactor", unit(m.iridescence))]),
+        ));
+    }
+    let used: Vec<&'static str> = extensions.iter().map(|e| e.0).collect();
+    if !extensions.is_empty() {
+        fields.push(("extensions", Json::Obj(extensions)));
+    }
+    Ok((Json::Obj(fields), used))
 }
 
 /// Each of a material's maps checked ([`check_texture`]) and given its
@@ -904,7 +958,7 @@ fn glb_all(
     // Per part with morph targets: how many.
     let mut morph_counts: BTreeMap<&str, usize> = BTreeMap::new();
     let mut textures: Vec<&Texture> = Vec::new();
-    let mut emissive_strength = false;
+    let mut material_extensions: Vec<&'static str> = Vec::new();
     let mut view = |bin: &mut Vec<u8>, start: usize, target: u64| -> u64 {
         views.push(Json::Obj(vec![
             ("buffer", Json::Int(0)),
@@ -1121,8 +1175,8 @@ fn glb_all(
             part.solid.uvs.is_some(),
             &mut textures,
         )?;
-        let (material, strength) = material_json(&part.material, &part.name, maps)?;
-        emissive_strength |= strength;
+        let (material, used) = material_json(&part.material, &part.name, maps)?;
+        material_extensions.extend(used);
         let same = |m: &Json| {
             let (mut a, mut b) = (String::new(), String::new());
             m.write(&mut a);
@@ -1291,7 +1345,7 @@ fn glb_all(
         ),
         ("nodes", Json::Arr(nodes)),
     ];
-    for (k, field) in extension_fields(emissive_strength, &textures)
+    for (k, field) in extension_fields(&material_extensions, &textures)
         .into_iter()
         .enumerate()
     {
@@ -1353,12 +1407,12 @@ fn texture_extension(t: &Texture) -> Option<&'static str> {
     }
 }
 
-/// `extensionsUsed` and `extensionsRequired` for what a file carries: a
-/// material with an emissive strength (used), and textures in KTX2 or
+/// `extensionsUsed` and `extensionsRequired` for what a file carries:
+/// its materials' extensions (used), and textures in KTX2 or
 /// WebP, written as they came (used and required: they have no image a
 /// reader without the extension could take).
 pub(crate) fn extension_fields(
-    emissive_strength: bool,
+    materials: &[&'static str],
     textures: &[&Texture],
 ) -> Vec<(&'static str, Json)> {
     let mut required: Vec<&'static str> = textures
@@ -1367,10 +1421,12 @@ pub(crate) fn extension_fields(
         .collect();
     required.sort_unstable();
     required.dedup();
-    let mut used = required.clone();
-    if emissive_strength {
-        used.insert(0, "KHR_materials_emissive_strength");
-    }
+    // The materials' extensions (used, never required: a reader
+    // without one draws the material without it), then the textures'.
+    let mut used: Vec<&'static str> = materials.to_vec();
+    used.sort_unstable();
+    used.dedup();
+    used.extend(&required);
     let list = |names: &[&str]| Json::Arr(names.iter().map(|n| Json::Str((*n).into())).collect());
     let mut out = Vec::new();
     if !used.is_empty() {

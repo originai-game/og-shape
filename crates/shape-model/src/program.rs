@@ -680,6 +680,12 @@ fn dispatch(m: &mut Model, a: &Args) -> Result<(Value, bool), ModelError> {
                         None => None,
                         Some(_) => Some(a.texture("map")?),
                     },
+                    clearcoat: a.num_or("clearcoat", 0.0)?,
+                    clearcoat_roughness: a.num_or("clearcoatRoughness", 0.0)?,
+                    sheen: colour("sheenColor")?.unwrap_or([0.0; 3]),
+                    sheen_roughness: a.num_or("sheenRoughness", 0.0)?,
+                    transmission: a.num_or("transmission", 0.0)?,
+                    iridescence: a.num_or("iridescence", 0.0)?,
                     ..Default::default()
                 };
                 if a.opt("mapSize").is_some() && mat.map.is_none() {
@@ -1000,6 +1006,12 @@ const OPS: &[(&str, &[&str])] = &[
             "opacity",
             "map",
             "mapSize",
+            "clearcoat",
+            "clearcoatRoughness",
+            "sheenColor",
+            "sheenRoughness",
+            "transmission",
+            "iridescence",
         ],
     ),
     (

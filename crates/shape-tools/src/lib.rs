@@ -125,7 +125,9 @@ pub use place::{
     Axis, AxisMeasures, Pivot, Place, PlaceError, PlaceReport, Size, axis_measures, place,
 };
 pub use png::png;
-pub use preview::{Image, Preview, ViewCamera, Views, preview, sheet, views};
+pub use preview::{
+    Environment, Image, Preview, ViewCamera, Views, preview, preview_in, sheet, views, views_in,
+};
 pub use reorder::{Reordered, reorder};
 pub use repair::{
     Floaters, Holes, LARGE_HOLE_EDGES, NonManifold, Repair, RepairError, RepairReport, Weld,

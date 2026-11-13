@@ -1767,3 +1767,14 @@
   the stage and its maps into one file (`shape export in.glb -o
   out.usdz`; `shape_tools::usda_clips`, `usdz`; `docs/research.md`
   §73).
+- `shape preview --env PICTURE` (the MCP's `env`,
+  `shape_tools::Environment`, `views_in`): an equirectangular picture
+  (a Radiance `.hdr`, or a PNG, JPEG, WebP or KTX2) lights the scene:
+  surfaces reflect it, blurred as they roughen, and take its colour
+  from each side.
+- Materials carry `clearcoat`, `clearcoat_roughness`, `sheen`,
+  `sheen_roughness`, `transmission` and `iridescence`
+  (`KHR_materials_clearcoat`, `_sheen`, `_transmission`,
+  `_iridescence`, their factors): read from and written to GLB, set by
+  a program's `material` op, and drawn by the preview
+  (`docs/research.md` §74).

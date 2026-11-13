@@ -10307,3 +10307,60 @@ joints' paths, takes them from the bind transforms, and gets the
 clip's own skinning matrices to a thousandth;
 `a_usd_stage_holds_the_parts_as_built` holds the hinge between its
 two prims and the zip's layout. No golden line moved.
+
+## 74. The preview: a picture all round, and four material extensions (2026-11-13)
+
+§53 gave the preview a highlight and a plain sky over a ground to
+reflect, and left image-based lighting and glTF's material extensions.
+
+**A picture all round** (`Environment`, `shape preview --env FILE`,
+the MCP's `env`). An equirectangular picture (its width the turn round
++Z, its top row straight up): a Radiance `.hdr` (RGBE, flat or
+run-length coded; read here, ~80 lines) or any image the tools decode,
+taken as sRGB. It is scaled so that its mean over the sphere is the
+plain sky's, so it gives the light its shape and colour and not the
+exposure. Kept as the picture and its halvings down to 8 across, and
+as what a matte surface facing each of 32 × 16 ways gathers (the
+picture times the cosine, summed over a level of at most 64 across).
+With one: what a surface reflects is the picture along the mirrored
+view, from a smaller level the rougher the surface (in place of the
+two greys of §53), and the even light from all round is what the
+surface's normal gathers, in colour. The sun, its highlight and the
+ground's shadow stay as they were. This is the usual split-sum idea
+without its tables: no prefiltering by the lobe, no BRDF integral; a
+level picked by roughness.
+
+**Material extensions**, as factors (their maps are not read, and the
+import says so): on `Material`, through GLB import and export
+(`extensionsUsed`, never required), the program's `material` op
+(three.js's names), and drawn:
+
+- `KHR_materials_clearcoat`: a second lobe of its own roughness over
+  the surface, reflecting 4 % head on and more at a grazing angle
+  (Schlick), and taking that share from what is under it.
+- `KHR_materials_sheen`: its colour added towards the rim, as (1 −
+  n·v) to a power from 1 (rough) to 5 (smooth), under the surface's
+  light.
+- `KHR_materials_transmission`: that share of the matte light gone,
+  and what is already drawn behind the pixel added, tinted by the
+  surface's colour. No refraction, no blur by roughness; the order is
+  the draw order, so glass in front of glass shows the nearer only
+  where it was drawn later.
+- `KHR_materials_iridescence`: the reflection's colour pulled towards
+  a thin film's (400 nm, index 1.3: a cosine of the path difference at
+  650, 510 and 475 nm), which changes with the angle.
+
+A material with none of these and no picture is drawn by the same
+arithmetic as before: no golden line moved.
+
+Checked: `a_picture_all_round_lights_the_scene` (a matte floor under
+a blue sky is bluer; a mirror floor shows the sky; the same picture as
+a Radiance file gives the same pixels to 3 of 255),
+`the_material_extensions_show` (each changes its pixel the way
+described), `material_extensions_go_through_a_glb`. Seen: the
+DamagedHelmet under a drawn sky with a red wall
+(`shape preview --env`): the visor and the metal show them.
+
+Not done: specular, IOR, volume, anisotropy and dispersion; maps
+inside the four extensions; refraction. It is still for checking a
+model, not a render.

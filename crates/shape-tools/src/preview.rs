@@ -392,6 +392,15 @@ pub fn preview(scene: &Scene, d: &Preview) -> Result<Vec<Image>, ExportError> {
     Ok(views(scene, d)?.images)
 }
 
+/// [`preview`], lit by a picture of what is all round ([`views_in`]).
+pub fn preview_in(
+    scene: &Scene,
+    d: &Preview,
+    environment: Option<&Environment>,
+) -> Result<Vec<Image>, ExportError> {
+    Ok(views_in(scene, d, environment)?.images)
+}
+
 /// The decoded maps of a scene's parts, each distinct one once: the
 /// textures and their chains (or why not), in first-use order.
 pub(crate) struct Maps<'a> {
@@ -454,6 +463,16 @@ pub const MAX_PIXELS: u64 = 1 << 28;
 /// Errors as [`crate::glb`] does on an invalid scene, and on an elevation
 /// or field of view out of range.
 pub fn views(scene: &Scene, d: &Preview) -> Result<Views, ExportError> {
+    views_in(scene, d, None)
+}
+
+/// [`views`], lit by a picture of what is all round ([`Environment`])
+/// in place of the plain sky over the ground.
+pub fn views_in(
+    scene: &Scene,
+    d: &Preview,
+    environment: Option<&Environment>,
+) -> Result<Views, ExportError> {
     // The same checks as export, and each part's pose.
     let placed = crate::export::check(scene)?;
     let width = if d.width == 0 { 256 } else { d.width };
@@ -550,6 +569,7 @@ pub fn views(scene: &Scene, d: &Preview) -> Result<Views, ExportError> {
             rgb,
             &mut maps,
             &mut undrawn,
+            environment.is_some(),
         );
         parts.push(Drawn {
             tris,
@@ -656,6 +676,7 @@ pub fn views(scene: &Scene, d: &Preview) -> Result<Views, ExportError> {
             toward,
             unlit: d.unlit,
             maps: &maps,
+            environment,
         };
         if !d.no_ground {
             draw_ground(&mut t, &cam, &ground, &parts, light, ground_z);
@@ -714,12 +735,283 @@ struct Gloss {
     /// The colour the emissive light is multiplied by.
     glow: Option<usize>,
     uvs: Option<Vec<[DVec2; 3]>>,
+    /// A clear layer and its roughness; a sheen's colour and spread;
+    /// how much passes through; a thin film's share.
+    coat: (f64, f64),
+    sheen: ([f64; 3], f64),
+    transmission: f64,
+    iridescence: f64,
 }
 
 /// The light a mirror facing straight down and straight up reflects
 /// (linear): the ground's and the sky's.
 const ENV_DOWN: f64 = 0.15;
 const ENV_UP: f64 = 0.9;
+
+/// The light all round a scene, from a picture of it: an
+/// equirectangular image (its width the turn round the scene's up
+/// axis, its top row straight up), in linear light. With one, a
+/// surface reflects the picture where it would reflect the plain sky
+/// over the ground, blurred as it roughens, and the even light from
+/// all round takes the picture's colour from each side.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Environment {
+    /// The picture and its halvings, each (width, height, linear RGB a
+    /// texel), down to 8 across.
+    levels: Vec<(usize, usize, Vec<[f32; 3]>)>,
+    /// The light a matte surface facing each way gathers, 32 × 16.
+    gathered: Vec<[f32; 3]>,
+}
+
+const GATHERED: (usize, usize) = (32, 16);
+
+impl Environment {
+    /// From linear RGB texels, rows from the top. The whole is scaled
+    /// so that its mean is the plain sky's (0.525): the picture gives
+    /// the light its shape and colour, not the exposure. `None` for an
+    /// image of no size, of the wrong length, or not finite.
+    pub fn new(width: usize, height: usize, texels: &[[f32; 3]]) -> Option<Environment> {
+        if width == 0 || height == 0 || texels.len() != width * height {
+            return None;
+        }
+        if texels.iter().flatten().any(|v| !v.is_finite() || *v < 0.0) {
+            return None;
+        }
+        // The mean over the sphere: a row counts by its ring's size.
+        let ring = |y: usize, h: usize| trig::sin(trig::PI * (y as f64 + 0.5) / h as f64);
+        let (mut sum, mut weight) = (0.0f64, 0.0f64);
+        for y in 0..height {
+            let w = ring(y, height);
+            for p in &texels[y * width..(y + 1) * width] {
+                sum += w * (f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2])) / 3.0;
+            }
+            weight += w * width as f64;
+        }
+        let mean = sum / weight;
+        if mean <= 0.0 || !mean.is_finite() {
+            return None;
+        }
+        let k = ((ENV_DOWN + ENV_UP) / 2.0 / mean) as f32;
+        let mut levels = vec![(
+            width,
+            height,
+            texels.iter().map(|p| p.map(|c| c * k)).collect::<Vec<_>>(),
+        )];
+        while let Some((w, h, last)) = levels.last() {
+            if *w <= 8 || *h <= 4 {
+                break;
+            }
+            let (nw, nh) = (w / 2, h / 2);
+            let mut next = Vec::with_capacity(nw * nh);
+            for y in 0..nh {
+                for x in 0..nw {
+                    let at = |dx: usize, dy: usize| last[(2 * y + dy) * w + 2 * x + dx];
+                    let (a, b, c, d) = (at(0, 0), at(1, 0), at(0, 1), at(1, 1));
+                    next.push([0, 1, 2].map(|i| (a[i] + b[i] + c[i] + d[i]) / 4.0));
+                }
+            }
+            levels.push((nw, nh, next));
+        }
+        // What a matte surface gathers: the picture times the cosine to
+        // its normal, summed over a small level.
+        let small = levels
+            .iter()
+            .find(|l| l.0 <= 64)
+            .unwrap_or(&levels[levels.len() - 1]);
+        let (sw, sh, texels) = (small.0, small.1, &small.2);
+        let dirs: Vec<(DVec3, f64)> = (0..sw * sh)
+            .map(|i| {
+                let (x, y) = (i % sw, i / sw);
+                (
+                    Self::direction((x as f64 + 0.5) / sw as f64, (y as f64 + 0.5) / sh as f64),
+                    ring(y, sh),
+                )
+            })
+            .collect();
+        let mut gathered = Vec::with_capacity(GATHERED.0 * GATHERED.1);
+        for gy in 0..GATHERED.1 {
+            for gx in 0..GATHERED.0 {
+                let n = Self::direction(
+                    (gx as f64 + 0.5) / GATHERED.0 as f64,
+                    (gy as f64 + 0.5) / GATHERED.1 as f64,
+                );
+                let (mut sum, mut weight) = ([0.0f64; 3], 0.0f64);
+                for ((d, ring), p) in dirs.iter().zip(texels) {
+                    let w = ring * d.dot(n).max(0.0);
+                    for c in 0..3 {
+                        sum[c] += w * f64::from(p[c]);
+                    }
+                    weight += w;
+                }
+                gathered.push(sum.map(|s| (s / weight.max(1e-12)) as f32));
+            }
+        }
+        Some(Environment { levels, gathered })
+    }
+
+    /// From an sRGB image (PNG, JPEG, WebP or KTX2, decoded).
+    pub fn from_image(image: &Image) -> Option<Environment> {
+        let texels: Vec<[f32; 3]> = image
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|p| [0, 1, 2].map(|c| to_linear(f64::from(p[c]) / 255.0) as f32))
+            .collect();
+        Self::new(image.width as usize, image.height as usize, &texels)
+    }
+
+    /// From a Radiance `.hdr` file (RGBE, its rows from the top, flat or
+    /// run-length coded); or why not.
+    pub fn from_hdr(bytes: &[u8]) -> Result<Environment, String> {
+        let bad = || "not a Radiance .hdr picture this reads".to_string();
+        if !bytes.starts_with(b"#?") {
+            return Err(bad());
+        }
+        // The header ends at an empty line; the size line follows.
+        let mut at = 0;
+        let mut line = || -> Option<&[u8]> {
+            let end = at + bytes[at..].iter().position(|b| *b == b'\n')?;
+            let l = &bytes[at..end];
+            at = end + 1;
+            Some(l)
+        };
+        loop {
+            if line().ok_or_else(bad)?.is_empty() {
+                break;
+            }
+        }
+        let size = String::from_utf8_lossy(line().ok_or_else(bad)?).to_string();
+        let words: Vec<&str> = size.split_whitespace().collect();
+        let (height, width) = match words.as_slice() {
+            ["-Y", h, "+X", w] => (h.parse::<usize>().ok(), w.parse::<usize>().ok()),
+            _ => return Err("an .hdr picture whose rows do not run from the top".into()),
+        };
+        let (Some(height), Some(width)) = (height, width) else {
+            return Err(bad());
+        };
+        if width == 0 || height == 0 || width.saturating_mul(height) > 64_000_000 {
+            return Err("an .hdr picture of no size, or over 64 megapixels".into());
+        }
+        let mut data = &bytes[at..];
+        let mut texels = Vec::with_capacity(width * height);
+        let mut row = vec![[0u8; 4]; width];
+        for _ in 0..height {
+            if (8..32768).contains(&width)
+                && data.len() >= 4
+                && data[0] == 2
+                && data[1] == 2
+                && usize::from(data[2]) << 8 | usize::from(data[3]) == width
+            {
+                // Run-length coded, a channel after a channel.
+                data = &data[4..];
+                for c in 0..4 {
+                    let mut x = 0;
+                    while x < width {
+                        let (&n, rest) = data.split_first().ok_or_else(bad)?;
+                        data = rest;
+                        if n > 128 {
+                            let (&v, rest) = data.split_first().ok_or_else(bad)?;
+                            data = rest;
+                            for _ in 0..n - 128 {
+                                row.get_mut(x).ok_or_else(bad)?[c] = v;
+                                x += 1;
+                            }
+                        } else {
+                            let n = usize::from(n);
+                            let run = data.get(..n).ok_or_else(bad)?;
+                            data = &data[n..];
+                            for &v in run {
+                                row.get_mut(x).ok_or_else(bad)?[c] = v;
+                                x += 1;
+                            }
+                        }
+                    }
+                }
+            } else {
+                let flat = data.get(..4 * width).ok_or_else(bad)?;
+                data = &data[4 * width..];
+                for (p, q) in row.iter_mut().zip(flat.as_chunks::<4>().0) {
+                    *p = *q;
+                }
+            }
+            for p in &row {
+                // Mantissas times 2^(e − 136), by halving or doubling.
+                let mut scale = 1.0f32;
+                let e = i32::from(p[3]) - 136;
+                for _ in 0..e.abs() {
+                    scale *= if e > 0 { 2.0 } else { 0.5 };
+                }
+                texels.push(if p[3] == 0 {
+                    [0.0; 3]
+                } else {
+                    [0, 1, 2].map(|c| f32::from(p[c]) * scale)
+                });
+            }
+        }
+        Self::new(width, height, &texels)
+            .ok_or_else(|| "an .hdr picture with no light in it".to_string())
+    }
+
+    /// The way texel (u, v) of the picture lies, both in 0..1: u a
+    /// turn round +Z from −X through −Y, v from straight up down.
+    fn direction(u: f64, v: f64) -> DVec3 {
+        let (st, ct) = trig::sin_cos(trig::PI * v);
+        let (sp, cp) = trig::sin_cos(trig::TAU * (u - 0.5));
+        DVec3::new(st * cp, st * sp, ct)
+    }
+
+    /// Where direction `d` (a unit vector) is in the picture.
+    fn place(d: DVec3) -> (f64, f64) {
+        (
+            trig::atan2(d.y, d.x) / trig::TAU + 0.5,
+            trig::acos(d.z.clamp(-1.0, 1.0)) / trig::PI,
+        )
+    }
+
+    fn texel(w: usize, h: usize, texels: &[[f32; 3]], u: f64, v: f64) -> [f64; 3] {
+        // Between the four nearest; round the turn, held at the poles.
+        let (x, y) = (
+            u * w as f64 - 0.5,
+            (v * h as f64 - 0.5).clamp(0.0, h as f64 - 1.0),
+        );
+        let (x0, y0) = (x.floor(), y.floor());
+        let (fx, fy) = (x - x0, y - y0);
+        let at = |dx: i64, dy: i64| {
+            let xi = (x0 as i64 + dx).rem_euclid(w as i64) as usize;
+            let yi = ((y0 as i64 + dy).max(0) as usize).min(h - 1);
+            texels[yi * w + xi]
+        };
+        let (a, b, c, d) = (at(0, 0), at(1, 0), at(0, 1), at(1, 1));
+        [0, 1, 2].map(|i| {
+            let top = f64::from(a[i]) * (1.0 - fx) + f64::from(b[i]) * fx;
+            let low = f64::from(c[i]) * (1.0 - fx) + f64::from(d[i]) * fx;
+            top * (1.0 - fy) + low * fy
+        })
+    }
+
+    /// What a mirror of roughness `rough` facing `d` reflects: the
+    /// picture there, from a smaller level the rougher it is.
+    fn reflected(&self, d: DVec3, rough: f64) -> [f64; 3] {
+        let (u, v) = Self::place(d);
+        let level = rough.clamp(0.0, 1.0) * (self.levels.len() - 1) as f64;
+        let (lo, part) = (level.floor() as usize, level - level.floor());
+        let read = |k: usize| {
+            let (w, h, texels) = &self.levels[k.min(self.levels.len() - 1)];
+            Self::texel(*w, *h, texels, u, v)
+        };
+        let (a, b) = (read(lo), read(lo + 1));
+        [0, 1, 2].map(|i| a[i] * (1.0 - part) + b[i] * part)
+    }
+
+    /// The light a matte surface with normal `n` gathers, over the
+    /// picture's mean: 1 where it gathers as much as the plain light.
+    fn gathered(&self, n: DVec3) -> [f64; 3] {
+        let (u, v) = Self::place(n);
+        let g = Self::texel(GATHERED.0, GATHERED.1, &self.gathered, u, v);
+        g.map(|c| c / ((ENV_DOWN + ENV_UP) / 2.0))
+    }
+}
 
 /// The part's [`Paint`], if it has a map it can draw or vertex colours;
 /// what it cannot draw goes to `undrawn`.
@@ -730,6 +1022,7 @@ fn paint<'a>(
     rgb: [f64; 3],
     maps: &mut Maps<'a>,
     undrawn: &mut Vec<(String, String)>,
+    lit_round: bool,
 ) -> Option<Paint> {
     let n = s.triangles.len();
     let map = material.map.as_ref();
@@ -757,7 +1050,24 @@ fn paint<'a>(
     let glow = chain(material.emissive_map.as_ref(), true, "emissive map");
     let metal = material.metalness.clamp(0.0, 1.0);
     let rough = material.roughness.unwrap_or(1.0).clamp(0.0, 1.0);
-    let glossy = metal > 0.0 || rough < 1.0;
+    let unit = |v: f64| {
+        if v.is_finite() {
+            v.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    };
+    let coat = (unit(material.clearcoat), unit(material.clearcoat_roughness));
+    let sheen = (material.sheen.map(unit), unit(material.sheen_roughness));
+    let (transmission, iridescence) = (unit(material.transmission), unit(material.iridescence));
+    // A picture all round lights every surface, matte ones too.
+    let glossy = metal > 0.0
+        || rough < 1.0
+        || coat.0 > 0.0
+        || sheen.0 != [0.0; 3]
+        || transmission > 0.0
+        || iridescence > 0.0
+        || lit_round;
     let gloss =
         (glossy || metal_rough.is_some() || occlusion.is_some() || glow.is_some()).then(|| Gloss {
             metal,
@@ -766,6 +1076,10 @@ fn paint<'a>(
             occlusion,
             glow,
             uvs: uvs.cloned(),
+            coat,
+            sheen,
+            transmission,
+            iridescence,
         });
     let normal = normal.and_then(|(t, scale)| {
         let why = match &s.uvs {
@@ -840,6 +1154,8 @@ struct Look<'a> {
     toward: DVec3,
     unlit: bool,
     maps: &'a Maps<'a>,
+    /// The picture all round, if one was given.
+    environment: Option<&'a Environment>,
 }
 
 /// Per triangle, each corner's shading normal: the area-weighted sum of
@@ -1150,6 +1466,7 @@ fn draw_triangle(t: &mut Target, look: &Look, p: &Drawn, k: usize) {
                 *c *= f.w[0] * vc[0][ch] + f.w[1] * vc[1][ch] + f.w[2] * vc[2][ch];
             }
         }
+        let mut transmitted = 0.0;
         let lit: [f64; 3] = match gloss {
             None => {
                 let srgb = [0, 1, 2].map(|c| to_srgb(col[c].clamp(0.0, 1.0)));
@@ -1178,40 +1495,122 @@ fn draw_triangle(t: &mut Target, look: &Look, p: &Drawn, k: usize) {
                         .try_normalize()
                 });
                 let towards = n.map_or(0.0, |n| n.dot(look.light).max(0.0));
-                if !look.unlit && shade != 1.0 {
-                    // Occlusion dims the light from all round, not the sun.
-                    l = AMBIENT * shade + DIFFUSE * towards;
+                // The light from all round: even, or the picture's from
+                // the side the surface faces; occlusion dims it, not
+                // the sun.
+                let round = match (look.environment, n) {
+                    (Some(env), Some(n)) => env.gathered(n),
+                    _ => [1.0; 3],
+                };
+                let mut lights = [l; 3];
+                if !look.unlit && (shade != 1.0 || look.environment.is_some()) {
+                    lights = round.map(|r| AMBIENT * shade * r + DIFFUSE * towards);
                 }
                 // What is reflected: a highlight of the light, and the
-                // sky over the ground, blurred as the surface roughens.
+                // sky over the ground (or the picture), blurred as the
+                // surface roughens.
                 let mut mirror = [0.0; 3];
-                if let (Some(n), false, true) = (n, look.unlit, metal > 0.0 || rough < 1.0) {
+                let extras = g.coat.0 > 0.0 || g.sheen.0 != [0.0; 3] || g.iridescence > 0.0;
+                if let (Some(n), false, true) = (
+                    n,
+                    look.unlit,
+                    metal > 0.0 || rough < 1.0 || extras || look.environment.is_some(),
+                ) {
                     let smooth = 1.0 - rough;
-                    let alpha2 = (rough * rough * rough * rough).max(1e-6);
-                    let power = (2.0 / alpha2 - 2.0).clamp(0.0, 2000.0);
-                    let half = (look.light + view).try_normalize().unwrap_or(n);
-                    let highlight = DIFFUSE
-                        * ((power + 2.0) / 8.0 * trig::pow(n.dot(half).max(0.0), power)).min(8.0)
-                        * towards
-                        * smooth;
+                    let facing_view = n.dot(view).max(0.0);
                     let back = n * (2.0 * n.dot(view)) - view;
-                    let sharp = ENV_DOWN + (ENV_UP - ENV_DOWN) * (0.5 + 0.5 * back.z);
-                    let flat = (ENV_DOWN + ENV_UP) / 2.0;
-                    let around = (sharp + (flat - sharp) * rough) * shade;
+                    // A lobe of roughness r: its highlight, and what it
+                    // reflects of all round.
+                    let lobe = |r: f64| -> (f64, [f64; 3]) {
+                        let alpha2 = (r * r * r * r).max(1e-6);
+                        let power = (2.0 / alpha2 - 2.0).clamp(0.0, 2000.0);
+                        let half = (look.light + view).try_normalize().unwrap_or(n);
+                        let highlight = DIFFUSE
+                            * ((power + 2.0) / 8.0 * trig::pow(n.dot(half).max(0.0), power))
+                                .min(8.0)
+                            * towards
+                            * (1.0 - r);
+                        let around = match look.environment {
+                            Some(env) => env.reflected(back, r).map(|c| c * shade),
+                            None => {
+                                let sharp = ENV_DOWN + (ENV_UP - ENV_DOWN) * (0.5 + 0.5 * back.z);
+                                let flat = (ENV_DOWN + ENV_UP) / 2.0;
+                                [(sharp + (flat - sharp) * r) * shade; 3]
+                            }
+                        };
+                        (highlight, around)
+                    };
+                    let (highlight, around) = lobe(rough);
                     let reach = metal + (1.0 - metal) * smooth;
+                    // More is reflected at a grazing angle (Schlick).
+                    let graze = {
+                        let g = 1.0 - facing_view;
+                        g * g * g * g * g
+                    };
+                    // A thin film tints the reflection by the angle: a
+                    // film of 400 nm and index 1.3, at red, green and
+                    // blue light.
+                    let film = [650.0, 510.0, 475.0].map(|wave: f64| {
+                        let inside = (1.0 - (1.0 - facing_view * facing_view) / (1.3 * 1.3)).sqrt();
+                        0.5 + 0.5 * trig::cos(trig::TAU * 2.0 * 1.3 * 400.0 * inside / wave)
+                    });
+                    let coat_share = g.coat.0 * (0.04 + 0.96 * graze);
                     for (c, m) in mirror.iter_mut().enumerate() {
-                        let f0 = 0.04 * (1.0 - metal) + col[c].clamp(0.0, 1.0) * metal;
-                        *m = f0 * (highlight + around * reach);
+                        let mut f0 = 0.04 * (1.0 - metal) + col[c].clamp(0.0, 1.0) * metal;
+                        f0 += (film[c] - f0) * g.iridescence * (0.3 + 0.7 * reach);
+                        let near = if look.environment.is_some() || extras {
+                            // With a picture to reflect, and under a
+                            // coat, the grazing gain shows.
+                            f0 + (1.0 - f0) * graze * reach
+                        } else {
+                            f0
+                        };
+                        *m = near * (highlight + around[c] * reach) * (1.0 - coat_share);
+                    }
+                    if g.coat.0 > 0.0 {
+                        let (highlight, around) = lobe(g.coat.1);
+                        for (c, m) in mirror.iter_mut().enumerate() {
+                            *m += coat_share * (highlight + around[c]);
+                        }
+                    }
+                    if g.sheen.0 != [0.0; 3] {
+                        // Cloth's soft light towards the rim: wider the
+                        // rougher the sheen.
+                        let rim = trig::pow(1.0 - facing_view, 1.0 + 4.0 * (1.0 - g.sheen.1));
+                        for (c, m) in mirror.iter_mut().enumerate() {
+                            *m += g.sheen.0[c] * rim * to_linear(lights[c].clamp(0.0, 1.0));
+                        }
                     }
                 }
+                transmitted = g.transmission * (1.0 - metal);
                 [0, 1, 2].map(|c| {
                     let matte = to_srgb((col[c] * (1.0 - metal)).clamp(0.0, 1.0));
-                    let linear =
-                        to_linear((matte * l).clamp(0.0, 1.0)) + mirror[c] + e[c] * tint[c];
+                    let linear = to_linear((matte * lights[c]).clamp(0.0, 1.0))
+                        * (1.0 - transmitted)
+                        + mirror[c]
+                        + e[c] * tint[c];
                     to_srgb(linear.clamp(0.0, 1.0))
                 })
             }
         };
+        if transmitted > 0.0 {
+            // What passes through: what is behind, tinted by the
+            // surface's colour, under the surface's own light. Nearer
+            // things still hide what is behind this.
+            let a = alpha * col[3].clamp(0.0, 1.0);
+            let under = out[i];
+            out[i] = [0, 1, 2].map(|c| {
+                let behind = to_linear(f64::from(under[c]) / 255.0) * col[c].clamp(0.0, 1.0);
+                let own = to_linear(lit[c]);
+                let seen = to_srgb((own + transmitted * behind).clamp(0.0, 1.0));
+                byte(seen * a + f64::from(under[c]) / 255.0 * (1.0 - a))
+            });
+            if alpha == 1.0 {
+                depth[i] = z;
+                ground[i] = false;
+            }
+            return;
+        }
         if alpha == 1.0 {
             depth[i] = z;
             ground[i] = false;
@@ -1468,6 +1867,128 @@ mod tests {
     fn rgb_at(im: &Image, x: u32, y: u32) -> [u8; 3] {
         let i = ((y * im.width + x) * 4) as usize;
         [im.rgba[i], im.rgba[i + 1], im.rgba[i + 2]]
+    }
+
+    /// A picture all round lights the scene: a matte floor under a
+    /// blue sky is bluer than under the plain light, and a mirror
+    /// floor shows the sky itself. A Radiance file reads as the
+    /// picture it holds.
+    #[test]
+    fn a_picture_all_round_lights_the_scene() {
+        let s = floor_quad();
+        // The upper half blue, the lower half red.
+        let texels: Vec<[f32; 3]> = (0..64 * 32)
+            .map(|i| {
+                if i / 64 < 16 {
+                    [0.1, 0.2, 1.0]
+                } else {
+                    [1.0, 0.1, 0.1]
+                }
+            })
+            .collect();
+        let env = Environment::new(64, 32, &texels).unwrap();
+        let lit = |material: Material, env: Option<&Environment>| {
+            let scene = Scene {
+                name: "t".into(),
+                parts: vec![Part {
+                    material,
+                    ..Part::new("p", &s)
+                }],
+            };
+            let d = Preview {
+                views: 1,
+                no_edges: true,
+                no_ground: true,
+                ..Default::default()
+            };
+            rgb_at(&views_in(&scene, &d, env).unwrap().images[0], 128, 128)
+        };
+        let grey = Material {
+            color: Some([0.5; 3]),
+            ..Default::default()
+        };
+        let plain = lit(grey.clone(), None);
+        assert_eq!(plain[0], plain[2]);
+        let [r, _, b] = lit(grey.clone(), Some(&env));
+        assert!(b > r + 15, "{r} {b}");
+        let matte = (r, b);
+        let mirror = Material {
+            color: Some([1.0; 3]),
+            metalness: 1.0,
+            roughness: Some(0.0),
+            ..Default::default()
+        };
+        let [r, _, b] = lit(mirror, Some(&env));
+        assert!(b > 150 && r < 110, "{r} {b}");
+        // The same picture as a Radiance file, flat: each texel a
+        // mantissa a channel and one exponent.
+        let mut hdr = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 32 +X 64\n".to_vec();
+        for p in &texels {
+            // Exponent 129: a mantissa of m is m / 128.
+            hdr.extend_from_slice(&[
+                (p[0] * 128.0) as u8,
+                (p[1] * 128.0) as u8,
+                (p[2] * 128.0) as u8,
+                129,
+            ]);
+        }
+        let read = Environment::from_hdr(&hdr).unwrap();
+        let [r2, _, b2] = lit(grey, Some(&read));
+        assert!(
+            r2.abs_diff(matte.0) <= 3 && b2.abs_diff(matte.1) <= 3,
+            "{r2} {b2} for {matte:?}"
+        );
+        assert!(Environment::from_hdr(b"#?RADIANCE\n\n+Y 2 +X 2\n").is_err());
+        assert!(Environment::new(2, 2, &[[0.0; 3]; 4]).is_none());
+    }
+
+    /// The material extensions each change what is drawn: a clear coat
+    /// reflects over a matte surface, a sheen adds its colour towards
+    /// the rim, what transmits shows what is behind it in its own
+    /// colour, and a thin film colours a metal's reflection.
+    #[test]
+    fn the_material_extensions_show() {
+        let s = floor_quad();
+        let at = |m: Material| rgb_at(&one_view(&s, m, Preview::default()).images[0], 128, 128);
+        let grey = Material {
+            color: Some([0.5; 3]),
+            ..Default::default()
+        };
+        let plain = at(grey.clone());
+        let coated = at(Material {
+            clearcoat: 1.0,
+            ..grey.clone()
+        });
+        assert!(coated[0] > plain[0] + 3, "{coated:?} {plain:?}");
+        let [r, g, _] = at(Material {
+            sheen: [1.0, 0.0, 0.0],
+            sheen_roughness: 1.0,
+            ..grey.clone()
+        });
+        assert!(r > plain[0] + 10 && g == plain[1], "{r} {g} {plain:?}");
+        // Red glass over the pale background: red stays, green goes.
+        let [r, g, _] = at(Material {
+            color: Some([1.0, 0.2, 0.2]),
+            transmission: 1.0,
+            ..Default::default()
+        });
+        assert!(r > 200 && g < 150, "{r} {g}");
+        let steel = Material {
+            color: Some([0.8; 3]),
+            metalness: 1.0,
+            roughness: Some(0.2),
+            ..Default::default()
+        };
+        let bare = at(steel.clone());
+        let filmed = at(Material {
+            iridescence: 1.0,
+            ..steel
+        });
+        let spread = |c: [u8; 3]| c.iter().max().unwrap() - c.iter().min().unwrap();
+        assert!(
+            spread(bare) < 4 && spread(filmed) > 20,
+            "{bare:?} {filmed:?}"
+        );
     }
 
     #[test]

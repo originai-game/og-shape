@@ -125,7 +125,7 @@ pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
     };
     let mut textures: Vec<&Texture> = Vec::new();
     let maps = map_indices(&material, "", uvs.is_some(), &mut textures).map_err(as_plain)?;
-    let (material_json, strength) = material_json(&material, name, maps).map_err(as_plain)?;
+    let (material_json, used) = material_json(&material, name, maps).map_err(as_plain)?;
     // Normals per (vertex, surface).
     let mut normal: BTreeMap<(u32, u32), DVec3> = BTreeMap::new();
     for (i, t) in s.triangles.iter().enumerate() {
@@ -378,10 +378,7 @@ pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
         doc.push(("materials", Json::Arr(vec![material_json])));
         doc.push(("accessors", Json::Arr(accessors)));
         doc.extend(texture_json(&textures, &mut bin, &mut views));
-        for (k, field) in extension_fields(strength, &textures)
-            .into_iter()
-            .enumerate()
-        {
+        for (k, field) in extension_fields(&used, &textures).into_iter().enumerate() {
             doc.insert(1 + k, field);
         }
         doc.push(("bufferViews", Json::Arr(views)));

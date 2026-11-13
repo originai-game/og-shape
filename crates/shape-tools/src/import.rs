@@ -677,7 +677,11 @@ pub(crate) fn fetch(uri: &str, resolve: Resolve) -> Result<Vec<u8>, ImportError>
 
 // ── glTF ────────────────────────────────────────────────────────────────────
 
-const SUPPORTED_EXTENSIONS: [&str; 9] = [
+const SUPPORTED_EXTENSIONS: [&str; 13] = [
+    "KHR_materials_clearcoat",
+    "KHR_materials_sheen",
+    "KHR_materials_transmission",
+    "KHR_materials_iridescence",
     "KHR_draco_mesh_compression",
     "EXT_meshopt_compression",
     "KHR_meshopt_compression",
@@ -2184,6 +2188,13 @@ impl Doc<'_> {
             .get("emissiveStrength")
             .num()
             .filter(|x| x.is_finite() && *x != 1.0);
+        let factor = |extension: &str, field: &str, default: f64| {
+            ext.get(extension)
+                .get(field)
+                .num()
+                .filter(|x| x.is_finite())
+                .map_or(default, |x| x.clamp(0.0, 1.0))
+        };
         let mode = m.get("alphaMode").str().unwrap_or("OPAQUE");
         let cutoff = m.get("alphaCutoff").num().filter(|x| x.is_finite());
         let mut tex =
@@ -2221,10 +2232,37 @@ impl Doc<'_> {
                 .get("strength")
                 .num()
                 .filter(|x| x.is_finite() && *x != 1.0),
+            clearcoat: factor("KHR_materials_clearcoat", "clearcoatFactor", 0.0),
+            clearcoat_roughness: factor("KHR_materials_clearcoat", "clearcoatRoughnessFactor", 0.0),
+            sheen: ext
+                .get("KHR_materials_sheen")
+                .get("sheenColorFactor")
+                .nums()
+                .filter(|v| v.len() == 3 && v.iter().all(|x| x.is_finite()))
+                .map_or([0.0; 3], |v| [v[0], v[1], v[2]].map(|c| c.clamp(0.0, 1.0))),
+            sheen_roughness: factor("KHR_materials_sheen", "sheenRoughnessFactor", 0.0),
+            transmission: factor("KHR_materials_transmission", "transmissionFactor", 0.0),
+            iridescence: factor("KHR_materials_iridescence", "iridescenceFactor", 0.0),
         };
-        for (k, _) in ext.entries() {
-            if k != "KHR_materials_emissive_strength" {
+        // The factors of these are read; a map inside one is not.
+        const READ: [&str; 5] = [
+            "KHR_materials_emissive_strength",
+            "KHR_materials_clearcoat",
+            "KHR_materials_sheen",
+            "KHR_materials_transmission",
+            "KHR_materials_iridescence",
+        ];
+        for (k, body) in ext.entries() {
+            if !READ.contains(&k.as_str()) {
                 skipped.push(format!("{name}: its material's extension {k} is not read"));
+                continue;
+            }
+            for (field, _) in body.entries() {
+                if field.ends_with("Texture") {
+                    skipped.push(format!(
+                        "{name}: its material's {field} is not read (the factor is)"
+                    ));
+                }
             }
         }
         (material, defaults)
