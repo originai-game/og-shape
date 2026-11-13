@@ -44,13 +44,10 @@
 //!    filled ones takes their mean, until `dilate` layers or every texel is
 //!    filled.
 //!
-//! **The tangent convention.** Per vertex of the plain GLB (one per
-//! position, surface, UV and colour), the sum over its triangles of
-//! ∂P/∂u and ∂P/∂v times their UV area, the tangent made square to the
-//! normal and `w` the side ∂P/∂v falls on (`surface::corner_frames`). It
-//! is the standard per-vertex accumulation, not MikkTSpace; the GLB
-//! carries it as `TANGENT` ([`crate::PlainGlb::tangents`]), which a glTF
-//! viewer uses instead of its own.
+//! **The tangent convention.** MikkTSpace ([`crate::mikk`]), from each
+//! corner's position, the surface's smooth normal and its UV
+//! (`surface::corner_frames`): what Blender, Unity and Unreal compute.
+//! The GLB carries it as `TANGENT` ([`crate::PlainGlb::tangents`]).
 //!
 //! f64 `+ − × /` and `sqrt` for positions, `trig::acos` for the angle
 //! measures only, integer texel arithmetic and exact predicates for every

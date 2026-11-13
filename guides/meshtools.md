@@ -283,10 +283,11 @@ What to check in the report:
 - `material.maps`: the baked maps (`baked_map.png`, …), `defaults` and
   the factors as the file had them.
 
-The tangents are this kernel's (per-vertex sums of ∂P/∂u, not
-MikkTSpace) and are written to the GLB as `TANGENT`: a viewer that reads
-`TANGENT` shades the baked normal map as it was baked; one that derives
-its own frame does not. What the bake cannot do, it reports and does not
+The tangents are MikkTSpace (what Blender, Unity and Unreal compute),
+from the mesh's normals as written, and go to the GLB as `TANGENT`: a
+viewer that reads `TANGENT` shades the baked normal map as it was
+baked, and one that derives MikkTSpace from the file's normals and UVs
+gets the same frame. What the bake cannot do, it reports and does not
 guess: thin shells and touching sheets (choose by `facing_away` and
 `ambiguous`), a source that crosses itself, mirrored source islands (read
 correctly; the output has none), and seams between charts in the normal

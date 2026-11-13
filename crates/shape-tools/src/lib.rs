@@ -74,6 +74,7 @@ mod ktx2;
 mod measure;
 mod meshglb;
 mod meshopt;
+mod mikk;
 mod place;
 mod png;
 mod polygon;

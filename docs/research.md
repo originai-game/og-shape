@@ -9323,3 +9323,50 @@ where the surface has turned, so a closed organic shape is several
 charts rather than one opened along a cut, which is what a seam-placing
 unwrapper (xatlas, Blender with marked seams) gives. Checked:
 `conformal_charts_keep_angles_and_area`.
+
+## 56. MikkTSpace (2026-11-12)
+
+§34 baked normal maps in a frame of this kernel's own (per-vertex sums
+of ∂P/∂u), safe only for a viewer that reads the written `TANGENT`.
+Tools that derive their own tangents (Blender on import, Unity and
+Unreal by default, most bakers) use MikkTSpace, so a map baked here
+shaded a little wrong there. `crate::mikk` is a port of Morten
+Mikkelsen's `mikktspace.c` (zlib licence, `third_party/mikktspace`),
+and `surface::corner_frames` uses it for the bake's frame and the
+written `TANGENT`.
+
+What the reference does, kept in the port:
+
+1. corners at one position with one normal and one UV are one vertex;
+2. a triangle's ∂P/∂u and ∂P/∂v, made unit, and whether its UVs keep
+   its winding; with no UV area it may join any group;
+3. two triangles are neighbours across an edge they wind opposite ways
+   (the first such pair, by triangle number);
+4. round a vertex, the triangles reached through neighbours that wind
+   their UVs the same way are one group, a triangle with no UV area
+   taking the winding of the first group to reach it;
+5. a corner's tangent is, over its group, each triangle's ∂P/∂u laid
+   in the plane of the vertex's normal and made unit, times the angle
+   of the triangle at the vertex (its edges laid in that plane), summed
+   and made unit; its sign is the group's winding. A group splits where
+   two triangles' derivatives point exactly opposite ways (the
+   reference's 180° threshold).
+
+Left out: quads (the kernel has triangles only). Differences that
+cannot change a result but for rounding: f64 for the reference's f32,
+`trig::acos`, ordered maps for its hash grid and sorts.
+
+Checked against Blender: Khronos' NormalTangentMirrorTest was written
+by Blender's glTF exporter with its tangents (MikkTSpace); from the
+file's positions, normals and UVs the port gives, over its 15 720
+corners, tangents within 0.03° of the file's and the same sign at
+every one (the file's values are f32). The file is CC-BY 4.0 and is
+not kept; the committed test is
+`a_corner_s_tangent_is_weighted_by_angle` (the weighting by angle, and
+a group split where the UVs fold).
+
+One limit stays: the normals are this kernel's (smooth within a
+surface, recomputed on import), not the file's, so a normal map that
+came with a file is read in MikkTSpace of other normals than its
+author's. Golden: `mcp.process.bake` moves (the baked normal map and
+the `TANGENT` it is written with); nothing else.

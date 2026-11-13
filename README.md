@@ -123,7 +123,7 @@ Run on `main` on 2026-11-10 to 12; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 167 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 392 pass | `scripts/check.sh test` |
+| Tests | 393 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -183,8 +183,8 @@ silent returns a result with no error:
   atlas: where keeping also reaches it (10 000 triangles) the bake looks
   less like the file (median colour error 2.9 against 1.6 of 255), its
   maps double a single-map file's texture memory, and its normal map is
-  in this kernel's tangent frame (written as `TANGENT`), not MikkTSpace
-  (`docs/research.md` §34).
+  in MikkTSpace from this kernel's own normals (written with `TANGENT`;
+  `docs/research.md` §34, §56).
 - Repair leaves open, and reports, non-manifold edges that no pairing of
   their faces separates and holes over 64 edges that no flat clear fill
   closes: 2 of TRELLIS's 6 meshes (`docs/research.md` §32).
@@ -237,8 +237,9 @@ What a user might expect and will not find, as of 2026-11-12:
 - **Unwrap and bake.** `--conformal` flattens bending charts keeping
   their angles (LSCM), but cuts no seams of its own: a chart still
   ends where the surface has turned too far from its seed, so a head
-  or a limb is several charts, not one cut open. The baked normal map is in this kernel's tangent frame, not
-  MikkTSpace.
+  or a limb is several charts, not one cut open. The baked normal map's frame is
+  MikkTSpace, but from this kernel's recomputed normals, not the
+  file's own.
 - **Preview.** One light, a sky over a ground for reflections, no
   environment image; none of glTF's material extensions (clearcoat,
   transmission, sheen, iridescence). It is for checking a model, not a

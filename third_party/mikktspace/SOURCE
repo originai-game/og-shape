@@ -1,0 +1,18 @@
+MikkTSpace (Morten S. Mikkelsen), zlib licence, LICENSE in this folder.
+repository: https://github.com/mmikk/MikkTSpace
+file:       mikktspace.c (master, read 2026-11-12)
+
+What is here:
+  Nothing but the licence. crates/shape-tools/src/mikk.rs is a port of
+  mikktspace.c: an altered version (the licence asks that this be said).
+  It is for triangles only (the reference's quad handling is left out),
+  in f64 with this project's deterministic maths, with ordered maps in
+  place of the reference's hashing and sorting; a triangle with two
+  corners at one position takes the tangent of another corner at the
+  same vertex, and a corner no group reaches keeps no tangent (the
+  caller gives it one square to its normal).
+
+Checked against Blender's MikkTSpace: Khronos' NormalTangentMirrorTest
+(written by Blender's glTF exporter, CC-BY 4.0, not kept here), its
+15 720 corners' tangents from the file's positions, normals and UVs:
+the largest angle to the file's TANGENT 0.03 degrees, every sign equal.

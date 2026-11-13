@@ -1596,3 +1596,9 @@
   charts for 6, a cylinder's side unrolls at its true area,
   DamagedHelmet takes 497 charts for 643. Off by default
   (`docs/research.md` §55).
+- Tangents are MikkTSpace: the baked normal map's frame and the
+  `TANGENT` a GLB carries are what Blender, Unity and Unreal compute
+  from the same normals and UVs (a port of `mikktspace.c`). Against
+  Blender's own tangents on Khronos' NormalTangentMirrorTest: 15 720
+  corners within 0.03°, every sign equal. Baked normal maps change
+  (`docs/research.md` §56).
