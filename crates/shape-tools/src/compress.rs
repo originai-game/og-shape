@@ -193,7 +193,7 @@ pub(crate) fn triangles(tris: &[[u32; 3]]) -> Vec<u8> {
 }
 
 /// A parsed value as JSON text, keys in their order.
-fn write(v: &Value, out: &mut String) {
+pub(crate) fn write(v: &Value, out: &mut String) {
     match v {
         Value::Null => out.push_str("null"),
         Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
@@ -224,7 +224,7 @@ fn write(v: &Value, out: &mut String) {
     }
 }
 
-fn set(obj: &mut Value, key: &str, v: Value) {
+pub(crate) fn set(obj: &mut Value, key: &str, v: Value) {
     if let Value::Obj(fields) = obj {
         match fields.iter_mut().find(|(k, _)| k == key) {
             Some(slot) => slot.1 = v,
@@ -233,11 +233,11 @@ fn set(obj: &mut Value, key: &str, v: Value) {
     }
 }
 
-fn num(v: usize) -> Value {
+pub(crate) fn num(v: usize) -> Value {
     Value::Num(v as f64)
 }
 
-fn obj(fields: Vec<(&str, Value)>) -> Value {
+pub(crate) fn obj(fields: Vec<(&str, Value)>) -> Value {
     Value::Obj(
         fields
             .into_iter()

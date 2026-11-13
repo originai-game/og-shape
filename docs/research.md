@@ -9509,3 +9509,56 @@ kept only for the modes of 16 and 32 weights.
 The hints differ from §50's in the blocks where a clipped channel
 decided, so `meshtools.look.ktx2` moves: the written files' bytes, not
 what they decode to. Checked: `copies_of_neighbours_cost_fewer_bytes`.
+
+## 60. Writing Draco (2026-11-12)
+
+§44 reads Draco; `draco_write.rs` writes it, the mirror of what the
+reader takes (Draco's own encoder was not read). The bitstream is 2.2,
+which `KHR_draco_mesh_compression` asks for.
+
+- **Connectivity: sequential.** Points and triangles keep their order,
+  so the glTF accessors' counts stay true and nothing has to be
+  remapped. The indices are written as signed differences from the
+  last, under the tagged symbol scheme. EdgeBreaker, which reorders
+  the mesh and codes a triangle in about two bits, is not written.
+- **Attributes.** Floats are quantized to a number of bits of their
+  range (Draco's one extent for all components) and written as whole
+  numbers; whole numbers (joints) as they are; other floats (weights)
+  plain. Whole numbers are coded as the difference from the point
+  before (the only prediction a sequential mesh has: the parallelogram
+  needs EdgeBreaker's corner table), wrapped into the values' range,
+  signs folded into the low bit.
+- **Symbols.** Tagged: each point's numbers are written in as many
+  bits as its largest needs, and that bit count is entropy coded with
+  rANS over a table of 4 096 (the encoder runs the points last to
+  first and the decoder reads the bytes from the end). The table's
+  probabilities are the counts scaled to 4 096, none of a used symbol
+  nothing.
+- **In a GLB** (`compress_draco`). Each primitive that draws indexed
+  triangles and has no morph targets becomes one Draco buffer; its
+  accessors lose their buffer views (the counts and bounds stay), and
+  views nothing reads any more are dropped. Positions of all of a
+  mesh's primitives are quantized on one grid (the mesh's least corner
+  and widest extent): on grids of their own, vertices two primitives
+  share came back apart (RobotExpressive: 76 boundary edges became
+  124). The bounds in the accessors are the unquantized ones.
+
+Measured (default bits: positions 14, normals and tangents 10, UVs 12,
+colours 8):
+
+| File | Primitives | Their geometry | Read back |
+| --- | --- | --- | --- |
+| DamagedHelmet | 1 of 1 | 558 504 → 153 934 | same triangles; UV measures move in the last places |
+| Mixamo soldier | 2 of 2 | 841 392 → 425 788 | same triangles, bones and clips |
+| RobotExpressive | 16 of 19 (3 have morph targets) | 172 482 → 56 654 | same triangles, positions, boundary edges and pieces |
+
+About 3.6 × on a static mesh, against meshopt's lossless 1.4 × (§51);
+Draco's own encoder at these bits reaches perhaps twice as far again
+with EdgeBreaker and the parallelogram. Checked:
+`a_written_mesh_reads_back` (the decoder that reads Draco's own test
+files gives back the triangles, whole numbers and plain floats
+exactly, and quantized floats within half a step);
+`a_draco_glb_reads_back_to_the_bits_kept`; `meshtools.compress` in the
+gate (its line moves: the Draco file is hashed with the meshopt one).
+Not checked: no file written here has been read by Draco's own
+decoder (it cannot be run in this environment).

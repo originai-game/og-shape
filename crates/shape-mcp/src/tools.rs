@@ -896,6 +896,28 @@ fn compress_schema() -> Value {
                 "out",
                 path("Write the compressed GLB here, in the workspace."),
             ),
+            (
+                "draco",
+                boolean(
+                    "Compress with Draco (`KHR_draco_mesh_compression`) instead: lossy \
+                     (positions kept to 14 bits of their range, normals 10, UVs 12, colours 8; \
+                     joints and weights as they are), several times smaller than meshopt's \
+                     lossless. Meshes only: animation stays as it is.",
+                ),
+            ),
+            (
+                "position_bits",
+                int("Draco: bits of a position's range; 0 is 14."),
+            ),
+            (
+                "normal_bits",
+                int("Draco: bits of a normal's or tangent's; 0 is 10."),
+            ),
+            (
+                "uv_bits",
+                int("Draco: bits of a texture coordinate's; 0 is 12."),
+            ),
+            ("color_bits", int("Draco: bits of a colour's; 0 is 8.")),
         ],
         &["path", "out"],
     )
@@ -1262,7 +1284,15 @@ fn collide_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<
 }
 
 fn compress_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
+    let bits = |k: &str| a.uint(k).map(|v| v.min(30) as u8);
+    let draco = shape_tools::Draco {
+        position_bits: bits("position_bits")?,
+        normal_bits: bits("normal_bits")?,
+        uv_bits: bits("uv_bits")?,
+        color_bits: bits("color_bits")?,
+    };
     let d = CompressDesc {
+        draco: (a.flag("draco")? || draco != shape_tools::Draco::default()).then_some(draco),
         input: a.mesh_input()?,
         out: a
             .path("out")?

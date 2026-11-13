@@ -229,8 +229,13 @@ import → join → repair → decimate → place → unwrap → measure → pre
    MCP `compress`): meshopt, lossless, a quarter to two fifths off the
    geometry and animation; the file then requires
    `EXT_meshopt_compression`, which three.js, Babylon and the engines'
-   glTF loaders read with the meshopt decoder. Not for a file a
-   texturing or modelling tool will open next.
+   glTF loaders read with the meshopt decoder. `--draco` (MCP `draco`)
+   compresses the meshes with Draco instead: several times smaller,
+   and lossy (positions to 14 bits of the mesh's size, normals 10, UVs
+   12, colours 8; `--position-bits` and the others change that), with
+   animation left as it is; choose it where download size matters more
+   than exact vertices. Not for a file a texturing or modelling tool
+   will open next.
 
 ## Keep the UVs or bake
 

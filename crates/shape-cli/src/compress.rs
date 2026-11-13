@@ -2,6 +2,10 @@
 //! and animation under `EXT_meshopt_compression`
 //! (`shape_tools::compress`), losslessly, as JSON: how many buffer
 //! views were compressed, their bytes before and after, and the output.
+//! With `--draco`, its triangle meshes under
+//! `KHR_draco_mesh_compression` instead (`shape_tools::compress_draco`,
+//! lossy: `--position-bits`, `--normal-bits`, `--uv-bits`,
+//! `--color-bits`).
 
 use std::path::PathBuf;
 
@@ -17,6 +21,9 @@ pub struct CompressDesc {
     pub input: Input,
     /// Where to write the result.
     pub out: PathBuf,
+    /// Compress with Draco (lossy: values kept to a number of bits)
+    /// in place of meshopt (lossless).
+    pub draco: Option<shape_tools::Draco>,
 }
 
 /// The report: `views`, `compressed`, `bytes_before`, `bytes_after`
@@ -26,6 +33,18 @@ pub fn compress(files: &dyn Files, d: &CompressDesc) -> Result<String, Failure> 
         return Err(Failure::Usage("a GLB file to compress".into()));
     };
     let bytes = files.read(path)?;
+    if let Some(draco) = &d.draco {
+        let (out, c) = shape_tools::compress_draco(&bytes, draco).map_err(failed)?;
+        files.write(&d.out, &out)?;
+        return Ok(object(&[
+            ("primitives", c.primitives.to_string()),
+            ("compressed", c.compressed.to_string()),
+            ("bytes_before", c.bytes_before.to_string()),
+            ("bytes_after", c.bytes_after.to_string()),
+            ("file_before", bytes.len().to_string()),
+            ("output", crate::export::written(&d.out, out.len())),
+        ]));
+    }
     let (out, c) = shape_tools::compress(&bytes).map_err(failed)?;
     files.write(&d.out, &out)?;
     Ok(object(&[
@@ -40,12 +59,28 @@ pub fn compress(files: &dyn Files, d: &CompressDesc) -> Result<String, Failure> 
 
 /// The command line.
 pub fn run(a: &Args) -> Result<String, Failure> {
-    a.only(&["-o", "--out"])?;
+    a.only(&[
+        "-o",
+        "--out",
+        "--draco",
+        "--position-bits",
+        "--normal-bits",
+        "--uv-bits",
+        "--color-bits",
+    ])?;
+    let bits = |name: &str| a.number::<u8>(name).map(|v| v.unwrap_or(0));
+    let draco = shape_tools::Draco {
+        position_bits: bits("--position-bits")?,
+        normal_bits: bits("--normal-bits")?,
+        uv_bits: bits("--uv-bits")?,
+        color_bits: bits("--color-bits")?,
+    };
     compress(
         &Local,
         &CompressDesc {
             input: a.input()?,
             out: a.out()?,
+            draco: (a.switch("--draco") || draco != shape_tools::Draco::default()).then_some(draco),
         },
     )
 }

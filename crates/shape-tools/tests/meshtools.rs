@@ -1371,3 +1371,58 @@ fn a_compressed_glb_reads_back_the_same() {
     let (packed, _) = compress(&moving).unwrap();
     assert_eq!(read(&packed), read(&moving));
 }
+
+/// A GLB compressed with Draco reads back as the same mesh to the
+/// bits kept: the same triangles and welds, each position within half
+/// a step of the grid; a skinned file keeps its bones and weights; it
+/// says what it requires and is not compressed twice.
+#[test]
+fn a_draco_glb_reads_back_to_the_bits_kept() {
+    use shape_tools::{Draco, compress_draco};
+    let ball = shape_gen::solids::sphere(10.0).unwrap();
+    let plain = glb_plain(
+        &ball,
+        &PlainGlb {
+            name: "ball",
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (small, report) = compress_draco(&plain, &Draco::default()).unwrap();
+    assert_eq!((report.primitives, report.compressed), (1, 1));
+    assert!(report.bytes_after * 2 < report.bytes_before, "{report:?}");
+    let read = |b: &[u8]| import(b, &Import::default(), &no_files).unwrap();
+    let (was, now) = (read(&plain), read(&small));
+    let (a, b) = (&was.parts[0].solid, &now.parts[0].solid);
+    assert_eq!(a.triangles, b.triangles);
+    assert_eq!(a.positions.len(), b.positions.len());
+    // 20 mm across 14 bits: a step of 1.2 µm.
+    let step = 20.0 / 16383.0;
+    for (p, q) in a.positions.iter().zip(&b.positions) {
+        assert!((*p - *q).abs().max_element() <= step * 0.51, "{p} {q}");
+    }
+    assert!(measure(b, &Measure::default()).closed);
+    let g = gltf::Gltf::from_slice_without_validation(&small).unwrap();
+    assert!(
+        g.extensions_required()
+            .any(|e| e == "KHR_draco_mesh_compression")
+    );
+    assert!(
+        compress_draco(&small, &Draco::default())
+            .unwrap_err()
+            .contains("already")
+    );
+    // Fewer bits, fewer bytes.
+    let coarse = Draco {
+        position_bits: 8,
+        ..Default::default()
+    };
+    assert!(compress_draco(&plain, &coarse).unwrap().0.len() < small.len());
+
+    let moving = skinned::skinned_glb_animated(None);
+    let (packed, _) = compress_draco(&moving, &Draco::default()).unwrap();
+    let (was, now) = (read(&moving), read(&packed));
+    assert_eq!(was.parts[0].solid.skin, now.parts[0].solid.skin);
+    assert_eq!(was.parts[0].clips, now.parts[0].clips);
+    assert_eq!(was.parts[0].solid.triangles, now.parts[0].solid.triangles);
+}

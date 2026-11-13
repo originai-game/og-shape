@@ -1624,3 +1624,13 @@
   third faster (its ETC1 hint search); the hints it writes change, so
   UASTC files differ from before in those bits (`docs/research.md`
   §59).
+- `shape compress --draco` (MCP `compress` with `draco`,
+  `shape_tools::compress_draco`): a GLB's triangle meshes under
+  `KHR_draco_mesh_compression`. Positions are kept to 14 bits of the
+  mesh's size, normals and tangents 10, texture coordinates 12, colours
+  8 (`--position-bits` …); joints and weights as they are; a mesh's
+  primitives share one grid so their common vertices stay welded.
+  Measured: DamagedHelmet's geometry 558 → 154 kB, the Mixamo
+  soldier's 841 → 426 kB, RobotExpressive's 172 → 57 kB, each reading
+  back with the same triangles and welds. Primitives with morph
+  targets and animation stay as they are (`docs/research.md` §60).

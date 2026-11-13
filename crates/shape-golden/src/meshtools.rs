@@ -610,6 +610,14 @@ fn compress_case(h: &mut OutputHash) -> Result<(), HashError> {
         shape_tools::compress(&skinned_support::skinned_glb_animated(None)).map_err(fail)?;
     h.u64(report.compressed as u64);
     h.bytes(&bytes);
+    // The same file under Draco (quantized in f32, rANS).
+    let (bytes, report) = shape_tools::compress_draco(
+        &skinned_support::skinned_glb_animated(None),
+        &shape_tools::Draco::default(),
+    )
+    .map_err(fail)?;
+    h.u64(report.compressed as u64);
+    h.bytes(&bytes);
     Ok(())
 }
 

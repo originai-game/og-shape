@@ -62,6 +62,7 @@ mod compress;
 mod decimate;
 mod decode;
 mod draco;
+mod draco_write;
 mod etc1s;
 mod etc1s_write;
 mod export;
@@ -104,6 +105,7 @@ pub use decimate::{
     Blocked, Decimate, DecimateError, DecimateReport, Rigid, collapse_short_edges, decimate, lods,
     merge_charts,
 };
+pub use draco_write::{Draco, DracoReport, compress_draco};
 pub use export::{
     Clip, ClipKey, ColorSpace, ExportError, Joint, JointKind, MAP_KINDS, Material, Mimic, Part,
     Placement, Scene, glb, glb_clips, glb_shared, glb_skin_clips, obj, obj_at, posed, stl, stl_at,
