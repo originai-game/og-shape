@@ -1,4 +1,4 @@
-//! Decodes a texture's PNG, JPEG or KTX2 bytes to RGBA8, for the preview to
+//! Decodes a texture's PNG, JPEG, KTX2 or WebP bytes to RGBA8, for the preview to
 //! sample (`docs/research.md` §30, §33).
 //!
 //! The decoding is the texture budget's ([`crate::texture::decode`],
@@ -7,7 +7,7 @@
 //! extended sequential and progressive JPEG, one or three components,
 //! integer inverse DCT. Colour-space chunks (`gAMA`, `iCCP`, `sRGB`) are ignored: the
 //! bytes are taken as sRGB, as glTF says a base-colour image is.
-//! Arithmetic-coded and lossless JPEG and WebP are refused with
+//! Arithmetic-coded and lossless JPEG are refused with
 //! the reason, as is an image over [`MAX_PIXELS`] (read from its header,
 //! before anything is decoded).
 //!
@@ -24,8 +24,9 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Image, String> {
     if !bytes.starts_with(b"\x89PNG\r\n\x1a\n")
         && !bytes.starts_with(&[0xFF, 0xD8])
         && !bytes.starts_with(b"\xabKTX 20")
+        && !(bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP")
     {
-        return Err("not a PNG, JPEG or KTX2 image (the preview decodes those)".into());
+        return Err("not a PNG, JPEG, KTX2 or WebP image (the preview decodes those)".into());
     }
     if let (Some(w), Some(h)) = {
         let i = ImageInfo::from_bytes("", bytes);

@@ -14,6 +14,7 @@ shape-bool.workspace = true
 shape-gen.workspace = true
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 ruzstd = { version = "0.9.1", default-features = false, features = ["std"] }
+image-webp = "0.2.4"
 
 [dev-dependencies]
 gltf = { version = "1.4.1", default-features = false, features = ["utils", "names", "extras"] }

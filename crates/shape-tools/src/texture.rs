@@ -144,7 +144,8 @@ fn ktx2_of(t: &Texture, color: bool, small: bool) -> Result<Option<Texture>, Tex
     }))
 }
 
-/// Decodes a PNG, a JPEG or a KTX2 file (UASTC, or ETC1S under BasisLZ) to RGBA8.
+/// Decodes a PNG, a JPEG, a KTX2 file (UASTC, or ETC1S under BasisLZ) or a
+/// WebP image to RGBA8.
 pub fn decode(bytes: &[u8]) -> Result<Image, TextureError> {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         decode_png(bytes)
@@ -152,11 +153,50 @@ pub fn decode(bytes: &[u8]) -> Result<Image, TextureError> {
         decode_jpeg(bytes)
     } else if bytes.starts_with(b"\xabKTX 20") {
         crate::ktx2::decode(bytes).map_err(TextureError::Unsupported)
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        decode_webp(bytes)
     } else {
         Err(TextureError::Unsupported(
-            "only PNG, JPEG and KTX2 are decoded".into(),
+            "only PNG, JPEG, KTX2 and WebP are decoded".into(),
         ))
     }
+}
+
+/// A WebP image (lossy, lossless, with or without alpha; the first
+/// frame of an animation is not taken: it is refused) by the
+/// `image-webp` crate.
+fn decode_webp(bytes: &[u8]) -> Result<Image, TextureError> {
+    let webp = |e: image_webp::DecodingError| bad(format!("WebP: {e}"));
+    let mut d = image_webp::WebPDecoder::new(std::io::Cursor::new(bytes)).map_err(webp)?;
+    if d.is_animated() {
+        return Err(TextureError::Unsupported("an animated WebP".into()));
+    }
+    let (width, height) = d.dimensions();
+    if u64::from(width) * u64::from(height) > crate::decode::MAX_PIXELS {
+        return Err(TextureError::Unsupported(format!(
+            "a {width} × {height} WebP is over {} pixels",
+            crate::decode::MAX_PIXELS
+        )));
+    }
+    let size = d
+        .output_buffer_size()
+        .ok_or_else(|| bad("a WebP too large to hold"))?;
+    let mut buf = vec![0u8; size];
+    d.read_image(&mut buf).map_err(webp)?;
+    let rgba = if d.has_alpha() {
+        buf
+    } else {
+        buf.as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect()
+    };
+    Ok(Image {
+        width,
+        height,
+        rgba,
+    })
 }
 
 // ── Box filter ──────────────────────────────────────────────────────────────
@@ -1275,5 +1315,56 @@ mod tests {
             d.rgba,
             vec![255, 255, 255, 255, 0, 0, 0, 255, 255, 255, 255, 255]
         );
+    }
+}
+
+#[cfg(test)]
+mod webp_tests {
+    use super::*;
+
+    /// A WebP image decodes to the texels it was made from (a lossless
+    /// one, with alpha and without); an animation and a broken file
+    /// are refused with the reason.
+    #[test]
+    fn a_webp_image_is_decoded() {
+        let (w, h) = (23u32, 17u32);
+        let rgba: Vec<u8> = (0..w * h * 4)
+            .map(|i| ((i * 37 + 11) % 256) as u8)
+            .collect();
+        let pack = |data: &[u8], kind| {
+            let mut out = Vec::new();
+            image_webp::WebPEncoder::new(&mut out)
+                .encode(data, w, h, kind)
+                .unwrap();
+            out
+        };
+        let with_alpha = pack(&rgba, image_webp::ColorType::Rgba8);
+        // The same file is kept for the gate.
+        assert_eq!(
+            with_alpha,
+            include_bytes!("../../../golden/meshes/pattern.webp")
+        );
+        let im = decode(&with_alpha).unwrap();
+        assert_eq!((im.width, im.height), (w, h));
+        assert_eq!(im.rgba, rgba);
+        let rgb: Vec<u8> = rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|p| [p[0], p[1], p[2]])
+            .collect();
+        let opaque = decode(&pack(&rgb, image_webp::ColorType::Rgb8)).unwrap();
+        for (p, q) in opaque
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(rgba.as_chunks::<4>().0)
+        {
+            assert_eq!(*p, [q[0], q[1], q[2], 255]);
+        }
+        for cut in [12, 20, with_alpha.len() / 2] {
+            assert!(decode(&with_alpha[..cut]).is_err(), "cut at {cut}");
+        }
     }
 }

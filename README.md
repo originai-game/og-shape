@@ -122,8 +122,8 @@ Run on `main` on 2026-11-10 to 12; each line says where the numbers come from.
 
 | Check | Result | How |
 |---|---|---|
-| The same bytes on every host | 168 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 395 pass | `scripts/check.sh test` |
+| The same bytes on every host | 169 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
+| Tests | 396 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -199,7 +199,8 @@ silent returns a result with no error:
   differently after repair alone. The texture budget writes PNG, or
   KTX2: `--ktx2` UASTC blocks (no rate-distortion pass: about a byte a
   texel on disk), `--etc1s` ETC1S blocks (small, about 33 dB). A WebP
-  map is not decoded, and is written as it came (`EXT_texture_webp`). A
+  map is decoded (drawn, baked, resized) and, untouched, written as it
+  came (`EXT_texture_webp`); none is encoded. A
   plain GLB has one material, so parts whose materials differ lose
   theirs (reported).
 - `place` turns, sizes and moves a mesh to its base, but does not
@@ -213,8 +214,8 @@ silent returns a result with no error:
 
 What a user might expect and will not find, as of 2026-11-12:
 
-- **Textures.** WebP is neither decoded nor written: such a map
-  passes through as it came. UASTC is written without a
+- **Textures.** WebP is decoded but never encoded: a WebP map that is
+  resized or baked leaves as PNG or KTX2. UASTC is written without a
   rate-distortion pass and without weighing the BC7 it will become, at
   about 3 s a megatexel; ETC1S is written without the run-length
   codes or a rate-distortion pass, and texture video is not read. No

@@ -9437,3 +9437,32 @@ anywhere is an error); `meshtools.look.etc1s` in the gate. Not
 checked: the written files have not been through the Basis transcoder
 (§50 says why); the reader that reads them back is the one that reads
 toktx's files.
+
+## 58. WebP (2026-11-12)
+
+`EXT_texture_webp` maps passed through undecoded (§29). They are now
+decoded by `image-webp` (image-rs, MIT or Apache-2.0, pure Rust, two
+small dependencies): VP8 lossy, VP8L lossless, alpha in either. A
+decoder of its own would be VP8's whole intra decoder and the
+lossless format's transforms and Huffman groups, some three thousand
+lines, for no gain over a maintained crate; unlike Draco, meshopt,
+UASTC and ETC1S there is one already in Rust under a licence this
+project takes.
+
+Run by hand on Google's WebP gallery (not kept; no licence is given
+with the files): `gallery3/1_webp_ll.webp` (lossless, with alpha)
+equal to `gallery3/1.png` at every texel that is not clear in both
+(a lossless WebP may drop the colour of clear texels);
+`gallery/1.webp` (lossy) 32.38 dB from `gallery/1.png`;
+`gallery3/1_webp_a.webp` (lossy with alpha) decodes with 64 750
+translucent texels, as the PNG has.
+
+An animated WebP is refused. Nothing is encoded: a WebP map that is
+resized or baked leaves as PNG, or KTX2 with `--ktx2` / `--etc1s`;
+one left untouched is still written as it came. Checked:
+`a_webp_image_is_decoded` (lossless files made by the crate's own
+encoder read back exactly, with and without alpha; a cut file is an
+error); `meshtools.look.webp` in the gate decodes on the three
+targets. The lossy path has no file in the gate: it is integer
+arithmetic in the crate, and no lossy file with a licence this project
+takes was at hand.

@@ -1610,3 +1610,8 @@
   the same image: 33.3 dB in 86 kB and 0.13 s (toktx: 71 kB);
   DamagedHelmet's five 2048² maps with their levels 3.8 → 3.2 MB in
   7 s, where UASTC takes 16.9 MB and 61 s (`docs/research.md` §57).
+- WebP maps are decoded (lossy and lossless, with alpha; the
+  `image-webp` crate), so they are drawn, baked and resized. Checked
+  on Google's gallery files: the lossless one equal to its PNG at
+  every visible texel, the lossy one 32.4 dB from its source. An
+  animated WebP is refused; none is encoded (`docs/research.md` §58).

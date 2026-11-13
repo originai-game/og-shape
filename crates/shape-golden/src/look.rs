@@ -36,6 +36,10 @@ pub fn cases() -> Vec<Case> {
             name: "meshtools.look.etc1s",
             run: etc1s_case,
         },
+        Case {
+            name: "meshtools.look.webp",
+            run: webp_case,
+        },
     ]
 }
 
@@ -349,6 +353,14 @@ fn etc1s_case(h: &mut OutputHash) -> Result<(), HashError> {
         h.bytes(&k.bytes);
         h.bytes(&decode(&k.bytes).map_err(fail)?.rgba);
     }
+    Ok(())
+}
+
+/// A lossless WebP (stored here, made by `image-webp`'s encoder from
+/// 23 × 17 texels of a fixed pattern) decoded.
+fn webp_case(h: &mut OutputHash) -> Result<(), HashError> {
+    let webp = include_bytes!("../../../golden/meshes/pattern.webp");
+    h.bytes(&decode(webp).map_err(fail)?.rgba);
     Ok(())
 }
 
