@@ -1,0 +1,10 @@
+{"name":"subdiv","ops":[
+ {"op":"box","name":"pebble","width":60,"depth":40,"height":25},
+ {"op":"subdivide","id":0,"levels":3},
+ {"op":"box","name":"cushion","width":60,"depth":60,"height":20,"on":{"origin":[90,0,0],"x":[1,0,0],"y":[0,1,0],"z":[0,0,1]}},
+ {"op":"subdivide","id":1,"levels":3,"sharp":"bottom"},
+ {"op":"extrude","name":"ell","height":20,"profile":{"poly":{"points":[[-15,-5],[15,-5],[15,5],[-5,5],[-5,25],[-15,25]]}},"on":{"origin":[-80,0,0],"x":[1,0,0],"y":[0,1,0],"z":[0,0,1]}},
+ {"op":"subdivide","id":2,"levels":3,"sharp":"bottom top"},
+ {"op":"cylinder","name":"can","radius":15,"height":40,"segments":12,"on":{"origin":[0,80,0],"x":[1,0,0],"y":[0,1,0],"z":[0,0,1]}},
+ {"op":"subdivide","id":3,"levels":2,"sharp":"bottom"}
+]}

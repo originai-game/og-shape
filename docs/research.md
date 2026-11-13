@@ -9225,8 +9225,8 @@ Checked: `metal_gloss_occlusion_and_glow_maps_show` (a gold metal is
 gold and not black; polished shows more sky than rough; occlusion
 darkens and intensity 0 does not; a white glow under a blue map is
 blue; the map's blue channel turns a metal off, to the plain bytes).
-The README's gallery pictures were made before this and have not been
-drawn again.
+The README's gallery pictures were drawn again afterwards
+(`docs/previews/readme/redraw.sh`).
 
 ## 54. USD (2026-11-12)
 

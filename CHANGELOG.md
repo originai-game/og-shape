@@ -1672,3 +1672,10 @@
   millionth of itself (then a hundred-thousandth, a ten-thousandth)
   until they cross and the copy untangles: the walls are off by that
   share of their thickness (`docs/research.md` §64).
+- The README's gallery is drawn again with the preview as it now is
+  (metal and gloss show on the toaster, the spectacles, the washing
+  machine, the bangle and the shells), by
+  `docs/previews/readme/redraw.sh`, which holds each image's command.
+  `mesh_after.png` no longer shows chart seams as lines: the preview
+  stopped drawing them before this, and the picture had not been
+  redrawn since.

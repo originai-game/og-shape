@@ -20,7 +20,8 @@ dropped; the table in its §Status is the record. Run the gate with
 
 ## What it makes
 
-Each image is the kernel's own CPU preview (`shape preview`), no GPU.
+Each image is the kernel's own CPU preview (`shape preview`), no GPU;
+`docs/previews/readme/redraw.sh` draws them all again.
 
 | ![a robot of rigid parts at rest and in three of its clips](docs/previews/readme/node_animation.png)
 
@@ -47,7 +48,7 @@ get convex colliders:
 | | |
 |---|---|
 | ![subdivided](docs/previews/readme/subdivide.png) | ![colliders](docs/previews/readme/cup_colliders.png) |
-| An L with sharp caps, a 12-sided can with a sharp base, a box rounded all over and one on a sharp base. | A cup and its handle covered by 16 convex hulls (`shape collide`): the hollow stays open. |
+| `docs/previews/readme/src/subdivide.json`: an L with sharp caps, a 12-sided can with a sharp base, a box rounded all over and one on a sharp base. | A cup and its handle covered by 16 convex hulls (`shape collide`): the hollow stays open. |
 
 A loft bends through space and closes into a loop; a shell may be
 thicker than the part's rounded corners, fillets or chamfers:
@@ -83,7 +84,7 @@ Meshes from elsewhere go through the same kernel:
 | | | |
 |---|---|---|
 | ![duck](docs/previews/uv/duck-full-half.png) | ![defects before](docs/previews/readme/mesh_before.png) | ![defects after](docs/previews/readme/mesh_after.png) |
-| Khronos's Duck, as imported and decimated to half, its texture kept (three.js render, `docs/research.md` §17). | `golden/meshes/ball_defects.obj` as it comes: open, in 2 pieces, 79 faces flipped. | After `shape process --budget 1500`: closed, 1 piece, 1 500 triangles, 6 UV charts with no overlap (the lines are chart seams). |
+| Khronos's Duck, as imported and decimated to half, its texture kept (three.js render, `docs/research.md` §17). | `golden/meshes/ball_defects.obj` as it comes: open, in 2 pieces, 79 faces flipped. | After `shape process --budget 1500`: closed, 1 piece, 1 500 triangles, 6 UV charts with no overlap. |
 
 ![a skinned file posed by its clips](docs/previews/readme/clips_posed.png)
 
