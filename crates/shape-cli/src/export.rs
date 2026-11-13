@@ -64,8 +64,20 @@ pub fn encode(source: &Source, out: &Path) -> Result<Vec<u8>, Failure> {
 /// written at the model's pose, else `"rest"` (a GLB's meshes are always
 /// at rest, posed by its joint nodes).
 pub fn export(files: &dyn Files, source: &Source, out: &Path) -> Result<String, Failure> {
+    export_with(files, source, out, &shape_tools::UrdfDesc::default())
+}
+
+/// [`export`], a URDF with what `robot` adds: each closed link's
+/// `inertial` at a density, and the joints' limits of effort and
+/// velocity.
+pub fn export_with(
+    files: &dyn Files,
+    source: &Source,
+    out: &Path,
+    robot: &shape_tools::UrdfDesc,
+) -> Result<String, Failure> {
     if extension(out) == "urdf" {
-        return export_urdf(files, source, out);
+        return export_urdf(files, source, out, robot);
     }
     if extension(out) == "usda" {
         return export_usda(files, source, out);
@@ -100,15 +112,20 @@ pub fn export(files: &dyn Files, source: &Source, out: &Path) -> Result<String, 
 /// each link's STL beside it, named `<out's stem>_<part>.stl`. Reports
 /// the path, format and size, the mesh files, and what URDF asks for
 /// that is not written.
-fn export_urdf(files: &dyn Files, source: &Source, out: &Path) -> Result<String, Failure> {
+fn export_urdf(
+    files: &dyn Files,
+    source: &Source,
+    out: &Path,
+    robot: &shape_tools::UrdfDesc,
+) -> Result<String, Failure> {
     let stem = out
         .file_stem()
         .map_or("robot".to_string(), |s| s.to_string_lossy().into_owned());
     let urdf = match source {
-        Source::Program(model) => model.urdf(&stem).map_err(failed)?,
+        Source::Program(model) => model.urdf_with(&stem, robot).map_err(failed)?,
         Source::Mesh(mesh) => {
             let placed = mesh.placed()?;
-            shape_tools::urdf(&scene(&mesh.name, &placed), &stem).map_err(failed)?
+            shape_tools::urdf_with(&scene(&mesh.name, &placed), &stem, robot).map_err(failed)?
         }
     };
     files.write(out, urdf.xml.as_bytes())?;
@@ -117,18 +134,26 @@ fn export_urdf(files: &dyn Files, source: &Source, out: &Path) -> Result<String,
         files.write(&out.with_file_name(name), bytes)?;
         names.push(string(name));
     }
-    let lost = [
-        "inertial (mass and inertia)",
-        "limit effort and velocity (written 0)",
-        "materials, UVs and colours",
-    ];
+    let mut lost = vec!["materials, UVs and colours".to_string()];
+    if robot.density == 0.0 {
+        lost.push("inertial (mass and inertia): give a density".into());
+    }
+    for name in &urdf.not_weighed {
+        lost.push(format!("{name}: inertial (the link is not closed)"));
+    }
+    if robot.effort == 0.0 || robot.velocity == 0.0 {
+        lost.push("limit effort and velocity (written 0 where not given)".into());
+    }
     Ok(object(&[
         ("path", string(&out.display().to_string())),
         ("format", string("urdf")),
         ("bytes", urdf.xml.len().to_string()),
         ("geometry", string("rest")),
         ("meshes", crate::report::array(&names)),
-        ("not_written", crate::report::array(&lost.map(string))),
+        (
+            "not_written",
+            crate::report::array(&lost.iter().map(|s| string(s)).collect::<Vec<_>>()),
+        ),
     ]))
 }
 
@@ -399,7 +424,15 @@ pub fn export_atlas(
 
 /// The command line.
 pub fn run(a: &Args) -> Result<String, Failure> {
-    let mut known = vec!["-o", "--out", "--uvs", "--atlas"];
+    let mut known = vec![
+        "-o",
+        "--out",
+        "--uvs",
+        "--atlas",
+        "--density",
+        "--effort",
+        "--velocity",
+    ];
     known.extend(IMPORT_OPTIONS);
     a.only(&known)?;
     let out = a.out()?;
@@ -409,6 +442,15 @@ pub fn run(a: &Args) -> Result<String, Failure> {
     let source = load_uvs(&Local, &a.input()?, &a.import()?, a.switch("--uvs"))?;
     match a.number::<u32>("--atlas")? {
         Some(size) => export_atlas(&Local, &source, &out, size),
-        None => export(&Local, &source, &out),
+        None => export_with(
+            &Local,
+            &source,
+            &out,
+            &shape_tools::UrdfDesc {
+                density: a.number("--density")?.unwrap_or(0.0),
+                effort: a.number("--effort")?.unwrap_or(0.0),
+                velocity: a.number("--velocity")?.unwrap_or(0.0),
+            },
+        ),
     }
 }

@@ -384,6 +384,84 @@ fn a_clip_that_cannot_be_written_says_why() {
     assert!(why(clip("", &[(0.0, &[("spin", 0.0)])])).contains("no name"));
 }
 
+/// With a density a closed link gets its inertial: a box of 200 by
+/// 100 by 50 mm of water weighs 1 kg, about its centre (which is not
+/// the link's origin) with a box's inertia, m (b² + c²) / 12; an open
+/// sheet gets none and is named; and the limits are the desc's.
+#[test]
+fn a_urdf_s_links_are_weighed() {
+    use shape_gen::solids::{BoxDesc, cuboid};
+    let mut slab = cuboid(&BoxDesc {
+        width: 200.0,
+        depth: 100.0,
+        height: 50.0,
+    })
+    .unwrap();
+    slab.map_positions(|p| p + DVec3::new(300.0, 0.0, 0.0), false);
+    let mut sheet = slab.clone();
+    sheet.triangles.truncate(2);
+    sheet.surfaces.truncate(2);
+    sheet.face_tags.truncate(2);
+    let (_, wheel) = solids();
+    let mut s = scene(&slab, &wheel);
+    s.parts.push(Part::new("sheet", &sheet));
+    let d = shape_tools::UrdfDesc {
+        density: 1000.0,
+        effort: 12.5,
+        velocity: 3.0,
+    };
+    let u = shape_tools::urdf_with(&s, "cart", &d).unwrap();
+    let link = |name: &str| {
+        let at = u.xml.find(&format!("<link name=\"{name}\"")).unwrap();
+        &u.xml[at..at + u.xml[at..].find("</link>").unwrap()]
+    };
+    let attr = |text: &str, key: &str| -> f64 {
+        let at = text.find(&format!("{key}=\"")).unwrap() + key.len() + 2;
+        text[at..at + text[at..].find('"').unwrap()]
+            .parse()
+            .unwrap()
+    };
+    let base = link("base");
+    assert!((attr(base, "value") - 1.0).abs() < 1e-9, "{base}");
+    let xyz = &base[base.find("<inertial>").unwrap()..];
+    assert!(xyz.contains("xyz=\"0.3 0 0.025\""), "{xyz}");
+    for (key, want) in [
+        ("ixx", (0.1f64 * 0.1 + 0.05 * 0.05) / 12.0),
+        ("iyy", (0.2 * 0.2 + 0.05 * 0.05) / 12.0),
+        ("izz", (0.2 * 0.2 + 0.1 * 0.1) / 12.0),
+        ("ixy", 0.0),
+        ("ixz", 0.0),
+        ("iyz", 0.0),
+    ] {
+        assert!(
+            (attr(base, key) - want).abs() < 1e-9,
+            "{key} {}",
+            attr(base, key)
+        );
+    }
+    assert!(!link("sheet").contains("<inertial>"));
+    assert_eq!(u.not_weighed, ["sheet"]);
+    assert!(u.xml.contains("effort=\"12.5\" velocity=\"3\""));
+    // Without a density, as before: no inertial anywhere.
+    assert!(
+        !shape_tools::urdf(&s, "cart")
+            .unwrap()
+            .xml
+            .contains("<inertial>")
+    );
+    assert!(
+        shape_tools::urdf_with(
+            &s,
+            "cart",
+            &shape_tools::UrdfDesc {
+                density: f64::NAN,
+                ..d
+            }
+        )
+        .is_err()
+    );
+}
+
 /// A URDF's links, put back where its joints' origins say, are the
 /// parts where they were built; its joints carry the kind, axis, limits
 /// (SI) and mimic of the scene's.

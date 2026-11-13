@@ -88,11 +88,14 @@ import → join → repair → decimate → place → unwrap → measure → pre
      not be split (the mesh stays open), `crossings_added` pairs the moves
      made cross (the fuse step untangles them on a closed shell).
    - `max_hole_edges: 64`: closes holes up to 64 edges round, and larger
-     ones (up to 512) whose fill is flat and crosses nothing
-     (`large_holes_filled`); the rest stay in `holes_left`. If a
-     mesh must end closed and has faces behind its holes, add
-     `holes_through` with `fuse`: those holes close by a fill that
-     crosses (`crossing_fills`) and the fuse untangles it. Fills are
+     ones (up to 512) by a fill that crosses nothing
+     (`large_holes_filled`): round where the surface is curved at the
+     rim (`round_fills`: a guess at what was there, so preview it),
+     flat otherwise; the rest stay in `holes_left`. With `fuse`, a
+     hole that only a crossing fill closes (faces behind it) is closed
+     by one (`crossing_fills`) and the fuse untangles it;
+     `holes_through` does the same without `fuse`, and leaves the
+     crossings. Fills are
      named `fill`; preview them. A fill whose rim crosses a UV seam
      takes one UV (`uv_seam_fills`): one colour, the rim's, instead of a
      fan across the texture.
@@ -234,8 +237,11 @@ import → join → repair → decimate → place → unwrap → measure → pre
    (`shape-skin`'s `pose`) and compare them: the posed error should be no
    more than the rest error. For a
    robot simulator, name the output `.urdf`: links, joints and one STL
-   a part beside it; set each joint's `effort` and `velocity` and add
-   `inertial` yourself (the report's `not_written` lists them).
+   a part beside it; give `--density` (kg/m³: each closed link then
+   gets its mass, centre and inertia as an even solid), `--effort`
+   and `--velocity` (every moving joint's limits), or set them
+   yourself afterwards (the report's `not_written` lists what is
+   missing; a hollow part or mixed materials need their own numbers).
 11. **Compress** the file you ship (`shape compress in.glb -o out.glb`,
    MCP `compress`): meshopt, lossless (triangles and vertices may
    come back in a vertex-cache order, a triangle from another of its

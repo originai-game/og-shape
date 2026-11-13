@@ -52,6 +52,7 @@ pub fn repair(r: &RepairReport) -> String {
         ("holes_filled", r.holes_filled.to_string()),
         ("large_holes_filled", r.large_holes_filled.to_string()),
         ("crossing_fills", r.crossing_fills.to_string()),
+        ("round_fills", r.round_fills.to_string()),
         ("fill_triangles", r.fill_triangles.to_string()),
         ("uv_seam_fills", r.uv_seam_fills.to_string()),
         ("holes_left", r.holes_left.to_string()),

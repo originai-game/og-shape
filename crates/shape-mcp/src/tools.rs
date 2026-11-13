@@ -15,7 +15,7 @@ use shape_cli::build::report as build_report;
 use shape_cli::collide::{CollideDesc, collide};
 use shape_cli::compress::{CompressDesc, compress};
 use shape_cli::decimate::{DecimateDesc, decimate};
-use shape_cli::export::{export, written};
+use shape_cli::export::{export_with, written};
 use shape_cli::import::{ImportDesc, import};
 use shape_cli::measure::{MeasureDesc, measure, measure_posed};
 use shape_cli::place::{PlaceDesc, length, pivot, place};
@@ -620,8 +620,9 @@ fn repair_props() -> Vec<(&'static str, Value)> {
             "holes_through",
             boolean(
                 "Close a larger hole that no clear fill closes all the same, by a fill that \
-                 crosses the mesh (faces behind the hole); set `fuse` too, which untangles it. \
-                 The report's `crossing_fills` counts them.",
+                 crosses the mesh (faces behind the hole). `fuse` does this by itself and \
+                 untangles it; without `fuse` the crossings stay. The report's \
+                 `crossing_fills` counts them.",
             ),
         ),
         (
@@ -807,7 +808,8 @@ fn export_schema() -> Value {
         path(
             "Where to write, in the workspace: .glb, .obj, .stl, or .urdf (the description, \
              with each part's STL beside it as <stem>_<part>.stl; links at rest, joints with \
-             their axes, limits and mimics; no inertial, and limit effort and velocity are 0), \
+             their axes, limits and mimics; `density`, `effort` and `velocity` add inertials \
+             and limits), \
              or .usda (a USD stage in the kernel's space, Z up in millimetres: a mesh a part \
              with normals and UVs, UsdPreviewSurface materials, PNG and JPEG maps beside it; \
              no joints, skins, morph targets or clips).",
@@ -815,6 +817,22 @@ fn export_schema() -> Value {
     ));
     p.push(pose_prop());
     p.extend(obj_props());
+    p.push((
+        "density",
+        num(
+            "URDF: kilograms a cubic metre every link is made of (water 1000, ABS 1050, \
+             aluminium 2700, steel 7850): each closed link then gets its inertial (mass, centre \
+             of mass, inertia). 0 writes none.",
+        ),
+    ));
+    p.push((
+        "effort",
+        num("URDF: every moving joint's limit of effort (N for a slider, N·m for a hinge)."),
+    ));
+    p.push((
+        "velocity",
+        num("URDF: every moving joint's limit of velocity (m/s for a slider, rad/s for a hinge)."),
+    ));
     schema(p, &["out"])
 }
 
@@ -1264,7 +1282,17 @@ fn export_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<V
     let out = a
         .path("out")?
         .ok_or_else(|| Failure::Usage("give `out`".into()))?;
-    Ok(vec![text(export(&server.ws, &loaded(server, a)?, &out)?)])
+    let robot = shape_tools::UrdfDesc {
+        density: a.num("density")?,
+        effort: a.num("effort")?,
+        velocity: a.num("velocity")?,
+    };
+    Ok(vec![text(export_with(
+        &server.ws,
+        &loaded(server, a)?,
+        &out,
+        &robot,
+    )?)])
 }
 
 fn import_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {

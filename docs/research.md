@@ -10165,3 +10165,93 @@ goes through all the triangles instead.
 
 Checked: `three_holes_cross_at_one_point` (shape-edit); the sweep of
 126. No golden line moved.
+
+## 71. Repair: large holes closed round, crossing fills with `fuse`, the bench again (2026-11-13)
+
+§63 left three things: a large hole on a curved surface closes flat;
+`--holes-through` has to be asked for; the bench of 54 was not run
+again.
+
+**Round fills** (`dome`). For a hole of more than `max_hole_edges`
+edges, before the flat fill: the way the surface leaves the rim is
+read at each rim edge (across the edge, in the plane of the triangle
+that has it), and its mean tilt out of the fill's plane (held to 60°)
+gives the height a spherical cap of that tilt stands off its rim:
+radius · tan(tilt / 2), 0 for a hole in a flat face. Between the rim
+and a centre at that height go rings of new vertices (a sixth of the
+rim's edges, 2 to 16 rings), each on a cubic that leaves its rim
+vertex along the surface and arrives at the centre flat. The fill is
+taken where it crosses nothing (exactly), first where the tilt's sine
+is 0.1 or more (a hole in a flat face keeps its flat fill, which has
+fewer triangles), and again, whatever the tilt, where no flat fill
+will do; then the lifted fans and the crossing fill of §63 as before.
+Each new vertex takes its rim vertex's weights, targets, UV and
+colour, blended towards the rim's mean as it nears the centre.
+
+| A ball of radius 50 | Volume | Of the whole ball |
+| --- | --- | --- |
+| whole | 523 599 | |
+| its cap above 0.6 r cut away, closed flat (§63) | 470 541 | 0.899 |
+| the same, closed round (96 rim edges, 2 976 triangles) | 524 230 | 1.001 |
+| its upper half cut away, closed round | 411 301 | 0.786 (the tilt is held to 60°: a guess, between the flat 0.5 and the ball) |
+
+It is a guess at what was there, as any fill is: right for a ball,
+plausible for a smooth bump, and wrong for a hole that was an opening.
+The report counts them (`round_fills`).
+
+**Crossing fills with `fuse`.** A fill that crosses the mesh is a
+wrong surface until something untangles it, which is why §63 kept
+`holes_through` off. `fuse` is that something, so it now turns it on
+by itself; without `fuse` it stays off unless asked.
+
+**The bench again** (`bench/generated`, the 54 files fetched and
+checked against the manifest; `run.ts --budgets 10000 --modes keep`,
+the guide's repair with `--fuse`):
+
+| Keep 10k | §33.4 | Now |
+| --- | --- | --- |
+| ran | 54 | 54 |
+| closed | 52 | 54 |
+| within budget and closed | 51 | 53 (SPAR3D's cabinet is 21 380 triangles) |
+| outputs crossing themselves (files; pairs) | 2; 28 | 0; 0 |
+| holes left | | 0 |
+
+The one file with large holes is TRELLIS's cabinet: 3 large holes
+filled, 2 of them by fills that cross, untangled by `fuse` (6 pieces
+joined). No file of the bench got a round fill: none has a large hole
+on a clear curved surface. The other budgets and the fresh-UV runs
+were not run again.
+
+Checked: `a_large_hole_in_a_curved_surface_closes_round`. Golden: the
+repair and `process` lines that hash a report move for its new field
+(`meshtools.repair.large_hole`, `.non_manifold`, `.pockets`,
+`.seam_fill`, `mcp.process.bake`, `.ball_defects`, `.look`,
+`place.process`).
+
+## 72. URDF: inertials and limits (2026-11-13)
+
+§52 wrote no `inertial` and limits of effort and velocity 0, because a
+scene holds neither. They are the author's to say, so they are now
+asked for (`UrdfDesc`, `shape export out.urdf --density KG_M3
+--effort E --velocity V`, the MCP's `density`, `effort`, `velocity`):
+
+- **Density.** Every link is taken to be an even solid of that many
+  kilograms a cubic metre. Mass, centre of mass and the inertia about
+  that centre come from the link's mesh, in its own frame and in
+  metres: the sum over the tetrahedra its triangles make with the
+  origin of their volume, first and second moments (the closed forms
+  for a tetrahedron), then the parallel-axis shift to the centre. The
+  `inertial`'s origin is the centre with no rotation, so the six
+  numbers are in the link's axes. A link that is not closed has no
+  volume to weigh: it gets none and the report names it. 0 (the
+  default) writes none, as before.
+- **Effort and velocity** go on every moving joint's limit as given.
+
+A box of 200 × 100 × 50 mm at 1 000 kg/m³: 1 kg, centre (0.3, 0,
+0.025) where it stands, ixx = (0.1² + 0.05²) / 12 and its fellows to
+1e-9, products of inertia 0. One density for every link, and solid
+through: a hollow part, or parts of several materials, need their
+numbers set by hand. Not checked by a URDF parser (nothing outside
+can be run here).
+
+Checked: `a_urdf_s_links_are_weighed`. No golden line moved.

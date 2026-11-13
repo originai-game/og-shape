@@ -124,7 +124,7 @@ Run on `main` on 2026-11-10 to 12; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 170 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 413 pass | `scripts/check.sh test` |
+| Tests | 415 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -187,11 +187,11 @@ silent returns a result with no error:
   maps double a single-map file's texture memory, and its normal map is
   in MikkTSpace from this kernel's own normals (written with `TANGENT`;
   `docs/research.md` §34, §56).
-- Repair leaves open, and reports, holes over 64 edges that neither a
-  flat fill nor a fan from a lifted centre closes without crossing the
-  mesh: 2 of the 3 on TRELLIS's cabinet, which has faces behind them.
-  `--holes-through --fuse` closes those by a fill that crosses and
-  untangles the result (`docs/research.md` §32, §63).
+- Repair leaves open, and reports, holes over 64 edges that no round
+  or flat fill and no fan from a lifted centre closes without crossing
+  the mesh: 2 of the 3 on TRELLIS's cabinet, which has faces behind
+  them. `--fuse` closes those by a fill that crosses and untangles
+  the result (`docs/research.md` §32, §63, §71).
 - Not read: a morph target's normals, a second UV set. Draco- and meshopt-compressed glTF are read. Vertices at one
   place are one vertex to the tools, so a morph target that parts them
   (lips that touch at rest) moves them together after a weld; `import`
@@ -274,16 +274,17 @@ What a user might expect and will not find, as of 2026-11-12:
   environment image; none of glTF's material extensions (clearcoat,
   transmission, sheen, iridescence). It is for checking a model, not a
   render.
-- **Repair.** A hole over 64 edges that no fill closes without
-  crossing the mesh stays open unless `--holes-through` (with `--fuse`)
-  is given; fills are least-area or a fan, not fair: a large hole on a
-  curved surface closes flat, not round. Only TRELLIS's six meshes
-  were run again after §63, not the bench of 54.
+- **Repair.** A large hole on a curved surface closes round by a
+  guess at the tilt of the surface at its rim (right for a ball, wrong
+  for a hole that was an opening); a hole that only a crossing fill
+  closes stays open unless `--fuse` (or `--holes-through`) is given.
+  The bench of 54 was run again at keep 10k only
+  (`docs/research.md` §71).
 - **Formats.** USD is written as `.usda` text with meshes, materials
   and maps: no joints, skins, morph targets or clips, no `.usdc` or
-  `.usdz`, and no USD tool has read a file here. URDF is written
-  without inertia, and with limit effort and velocity 0 for the author
-  to set; no URDF parser has read one here either. No STEP or other B-rep, by
+  `.usdz`, and no USD tool has read a file here. URDF takes one
+  density for every link (a solid, even one) and one effort and
+  velocity for every joint; no URDF parser has read one here either. No STEP or other B-rep, by
   design: the kernel holds meshes only.
 - **Size.** A `Solid` of 600 000 coloured triangles is about 300 MiB;
   nothing streams.

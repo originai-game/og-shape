@@ -1747,3 +1747,16 @@
 - `shell`: a shell built only by nudging tangent surfaces apart is
   kept only where its inner solid stays a quarter of the wall from the
   outside everywhere (`docs/research.md` §70).
+- `repair`: a large hole on a curved surface closes round, with
+  rings of new vertices that leave the rim along the surface (a ball
+  with its cap cut away: 1.001 of the ball's volume, was 0.899);
+  `round_fills` in the report. `--fuse` now also closes large holes
+  that only a crossing fill closes (as `--holes-through` does), since
+  it untangles what that leaves. The bench of 54 at keep 10k: 54
+  closed (52), none crossing itself (`docs/research.md` §71). Golden:
+  eight repair and `process` lines moved for the report's new field.
+- `shape export out.urdf --density KG_M3 [--effort E] [--velocity V]`
+  (the MCP's `density`, `effort`, `velocity`; `shape_tools::urdf_with`):
+  each closed link gets its `inertial` (mass, centre of mass and
+  inertia of an even solid of that density, from its mesh) and the
+  joints their limits (`docs/research.md` §72).

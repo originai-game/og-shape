@@ -2211,7 +2211,17 @@ impl Model {
     /// The model as URDF (`shape_tools::urdf`): its parts as links at
     /// rest, its joints, and each link's STL named `<prefix>_<part>.stl`.
     pub fn urdf(&self, prefix: &str) -> Result<shape_tools::Urdf, ModelError> {
-        Ok(shape_tools::urdf(&self.build()?.scene(), prefix)?)
+        self.urdf_with(prefix, &shape_tools::UrdfDesc::default())
+    }
+
+    /// [`Model::urdf`] with each closed link's `inertial` at a density
+    /// and the joints' limits (`shape_tools::urdf_with`).
+    pub fn urdf_with(
+        &self,
+        prefix: &str,
+        d: &shape_tools::UrdfDesc,
+    ) -> Result<shape_tools::Urdf, ModelError> {
+        Ok(shape_tools::urdf_with(&self.build()?.scene(), prefix, d)?)
     }
 
     /// The model as a USD stage (`shape_tools::usda`): its parts as

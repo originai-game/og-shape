@@ -100,7 +100,8 @@ pub struct Repair {
     pub max_hole_edges: usize,
     /// Closes a larger hole that no clear fill closes all the same, by
     /// a fill that crosses the mesh (a mesh with faces behind its
-    /// holes); set `fuse` too, which untangles what that leaves.
+    /// holes). `fuse`, which untangles what that leaves, does this by
+    /// itself; without it the crossings stay.
     pub holes_through: bool,
     /// Gives every piece still open after the holes are closed a second
     /// sheet this far under it, in mm, and a rim along its open edges
@@ -144,12 +145,15 @@ pub struct RepairReport {
     /// Holes closed, and triangles added to close them.
     pub holes_filled: usize,
     /// Of `holes_filled`, holes with more than `max_hole_edges` edges:
-    /// closed by a fill that is flat and crosses nothing, by a fan from
-    /// a lifted centre that crosses nothing, or (`holes_through`) by a
-    /// fill that crosses.
+    /// closed by a fill that is flat and crosses nothing, by a round
+    /// fill or a fan from a lifted centre that crosses nothing, or
+    /// (`holes_through`, or `fuse`) by a fill that crosses.
     pub large_holes_filled: usize,
     /// Of those, the ones whose fill crosses the mesh.
     pub crossing_fills: usize,
+    /// Of the large holes filled, the ones closed round: rings of new
+    /// vertices that leave the rim along the surface.
+    pub round_fills: usize,
     /// Triangles added by closing holes.
     pub fill_triangles: usize,
     /// Holes left open: too large, or with a rim that does not close (it
@@ -1435,6 +1439,9 @@ pub struct Holes {
     /// Of the large holes closed, those whose fill crosses the mesh
     /// (only with [`close_holes_through`]'s `through`).
     pub crossing: usize,
+    /// Of the large holes closed, those closed round ([`dome`]): rings
+    /// of new vertices that leave the rim along the surface.
+    pub round: usize,
     /// Holes left open: larger than `max_edges` and not flat or clear
     /// enough to fill, larger than [`LARGE_HOLE_EDGES`], or with a rim
     /// that does not close (it runs into a non-manifold edge).
@@ -1556,9 +1563,36 @@ pub fn close_holes_through(
         // if asked, the least-area fill though it crosses.
         let mut large_fill = None;
         let mut fan_from = None;
+        let mut round: Option<Round> = None;
         if large {
             let least = fill(&s, &rim, &undirected);
+            let mean: DVec3 = least
+                .iter()
+                .flatten()
+                .map(|t| {
+                    let [a, b, c] = t.map(|v| s.positions[v as usize]);
+                    (b - a).cross(c - a)
+                })
+                .sum();
+            let along = mean.try_normalize().unwrap_or(DVec3::ZERO);
+            // A round fill that leaves the rim along the surface, where
+            // it is clear: first where the surface is tilted at the rim
+            // (sine 0.1, about 6°: a hole in a curved surface), and,
+            // where no flat fill will do, whatever the tilt.
+            let try_round = |least_tilt: f64, new_tris: &[Fill]| -> Option<Round> {
+                let base = s.positions.len() as u32;
+                let (points, tris) = dome(&s, &rim, &rim_tris, along, base, least_tilt)?;
+                let mut tried = Solid {
+                    positions: s.positions.clone(),
+                    triangles: s.triangles.clone(),
+                    ..Default::default()
+                };
+                tried.positions.extend(points.iter().map(|p| p.0));
+                (!crosses(&tried, &tris, new_tris)).then_some((points, tris))
+            };
+            round = try_round(0.1, &new_tris);
             match &least {
+                _ if round.is_some() => {}
                 Some(tris) if flat(&s, tris) && !crosses(&s, tris, &new_tris) => {
                     large_fill = least.clone();
                 }
@@ -1569,16 +1603,11 @@ pub fn close_holes_through(
                         .iter()
                         .map(|&v| (s.positions[v as usize] - centre).length())
                         .fold(0.0, f64::max);
-                    let mean: DVec3 = least
-                        .iter()
-                        .flatten()
-                        .map(|t| {
-                            let [a, b, c] = t.map(|v| s.positions[v as usize]);
-                            (b - a).cross(c - a)
-                        })
-                        .sum();
-                    let along = mean.try_normalize().unwrap_or(DVec3::ZERO);
+                    round = try_round(0.0, &new_tris);
                     for lift in [0.05, 0.15, -0.05, -0.15, 0.0, 0.3] {
+                        if round.is_some() {
+                            break;
+                        }
                         let at = centre + along * (lift * radius);
                         let mut tried = Solid {
                             positions: s.positions.clone(),
@@ -1595,13 +1624,13 @@ pub fn close_holes_through(
                             break;
                         }
                     }
-                    if fan_from.is_none() && through {
+                    if fan_from.is_none() && round.is_none() && through {
                         large_fill = least.clone();
                         h.crossing += usize::from(least.is_some());
                     }
                 }
             }
-            if large_fill.is_none() && fan_from.is_none() {
+            if large_fill.is_none() && fan_from.is_none() && round.is_none() {
                 h.left += 1;
                 continue;
             }
@@ -1632,7 +1661,37 @@ pub fn close_holes_through(
             .collect();
         let centre_color: [f64; 4] =
             core::array::from_fn(|ch| rim_color.iter().map(|c| c[ch]).sum::<f64>() / n as f64);
-        let tris = large_fill
+        // A round fill's points: each takes its rim vertex's weights,
+        // targets, UV and colour, blended towards the rim's mean as it
+        // nears the centre.
+        let mut spoke: BTreeMap<u32, (usize, f64)> = BTreeMap::new();
+        let round_tris = round.map(|(points, tris)| {
+            for (p, j, u) in points {
+                let v = s.push_vertex(p);
+                spoke.insert(v, (j, u));
+                let share = |i: usize| u / n as f64 + if i == j { 1.0 - u } else { 0.0 };
+                if let Some(k) = &mut s.skin {
+                    let items: Vec<(Weights, f64)> = rim
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &r)| (k.weights[r as usize], share(i)))
+                        .collect();
+                    k.weights[v as usize] = Weights::blend(&items);
+                }
+                if let Some(m) = &mut s.morphs {
+                    let items: Vec<(usize, f64)> = rim
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &r)| (r as usize, share(i)))
+                        .collect();
+                    m.blend(v as usize, &items);
+                }
+            }
+            h.round += 1;
+            tris
+        });
+        let tris = round_tris
+            .or(large_fill)
             .or_else(|| {
                 if fan_from.is_some() {
                     None
@@ -1678,11 +1737,19 @@ pub fn close_holes_through(
             if seam {
                 return rim_uv[0];
             }
+            if let Some(&(j, u)) = spoke.get(&v) {
+                let from = rim_uv.get(j).copied().unwrap_or(centre_uv);
+                return from * (1.0 - u) + centre_uv * u;
+            }
             rim.iter()
                 .position(|&x| x == v)
                 .map_or(centre_uv, |j| rim_uv[j])
         };
         let color_of = |v: u32| {
+            if let Some(&(j, u)) = spoke.get(&v) {
+                let from = rim_color.get(j).copied().unwrap_or(centre_color);
+                return core::array::from_fn(|ch| from[ch] * (1.0 - u) + centre_color[ch] * u);
+            }
             rim.iter()
                 .position(|&x| x == v)
                 .map_or(centre_color, |j| rim_color[j])
@@ -1716,6 +1783,112 @@ pub fn close_holes_through(
     }
     s.canonicalize()?;
     Ok((s, h))
+}
+
+/// A round fill: its new points (each with its rim vertex's place in
+/// the rim and how far along its curve it is) and its triangles.
+type Round = (Vec<(DVec3, usize, f64)>, Vec<[u32; 3]>);
+
+/// A round fill for a rim: rings of vertices between the rim and a
+/// centre, each on a curve that leaves its rim vertex along the surface
+/// there (in the plane of the triangle at the rim) and arrives at the
+/// centre flat. The centre stands off the rim's centre by what a
+/// spherical cap of the rim's mean tilt would (`along` is the way the
+/// fill faces): 0 for a hole in a flat face, the cap's height for one
+/// cut from a ball. Gives the new points (each with its rim vertex's
+/// place in the rim and how far along its curve it is; the centre
+/// last, with no rim vertex) and the triangles, rim vertices by their
+/// own numbers and new points from `base` on.
+///
+/// `None` for a rim under 8 edges, or where the surface leaves the rim
+/// by less than `least_tilt` (the sine of its mean tilt): a flat fill
+/// does as well there.
+fn dome(
+    s: &Solid,
+    rim: &[u32],
+    rim_tris: &[u32],
+    along: DVec3,
+    base: u32,
+    least_tilt: f64,
+) -> Option<Round> {
+    let n = rim.len();
+    if n < 8 || along == DVec3::ZERO {
+        return None;
+    }
+    let at = |j: usize| s.positions[rim[j % n] as usize];
+    let centre = (0..n).map(at).sum::<DVec3>() / n as f64;
+    let radius = (0..n).map(|j| (at(j) - centre).length()).sum::<f64>() / n as f64;
+    // Into the hole along the surface, at each rim edge: across the
+    // edge, in its triangle's plane.
+    let inward: Vec<DVec3> = (0..n)
+        .map(|j| {
+            let [a, b, c] = s.triangles[rim_tris[j] as usize].map(|v| s.positions[v as usize]);
+            let normal = (b - a).cross(c - a);
+            normal
+                .cross(at(j + 1) - at(j))
+                .try_normalize()
+                .unwrap_or(DVec3::ZERO)
+        })
+        .collect();
+    let at_vertex: Vec<DVec3> = (0..n)
+        .map(|j| {
+            (inward[j] + inward[(j + n - 1) % n])
+                .try_normalize()
+                .unwrap_or(DVec3::ZERO)
+        })
+        .collect();
+    // The mean tilt out of the rim's plane, held to 60°; a cap of that
+    // tilt stands radius · tan(tilt / 2) off its rim.
+    let sin = (at_vertex.iter().map(|d| d.dot(along)).sum::<f64>() / n as f64).clamp(-0.866, 0.866);
+    if sin.abs() < least_tilt {
+        return None;
+    }
+    let height = radius * sin / (1.0 + (1.0 - sin * sin).sqrt());
+    let top = centre + along * height;
+    let rings = (n / 6).clamp(2, 16);
+    let mut points: Vec<(DVec3, usize, f64)> = Vec::with_capacity((rings - 1) * n + 1);
+    for k in 1..rings {
+        let u = k as f64 / rings as f64;
+        for (j, leaving) in at_vertex.iter().enumerate() {
+            let p = at(j);
+            let reach = (top - p).length();
+            let out = p - centre;
+            let flat = (out - along * out.dot(along))
+                .try_normalize()
+                .unwrap_or(DVec3::ZERO);
+            // A cubic from the rim vertex, leaving along the surface,
+            // to the top, arriving in its plane.
+            let (p1, p2) = (p + *leaving * (reach / 3.0), top + flat * (reach / 3.0));
+            let v = 1.0 - u;
+            let q = p * (v * v * v)
+                + p1 * (3.0 * v * v * u)
+                + p2 * (3.0 * v * u * u)
+                + top * (u * u * u);
+            points.push((q, j, u));
+        }
+    }
+    points.push((top, usize::MAX, 1.0));
+    let ring = |k: usize, j: usize| -> u32 {
+        if k == 0 {
+            rim[j % n]
+        } else {
+            base + ((k - 1) * n + j % n) as u32
+        }
+    };
+    let mut tris = Vec::with_capacity(2 * (rings - 1) * n + n);
+    for k in 1..rings {
+        for j in 0..n {
+            let (a, b) = (ring(k - 1, j), ring(k - 1, j + 1));
+            let (c, d) = (ring(k, j + 1), ring(k, j));
+            tris.push([a, b, c]);
+            tris.push([a, c, d]);
+        }
+    }
+    let last = base + ((rings - 1) * n) as u32;
+    for j in 0..n {
+        tris.push([ring(rings - 1, j), ring(rings - 1, j + 1), last]);
+    }
+    Some((points, tris))
 }
 
 /// No triangle of the fill faces against its area-weighted mean normal.
@@ -2144,12 +2317,13 @@ pub fn repair_owned(s: Solid, d: &Repair) -> Result<(Solid, RepairReport), Repai
         r.non_manifold = Some(nm);
     }
     if d.max_hole_edges > 0 {
-        let (next, h) = close_holes_through(&s, d.max_hole_edges, d.holes_through)?;
+        let (next, h) = close_holes_through(&s, d.max_hole_edges, d.holes_through || d.fuse)?;
         s = next;
         r.uv_seam_fills = h.uv_seam_fills;
         r.holes_filled = h.filled;
         r.large_holes_filled = h.large;
         r.crossing_fills = h.crossing;
+        r.round_fills = h.round;
         r.fill_triangles = h.triangles;
         r.holes_left = h.left;
         // Filling can join pieces that were apart; orient once more.
@@ -2527,6 +2701,58 @@ mod tests {
             s.push_triangle(t, 9, &["spike"]);
         }
         s
+    }
+
+    /// A ball with its cap cut away closes round: rings of new vertices
+    /// that leave the rim along the ball, to within a hundredth of the
+    /// whole ball's volume (a flat fill is a tenth short). A hole in a
+    /// flat face stays a flat fill.
+    #[test]
+    fn a_large_hole_in_a_curved_surface_closes_round() {
+        let ball = shape_gen::solids::sphere_desc(&shape_gen::solids::SphereDesc {
+            radius: 50.0,
+            segments: 48,
+            ..Default::default()
+        })
+        .unwrap();
+        let whole = ball.measure().volume;
+        let mut open = ball.clone();
+        // Without what stands above 0.6 of its radius (the poles are on y).
+        for i in (0..open.triangles.len()).rev() {
+            let top = open.triangles[i]
+                .iter()
+                .map(|&v| open.positions[v as usize].y)
+                .sum::<f64>()
+                / 3.0;
+            if top > 30.0 {
+                open.triangles.remove(i);
+                open.surfaces.remove(i);
+                open.face_tags.remove(i);
+            }
+        }
+        let (out, h) = close_holes(&open, 8).unwrap();
+        assert_eq!((h.filled, h.large, h.round, h.left), (1, 1, 1, 0), "{h:?}");
+        let m = out.measure();
+        assert!(m.closed);
+        assert!(
+            (m.volume - whole).abs() < 0.01 * whole,
+            "{} {whole}",
+            m.volume
+        );
+        // Closed flat it would be short by the cap above the cut (of
+        // height 20: π h² (3 r − h) / 3), a tenth of the ball.
+        let cap = core::f64::consts::PI * 20.0 * 20.0 * (150.0 - 20.0) / 3.0;
+        assert!(whole - cap < 0.91 * whole);
+
+        // A hole in a flat face: no tilt at its rim, a flat fill.
+        let mut lid = cube(DVec3::ZERO, 10.0);
+        for k in [3, 2] {
+            lid.triangles.remove(k);
+            lid.surfaces.remove(k);
+            lid.face_tags.remove(k);
+        }
+        let (_, h) = close_holes(&lid, 3).unwrap();
+        assert_eq!((h.filled, h.large, h.round), (1, 1, 0), "{h:?}");
     }
 
     /// A large hole with something in its way: a spike that just pokes
