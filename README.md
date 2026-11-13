@@ -158,9 +158,9 @@ silent returns a result with no error:
   `hole`, `pocket`, `seat` or `dent` leaves any. A shell of a part
   whose holes cross inside it, or whose rims are rounded narrower than
   the wall, is built (`docs/research.md` §48); it is still refused, or
-  answers pairs, where the boolean meets its own limits: 6 of 126 swept
-  (a blind hole ending at another hole's widest, a hole's floor or
-  grown floor in the plane of another wall).
+  answers pairs, where the boolean meets its own limits: 1 of 126 swept
+  (a blind hole of the diameter of the hole it runs into, ending past
+  it; `docs/research.md` §64).
 - 1 300 of the scan's bevels are refused: too large for the faces (426),
   a lone piece of a crease that does not fit (226), a twisted face (340),
   an edge with more than two faces (308).
@@ -245,10 +245,11 @@ What a user might expect and will not find, as of 2026-11-12:
 - **FBX.** Animation layers are checked on a hand-written file, not on
   one from an authoring tool. NURBS and other geometry that is not a
   mesh, and FBX 6 and older, are not read.
-- **Shells and booleans.** 6 of 126 swept shells of crossing and
-  blind holes stop at the boolean's own limits (faces in one plane, a
-  rim that does not fill), and three holes through one point fail in
-  `hole` (`docs/research.md` §48).
+- **Shells and booleans.** 1 of 126 swept shells of crossing and
+  blind holes still stops at the boolean's own limit, and four build
+  only with their walls off by up to a millionth of their thickness
+  (tangent surfaces nudged apart); three holes through one point fail
+  in `hole` (`docs/research.md` §48, §64).
 - **Unwrap and bake.** `--conformal` flattens bending charts keeping
   their angles (LSCM), but cuts no seams of its own: a chart still
   ends where the surface has turned too far from its seed, so a head

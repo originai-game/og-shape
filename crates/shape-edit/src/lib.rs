@@ -737,6 +737,10 @@ fn offset(planes: &[(DVec3, f64)]) -> DVec3 {
     // keeps the open face's target.
     let mut clusters: Vec<(DVec3, f64, bool)> = Vec::new();
     for &(n, target) in planes {
+        // A triangle of no area (a sliver a boolean left) has no plane.
+        if n == DVec3::ZERO {
+            continue;
+        }
         let open = target > 0.0;
         match clusters
             .iter_mut()
@@ -981,6 +985,39 @@ pub fn shell_report(s: &Solid, d: &Shell) -> Result<(Solid, EditReport), EditErr
     if let Some(i) = pieces::pieced(s, &targets, t, size(s)) {
         let e = cut(&i)
             .ok()
+            .filter(|(_, r)| r.touching_edges == 0)
+            .map(|(out, _)| counted(out));
+        if let Some(e) = e
+            && e.1.crossing_pairs == 0
+        {
+            return Ok(e);
+        }
+    }
+    // Surfaces that touch without crossing (two holes of one diameter
+    // meeting: their inner copies are tangent along a line) are a case
+    // the untangling cannot decide. Each vertex's move is made a little
+    // longer or shorter, by its number, up to a millionth, then a
+    // hundred-thousandth, then a ten-thousandth of itself: tangent
+    // surfaces then cross or miss, and the copy untangles. The walls
+    // are off by that share of their thickness.
+    for share in [1e-6, 1e-5, 1e-4] {
+        let mut nudged = Solid::default();
+        for (v, p) in s.positions.iter().enumerate() {
+            // A fixed scramble of the vertex's number, in −1..1.
+            let h =
+                ((v as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40) as f64 / (1u64 << 24) as f64;
+            nudged.push_vertex(*p + offset(&planes[v]) * (1.0 + share * (2.0 * h - 1.0)));
+        }
+        for (i, tri) in s.triangles.iter().enumerate() {
+            nudged.push_triangle(*tri, s.surfaces[i], &["wall"]);
+        }
+        nudged.uvs.clone_from(&s.uvs);
+        if nudged.canonicalize().is_err() {
+            continue;
+        }
+        let e = self_union(&nudged)
+            .ok()
+            .and_then(|u| cut(&u).ok())
             .filter(|(_, r)| r.touching_edges == 0)
             .map(|(out, _)| counted(out));
         if let Some(e) = e

@@ -358,6 +358,37 @@ fn edits_answer_the_crossing_pairs_they_leave() {
     ]);
     assert_eq!(answer, json!({"crossingPairs": 0}));
     assert!(closed && volume > 50_000.0 && volume < 56_000.0, "{volume}");
+    // A blind hole of the other hole's own diameter, ending a millimetre
+    // past its axis: the two inner copies are tangent along a line,
+    // which no untangling decides; with each vertex's move nudged by up
+    // to a millionth of itself they cross, and the shell builds
+    // (`docs/research.md` §64).
+    let through = json!({"op": "hole", "id": 0, "diameter": 8,
+        "at": {"origin": [30, 0, 20], "x": [0, 1, 0], "y": [0, 0, 1], "z": [1, 0, 0]}});
+    let blind = |diameter: f64, depth: f64| {
+        json!({"op": "hole", "id": 0, "diameter": diameter, "depth": depth,
+            "at": {"origin": [0, 0, 40], "x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}})
+    };
+    let block = json!({"op": "extrude", "name": "block", "height": 40,
+        "profile": {"rect": {"width": 60, "height": 60}}});
+    let (answer, closed, volume) = build(vec![
+        block.clone(),
+        through.clone(),
+        blind(8.0, 21.0),
+        json!({"op": "shell", "id": 0, "thickness": 3}),
+    ]);
+    assert_eq!(answer, json!({"crossingPairs": 0}));
+    assert!(closed && (volume - 51_050.0).abs() < 5.0, "{volume}");
+    // A narrower blind hole reaching the far wall of the other: the cut
+    // leaves triangles of no area, which have no plane to move.
+    let (answer, closed, _) = build(vec![
+        block,
+        through,
+        blind(6.0, 30.0),
+        json!({"op": "shell", "id": 0, "thickness": 5}),
+    ]);
+    assert_eq!(answer, json!({"crossingPairs": 0}));
+    assert!(closed);
 }
 
 #[test]

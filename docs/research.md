@@ -9704,3 +9704,34 @@ repair and `process` lines that hash a report move for its new fields
 (`meshtools.repair.large_hole`, `.non_manifold`, `.pockets`,
 `.seam_fill`, `mcp.process.bake`, `.ball_defects`, `.look`,
 `place.process`).
+
+## 64. The six shells §48 left (2026-11-12)
+
+All six are one block: a hole of 8 through it, and a blind hole from
+the top that runs into it.
+
+| Blind hole | Wall | §48 | Why | Now |
+| --- | --- | --- | --- | --- |
+| ⌀6, 30 deep | 5 | "too thin to move in" | the cut leaves triangles of no area; their normals were zero, a vertex's planes had no solution, and the inner copy was never made | builds: a triangle of no area gives no plane |
+| ⌀8, 21 deep | 2, 3, 5 | the same | the same, and then as the next row | builds, nudged |
+| ⌀8, 20 deep | 5 | "the tool passes through itself" | the two holes have one diameter, so their walls, moved out by the wall, are two tubes of one radius whose axes meet: tangent along lines. The folded copy cannot be untangled (`self_union` ends open: 77 to 408 unmatched edges), the planes do not apply (not convex), collapsing leaves it open, and the pieces do not come apart | builds, nudged |
+| ⌀8, 26 deep | 2 | the same | the same | still refused: nudged by any of the three shares its untangling ends open (55, 14, 18 unmatched edges) |
+
+**The nudge.** Surfaces that touch without crossing are the one case
+exact predicates cannot settle either way: there is no side. As the
+last try before giving up, each vertex's move is made longer or
+shorter by a share of itself that depends on its number (a fixed
+scramble, in −1..1) times a millionth; then a hundred-thousandth; then
+a ten-thousandth. Tangent surfaces then cross or miss, the copy
+untangles (1 610 and 2 062 triangles, no crossing pair), and the cut
+is closed with no crossing pair and no touching edge, or the next
+share is tried. The walls are off by at most that share of their
+thickness (3 nm on a 3 mm wall at the first), which is the price, and
+is why it is the last try and not the first: every shell that built
+before builds as before.
+
+Measured: the sweep of §48, 125 of 126 (120); the sweeps of 7 280
+shells and 2 434 edits, unchanged line for line. Checked:
+`edits_answer_the_crossing_pairs_they_leave` holds the ⌀8, 21 deep
+shell at 3 (closed, volume 51 050) and the ⌀6, 30 deep one at 5. No
+golden line moved.

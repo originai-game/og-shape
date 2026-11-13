@@ -1663,3 +1663,12 @@
   report's new `crossing_fills`, for `--fuse` to untangle: TRELLIS's
   cabinet, 2 of whose 3 large holes have faces behind them, ends
   closed with no self-intersection (`docs/research.md` §63).
+- `shell`: five more of the 126 swept shells build (125; the 7 280-shell
+  and 2 434-edit sweeps unchanged line for line). A triangle of no
+  area a boolean left no longer leaves the inner copy without a place
+  for its corners; and where the inner copies of two holes are tangent
+  (a blind hole of the diameter of the hole it meets), which no
+  untangling decides, each vertex's move is nudged by up to a
+  millionth of itself (then a hundred-thousandth, a ten-thousandth)
+  until they cross and the copy untangles: the walls are off by that
+  share of their thickness (`docs/research.md` §64).
