@@ -1,12 +1,15 @@
 //! `shape retarget <rigged mesh> --from <animated file> [--clip NAME]
 //! [--map SOURCE=TARGET,…] [-o out.glb]`: clips made for another
 //! skeleton moved onto a skinned mesh (`shape_skin::retarget`), such as
-//! one `shape rig` wrote. Bones match by name (Mixamo's prefix taken off)
-//! and by the pairs given; both files stand up +Z, facing −Y, as read.
+//! one `shape rig` wrote. The animated file may carry the skeleton
+//! alone, with no mesh (the origin asset library's motion clips). Bones
+//! match by name (Mixamo's prefix taken off, Tripo's biped names read as
+//! Mixamo's) and by the pairs given; both files stand up +Z, as read, and
+//! a source facing another way is turned by a quarter turn to the rig's.
 //!
 //! The report gives, per clip, the pairs matched, the rig's bones left
 //! to follow their parents, the source's bones unused, and how the root's
-//! motion was scaled. The output keeps the mesh's own clips, a clip of
+//! motion was scaled and the quarter turn the source was given. The output keeps the mesh's own clips, a clip of
 //! the same name replaced.
 
 use std::path::{Path, PathBuf};
@@ -60,9 +63,16 @@ pub fn retarget(files: &dyn Files, d: &RetargetDesc) -> Result<String, Failure> 
         ));
     };
     let mut source = load_mesh(files, &Input::Path(d.from.clone()), &Import::default())?;
-    let source_clips = source.clips()?;
-    let source_solid = source.take_joined()?;
-    let Some(source_skin) = source_solid.skin else {
+    let (source_skin, source_clips) = if source.imported.parts.is_empty()
+        && let Some(s) = source.imported.skeletons.first()
+    {
+        // An animation file with the skeleton alone.
+        (Some(s.skin.clone()), s.clips.clone())
+    } else {
+        let clips = source.clips()?;
+        (source.take_joined()?.skin, clips)
+    };
+    let Some(source_skin) = source_skin else {
         return Err(Failure::Failed(format!(
             "{}: no skin, so no skeleton for its clips",
             d.from.display()
@@ -92,6 +102,7 @@ pub fn retarget(files: &dyn Files, d: &RetargetDesc) -> Result<String, Failure> 
             "unmatched": r.unmatched,
             "unused": r.unused,
             "scale": r.scale,
+            "turn": r.turn,
         }));
         clips.retain(|k| k.name != moved.name);
         clips.push(moved);

@@ -553,4 +553,44 @@ fn a_clip_moves_onto_another_skeleton() {
     );
     let up = shoulder + DVec3::X * 50.0 + DVec3::Z * 50.0;
     assert!((place(1, 3) - up).length() < 1e-9, "{:?}", place(1, 3));
+    assert_eq!(r.turn, 0);
+    // A source that faces a quarter turn the other way (its arm along +y,
+    // the elbow bent about +x to point the forearm up): turned to the
+    // rig's facing, the same places as above.
+    let side = chain(DVec3::Y, "");
+    let side_clip = SkinClip {
+        poses: vec![
+            crate::skin_matrices(&side, &Pose::default()).unwrap(),
+            crate::skin_matrices(
+                &side,
+                &Pose {
+                    turns: vec![Turn {
+                        bone: "LeftForeArm".into(),
+                        axis: DVec3::X,
+                        angle: trig::to_radians(90.0),
+                    }],
+                },
+            )
+            .unwrap(),
+        ],
+        ..clip.clone()
+    };
+    let (moved, r) = crate::retarget(&side, &side_clip, &a_pose, &Default::default()).unwrap();
+    assert_eq!(r.turn, 270);
+    let place = |key: usize, bone: usize| {
+        crate::apply(&moved.poses[key][bone], a_pose.bones[bone].rest.origin)
+    };
+    assert!((place(0, 3) - (shoulder + DVec3::X * 100.0)).length() < 1e-9);
+    assert!((place(1, 3) - up).length() < 1e-9, "{:?}", place(1, 3));
+    // Tripo's names for the same bones match Mixamo's.
+    let mut tripo = source.clone();
+    for (b, n) in tripo
+        .bones
+        .iter_mut()
+        .zip(["Hip", "L_Upperarm", "L_Forearm", "L_Hand"])
+    {
+        b.name = n.into();
+    }
+    let (_, r) = crate::retarget(&tripo, &clip, &a_pose, &Default::default()).unwrap();
+    assert_eq!(r.matched.len(), 4, "{r:?}");
 }

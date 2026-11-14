@@ -178,9 +178,12 @@ const TOOLS: [Tool; 15] = [
     },
     Tool {
         name: "retarget",
-        description: "Move another skeleton's clips (`from`: a skinned, animated glb, gltf or \
-            fbx, such as a Mixamo file) onto a skinned mesh (`path`, such as `rig`'s output). \
-            Bones match by name, Mixamo's prefix taken off, and by `map`; each takes its source \
+        description: "Move another skeleton's clips (`from`: an animated glb, gltf or fbx with \
+            a skin or a skeleton alone, such as a Mixamo file or a Tripo biped clip from the \
+            origin asset library) onto a skinned mesh (`path`, such as `rig`'s output). Bones \
+            match by name, Mixamo's prefix taken off and Tripo's biped names read as Mixamo's, \
+            and by `map`; a source facing another way is first turned by a quarter turn \
+            (`turn`); each takes its source \
             bone's world turns, its rest direction swung onto the source's, so a T pose's clip \
             plays on an A pose's rig; the root's motion is scaled by the hips' heights. Reports \
             per clip the bones matched, the rig's bones left to follow their parents \
@@ -1053,7 +1056,7 @@ fn retarget_schema() -> Value {
     p.extend([
         (
             "from",
-            path("The file the clips come from, with its skeleton: .glb, .gltf or .fbx."),
+            path("The file the clips come from, with its skeleton (a skinned mesh, or the skeleton alone): .glb, .gltf or .fbx."),
         ),
         (
             "clips",

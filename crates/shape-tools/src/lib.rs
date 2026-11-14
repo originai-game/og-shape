@@ -116,8 +116,8 @@ pub use export::{
 pub use fbx::import_fbx;
 pub use image::{ImageInfo, Texture};
 pub use import::{
-    Affine, Import, ImportError, Imported, ImportedPart, Resolve, SkinScale, UNEVEN, import,
-    import_gltf, import_obj, no_files,
+    Affine, Import, ImportError, Imported, ImportedPart, ImportedSkeleton, Resolve, SkinScale,
+    UNEVEN, import, import_gltf, import_obj, no_files,
 };
 pub use interference::{Interfering, interference};
 pub use measure::{Measure, MeshMeasures, Piece, TextureMeasures, UvMeasures, measure};

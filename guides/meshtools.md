@@ -437,6 +437,15 @@ heights. Read `unmatched` (the rig's bones that only follow their
 parents) and `unused` (the source's bones nothing took: fingers, when
 the rig has none). Scale in a clip's bones is not carried.
 
+The animated file may be a skeleton with no mesh, as the origin asset
+library's motion clips are (`assets_search` with `kind: "animation"`:
+about 47 Tripo biped clips, walk, run, idle, jump, dances, boxing,
+kicks, slashes, spells). Their bone names (`Hip`, `L_Upperarm`,
+`R_Calf`, …) are read as Mixamo's, so no `--map` is needed; their twist
+bones go unused. A source that faces another way than the rig (Tripo's
+face +X) is turned about up by the nearest quarter turn first; the
+report's `turn` says by how much.
+
 ## Which way is up
 
 `measure --axes` (MCP `axes`) and `place`'s report give, for the mesh

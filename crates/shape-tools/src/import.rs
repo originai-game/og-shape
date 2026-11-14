@@ -209,6 +209,22 @@ pub struct Imported {
     /// The uniform scales taken out of skinned parts' bones, one per
     /// skinned part that had one.
     pub skin_scales: Vec<SkinScale>,
+    /// glTF skins no mesh uses (an animation file that carries the
+    /// skeleton alone), each with its clips, read with glTF's axes
+    /// (`up` and `front` do not turn them). A skin that cannot be read is
+    /// a line in [`Imported::skipped`] instead.
+    pub skeletons: Vec<ImportedSkeleton>,
+}
+
+/// A skeleton with no mesh, and the clips that move it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ImportedSkeleton {
+    /// The skin's name in the file, else `skinK`.
+    pub name: String,
+    /// The bones, with no vertices weighted.
+    pub skin: Skin,
+    /// The file's animations of it, as [`ImportedPart::clips`].
+    pub clips: Vec<shape_mesh::SkinClip>,
 }
 
 /// A uniform scale taken out of a skinned part's bones: their bind
@@ -1143,8 +1159,12 @@ impl Doc<'_> {
             }
             pending.push((i, world, name, part, raw));
         }
+        let mut skinned = vec![false; self.json.get("skins").items().len()];
         for (i, world, name, mut part, raw) in pending {
             let n = self.json.get("nodes").at(i);
+            if let Some(slot) = n.get("skin").index().and_then(|k| skinned.get_mut(k)) {
+                *slot = true;
+            }
             let morph_node =
                 |part: &ImportedPart| part.solid.morphs.as_ref().map(|m| (i, m.targets.len()));
             let weighted = raw.iter().any(|r| r.iter().any(|p| p.1 > 0.0));
@@ -1244,6 +1264,27 @@ impl Doc<'_> {
                 }
             }
             out.parts.push(part);
+        }
+        for (k, used) in skinned.iter().enumerate() {
+            if *used {
+                continue;
+            }
+            let name = self
+                .json
+                .get("skins")
+                .at(k)
+                .get("name")
+                .str()
+                .map_or_else(|| format!("skin{k}"), str::to_string);
+            let read = self
+                .skin(k, &name, &[], &[])
+                .and_then(|((skin, _), space)| Ok((skin, self.clips(&space, None)?)));
+            match read {
+                Ok((skin, clips)) => out.skeletons.push(ImportedSkeleton { name, skin, clips }),
+                Err(e) => out
+                    .skipped
+                    .push(format!("{name}: a skin no mesh uses, not read: {e}")),
+            }
         }
         Ok(out)
     }

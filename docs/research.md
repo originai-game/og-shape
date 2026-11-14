@@ -10679,3 +10679,53 @@ none NaN. Retargeting a clip of 231 keys takes 1 ms.
 Tests: `a_clip_moves_onto_another_skeleton` (onto itself the same
 matrices; onto an A pose's arm of other lengths the T pose's
 directions, and a bent elbow pointing up); golden `skin.retarget`.
+
+## 81. The asset library's motion clips onto a rig (2026-11-14)
+
+The origin asset library (`assets_search`, `kind: "animation"`) holds
+about 47 biped clips from Tripo's partner motion library (walk, run,
+idle, jump, six dances, three boxing, two kicks, slash, chop, shoot,
+cast a spell, …; `LicenseRef-Tripo-Partner-Authorization`, so none is
+kept in this repository). Each is a GLB with a skin of 41 bones and no
+mesh (`Root`, `Hip`, `Pelvis`, `L_Thigh` … `R_UpperarmTwist02`,
+generator `animation-lab-retargeting-native`), one clip at 30 keys a
+second.
+
+Three things stood in the way of `shape retarget --from walk.glb`:
+
+- The importer read skins only through the meshes that use them, so the
+  file had "no meshes". `Imported::skeletons` now carries each glTF
+  skin no mesh uses, read as a mesh's skin is, with its clips; a skin
+  that cannot be read is a `skipped` line. The command takes the first
+  when the file has no mesh.
+- No bone name matched. The 22 Tripo bones that have a Mixamo
+  counterpart (`Hip` Hips, `Waist` Spine, `Spine01` Spine1, `Spine02`
+  Spine2, `NeckTwist01` Neck, `Head`, `L_`/`R_` `Thigh` UpLeg, `Calf`
+  Leg, `Foot`, `ToeBase`, `Clavicle` Shoulder, `Upperarm` Arm,
+  `Forearm` ForeArm, `Hand`) are read as Mixamo's. With this table and
+  with the same pairs given by `--map`, the six outputs below are the
+  same bytes.
+- The skeleton faces +X (its left hand at +Y), the rig −Y. Each bone
+  took its source's world turns, so the whole figure turned a quarter
+  turn on its hips, legs crossed and the torso twisted (seen in the
+  preview, not in any number). The source is now turned about +Z by
+  the quarter turn nearest the least-squares one that carries its
+  matched bones' bind places onto the rig's, each about its centroid
+  (`cos ∝ Σ a·b`, `sin ∝ Σ a×b` over the horizontal parts, chosen by
+  comparing the two sums, ties to no turn), and every key conjugated by
+  it. A source that faces as the rig does is left exactly as it was
+  (onto its own skeleton still 0 mm, §80). Tripo's clips get 270°.
+
+Tripo's walk, run, jump, dance_02, box_01 and idle onto Meshy's army
+man rigged by `shape rig` (§79): 22 bones matched each, the five
+hand, toe and head tips following their parents, the 19 twist bones,
+`Root` and `Pelvis` unused, root motion scaled 1.24. Read by three.js
+r186 (6 clips, 27 bones): the skinned vertices move at 0, 0.2, 0.4 and
+0.6 s, none NaN. Previews from the side show the walk's legs
+alternating along the way he faces, the run's knees high, the boxer's
+guard, the jump's crouch.
+
+Tests: `a_clip_moves_onto_another_skeleton` (a skeleton facing a
+quarter turn the other way lands on the same places, `turn` 270; Tripo's
+names match); `a_file_s_animation_poses_its_skin` (the same file with
+its mesh taken off gives the same bones and clip as a skeleton).

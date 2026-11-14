@@ -2,7 +2,8 @@
 //!
 //! Bones are matched by name, after a prefix up to the last `:` and a
 //! leading `mixamorig` are taken off (`mixamorig:LeftArm` and
-//! `mixamorigLeftArm` are `LeftArm`), and by any pairs given. Each key:
+//! `mixamorigLeftArm` are `LeftArm`; Tripo's biped names, such as
+//! `L_Upperarm`, are read as Mixamo's), and by any pairs given. Each key:
 //! - A matched target bone turns in the world as its source bone does
 //!   from its rest (the rotation part of the source's skinning matrix),
 //!   after its rest direction is first swung onto the source bone's rest
@@ -11,6 +12,9 @@
 //! - A target bone without a match turns with its parent.
 //! - The roots move as the source's matched root does, scaled by the
 //!   ratio of the two roots' rest heights.
+//! - A source skeleton that faces another way than the rig (a quarter
+//!   turn or more about +Z, judged from the matched bones' bind places)
+//!   is first turned by the nearest quarter turn, its clip with it.
 //! - Every bone keeps its own length: a child sits where its parent's
 //!   posed frame carries its rest offset.
 //!
@@ -45,12 +49,82 @@ pub struct RetargetReport {
     /// The roots' rest heights, target over source: how the root's
     /// motion was scaled.
     pub scale: f64,
+    /// The quarter turn about +Z, in degrees counter-clockwise (0, 90,
+    /// 180 or 270), the clip was given so its skeleton faces the way the
+    /// rig does.
+    pub turn: u32,
 }
 
-/// A bone's name without a namespace or Mixamo's prefix.
+/// The quarter turn about +Z that best carries the source's matched
+/// bind origins onto the target's, each about its own centroid, seen
+/// from above: in degrees, and its cosine and sine. The least-squares
+/// angle has `cos ∝ Σ a·b` and `sin ∝ Σ a×b` (`a` source, `b` target,
+/// horizontal parts); the quarter turn nearest it is picked by those
+/// two sums alone, ties to the smaller turn, so a skeleton that faces
+/// as the rig does is left exactly as it is.
+fn facing(pairs: &[(DVec3, DVec3)]) -> (u32, f64, f64) {
+    let n = pairs.len() as f64;
+    if pairs.is_empty() {
+        return (0, 1.0, 0.0);
+    }
+    let (ca, cb) = pairs
+        .iter()
+        .fold((DVec3::ZERO, DVec3::ZERO), |(x, y), (a, b)| {
+            (x + *a, y + *b)
+        });
+    let (ca, cb) = (ca / n, cb / n);
+    let (mut dot, mut cross) = (0.0, 0.0);
+    for (a, b) in pairs {
+        let (a, b) = (*a - ca, *b - cb);
+        dot += a.x * b.x + a.y * b.y;
+        cross += a.x * b.y - a.y * b.x;
+    }
+    if dot.abs() >= cross.abs() {
+        if dot >= 0.0 {
+            (0, 1.0, 0.0)
+        } else {
+            (180, -1.0, 0.0)
+        }
+    } else if cross > 0.0 {
+        (90, 0.0, 1.0)
+    } else {
+        (270, 0.0, -1.0)
+    }
+}
+
+/// Tripo's biped skeleton (the origin asset library's motion clips) by
+/// Mixamo's names; its twist bones, `Root` and `Pelvis` have none.
+const TRIPO: [(&str, &str); 22] = [
+    ("Hip", "Hips"),
+    ("Waist", "Spine"),
+    ("Spine01", "Spine1"),
+    ("Spine02", "Spine2"),
+    ("NeckTwist01", "Neck"),
+    ("L_Thigh", "LeftUpLeg"),
+    ("L_Calf", "LeftLeg"),
+    ("L_Foot", "LeftFoot"),
+    ("L_ToeBase", "LeftToeBase"),
+    ("R_Thigh", "RightUpLeg"),
+    ("R_Calf", "RightLeg"),
+    ("R_Foot", "RightFoot"),
+    ("R_ToeBase", "RightToeBase"),
+    ("L_Clavicle", "LeftShoulder"),
+    ("L_Upperarm", "LeftArm"),
+    ("L_Forearm", "LeftForeArm"),
+    ("L_Hand", "LeftHand"),
+    ("R_Clavicle", "RightShoulder"),
+    ("R_Upperarm", "RightArm"),
+    ("R_Forearm", "RightForeArm"),
+    ("R_Hand", "RightHand"),
+    ("Head", "Head"),
+];
+
+/// A bone's name without a namespace or Mixamo's prefix, and Tripo's
+/// biped names as Mixamo's.
 fn plain(name: &str) -> &str {
     let n = name.rsplit(':').next().unwrap_or(name);
-    n.strip_prefix("mixamorig").unwrap_or(n)
+    let n = n.strip_prefix("mixamorig").unwrap_or(n);
+    TRIPO.iter().find(|(t, _)| *t == n).map_or(n, |(_, m)| m)
 }
 
 /// The 3×3 part of `m`, made orthonormal (Gram–Schmidt on its columns),
@@ -179,8 +253,31 @@ pub fn retarget(
             "no bone of the clip's skeleton matches the rig's by name; give pairs".into(),
         ));
     }
-    let src_rest = bind_origins(source);
     let tgt_rest = bind_origins(target);
+    let src_bind = bind_origins(source);
+    // The source turned to face the rig's way: its bind origins, and
+    // (below) each key conjugated by the same turn.
+    let (turn_deg, c, s) = facing(
+        &(0..nt)
+            .filter_map(|i| source_of[i].map(|k| (src_bind[k as usize], tgt_rest[i])))
+            .collect::<Vec<_>>(),
+    );
+    let face: Mat4 = [
+        c, s, 0.0, 0.0, //
+        -s, c, 0.0, 0.0, //
+        0.0, 0.0, 1.0, 0.0, //
+        0.0, 0.0, 0.0, 1.0,
+    ];
+    let face_back: Mat4 = [
+        c, -s, 0.0, 0.0, //
+        s, c, 0.0, 0.0, //
+        0.0, 0.0, 1.0, 0.0, //
+        0.0, 0.0, 0.0, 1.0,
+    ];
+    let src_rest: Vec<DVec3> = src_bind
+        .into_iter()
+        .map(|p| if turn_deg == 0 { p } else { apply(&face, p) })
+        .collect();
     // Each matched target bone's swing from its rest direction onto its
     // source bone's, toward the first child that matches.
     let mut first_child: Vec<Option<usize>> = vec![None; nt];
@@ -218,6 +315,16 @@ pub fn retarget(
     };
     let mut poses = Vec::with_capacity(clip.poses.len());
     for key in &clip.poses {
+        let turned: Vec<Mat4>;
+        let key = if turn_deg == 0 {
+            key
+        } else {
+            turned = key
+                .iter()
+                .map(|m| mul(&mul(&face, m), &face_back))
+                .collect();
+            &turned
+        };
         let mut turn: Vec<Mat4> = Vec::with_capacity(nt);
         let mut at: Vec<DVec3> = Vec::with_capacity(nt);
         let mut out: Vec<Mat4> = Vec::with_capacity(nt);
@@ -278,6 +385,7 @@ pub fn retarget(
             .map(|(b, _)| b.name.clone())
             .collect(),
         scale,
+        turn: turn_deg,
     };
     Ok((
         SkinClip {

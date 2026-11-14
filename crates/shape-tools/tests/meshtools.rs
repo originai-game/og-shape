@@ -795,6 +795,32 @@ fn a_file_s_animation_poses_its_skin() {
             let (top, _) = posed(time);
             near(top, DVec3::new(100.0 - 250.0, 0.0, 250.0));
         }
+        // The same file with no mesh (an animation file that carries the
+        // skeleton alone): the same bones and the same clip, as a
+        // skeleton.
+        let glb = skinned::skinned_glb_animated(armature);
+        let json_len = u32::from_le_bytes([glb[12], glb[13], glb[14], glb[15]]) as usize;
+        let json = String::from_utf8(glb[20..20 + json_len].to_vec()).unwrap();
+        let mut json = json
+            .replace(r#"{"name":"legs","mesh":0,"skin":0}"#, r#"{"name":"legs"}"#)
+            .into_bytes();
+        while json.len() % 4 != 0 {
+            json.push(b' ');
+        }
+        let bin = &glb[20 + json_len..];
+        let mut bare = b"glTF".to_vec();
+        bare.extend(2u32.to_le_bytes());
+        bare.extend(((20 + json.len() + bin.len()) as u32).to_le_bytes());
+        bare.extend((json.len() as u32).to_le_bytes());
+        bare.extend(b"JSON");
+        bare.extend(json);
+        bare.extend(bin);
+        let bare = import(&bare, &Import::default(), &no_files).unwrap();
+        assert!(bare.parts.is_empty());
+        let skeleton = &bare.skeletons[0];
+        assert_eq!(skeleton.name, "rig");
+        assert_eq!(skeleton.skin.bones, part.solid.skin.as_ref().unwrap().bones);
+        assert_eq!(skeleton.clips, part.clips);
     }
 }
 

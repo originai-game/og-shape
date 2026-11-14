@@ -298,9 +298,10 @@ What a user might expect and will not find, as of 2026-11-14:
 - **Rigging.** `shape rig` finds a humanoid's joints only in a T or A
   pose (no fingers) and refuses other poses; any other skeleton is
   given as joints. `shape retarget` carries a clip's turns, not its
-  bones' scale. The preset motions (Kimodo) are not in yet
+  bones' scale. Preset motions come from the origin asset library's
+  Tripo clips, retargeted (§81); Kimodo's are not in yet
   (`docs/plan.md` phase 7,
-  `docs/research.md` §79, §80).
+  `docs/research.md` §79, §80, §81).
 - **Size.** A `Solid` of 819 000 coloured triangles is 126 MiB
   resident (its corner colours are 32-bit floats now, 48 bytes a
   triangle), and `repair` peaks at 506 MiB on it (837 before). Nothing

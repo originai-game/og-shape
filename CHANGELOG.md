@@ -1835,3 +1835,11 @@
   skeleton; onto Meshy's army man (an A pose), played by three.js
   (`docs/research.md` §80). Golden: `skin.retarget` added.
 - MCP: the tools `rig` and `retarget`, as the commands (`guides/mcp.md`).
+- `shape retarget` takes clips from a file that carries the skeleton
+  alone, as the origin asset library's motion clips do
+  (`shape_tools::Imported::skeletons`: glTF skins no mesh uses, with
+  their clips). Tripo's biped bone names are read as Mixamo's, and a
+  source that faces another way than the rig is first turned by the
+  nearest quarter turn about up (the report's `turn`). Tripo's walk,
+  run, jump, dance, boxing and idle clips onto Meshy's army man, rigged
+  by `shape rig`, with no `--map` (`docs/research.md` §81).
