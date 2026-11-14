@@ -1834,3 +1834,4 @@
   from its mesh: joints within 31 mm on average, exact onto its own
   skeleton; onto Meshy's army man (an A pose), played by three.js
   (`docs/research.md` §80). Golden: `skin.retarget` added.
+- MCP: the tools `rig` and `retarget`, as the commands (`guides/mcp.md`).

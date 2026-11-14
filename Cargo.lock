@@ -473,6 +473,7 @@ dependencies = [
  "serde_json",
  "shape-cli",
  "shape-model",
+ "shape-skin",
  "shape-tools",
 ]
 

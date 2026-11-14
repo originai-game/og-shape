@@ -17,6 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 shape-cli = { path = "../shape-cli" }
+shape-skin.workspace = true
 shape-tools.workspace = true
 serde_json.workspace = true
 

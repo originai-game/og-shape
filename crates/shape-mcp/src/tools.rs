@@ -23,6 +23,8 @@ use shape_cli::preview::{PreviewDesc, image_path, render};
 use shape_cli::process::{ProcessDesc, STEPS, process_steps};
 use shape_cli::repair::{RepairDesc, repair};
 use shape_cli::report::{array, object, string};
+use shape_cli::retarget::{RetargetDesc, retarget};
+use shape_cli::rig::{RigDesc, rig, skeleton};
 use shape_cli::source::{Source, load, load_uvs};
 use shape_cli::unwrap::{UnwrapDesc, unwrap};
 use shape_cli::{Failure, Files, Input, failed};
@@ -42,7 +44,7 @@ struct Tool {
     handler: Handler,
 }
 
-const TOOLS: [Tool; 13] = [
+const TOOLS: [Tool; 15] = [
     Tool {
         name: "build",
         description: "Build a model program (the JSON form of resource og-shape://guides/program.md) \
@@ -159,6 +161,32 @@ const TOOLS: [Tool; 13] = [
             packed atlas (the report's `bake` says what was baked and what found no source).",
         schema: process_schema,
         handler: process_tool,
+    },
+    Tool {
+        name: "rig",
+        description: "Give a mesh file without a skin one (bone heat weights). Without \
+            `skeleton`, a humanoid's 27 joints (Mixamo's names) are found from the mesh: it must \
+            stand up +Z facing -Y as read (`up`, `front`) in a T or A pose, else it is refused \
+            with why. With `skeleton`, those joints. Reports the skeleton (in the form \
+            `skeleton` takes: move a joint and rig again), what the finder measured (`fit`: \
+            limbs, joints outside the mesh, the arms' drop), the binding (`bind`) and two check \
+            poses (`check`: inverted triangles, volume ratio). `check_clip` writes those poses \
+            as the clip `rig_check`, for `preview` with `clip`. og-shape://guides/meshtools.md, \
+            \"Rigging a mesh without a skin\".",
+        schema: rig_schema,
+        handler: rig_tool,
+    },
+    Tool {
+        name: "retarget",
+        description: "Move another skeleton's clips (`from`: a skinned, animated glb, gltf or \
+            fbx, such as a Mixamo file) onto a skinned mesh (`path`, such as `rig`'s output). \
+            Bones match by name, Mixamo's prefix taken off, and by `map`; each takes its source \
+            bone's world turns, its rest direction swung onto the source's, so a T pose's clip \
+            plays on an A pose's rig; the root's motion is scaled by the hips' heights. Reports \
+            per clip the bones matched, the rig's bones left to follow their parents \
+            (`unmatched`), the source's unused, and the scale. `out` keeps the mesh's own clips.",
+        schema: retarget_schema,
+        handler: retarget_tool,
     },
     Tool {
         name: "run_typescript",
@@ -999,6 +1027,54 @@ fn compress_schema() -> Value {
     )
 }
 
+fn rig_schema() -> Value {
+    let mut p = mesh_props("Write the rigged mesh here: .glb (skin, UVs, material, clips).");
+    p.extend([
+        (
+            "skeleton",
+            json!({
+                "type": "object",
+                "description": "The joints, parents first, in mm: {\"joints\": [{\"name\", \
+                    \"parent\" (\"\" for a root), \"at\": [x, y, z]}]}. A joint's bone is the \
+                    segments to its children; a joint without children gets no weight. Absent: \
+                    a humanoid's, found from the mesh.",
+            }),
+        ),
+        (
+            "check_clip",
+            boolean("Also write the check poses as the clip `rig_check` (rest, down, rest, up, rest; a second each)."),
+        ),
+    ]);
+    schema(p, &["path"])
+}
+
+fn retarget_schema() -> Value {
+    let mut p = mesh_props("Write the mesh with the clips here: .glb.");
+    p.extend([
+        (
+            "from",
+            path("The file the clips come from, with its skeleton: .glb, .gltf or .fbx."),
+        ),
+        (
+            "clips",
+            json!({
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "The clips to take, by name; absent takes them all.",
+            }),
+        ),
+        (
+            "map",
+            json!({
+                "type": "object",
+                "additionalProperties": {"type": "string"},
+                "description": "Extra pairs: a source bone's full name to the rig's bone it drives.",
+            }),
+        ),
+    ]);
+    schema(p, &["path", "from"])
+}
+
 fn place_schema() -> Value {
     let mut p = mesh_props(
         "Write the parts placed here: .glb (skins, UVs and textures kept), .obj or .stl.",
@@ -1398,6 +1474,62 @@ fn compress_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec
             .ok_or_else(|| Failure::Usage("give `out`, where to write the GLB".into()))?,
     };
     Ok(vec![text(compress(&server.ws, &d)?)])
+}
+
+fn rig_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
+    let skeleton = match a.o.get("skeleton") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(skeleton(&v.to_string())?),
+    };
+    let d = RigDesc {
+        input: a.mesh_input()?,
+        import: a.import()?,
+        skeleton,
+        check_clip: a.flag("check_clip")?,
+        out: a.path("out")?,
+    };
+    Ok(vec![text(rig(&server.ws, &d)?)])
+}
+
+fn retarget_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
+    let from = a
+        .path("from")?
+        .ok_or_else(|| bad("from", "the file the clips come from"))?;
+    let strings = |k: &str| -> Result<Vec<String>, Failure> {
+        match a.o.get(k) {
+            None | Some(Value::Null) => Ok(Vec::new()),
+            Some(Value::Array(v)) => v
+                .iter()
+                .map(|x| {
+                    x.as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| bad(k, "a list of names"))
+                })
+                .collect(),
+            Some(_) => Err(bad(k, "a list of names")),
+        }
+    };
+    let map = match a.o.get("map") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Object(m)) => m
+            .iter()
+            .map(|(s, t)| {
+                t.as_str()
+                    .map(|t| (s.clone(), t.to_string()))
+                    .ok_or_else(|| bad("map", "source bone names to target bone names"))
+            })
+            .collect::<Result<_, _>>()?,
+        Some(_) => return Err(bad("map", "source bone names to target bone names")),
+    };
+    let d = RetargetDesc {
+        input: a.mesh_input()?,
+        import: a.import()?,
+        from,
+        clips: strings("clips")?,
+        retarget: shape_skin::Retarget { map },
+        out: a.path("out")?,
+    };
+    Ok(vec![text(retarget(&server.ws, &d)?)])
 }
 
 fn place_tool(server: &Server, a: &Args, _p: &mut dyn Progress) -> Result<Vec<Value>, Failure> {
