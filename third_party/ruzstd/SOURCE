@@ -1,0 +1,29 @@
+ruzstd (Moritz Borcherding and contributors), MIT, LICENSE in this folder.
+repository: https://github.com/KillingSpark/zstd-rs
+version:    0.9.1 (the crate this project also depends on, to read Zstandard)
+copied:     2026-11-14
+
+What is here:
+  Nothing but the licence. What came from the project lives in
+  crates/shape-tools/src/zstd/:
+
+  - bits.rs: src/bit_io/bit_writer.rs, the bit writer;
+  - fse.rs: src/fse/fse_encoder.rs, the FSE tables (states from
+    probabilities, a table's description, the two-state stream of
+    Huffman weights, the three predefined distributions);
+  - huff0.rs: src/huff0/huff0_encoder.rs, the Huffman codes from
+    weights and the one- and four-stream writers.
+
+  Each copied as it is, with its imports changed to this crate's and
+  its tests and test-only functions left out (the crate keeps these
+  modules private, so they cannot be used from it).
+
+What was read:
+  src/encoding/blocks/compressed.rs (how a compressed block is laid
+  out: the literals section's header, the sequences' three codes and
+  the order their bits are written in). crates/shape-tools/src/zstd/mod.rs
+  follows that layout and RFC 8878; its matcher (hash chains, a look
+  one byte ahead, repeated offsets), its code lengths and
+  probabilities from counts, and its choice between a described, a
+  predefined and a one-symbol table are this project's own
+  (docs/research.md §77).

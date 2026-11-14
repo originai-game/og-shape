@@ -95,6 +95,7 @@ mod unwrap;
 mod urdf;
 mod usd;
 mod uvview;
+mod zstd;
 
 pub use atlas::{
     Atlas, AtlasError, AtlasMeasures, AtlasReport, ChartPlace, Packing, atlas_measures, pack,

@@ -124,7 +124,7 @@ Run on `main` on 2026-11-10 to 12; each line says where the numbers come from.
 | Check | Result | How |
 |---|---|---|
 | The same bytes on every host | 170 golden output hashes equal on x86-64 Linux, x86-64 Windows, aarch64 Linux, aarch64 macOS and wasm32 (wasmtime); the binding's GLB and PNG equal under bun and node | the gate in GitHub Actions, every push |
-| Tests | 419 pass | `scripts/check.sh test` |
+| Tests | 420 pass | `scripts/check.sh test` |
 | An agent with only the guides and the MCP tools builds objects | 20 of 20 sand3d dataset objects built, every part closed, 24 of 24 joints as the reference, 2.0 builds an object, 19 ran on the first build | `eval/phase6`, run `Z1` (`docs/research.md` §22) |
 | Those 20 programs on today's kernel | 20 of 20 rebuild and export to GLB; 119 of 119 parts closed, no non-manifold edge, no degenerate triangle | `shape measure` on each `program.json` |
 | Every committed program | 105 of 107 build (`eval/phase6/**`, `golden/programs/`); the two that do not are a refusal a golden case hashes on purpose and a trial program with a joint declared twice | `shape build` on each |
@@ -144,7 +144,7 @@ Run on `main` on 2026-11-10 to 12; each line says where the numbers come from.
 | Colliders | the washing machine's 7 parts covered by 19 convex hulls of at most 16 vertices in 4 s; an octagonal cup's hollow kept by 16 hulls (41 mm bridged, against 310 mm by one) | `shape collide` (`guides/meshtools.md`) |
 | The mesh chain on a damaged mesh | open, 2 pieces, 79 flipped faces → closed, 1 piece, on budget, unwrapped with no UV overlap | `shape process golden/meshes/ball_defects.obj` |
 | Compressed and animated files | meshopt (`EXT_`/`KHR_meshopt_compression`) and Draco (bitstream 2.2) glTF read: three.js's and Khronos's samples, Draco's own test files to their Wavefront sources; morph targets and their weight animations read, drawn (`preview --morph`) and written back; FBX eased curves, animation layers and blend shapes (in-between shapes too) against the values Maya wrote for ufbx's test files, to 0.05 mm | `docs/research.md` §42–§47 |
-| KTX2 textures | UASTC: the specification's 64 example blocks decode to exactly its pixels; Khronos's files read (plain and Zstandard, with and without alpha). `process --ktx2` writes one: 49.9 dB on a 1024² colour grid (toktx's file of it: 47.9 dB) in 2.3 s. Not run through the Basis transcoder | `docs/research.md` §50 |
+| KTX2 textures | UASTC: the specification's 64 example blocks decode to exactly its pixels; Khronos's files read (plain and Zstandard, with and without alpha). `process --ktx2` writes one: 49.9 dB on a 1024² colour grid (toktx's file of it: 47.9 dB) in 2.3 s; its Zstandard levels are read back by libzstd. Not run through the Basis transcoder | `docs/research.md` §50, §77 |
 | Outside files | glTF, OBJ and FBX from three.js's and Khronos's samples import; textured and skinned ones keep UVs, bones and weights through repair and decimation to half | `docs/research.md` §9, §11.5, §17 |
 | three.js reads the output | the washing machine's joints move and a skinned figure poses in headless Chromium; vertex positions match the kernel's own pose | `docs/research.md` §19 |
 | A real MCP client | the official TypeScript SDK client and headless Claude Code drive every tool and resource | `docs/research.md` §19 |
@@ -216,14 +216,17 @@ silent returns a result with no error:
 
 ## Not done
 
-What a user might expect and will not find, as of 2026-11-13:
+What a user might expect and will not find, as of 2026-11-14:
 
 - **Textures.** WebP is written lossless only (no lossy VP8), and
   baked maps leave as PNG unless `--webp` or `--ktx2` is given.
   UASTC's rate-distortion pass copies whole blocks from neighbours;
-  matching parts of blocks, as the reference tool does, was tried and
-  gave more bytes at less quality under the one Zstandard level this
-  has (`docs/research.md` §69), and it takes about 2 s a megatexel.
+  matching parts of blocks was tried twice, the second time under
+  this project's own Zstandard encoder, and stays within 1 % of whole
+  blocks either way (`docs/research.md` §69, §77): the reference
+  tool's pass chooses by estimated bits, which this does not. The
+  Zstandard written is between the reference's levels 15 and 19, with
+  no optimal parse. UASTC takes about 2 s a megatexel.
   ETC1S has its run codes but no rate-distortion pass, and texture
   video is not read. No written KTX2 file has been run through the
   Basis transcoder (`docs/research.md` §50, §57).

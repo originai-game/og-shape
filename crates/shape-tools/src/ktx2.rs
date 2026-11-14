@@ -225,10 +225,7 @@ pub(crate) fn encode(levels: &[Image], srgb: bool, alpha: bool, rdo: f64) -> Vec
             let blocks =
                 crate::uastc::encode_rdo(&l.rgba, l.width as usize, l.height as usize, rdo);
             let full = blocks.len();
-            let packed = ruzstd::encoding::compress_to_vec(
-                blocks.as_slice(),
-                ruzstd::encoding::CompressionLevel::Fastest,
-            );
+            let packed = crate::zstd::compress(&blocks);
             (packed, full)
         })
         .collect();

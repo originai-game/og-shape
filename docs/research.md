@@ -10436,3 +10436,100 @@ The sweep: 126 of 126 build.
 Checked: `edits_answer_the_crossing_pairs_they_leave` (shape-model)
 has the case: closed, no crossing pair, 35 216 mm³ to within 5. No
 golden line moved.
+
+## 77. Zstandard written here; parts of UASTC blocks tried again (2026-11-14)
+
+§69 ended: "What is left of the gap to the reference tool is
+therefore the Zstandard level." ruzstd (MIT), which reads Zstandard
+here, writes one level only ("fastest"): one earlier place a position,
+matches of five bytes or more, every offset written in full, and
+Huffman code lengths from the order of the counts, not the counts.
+Its FSE, Huffman and bit-writer modules are private.
+
+**The encoder** (`crates/shape-tools/src/zstd/`, RFC 8878). ruzstd's
+three entropy-coder files are copied (`third_party/ruzstd/`); the rest
+is written here:
+
+- matches from chains of the earlier places that begin with the same
+  four bytes (64 tried), over the whole level, not one block;
+- a look one byte ahead before a match is taken, and the bytes before
+  it taken in where they match too;
+- the last three offsets named by their place (Zstandard's repeat
+  codes, with their shift where no literal comes before): a UASTC
+  block copied from its left or upper neighbour is the offset of the
+  block before it;
+- Huffman code lengths from the counts (the two smallest joined, as
+  Huffman's method has it; brought under 11 bits by lengthening the
+  longest shorter codes, then filled exactly);
+- FSE probabilities in proportion to the counts, the table's size
+  chosen as the reference chooses it; for each of the three codes the
+  cheaper of a described table, the predefined one, and a single
+  symbol; a block of one byte repeated written as that byte.
+
+Integers only, so the same bytes on every target.
+
+**Measured.** The level-0 UASTC blocks (1 048 576 bytes) of two 1024²
+maps, `rdo` 0:
+
+| Writer | Colour grid | Flight helmet lens |
+| --- | --- | --- |
+| ruzstd "fastest" (before) | 224 977 | 416 368 |
+| gzip -9 | 180 718 | 354 272 |
+| zstd 1.5 level 3 | 161 883 | 353 887 |
+| zstd level 9 | 154 057 | 335 855 |
+| **this** | **148 259** | **331 557** |
+| zstd level 19 | 141 446 | 322 905 |
+| xz -9e | 115 492 | 293 796 |
+
+Between the reference's levels 15 and 19, in 0.03 to 0.1 s a
+megabyte. What level 19 has more is a parse that weighs every choice
+by its cost; a deeper chain (256) or another preference for repeated
+offsets moves these by under 0.3 %.
+
+Whole KTX2 files (all levels), before and after, same texels:
+
+| Map | Before | After |
+| --- | --- | --- |
+| colour grid 1024², `rdo` 0 (48.60 dB) | 355 633 | 253 348 |
+| colour grid, `rdo` 1 (47.63 dB) | 290 998 | 212 217 |
+| colour grid, `rdo` 2 (46.66 dB) | 273 292 | 201 112 |
+| hunyuan-300's map, 1024² | 1 386 752 | 1 292 692 |
+| robot_mech1's map, 2048² | 5 492 900 | 5 073 041 |
+
+29 % off the grid, 7 % off the two generated maps (noise in every
+block; nothing a lossless coder finds). A map of one value (barn's
+metallic-roughness, 2048²) is 1 312 bytes.
+
+**Read by the reference.** libzstd (through python-zstandard) reads
+back the test's frames and every level of five KTX2 files written by
+`shape process --ktx2` (58 levels), byte for byte.
+
+**Parts of UASTC blocks, again.** With the stronger coder, §69's
+trial was repeated: where no whole neighbour passes, the first 12, 8
+or 6 bytes of one. Once with the same allowance as a whole block, once
+with the allowance in proportion to the bits a part saves (0.5, 0.28,
+0.18 of it). Bytes with levels, dB:
+
+| `rdo` | Grid: whole blocks | Grid: parts | Grid: parts, scaled | Lens: whole blocks | Lens: parts, scaled |
+| --- | --- | --- | --- | --- | --- |
+| 0.5 | 221 879, 48.00 | 221 150, 47.96 | 221 639, 47.99 | 488 020, 50.79 | 479 247, 50.76 |
+| 1 | 212 217, 47.63 | 211 337, 47.50 | 212 243, 47.63 | 474 291, 50.66 | 462 600, 50.59 |
+| 2 | 201 112, 46.66 | 198 879, 46.49 | 200 856, 46.64 | 456 307, 50.49 | 438 171, 50.07 |
+| 4 | 195 949, 46.23 | 194 549, 45.71 | 194 656, 46.17 | 430 574, 50.01 | 406 009, 49.18 |
+
+Read as curves (bytes at equal dB), parts are within 1 % of whole
+blocks either way on both maps: the grid's scaled column lies on the
+whole-block curve, and the lens is 1 % under it at 50.6 to 50.8 dB
+and 1 % over at 50.1. So §69's reading was wrong about the cause: the
+coder was worth 7 to 29 %, and parts are worth nothing a threshold
+can find, with either coder. What the reference tool's pass has is a
+choice per block by the estimated bits of each candidate, which a
+threshold on the error is not. The parts code is not in the tree.
+
+Checked: `what_is_written_reads_back` (shape-tools: nothing, a byte,
+runs, text, noise, skewed bytes, sixteen-byte blocks copied from near
+and far, sizes at each width of the frame's size field; each read
+back by ruzstd's decoder; text and runs under a twentieth; the copied
+blocks a tenth or more under ruzstd's writer, the skewed bytes a
+twentieth). Golden: `meshtools.look.ktx2` moved (its levels' bytes are
+this encoder's).

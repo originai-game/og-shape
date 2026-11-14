@@ -1788,3 +1788,10 @@
   millionth thicker or thinner (then a hundred-thousandth). The last refused case of the sweep (a
   ⌀8 hole 26 deep into a ⌀8 through hole, wall 2) builds: 126 of 126
   (`docs/research.md` §76).
+- KTX2 files of UASTC blocks are smaller: their Zstandard is now
+  written by this project's own encoder (chains of earlier matches,
+  repeated offsets, codes made from the counts) in place of ruzstd's
+  one level. 29 % fewer bytes on a 1024² colour grid (355 633 to
+  253 348), 7 % on two generated maps; the texels are the same, and
+  libzstd reads every level (`docs/research.md` §77). Golden:
+  `meshtools.look.ktx2` moved.
