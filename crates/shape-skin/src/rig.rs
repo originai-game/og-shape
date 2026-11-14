@@ -74,6 +74,8 @@ pub enum RigError {
     NoSuchBone(String, Vec<String>),
     /// A turn's axis has no length (its bone named).
     NoAxis(String),
+    /// A humanoid's joints could not be found from its mesh: why.
+    Humanoid(String),
     /// The skin itself is not valid.
     Skin(SkinError),
 }
@@ -124,6 +126,7 @@ impl fmt::Display for RigError {
                 write!(f, "no bone is named {n:?}; bones: {}", a.join(", "))
             }
             RigError::NoAxis(n) => write!(f, "a turn of bone {n:?} has an axis of zero length"),
+            RigError::Humanoid(w) => write!(f, "humanoid: {w}"),
             RigError::Skin(e) => write!(f, "{e}"),
         }
     }

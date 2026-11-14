@@ -1,12 +1,13 @@
 //! Golden cases for skins (shape-mesh's skin, shape-skin, and the GLB
 //! skin in shape-tools): weights after welding, weights from a rig with
-//! refined blend bands, a posed mesh with its measures, and the GLB.
+//! refined blend bands, a posed mesh with its measures, the GLB, and a
+//! figure rigged from its mesh alone (joints found, bone heat).
 
 use shape_bool::{Boolean, boolean};
 use shape_core::{DVec3, Frame, HashError, OutputHash, trig};
-use shape_gen::solids::{CylinderDesc, cylinder};
+use shape_gen::solids::{BoxDesc, CylinderDesc, cuboid, cylinder, sphere};
 use shape_mesh::{Bone, Skin, Solid, Weights};
-use shape_skin::{Pose, Rig, RigBone, Turn, measure_pose, pose, skin};
+use shape_skin::{Pose, Rig, RigBone, Turn, bind, humanoid, measure_pose, pose, skin};
 use shape_tools::{Part, Scene, glb};
 
 use crate::cases::Case;
@@ -24,6 +25,10 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "skin.pose",
             run: posed,
+        },
+        Case {
+            name: "skin.humanoid",
+            run: rigged_figure,
         },
         Case {
             name: "skin.glb",
@@ -147,4 +152,61 @@ fn posed(h: &mut OutputHash) -> Result<(), HashError> {
         m.max_area_ratio,
         m.volume_ratio,
     ])
+}
+
+/// A figure in a T pose from closed pieces that overlap (the one
+/// `shape-skin`'s tests rig), its joints found and its weights by bone
+/// heat: the joints, then the skinned solid.
+fn rigged_figure(h: &mut OutputHash) -> Result<(), HashError> {
+    let nan = |_| HashError::NaN;
+    let place = |mut s: Solid, f: &dyn Fn(DVec3) -> DVec3| {
+        s.map_positions(f, false);
+        s
+    };
+    let cyl = |r: f64, len: f64| {
+        cylinder(&CylinderDesc {
+            radius: r,
+            height: len,
+            ..Default::default()
+        })
+    };
+    let block = |w: f64, d: f64, h: f64| {
+        cuboid(&BoxDesc {
+            width: w,
+            depth: d,
+            height: h,
+        })
+    };
+    let mut s = place(block(380.0, 220.0, 600.0).map_err(nan)?, &|p| {
+        p + DVec3::Z * 850.0
+    });
+    s.append(&place(cyl(55.0, 140.0).map_err(nan)?, &|p| {
+        p + DVec3::Z * 1430.0
+    }));
+    s.append(&place(sphere(120.0).map_err(nan)?, &|p| {
+        p + DVec3::Z * 1650.0
+    }));
+    for side in [1.0, -1.0] {
+        s.append(&place(cyl(70.0, 840.0).map_err(nan)?, &|p| {
+            p + DVec3::new(110.0 * side, 0.0, 70.0)
+        }));
+        s.append(&place(block(130.0, 260.0, 90.0).map_err(nan)?, &|p| {
+            p + DVec3::new(110.0 * side, -50.0, 0.0)
+        }));
+        s.append(&place(cyl(50.0, 680.0).map_err(nan)?, &|p| {
+            DVec3::new(side * (p.z + 170.0), p.y, 1390.0 - side * p.x)
+        }));
+        s.append(&place(block(150.0, 60.0, 110.0).map_err(nan)?, &|p| {
+            DVec3::new(side * (p.x + 925.0), p.y, p.z + 1335.0)
+        }));
+    }
+    s.canonicalize()?;
+    let (sk, _) = humanoid(&s).map_err(|_| HashError::NaN)?;
+    for j in &sk.joints {
+        h.str(&j.name);
+        h.str(&j.parent);
+        h.dvec3s(&[j.at])?;
+    }
+    let (rigged, _) = bind(&s, &sk).map_err(|_| HashError::NaN)?;
+    rigged.hash_into(h)
 }

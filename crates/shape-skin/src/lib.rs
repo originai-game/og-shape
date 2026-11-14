@@ -10,6 +10,10 @@
 //! - [`measure_pose`]: how a pose deforms the triangles, with no
 //!   thresholds (`docs/design.md` §7).
 //!
+//! A mesh with no named regions (an imported one) is skinned by
+//! [`bind`]: bone heat for a [`Skeleton`] of joints at points. A
+//! humanoid's joints are found from its mesh by [`humanoid`].
+//!
 //! The weights (`docs/research.md` §11):
 //! - A face belongs to the bone whose region names it carries: a region
 //!   `forearm` matches the tag `forearm` and the qualified tags
@@ -34,10 +38,14 @@
 //! finds no inverted triangle but seam slivers at 90°
 //! (`docs/research.md` §11).
 
+mod heat;
+mod humanoid;
 mod mat;
 mod refine;
 mod rig;
 
+pub use heat::{BindReport, Joint, Skeleton, bind};
+pub use humanoid::{FitReport, Limb, humanoid};
 pub use mat::{apply, apply_vector, mul, turn};
 pub use rig::{
     Pose, PoseMeasures, Rig, RigBone, RigError, Turn, measure_pose, pose, pose_by, skin,

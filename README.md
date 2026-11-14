@@ -14,8 +14,9 @@ og-shape is its own project, MIT licensed. It ships as Rust crates, the
 API. It was planned as a kernel for origin-engine to absorb; that merge
 is not going ahead (`docs/plan.md` §M).
 
-Status: every phase of `docs/plan.md` is done but the merge, which is
-dropped; the table in its §Status is the record. Run the gate with
+Status: phases 0 to 6 of `docs/plan.md` are done and the merge is
+dropped; phase 7 (rigging and motion) is under way. The table in its
+§Status is the record. Run the gate with
 `scripts/check.sh` (needs cargo-deny and wasmtime).
 
 ## What it makes
@@ -294,6 +295,11 @@ What a user might expect and will not find, as of 2026-11-14:
   density for every link (a solid, even one) and one effort and
   velocity for every joint; no URDF parser has read one here either. No STEP or other B-rep, by
   design: the kernel holds meshes only.
+- **Rigging.** `shape rig` finds a humanoid's joints only in a T or A
+  pose (no fingers) and refuses other poses; any other skeleton is
+  given as joints. Clips are not yet retargeted onto a rig, and the
+  preset motions (Kimodo) are not in yet (`docs/plan.md` phase 7,
+  `docs/research.md` §79).
 - **Size.** A `Solid` of 819 000 coloured triangles is 126 MiB
   resident (its corner colours are 32-bit floats now, 48 bytes a
   triangle), and `repair` peaks at 506 MiB on it (837 before). Nothing
@@ -328,6 +334,7 @@ shape repair  leaf.obj --thicken 1.2 -o leaf.glb   # an open sheet made solid
 shape export model.json -o robot.urdf                # links, joints and STL meshes
 shape export model.json -o model.usda                # a USD stage, maps beside it
 shape collide model.json --hulls 8 -o colliders.glb  # convex colliders
+shape rig character.glb --check-clip -o rigged.glb   # a humanoid's skeleton and weights
 shape compress game.glb -o game.small.glb            # meshopt, lossless
 shape compress game.glb --quantize -o game.q.glb     # quantized, then meshopt
 shape compress game.glb --draco -o game.draco.glb    # Draco, quantized

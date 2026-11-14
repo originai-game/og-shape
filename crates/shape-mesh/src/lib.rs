@@ -8,6 +8,7 @@ mod measure;
 pub mod morph;
 mod names;
 pub mod skin;
+pub mod tree;
 
 pub use measure::Measures;
 pub use morph::{

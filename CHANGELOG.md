@@ -1815,3 +1815,14 @@
   under `third_party/`; only GPL and LGPL code stays out of the crates
   (`AGENTS.md`). Rigging meshes without a skin, retargeting and preset
   motions are planned as phase 7 (`docs/plan.md`).
+- `shape rig`: a skin for a mesh that has none. `shape_skin::bind`
+  weights a skeleton of joints given at points by bone heat (Baran and
+  Popović 2007); `shape_skin::humanoid` finds a humanoid's 27 joints
+  (Mixamo's names) from its mesh, standing up +Z facing −Y in a T or A
+  pose, and refuses other poses with why. The report gives the
+  skeleton as `--skeleton` reads it, what was measured, and two check
+  poses; `--check-clip` writes them as the clip `rig_check`. Xbot's
+  joints found within 33 mm of its own, Soldier's within 83 mm
+  (`docs/research.md` §79). `shape_mesh::tree`: the box tree for
+  segment crossings and nearest points, shared with `bake`. Golden:
+  `skin.humanoid` added.

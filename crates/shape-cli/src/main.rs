@@ -33,6 +33,7 @@
 //!                [repair, unwrap and place options] [--intersections]
 //!                [--unwrap] [--texture-max PX] [--ktx2 | --ktx2-rdo Q | --etc1s | --webp]
 //!                [--bake PX [--bake-distance MM]]
+//! shape rig      <mesh> [-o out.glb] [--skeleton joints.json] [--check-clip]
 //! ```
 //!
 //! An input is a program (the JSON a binding records,
@@ -105,7 +106,11 @@ const USAGE: &str = "usage: shape <command> <input> [options]
            [repair, unwrap and place options]
            [--intersections] [--unwrap] [--texture-max PX] [--ktx2 | --ktx2-rdo Q | --etc1s | --webp]
            [--bake PX [--bake-distance MM]]    --bake: fresh UVs packed at PX², the
-                                                look baked into new maps";
+                                                look baked into new maps
+  rig      <mesh> [-o out.glb] [--skeleton joints.json] [--check-clip]
+                                                a skin by bone heat: for the joints given,
+                                                or a humanoid's found from the mesh (up +Z,
+                                                facing -Y, T or A pose)";
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -125,6 +130,7 @@ fn main() -> ExitCode {
                 "collide" => shape_cli::collide::run(&a),
                 "compress" => shape_cli::compress::run(&a),
                 "process" => shape_cli::process::run(&a),
+                "rig" => shape_cli::rig::run(&a),
                 "help" | "-h" | "--help" => {
                     println!("{USAGE}");
                     return ExitCode::SUCCESS;

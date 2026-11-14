@@ -387,6 +387,45 @@ thinned hull, mm).
   dense mesh first (a few thousand triangles are plenty for a collider).
 - A flat sheet has no hull: give it a thickness.
 
+## Rigging a mesh without a skin
+
+`shape rig` (`shape_skin::humanoid` and `shape_skin::bind`) gives a mesh
+that has no skin one: a skeleton and four bone weights a vertex, as a
+GLB that three.js, Godot, Unity and Unreal pose.
+
+- **A humanoid** needs nothing else, if it stands up +Z facing −Y as
+  read (give the file's own axes with `--up` and `--front`, or `place`
+  it first) in a T or A pose: arms away from the body, legs apart. Its
+  joints are found from the mesh and named as Mixamo names them
+  (`Hips`, `Spine` … `Head`, `LeftArm`, `LeftForeArm`, `LeftHand`,
+  `LeftUpLeg`, `LeftLeg`, `LeftFoot`, `LeftToeBase`, and `_End` tips),
+  so clips made for that skeleton map by name. No fingers.
+- **Any other skeleton** (a quadruped, a tail, a prop's hinge) is given
+  as joints: `--skeleton joints.json`, `{"joints": [{"name": "Hips",
+  "parent": "", "at": [0, 0, 950]}, …]}` in mm, parents first. A bone is
+  the segments from its joint to its children; a joint without children
+  only marks where its parent's bone ends and gets no weight.
+- **Read the report, then look.** `skeleton` is the skeleton in the
+  form `--skeleton` reads: move a joint that fell wrong and bind again.
+  `fit.outside` names joints outside the mesh; `fit.limbs` gives each
+  limb's length and radius, and `fit.arm_drop` the arms' angle below the
+  horizontal (about 0.7 for an A pose). `check` measures two poses
+  (arms down and a knee up; arms up and the other knee up):
+  `inverted` triangles collect in armpits and groins at such turns; a
+  count far above the others, or a `volume_ratio` far from 1, says a
+  joint or a weight is wrong. With `--check-clip`, see them:
+  `shape preview out.glb --clip rig_check --frames 4` (frames 1 and 3).
+- What it does not judge: a skirt or armour hides where the legs or
+  arms leave the body, so the hips fall back to 64 % of the shoulders'
+  height and the shoulders to the chest's side under the arm; a wide
+  sleeve or a cape can still pull a joint off. Hands in pockets, arms
+  against the body, legs together or a sitting figure are refused with
+  why.
+- The weights are bone heat: each vertex is warmed by the nearest bone
+  it can see, and the heat spreads over the surface. Pieces that see no
+  bone (`bind.pieces_unseen`: an eye behind its lid) take their nearest
+  bones'. About 3 s for 25 000 vertices; decimate a dense mesh first.
+
 ## Which way is up
 
 `measure --axes` (MCP `axes`) and `place`'s report give, for the mesh

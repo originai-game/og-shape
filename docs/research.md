@@ -10592,3 +10592,58 @@ moved.
 Checked: the colour tests compare to what 32 bits keep (1e-6, where
 they asked 1e-12 of 64); `glb_round_trip_keeps_parts_transforms_and_names`
 also joins by `join_owned`: the same solid, the parts left empty.
+
+## 79. Rigging a mesh without a skin (2026-11-14)
+
+Phase 7's first two steps (`docs/plan.md`): `shape_skin::bind`, bone
+heat for joints given at points, and `shape_skin::humanoid`, a
+humanoid's joints found from its mesh; `shape rig` on the command line.
+
+Bone heat is written from Baran and Popović, "Automatic Rigging and
+Animation of 3D Characters" (SIGGRAPH 2007, §4): each vertex is heated
+`1/d²` by the nearest bone it sees (the segment to the bone crosses no
+triangle, exact sides), only bones within twice the nearest's distance
+are tried, and `(L + A·H) w = A·H·p` is solved per bone (cotangent
+stiffness, conjugate gradients, residual 1e-9). Pieces of the mesh that
+see no bone take their nearest bones'. The box tree it tests sight with
+is `bake`'s, moved to `shape_mesh::tree` (no golden hash moved).
+
+The joint finder is this project's own (`crates/shape-skin/src/humanoid.rs`):
+voxels 1/160 of the height, the branches of the bands of distance from
+the head's top for where limbs leave the body, centre lines from each
+tip, Mixamo's proportions for the joints between.
+
+Checked on three.js r160's Xbot and Soldier (fetched, not committed;
+§11), their skins taken off:
+
+| | Xbot (24 746 vertices, 95 pieces) | Soldier (5 890 vertices, turned to face −Y) |
+|---|---|---|
+| bone heat for the file's own 65 and 52 joints: the same largest bone as the file's | 79.0 % of vertices | 56.3 % |
+| mean weight difference from the file's (half the L1 distance) | 0.28 | 0.46 |
+| a test pose (arm, forearm, leg, knee, spine, neck): inverted triangles, file's weights / bone heat | 40 / 0 | 15 / 0 |
+| bind time (release, x86-64) | 2.9 s (14.2 s trying every bone for sight) | 0.7 s |
+| joints found from the mesh against the file's (23 by name) | median 15, max 33 mm | median 44, max 83 mm |
+| finding the joints | 0.2 s | 0.24 s |
+
+The Soldier's armour first put the hips 239 mm low (the legs leave the
+body below the belt's pouches) and the shoulders 100 mm out (pads):
+the shoulder is now the chest's side under the arm, the first layer
+down whose side stays put, and the hips at least 64 % of the
+shoulders' height (Xbot 0.676, Soldier 0.681, a person about 0.65).
+
+On the generated meshes (§28): Meshy's army man (A pose, 18 528
+vertices, one piece) is rigged in 3.4 s, arms 0.72 rad below the
+horizontal, no joint outside the mesh; posed by `rig_check` it bends
+at the elbows, knees and neck (inverted triangles 167 arms down, 163
+arms up, in the armpits and groin). Meshy's businessman (hands in
+pockets), its mech, and Hunyuan3D-2's and TRELLIS's bear (sitting) are
+refused: "the left arm never branches off the body".
+
+A figure of overlapping boxes, cylinders and a sphere in a T pose is
+the regression test (`a_figure_is_rigged_from_its_mesh`: sides,
+order and lines of the joints, the hand's and head's ends on their
+bones, a forearm's turn leaving the torso still) and the golden case
+`skin.humanoid`.
+
+Left: retargeting clips onto the rig, Kimodo's preset motions, the
+`rig` MCP tool, fingers, and quadrupeds without a given skeleton.

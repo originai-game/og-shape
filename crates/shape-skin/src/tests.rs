@@ -317,3 +317,147 @@ fn refining_a_band_keeps_uvs_on_their_surface() {
         }
     }
 }
+
+/// A figure 1 800 tall in a T pose, up +z, facing −y, its left at +x,
+/// from closed pieces that overlap (not joined): legs (r 70, x ±110,
+/// z 80..900) on feet reaching forward to y −180, a torso (x ±190,
+/// z 850..1450), a neck and a head, arms (r 50, z 1390) out to x ±850
+/// with hands to ±1000.
+fn figure() -> Solid {
+    use shape_gen::solids::{BoxDesc, cuboid, sphere};
+    let place = |mut s: Solid, f: &dyn Fn(DVec3) -> DVec3| {
+        s.map_positions(f, false);
+        s
+    };
+    let cyl = |r: f64, len: f64| {
+        cylinder(&CylinderDesc {
+            radius: r,
+            height: len,
+            ..Default::default()
+        })
+        .unwrap()
+    };
+    let block = |w: f64, d: f64, h: f64| {
+        cuboid(&BoxDesc {
+            width: w,
+            depth: d,
+            height: h,
+        })
+        .unwrap()
+    };
+    let mut s = place(block(380.0, 220.0, 600.0), &|p| p + DVec3::Z * 850.0);
+    s.append(&place(cyl(55.0, 140.0), &|p| p + DVec3::Z * 1430.0));
+    s.append(&place(sphere(120.0).unwrap(), &|p| p + DVec3::Z * 1650.0));
+    for side in [1.0, -1.0] {
+        s.append(&place(cyl(70.0, 840.0), &|p| {
+            p + DVec3::new(110.0 * side, 0.0, 70.0)
+        }));
+        s.append(&place(block(130.0, 260.0, 90.0), &|p| {
+            p + DVec3::new(110.0 * side, -50.0, 0.0)
+        }));
+        // Along ±x: (x, y, z) → (side·z, y, −side·x) turns +z to ±x.
+        s.append(&place(cyl(50.0, 680.0), &|p| {
+            DVec3::new(side * (p.z + 170.0), p.y, 1390.0 - side * p.x)
+        }));
+        s.append(&place(block(150.0, 60.0, 110.0), &|p| {
+            DVec3::new(side * (p.x + 925.0), p.y, p.z + 1335.0)
+        }));
+    }
+    s.canonicalize().unwrap();
+    s
+}
+
+#[test]
+fn a_figure_is_rigged_from_its_mesh() {
+    let s = figure();
+    let (sk, report) = crate::humanoid(&s).unwrap();
+    assert!(report.outside.is_empty(), "{:?}", report.outside);
+    let at = |n: &str| sk.joints.iter().find(|j| j.name == n).unwrap().at;
+    // Left is +x: a swap of the sides fails here.
+    for (side, s) in [("Left", 1.0), ("Right", -1.0)] {
+        let j = |n: &str| at(&format!("{side}{n}"));
+        let x = |n: &str| j(n).x * s;
+        // The shoulder near the torso's side (190), the arm's joints in
+        // order out to the hand, all on the arm's line.
+        assert!(
+            (150.0..=260.0).contains(&x("Arm")),
+            "{side}Arm {:?}",
+            j("Arm")
+        );
+        assert!(x("Arm") < x("ForeArm") && x("ForeArm") < x("Hand") && x("Hand") < x("Hand_End"));
+        for n in ["Arm", "ForeArm", "Hand"] {
+            assert!(
+                (j(n).z - 1390.0).abs() < 30.0 && j(n).y.abs() < 30.0,
+                "{side}{n} {:?}",
+                j(n)
+            );
+        }
+        // The leg's joints top to bottom on the leg's line, the toes in
+        // front (−y).
+        assert!(j("UpLeg").z > j("Leg").z && j("Leg").z > j("Foot").z);
+        assert!(
+            (850.0..=1000.0).contains(&j("UpLeg").z),
+            "{side}UpLeg {:?}",
+            j("UpLeg")
+        );
+        assert!(
+            (400.0..=650.0).contains(&j("Leg").z),
+            "{side}Leg {:?}",
+            j("Leg")
+        );
+        assert!(j("Foot").z < 200.0, "{side}Foot {:?}", j("Foot"));
+        for n in ["UpLeg", "Leg", "Foot"] {
+            assert!((x(n) - 110.0).abs() < 40.0, "{side}{n} {:?}", j(n));
+        }
+        assert!(j("ToeBase").y < j("Foot").y && j("Toe_End").y < j("ToeBase").y);
+    }
+    let up = [
+        "Hips",
+        "Spine",
+        "Spine1",
+        "Spine2",
+        "Neck",
+        "Head",
+        "HeadTop_End",
+    ];
+    for w in up.windows(2) {
+        assert!(at(w[0]).z < at(w[1]).z, "{} below {}", w[0], w[1]);
+    }
+    assert!(
+        (1400.0..=1560.0).contains(&at("Neck").z),
+        "Neck {:?}",
+        at("Neck")
+    );
+
+    // The weights: the hand's and the head's ends belong to their bones,
+    // and a forearm's turn leaves the torso where it was.
+    let (rigged, r) = crate::bind(&s, &sk).unwrap();
+    let skin = rigged.skin.as_ref().unwrap();
+    skin.check(rigged.positions.len()).unwrap();
+    assert_eq!(r.vertices, rigged.positions.len());
+    let bone = |n: &str| skin.bone(n).unwrap();
+    for (p, w) in rigged.positions.iter().zip(&skin.weights) {
+        if p.x > 950.0 {
+            assert_eq!(w.bones[0], bone("LeftHand"), "{p:?}");
+        }
+        if p.z > 1720.0 {
+            assert_eq!(w.bones[0], bone("Head"), "{p:?}");
+        }
+    }
+    let p = Pose {
+        turns: vec![Turn {
+            bone: "LeftForeArm".into(),
+            axis: DVec3::Z,
+            angle: -1.2,
+        }],
+    };
+    let posed = pose(&rigged, &p).unwrap();
+    for (a, b) in rigged.positions.iter().zip(&posed.positions) {
+        if a.x.abs() < 150.0 && a.z < 1300.0 {
+            assert!((*a - *b).length() < 1e-6, "{a:?} moved to {b:?}");
+        }
+        if a.x > 950.0 {
+            assert!(b.y < -300.0, "the hand at {a:?} went to {b:?}");
+        }
+    }
+}
