@@ -382,13 +382,25 @@ fn edits_answer_the_crossing_pairs_they_leave() {
     // A narrower blind hole reaching the far wall of the other: the cut
     // leaves triangles of no area, which have no plane to move.
     let (answer, closed, _) = build(vec![
-        block,
-        through,
+        block.clone(),
+        through.clone(),
         blind(6.0, 30.0),
         json!({"op": "shell", "id": 0, "thickness": 5}),
     ]);
     assert_eq!(answer, json!({"crossingPairs": 0}));
     assert!(closed);
+    // A blind hole ending the wall's own thickness below the other
+    // hole: faces of the inner copy lie on each other, and the shell
+    // is built at a wall a millionth off (`docs/research.md` §76). Its
+    // volume lies between its neighbours' in depth (35 061 and 35 467).
+    let (answer, closed, volume) = build(vec![
+        block,
+        through,
+        blind(8.0, 26.0),
+        json!({"op": "shell", "id": 0, "thickness": 2}),
+    ]);
+    assert_eq!(answer, json!({"crossingPairs": 0}));
+    assert!(closed && (volume - 35_216.0).abs() < 5.0, "{volume}");
 }
 
 #[test]

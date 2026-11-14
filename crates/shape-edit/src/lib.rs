@@ -860,6 +860,13 @@ pub fn shell_report(s: &Solid, d: &Shell) -> Result<(Solid, EditReport), EditErr
         let _ = shape_mesh::carry(&[s], &mut out);
         return Ok((out, report));
     }
+    shell_built(s, d, true)
+}
+
+/// [`shell_report`] of a bare solid. `again`: where nothing else gives
+/// a clean hollow, the whole is tried once more at a wall a millionth
+/// (then a hundred-thousandth) thicker or thinner.
+fn shell_built(s: &Solid, d: &Shell, again: bool) -> Result<(Solid, EditReport), EditError> {
     let t = d.thickness;
     if !positive(t) {
         return Err(EditError::NotPositive("thickness"));
@@ -1011,6 +1018,26 @@ pub fn shell_report(s: &Solid, d: &Shell) -> Result<(Solid, EditReport), EditErr
             && e.1.crossing_pairs == 0
         {
             return Ok(e);
+        }
+    }
+    // A wall that is exactly some distance of the part (a blind hole
+    // ending the wall's thickness short of another) puts faces of the
+    // inner copy on each other, which no untangling decides. The same
+    // shell a millionth thicker or thinner has no such coincidence:
+    // every face moves as one, so the copy stays as smooth as it was,
+    // and the walls are off by that share of their thickness.
+    if again {
+        for share in [1e-6, -1e-6, 1e-5, -1e-5] {
+            let near = Shell {
+                thickness: t * (1.0 + share),
+                open: d.open.clone(),
+            };
+            if let Ok(e) = shell_built(s, &near, false)
+                && e.1.crossing_pairs == 0
+                && e.0.measure().closed
+            {
+                return Ok(e);
+            }
         }
     }
     // Surfaces that touch without crossing (two holes of one diameter

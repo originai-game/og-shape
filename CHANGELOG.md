@@ -1783,3 +1783,8 @@
   triangles is 151 MiB resident after import (was 190). Code that
   changes one triangle's names in place uses `Arc::make_mut`; reading
   is as before (`docs/research.md` §75).
+- `shell`: where a shell at the thickness asked for is refused
+  (surfaces of the inner copy that touch), it is built with the wall a
+  millionth thicker or thinner (then a hundred-thousandth). The last refused case of the sweep (a
+  ⌀8 hole 26 deep into a ⌀8 through hole, wall 2) builds: 126 of 126
+  (`docs/research.md` §76).

@@ -10409,3 +10409,30 @@ that drop triangles hold two. Colours as 32-bit floats, or as the
 bytes they were read from, would halve or eighth them; that changes
 every hash a colour reaches and 95 places that compute with them, and
 was not done.
+
+## 76. The last swept shell (2026-11-14)
+
+§70 left 1 of the 126 swept shells refused: a ⌀8 hole 26 deep from
+the top into a ⌀8 through hole, wall 2. The inner copy is built from
+the faces' planes moved in by the wall, and at exactly 2 the blind
+hole's moved floor lands on the through hole's moved wall: surfaces
+that touch along a line, which the cut cannot decide. §64's nudge
+moves single vertices by a millionth of their move, and §70 showed
+that larger ones untangle the copy wrongly.
+
+What works is to nudge the wall, not the vertices: where the shell at
+the thickness asked for is refused, it is built at that thickness
+times 1 + 10⁻⁶, then 1 − 10⁻⁶, 1 + 10⁻⁵, 1 − 10⁻⁵, and the first that
+comes out closed with no crossing pair is kept. Every plane of the
+inner copy moves together, so it is a true shell of a wall a millionth
+thicker, not a distorted one. The case: closed, two surfaces,
+35 215.73 mm³ at a wall of 2.000002 (depths 23 and 30 give 35 061 and
+35 467; a wall of 1.999998 gives 35 215.67). A shell that builds at
+the thickness asked for is built as before, and the retry runs before
+the vertex nudges, which stay for the four shells of §64.
+
+The sweep: 126 of 126 build.
+
+Checked: `edits_answer_the_crossing_pairs_they_leave` (shape-model)
+has the case: closed, no crossing pair, 35 216 mm³ to within 5. No
+golden line moved.

@@ -254,11 +254,11 @@ What a user might expect and will not find, as of 2026-11-13:
 - **FBX.** Animation layers are checked on a hand-written file, not on
   one from an authoring tool. NURBS and other geometry that is not a
   mesh, and FBX 6 and older, are not read.
-- **Shells and booleans.** 1 of 126 swept shells of crossing and
-  blind holes is still refused (larger nudges untangle it wrongly,
-  which is now measured and refused), and four build only with their
-  walls off by up to a millionth of their thickness (tangent surfaces
-  nudged apart). Where two bores of one diameter cross, a shell's
+- **Shells and booleans.** All 126 swept shells of crossing and
+  blind holes build, five of them only with their walls off by up to
+  a millionth of their thickness (tangent surfaces nudged apart: four
+  by their vertices, one by the whole wall, `docs/research.md` §76).
+  Where two bores of one diameter cross, a shell's
   wall is down to 0.28 of what was asked: the inner copy is moved by
   its faces' planes, which is not a true offset there
   (`docs/research.md` §48, §64, §70).
