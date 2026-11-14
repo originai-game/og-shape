@@ -1054,7 +1054,7 @@ fn glb_all(
                 s.colors
                     .iter()
                     .flatten()
-                    .for_each(|&c| push_f32(&mut bin, c.clamp(0.0, 1.0) as f32));
+                    .for_each(|&c| push_f32(&mut bin, c.clamp(0.0, 1.0)));
                 let cv = view(&mut bin, start, ARRAY_BUFFER);
                 accessors.push(Json::Obj(vec![
                     ("bufferView", Json::Int(cv)),

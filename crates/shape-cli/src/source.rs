@@ -227,6 +227,20 @@ impl Mesh {
         join(&self.imported.parts).map_err(failed)
     }
 
+    /// [`Mesh::joined`], giving up the parts' solids
+    /// (`shape_tools::join_owned`): for a command that goes on with the
+    /// joined solid alone. Their names, materials and transforms stay;
+    /// [`Mesh::clips`] is asked before this.
+    pub fn take_joined(&mut self) -> Result<Solid, Failure> {
+        if self.imported.parts.is_empty() {
+            return Err(Failure::Failed(format!(
+                "{}: no meshes in the file",
+                self.name
+            )));
+        }
+        shape_tools::join_owned(&mut self.imported.parts).map_err(failed)
+    }
+
     /// The file's clips on the joined solid's skeleton
     /// (`shape_tools::join_clips`); empty for a file without any.
     pub fn clips(&self) -> Result<Vec<shape_mesh::SkinClip>, Failure> {

@@ -67,9 +67,9 @@ fn lod_levels(d: &Decimate, n: u32) -> Vec<Decimate> {
 /// The decimation report: `triangles_in` and `levels`, each with
 /// `decimate`, `measures` and `output`.
 pub fn decimate(files: &dyn Files, d: &DecimateDesc) -> Result<String, Failure> {
-    let mesh = load_mesh(files, &d.input, &d.import)?;
-    let joined = mesh.joined()?;
+    let mut mesh = load_mesh(files, &d.input, &d.import)?;
     let clips = mesh.clips()?;
+    let joined = mesh.take_joined()?;
     let levels = if !d.lod_ratios.is_empty() {
         let falling = d.lod_ratios.windows(2).all(|w| w[1] < w[0]);
         let shares = d.lod_ratios.iter().all(|&r| r > 0.0 && r <= 1.0);

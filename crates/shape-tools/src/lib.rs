@@ -132,8 +132,8 @@ pub use preview::{
 pub use reorder::{Reordered, reorder};
 pub use repair::{
     Floaters, Holes, LARGE_HOLE_EDGES, NonManifold, Repair, RepairError, RepairReport, Weld,
-    apply_transform, close_holes, join, join_clips, orient, remove_degenerate, remove_floaters,
-    repair, repair_owned, split_non_manifold, weld,
+    apply_transform, close_holes, join, join_clips, join_owned, orient, remove_degenerate,
+    remove_floaters, repair, repair_owned, split_non_manifold, weld,
 };
 pub use texture::{
     Downsize, TextureError, decode, downsize, to_ktx2, to_ktx2_etc1s, to_ktx2_rdo, to_webp,

@@ -226,10 +226,10 @@ pub fn process_steps(
     } else {
         (d.import, d.place)
     };
-    let mesh = load_mesh(files, &d.input, &import)?;
+    let mut mesh = load_mesh(files, &d.input, &import)?;
     let imported = report::imported(&mesh.format, &mesh.imported);
-    let joined = mesh.joined()?;
     let mut clips = mesh.clips()?;
+    let joined = mesh.take_joined()?;
     step(1)?;
     let (mut fixed, r) = shape_tools::repair_owned(joined, &d.repair).map_err(failed)?;
     // The bake's source: the repaired mesh with its UVs and colours.

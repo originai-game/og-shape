@@ -24,7 +24,7 @@ fn paint(s: &mut Solid, f: impl Fn(usize, DVec3) -> [f64; 4]) {
         s.triangles
             .iter()
             .enumerate()
-            .map(|(i, t)| t.map(|v| f(i, s.positions[v as usize])))
+            .map(|(i, t)| t.map(|v| shape_mesh::stored(f(i, s.positions[v as usize]))))
             .collect(),
     );
 }
@@ -36,7 +36,7 @@ fn largest_error(s: &Solid) -> f64 {
         for k in 0..3 {
             let want = affine(s.positions[t[k] as usize]);
             for ch in 0..4 {
-                worst = worst.max((c[i][k][ch] - want[ch]).abs());
+                worst = worst.max((f64::from(c[i][k][ch]) - want[ch]).abs());
             }
         }
     }
@@ -78,7 +78,8 @@ fn decimation_moves_colours_with_their_corners_and_keeps_hard_borders() {
     };
     let (low, _) = decimate(&s, &half).unwrap();
     assert!(low.triangles.len() < s.triangles.len());
-    assert!(largest_error(&low) < 1e-12, "{}", largest_error(&low));
+    // To what 32 bits keep of a colour.
+    assert!(largest_error(&low) < 1e-6, "{}", largest_error(&low));
     // A hard border (two hemispheres, by each triangle's centre): every
     // triangle stays one colour and the border stays on the input's
     // border vertices.
@@ -187,7 +188,7 @@ fn repair_fills_holes_with_their_rims_colours() {
         for (k, &v) in fixed.triangles[i as usize].iter().enumerate() {
             let p = fixed.positions[v as usize];
             if s.positions.contains(&p) {
-                assert_eq!(col[i as usize][k], affine(p));
+                assert_eq!(col[i as usize][k], shape_mesh::stored(affine(p)));
             }
         }
     }
@@ -232,7 +233,8 @@ fn a_cut_interpolates_colours_and_counts_the_tools_faces() {
                 affine(out.positions[t[k] as usize])
             };
             for ch in 0..4 {
-                assert!((col[i][k][ch] - want[ch]).abs() < 1e-12);
+                // To what 32 bits keep of a colour.
+                assert!((f64::from(col[i][k][ch]) - want[ch]).abs() < 1e-6);
             }
         }
     }
@@ -322,7 +324,7 @@ fn a_material_and_colours_survive_both_glb_writers() {
             .map(|(v, c)| {
                 let want = affine(p.solid.positions[v as usize] / 1.0);
                 (0..3)
-                    .map(|ch| (c[ch] - want[ch]).abs())
+                    .map(|ch| (f64::from(c[ch]) - want[ch]).abs())
                     .fold(0.0, f64::max)
             })
             .fold(0.0, f64::max);
@@ -455,7 +457,7 @@ fn fusing_makes_no_colour_border_where_the_colour_is_continuous() {
     assert_eq!(r.fused, Some(Ok(2)), "{r:?}");
     let m = shape_tools::measure(&fused, &Default::default());
     assert_eq!(m.color_borders, Some(0));
-    assert!(largest_error(&fused) < 1e-9);
+    assert!(largest_error(&fused) < 1e-6);
 }
 
 /// A map in KTX2 (or WebP) is written as it came, under its extension,

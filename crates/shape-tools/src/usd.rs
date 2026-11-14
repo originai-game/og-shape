@@ -473,11 +473,16 @@ pub fn usda_clips(
         if let Some(c) = colors {
             text.push_str(&format!(
                 "        color3f[] primvars:displayColor = {} (\n            interpolation = \"faceVarying\"\n        )\n",
-                array(c.iter().flatten().map(|q| triple([q[0], q[1], q[2]])), 6)
+                array(
+                    c.iter()
+                        .flatten()
+                        .map(|q| triple([q[0], q[1], q[2]].map(f64::from))),
+                    6
+                )
             ));
             text.push_str(&format!(
                 "        float[] primvars:displayOpacity = {} (\n            interpolation = \"faceVarying\"\n        )\n",
-                array(c.iter().flatten().map(|q| f(q[3])), 20)
+                array(c.iter().flatten().map(|q| f(f64::from(q[3]))), 20)
             ));
         }
         text.push_str("        uniform token subdivisionScheme = \"none\"\n");

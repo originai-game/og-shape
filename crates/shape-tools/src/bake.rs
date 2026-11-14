@@ -856,7 +856,7 @@ pub fn bake(src: &BakeSource, low: &Solid, d: &Bake) -> Result<Baked, BakeError>
         if let Some(img) = &mut images[0] {
             let mut c = sample(0).unwrap_or([1.0; 4]);
             if let Some(col) = colors {
-                let cc = col[ji];
+                let cc = col[ji].map(shape_mesh::wide);
                 for (k, v) in c.iter_mut().enumerate() {
                     *v *= cc[0][k] * w[0] + cc[1][k] * w[1] + cc[2][k] * w[2];
                 }
@@ -1286,7 +1286,7 @@ mod tests {
                     s.push_triangle(t, 0, &[]);
                     let p = t.map(|v| s.positions[v as usize]);
                     uvs.push(p.map(|q| DVec2::new(q.x / 40.0, q.y / 40.0)));
-                    cols.push(p.map(|q| [q.x / 40.0, 1.0, 1.0, 1.0]));
+                    cols.push(p.map(|q| shape_mesh::stored([q.x / 40.0, 1.0, 1.0, 1.0])));
                 }
             }
         }

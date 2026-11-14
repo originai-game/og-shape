@@ -2130,7 +2130,7 @@ fn back(p: &impl Fn(DVec3) -> DVec3, v: DVec3) -> DVec3 {
 type Mesh = (
     Solid,
     Option<Vec<[DVec2; 3]>>,
-    Option<Vec<[[f64; 4]; 3]>>,
+    Option<Vec<shape_mesh::CornerColors>>,
     usize,
 );
 
@@ -2221,7 +2221,7 @@ fn mesh(
             .all(|v| v.is_finite())
             .then(|| [c[0], c[1], c[2], c[3]])
     };
-    let mut colors: Vec<[[f64; 4]; 3]> = Vec::new();
+    let mut colors: Vec<shape_mesh::CornerColors> = Vec::new();
     let mut all_color = color_values.is_some();
     // Materials per polygon.
     let mat_layer = g.all("LayerElementMaterial").next();
@@ -2273,10 +2273,10 @@ fn mesh(
                 }
                 let color = k.map(|j| color_at(corner_ids[j], corners[j] as usize));
                 if color.iter().all(Option::is_some) {
-                    colors.push(color.map(|c| c.unwrap_or([1.0; 4])));
+                    colors.push(color.map(|c| c.map_or(shape_mesh::WHITE, shape_mesh::stored)));
                 } else {
                     all_color = false;
-                    colors.push([[1.0; 4]; 3]);
+                    colors.push([shape_mesh::WHITE; 3]);
                 }
             }
         }

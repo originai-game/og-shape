@@ -1958,10 +1958,10 @@ impl Doc<'_> {
                     if c.iter().any(|x| !x.is_finite()) {
                         return Err(ImportError::NotFinite(name.to_string()));
                     }
-                    let at = |v: usize| -> [f64; 4] {
+                    let at = |v: usize| -> [f32; 4] {
                         let mut q = [1.0; 4];
                         q[..w].copy_from_slice(&c[v * w..v * w + w]);
-                        q.map(|x| x.clamp(0.0, 1.0))
+                        shape_mesh::stored(q.map(|x| x.clamp(0.0, 1.0)))
                     };
                     Some((0..count).map(at).collect::<Vec<_>>())
                 }
@@ -2607,13 +2607,13 @@ pub fn import_obj(bytes: &[u8], d: &Import, resolve: Resolve) -> Result<Imported
     };
     let lin = |c: [f64; 3]| {
         let l = c.map(|x| crate::export::linear(x / scale));
-        [l[0], l[1], l[2], 1.0]
+        shape_mesh::stored([l[0], l[1], l[2], 1.0])
     };
     for (p, global) in out.parts.iter_mut().zip(&globals) {
         if colored == 0 || !global.iter().any(|&g| vertex_colors[g].is_some()) {
             continue;
         }
-        let per_vertex: Vec<[f64; 4]> = global
+        let per_vertex: Vec<[f32; 4]> = global
             .iter()
             .map(|&g| vertex_colors[g].map_or(shape_mesh::WHITE, lin))
             .collect();

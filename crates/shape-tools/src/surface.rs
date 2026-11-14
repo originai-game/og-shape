@@ -22,7 +22,7 @@ pub(crate) struct Split {
     pub uvs: Vec<DVec2>,
     /// Per split vertex, its colour (linear RGBA), if the solid has
     /// colours.
-    pub colors: Vec<[f64; 4]>,
+    pub colors: Vec<[f32; 4]>,
 }
 
 /// Splits `s` so that each surface has its own vertices. A vertex's normal
@@ -42,7 +42,7 @@ pub(crate) fn split(s: &Solid) -> Split {
     let color_key = |i: usize, k: usize| {
         s.colors
             .as_ref()
-            .map_or([0; 4], |c| c[i][k].map(|x| (x as f32).to_bits()))
+            .map_or([0; 4], |c| c[i][k].map(f32::to_bits))
     };
     type Key = (u32, u32, (u32, u32), [u32; 4]);
     let mut ids: BTreeMap<Key, u32> = BTreeMap::new();

@@ -106,7 +106,7 @@ pub fn painted_sphere() -> Result<Solid, HashError> {
     s.colors = Some(
         s.triangles
             .iter()
-            .map(|t| t.map(|v| affine(s.positions[v as usize])))
+            .map(|t| t.map(|v| shape_mesh::stored(affine(s.positions[v as usize]))))
             .collect(),
     );
     Ok(s)
@@ -293,7 +293,7 @@ fn chain_case(h: &mut OutputHash) -> Result<(), HashError> {
         block
             .triangles
             .iter()
-            .map(|t| t.map(|v| affine(block.positions[v as usize])))
+            .map(|t| t.map(|v| shape_mesh::stored(affine(block.positions[v as usize]))))
             .collect(),
     );
     let mut pin = cylinder(&CylinderDesc {

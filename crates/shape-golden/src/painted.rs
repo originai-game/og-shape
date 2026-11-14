@@ -150,7 +150,7 @@ fn colors_case(h: &mut OutputHash) -> Result<(), HashError> {
     ball.colors = Some(
         ball.triangles
             .iter()
-            .map(|t| t.map(|v| colour(ball.positions[v as usize])))
+            .map(|t| t.map(|v| shape_mesh::stored(colour(ball.positions[v as usize]))))
             .collect(),
     );
     let s = Scene {

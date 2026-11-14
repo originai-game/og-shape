@@ -27,13 +27,30 @@ use shape_core::{DVec2, DVec3, HashError, OutputHash};
 pub type CornerUvs = [DVec2; 3];
 
 /// One triangle's vertex colours, a corner each, in the order of its
-/// vertices: linear RGBA, each component in 0..=1 (glTF `COLOR_0`).
-pub type CornerColors = [[f64; 4]; 3];
+/// vertices: linear RGBA, each component in 0..=1 (glTF `COLOR_0`), in
+/// 32 bits a component: what a file holds and a GPU takes, and half of
+/// what a mesh of coloured triangles would otherwise weigh
+/// (`docs/research.md` §78). Compute with [`wide`] and keep with
+/// [`stored`].
+pub type CornerColors = [[f32; 4]; 3];
+
+/// A stored colour in f64, to compute with.
+#[must_use]
+pub fn wide(c: [f32; 4]) -> [f64; 4] {
+    c.map(f64::from)
+}
+
+/// A colour computed in f64 as it is stored: each component rounded to
+/// the nearest f32.
+#[must_use]
+pub fn stored(c: [f64; 4]) -> [f32; 4] {
+    c.map(|x| x as f32)
+}
 
 /// The colour a corner gets where a solid has colours and a tool adds a
 /// triangle without saying: opaque white, which multiplies a material by
 /// 1 (glTF's meaning of no `COLOR_0`).
-pub const WHITE: [f64; 4] = [1.0; 4];
+pub const WHITE: [f32; 4] = [1.0; 4];
 
 /// An undirected edge, by its two vertex indices, smaller first.
 pub type EdgeKey = (u32, u32);
@@ -89,7 +106,7 @@ pub struct Solid {
     /// Per triangle, its corners' texture coordinates, if it has any.
     pub uvs: Option<Vec<CornerUvs>>,
     /// Per triangle, its corners' colours (linear RGBA), if it has any.
-    pub colors: Option<Vec<[[f64; 4]; 3]>>,
+    pub colors: Option<Vec<CornerColors>>,
     /// Morph targets, if the solid has any ([`morph`]). `None` leaves
     /// every other part, and the hash, as it was before morphs.
     pub morphs: Option<Morphs>,
@@ -131,7 +148,7 @@ impl Solid {
     /// The colour triangle `i` gives point `p`, interpolated as
     /// [`Solid::uv_at`] interpolates UVs. `None` when the solid has no
     /// colours or the triangle has no area.
-    pub fn color_at(&self, i: usize, p: DVec3) -> Option<[f64; 4]> {
+    pub fn color_at(&self, i: usize, p: DVec3) -> Option<[f32; 4]> {
         let c = self.colors.as_ref()?.get(i)?;
         let t = self.triangles[i];
         let [a, b, q] = t.map(|v| self.positions[v as usize]);
@@ -146,9 +163,10 @@ impl Solid {
         }
         let w1 = d.cross(e2).dot(n) / nn;
         let w2 = e1.cross(d).dot(n) / nn;
-        Some(core::array::from_fn(|k| {
-            c[0][k] + (c[1][k] - c[0][k]) * w1 + (c[2][k] - c[0][k]) * w2
-        }))
+        let [c0, c1, c2] = c.map(wide);
+        Some(stored(core::array::from_fn(|k| {
+            c0[k] + (c1[k] - c0[k]) * w1 + (c2[k] - c0[k]) * w2
+        })))
     }
 
     /// Appends a triangle with its corners' texture coordinates. On a
@@ -413,7 +431,7 @@ impl Solid {
             a.iter()
                 .flatten()
                 .zip(b.iter().flatten())
-                .map(|(x, y)| cmp_f64(*x, *y))
+                .map(|(x, y)| cmp_f64(f64::from(*x), f64::from(*y)))
                 .find(|o| o.is_ne())
                 .unwrap_or(core::cmp::Ordering::Equal)
         };
@@ -526,8 +544,10 @@ impl Solid {
         if let Some(colors) = &self.colors {
             h.str("colors");
             h.u64(colors.len() as u64);
+            // As f64, so a colour that is the same number hashes as
+            // it did when colours were kept in 64 bits.
             for c in colors.iter().flatten() {
-                h.f64s(c)?;
+                h.f64s(&wide(*c))?;
             }
         }
         Ok(())
@@ -761,7 +781,7 @@ mod tests {
     fn colors_follow_their_corners_through_canonical_order() {
         // As the UV test: each corner's colour a function of its position
         // and face, built in either order, must come back on its corner.
-        let color_of = |p: DVec3, side: bool| [p.x, p.y, p.z, if side { 0.5 } else { 1.0 }];
+        let color_of = |p: DVec3, side: bool| stored([p.x, p.y, p.z, if side { 0.5 } else { 1.0 }]);
         let build = |reversed: bool| {
             let mut s = tetra(DVec3::ZERO, reversed);
             for i in 0..s.triangles.len() {

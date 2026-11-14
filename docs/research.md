@@ -10533,3 +10533,62 @@ back by ruzstd's decoder; text and runs under a twentieth; the copied
 blocks a tenth or more under ruzstd's writer, the skewed bytes a
 twentieth). Golden: `meshtools.look.ktx2` moved (its levels' bytes are
 this encoder's).
+
+## 78. Colours in 32 bits; parts given up when joined (2026-11-14)
+
+§75 ended with what was left of a solid's memory: "the colours (96 of
+the 183 bytes a triangle now) and that nothing streams".
+
+**Colours.** `CornerColors` is now `[[f32; 4]; 3]`: 48 bytes a
+triangle. A file holds colours as bytes, 16-bit integers or 32-bit
+floats and a GPU takes the same; the 64 bits here only kept blends
+exact until they were written. `WHITE`, `Solid::color_at` and
+`shape_tools::Surface::colors` follow. Code that computes with
+colours (the boolean's and repair's interpolation, decimation's
+collapses, the bake, the preview) goes to f64 with `shape_mesh::wide`,
+computes as before, and rounds once with `stored` when it keeps the
+result. The hash takes each component as f64, so a colour that is the
+same number hashes as it did; canonical order compares the same way.
+The importers build their colours in 32 bits from the start, repair's
+map of the input's colours holds 32 bits, and the preview's copy too.
+
+**Parts given up.** Measured stage by stage, `shape repair` on the
+bear was already at 294 MiB resident before repair began, for a mesh
+of 126: `join` held the imported parts, their placed copies and the
+joined solid at once, and the command kept the parts to the end for
+their names and materials. `shape_tools::join_owned` places each part
+and leaves its solid empty; `shape repair`, `process` and `decimate`
+ask for the clips first and then join this way. The joined solid is
+the same.
+
+| The bear (819 426 coloured triangles) | §75 | Colours | And parts |
+| --- | --- | --- | --- |
+| resident after import | 151 MiB | 126 MiB | 126 MiB |
+| resident when repair begins | | 287 MiB | 176 MiB |
+| `shape repair --non-manifold`, peak | 837 MiB | 577 MiB | 506 MiB |
+
+The repaired GLB is byte for byte the same through both (the file
+always held 32 bits, and no blend on this mesh lands differently).
+
+**What is left.** With both changes, resident and peak after each
+step of that repair, MiB: begin 176 / 271; weld 217 / 330; degenerate
+triangles 255 / 423; floaters 213 / 423; orient 306 / 437; split
+non-manifold 306 / 437; orient again 345 / 438; with the file written,
+506. Each step builds its result beside its input and its own maps of
+edges or vertices, and writing holds the mesh, the surface it is
+written from and the file. So a tool's peak is a few times its mesh,
+and that is what "nothing streams" means here: the kernel's `Solid` is
+one mesh in memory, every operation takes one and gives one, and none
+works through a mesh in pieces. Changing that is a different kernel,
+not a fix, and is not planned.
+
+Golden, three lines: `meshtools.look.import` (its second primitive's
+8-bit colours: 128/255 and 64/255 are now the nearest 32-bit numbers
+when hashed), `meshtools.look.chain` and `mcp.process.look` (a painted
+sphere's colours, an affine function of position, rounded when kept
+and then blended by repair and decimation). No line that hashes a GLB
+moved.
+
+Checked: the colour tests compare to what 32 bits keep (1e-6, where
+they asked 1e-12 of 64); `glb_round_trip_keeps_parts_transforms_and_names`
+also joins by `join_owned`: the same solid, the parts left empty.

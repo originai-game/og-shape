@@ -1795,3 +1795,17 @@
   253 348), 7 % on two generated maps; the texels are the same, and
   libzstd reads every level (`docs/research.md` §77). Golden:
   `meshtools.look.ktx2` moved.
+- Vertex colours are kept as 32-bit floats: `CornerColors` is
+  `[[f32; 4]; 3]`, `WHITE` and `Solid::color_at` are `[f32; 4]`, and
+  `shape_tools::Surface::colors` likewise. `shape_mesh::wide` and
+  `stored` go to f64 and back for code that computes with them. A
+  colour that is the same number hashes as before; one that 32 bits
+  cannot hold exactly (a byte over 255, a blend) is rounded where it
+  is kept, not only where it is written. Golden: `meshtools.look.import`
+  (its 8-bit colours), `meshtools.look.chain` and `mcp.process.look`
+  (colours blended by repair and decimation) moved; no GLB did.
+- `shape_tools::join_owned` joins parts and takes their solids;
+  `shape repair`, `process` and `decimate` use it. With the colours:
+  a mesh of 819 000 coloured triangles is 126 MiB after import (151),
+  and `shape repair --non-manifold` on it peaks at 506 MiB (837), its
+  output byte for byte the same (`docs/research.md` §78).

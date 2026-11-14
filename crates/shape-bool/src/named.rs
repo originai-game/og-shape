@@ -672,10 +672,12 @@ fn named_result(
         }
         if let Some(c) = &solid.colors {
             let at = solid.triangles[src as usize].map(|v| solid.positions[v as usize]);
-            let c = c[src as usize];
+            let c = c[src as usize].map(shape_mesh::wide);
             let color = t.map(|v| {
                 let w = barycentric(at, out.positions[v as usize]);
-                core::array::from_fn(|k| c[0][k] * w[0] + c[1][k] * w[1] + c[2][k] * w[2])
+                shape_mesh::stored(core::array::from_fn(|k| {
+                    c[0][k] * w[0] + c[1][k] * w[1] + c[2][k] * w[2]
+                }))
             });
             let n = out.triangles.len();
             out.set_colors(n - 1, color);

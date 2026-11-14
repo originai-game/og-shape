@@ -167,7 +167,9 @@ fn bake_case(h: &mut OutputHash) -> Result<(), HashError> {
                 src.push_triangle(t, 0, &[]);
                 let p = t.map(|v| src.positions[v as usize]);
                 uvs.push(p.map(|q| DVec2::new(q.x / 40.0, q.y / 40.0)));
-                cols.push(p.map(|q| [0.25 + q.x / 80.0, 1.0, 0.5 + q.y / 80.0, 1.0]));
+                cols.push(
+                    p.map(|q| shape_mesh::stored([0.25 + q.x / 80.0, 1.0, 0.5 + q.y / 80.0, 1.0])),
+                );
             }
         }
     }

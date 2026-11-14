@@ -149,7 +149,7 @@ pub fn glb_plain(s: &Solid, d: &PlainGlb) -> Result<Vec<u8>, PlainGlbError> {
     for (i, t) in s.triangles.iter().enumerate() {
         for (k, &v) in t.iter().enumerate() {
             let uv = uvs.map_or([0.0f32; 2], |u| gltf_uv(u[i][k]));
-            let rgba = colors.map_or([0.0f32; 4], |c| c[i][k].map(|x| x.clamp(0.0, 1.0) as f32));
+            let rgba = colors.map_or([0.0f32; 4], |c| c[i][k].map(|x| x.clamp(0.0, 1.0)));
             let key = (
                 v,
                 s.surfaces[i],

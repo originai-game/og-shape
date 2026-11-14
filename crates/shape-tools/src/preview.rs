@@ -715,7 +715,7 @@ struct Paint {
     /// The normal map's chain, the part's UVs and the map's scale.
     normal: Option<(usize, Vec<[DVec2; 3]>, f64)>,
     /// Linear RGBA per triangle corner.
-    colors: Option<Vec<[[f64; 4]; 3]>>,
+    colors: Option<Vec<shape_mesh::CornerColors>>,
     /// The material's colour in linear light.
     base: [f64; 3],
     /// What the surface does with light besides its colour, if anything.
@@ -1462,6 +1462,7 @@ fn draw_triangle(t: &mut Target, look: &Look, p: &Drawn, k: usize) {
             }
         }
         if let Some(vc) = colors {
+            let vc = vc.map(shape_mesh::wide);
             for (ch, c) in col.iter_mut().enumerate() {
                 *c *= f.w[0] * vc[0][ch] + f.w[1] * vc[1][ch] + f.w[2] * vc[2][ch];
             }

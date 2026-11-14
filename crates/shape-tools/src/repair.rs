@@ -605,7 +605,28 @@ pub fn join(parts: &[ImportedPart]) -> Result<Solid, RepairError> {
         .iter()
         .map(apply_transform)
         .collect::<Result<_, _>>()?;
-    let named: Vec<(&str, &Solid)> = parts.iter().map(|p| p.name.as_str()).zip(&placed).collect();
+    let names: Vec<&str> = parts.iter().map(|p| p.name.as_str()).collect();
+    joined(&names, placed)
+}
+
+/// [`join`], taking the parts' solids: each is left empty once it is
+/// placed, so a caller done with them holds the joined solid and not
+/// the parts beside it (one mesh less from here on, two less while
+/// joining; `docs/research.md` §78). The result is the same. On an
+/// error the parts placed so far have been taken.
+pub fn join_owned(parts: &mut [ImportedPart]) -> Result<Solid, RepairError> {
+    let mut placed = Vec::with_capacity(parts.len());
+    for p in parts.iter_mut() {
+        placed.push(apply_transform(p)?);
+        p.solid = Solid::default();
+    }
+    let names: Vec<&str> = parts.iter().map(|p| p.name.as_str()).collect();
+    joined(&names, placed)
+}
+
+/// The placed solids of parts of these names as one.
+fn joined(names: &[&str], placed: Vec<Solid>) -> Result<Solid, RepairError> {
+    let named: Vec<(&str, &Solid)> = names.iter().copied().zip(&placed).collect();
     let merged = merge_skeletons(&named)?;
     let mut out = Solid::default();
     for (i, s) in placed.into_iter().enumerate() {
@@ -1656,7 +1677,7 @@ pub fn close_holes_through(
                     .iter()
                     .position(|&x| x == rim[j])
                     .unwrap_or(0);
-                s.colors.as_ref().map_or(WHITE, |c| c[t][k])
+                shape_mesh::wide(s.colors.as_ref().map_or(WHITE, |c| c[t][k]))
             })
             .collect();
         let centre_color: [f64; 4] =
@@ -1767,10 +1788,15 @@ pub fn close_holes_through(
         h.filled += 1;
         h.large += usize::from(large);
         h.uv_seam_fills += usize::from(seam);
-        new_tris.extend(
-            tris.into_iter()
-                .map(|t| (t, surface, tags.clone(), t.map(uv_of), t.map(color_of))),
-        );
+        new_tris.extend(tris.into_iter().map(|t| {
+            (
+                t,
+                surface,
+                tags.clone(),
+                t.map(uv_of),
+                t.map(|v| shape_mesh::stored(color_of(v))),
+            )
+        }));
     }
     for (t, surface, tags, uv, color) in new_tris {
         s.triangles.push(t);
@@ -2056,7 +2082,7 @@ fn keep_input_colors(before: &Solid, mut after: Solid) -> Result<Solid, RepairEr
         return Ok(after);
     };
     let key = |p: DVec3| [p.x + 0.0, p.y + 0.0, p.z + 0.0].map(f64::to_bits);
-    let mut at: BTreeMap<[u64; 3], Vec<[f64; 4]>> = BTreeMap::new();
+    let mut at: BTreeMap<[u64; 3], Vec<[f32; 4]>> = BTreeMap::new();
     for (t, tri) in before.triangles.iter().enumerate() {
         for (k, &v) in tri.iter().enumerate() {
             at.entry(key(before.positions[v as usize]))
@@ -2064,7 +2090,7 @@ fn keep_input_colors(before: &Solid, mut after: Solid) -> Result<Solid, RepairEr
                 .push(old[t][k]);
         }
     }
-    let cmp = |a: &[f64; 4], b: &[f64; 4]| {
+    let cmp = |a: &[f32; 4], b: &[f32; 4]| {
         (0..4)
             .map(|k| a[k].total_cmp(&b[k]))
             .find(|o| o.is_ne())
@@ -2076,8 +2102,14 @@ fn keep_input_colors(before: &Solid, mut after: Solid) -> Result<Solid, RepairEr
     }
     let n = after.triangles.len();
     let new = after.colors.get_or_insert_with(|| vec![[WHITE; 3]; n]);
-    let dist =
-        |a: &[f64; 4], b: &[f64; 4]| (0..4).map(|k| (a[k] - b[k]) * (a[k] - b[k])).sum::<f64>();
+    let dist = |a: &[f32; 4], b: &[f32; 4]| {
+        (0..4)
+            .map(|k| {
+                let d = f64::from(a[k]) - f64::from(b[k]);
+                d * d
+            })
+            .sum::<f64>()
+    };
     // Corners the union made, per vertex.
     let mut made: BTreeMap<u32, Vec<(usize, usize)>> = BTreeMap::new();
     for (t, tri) in after.triangles.iter().enumerate() {
@@ -2102,13 +2134,13 @@ fn keep_input_colors(before: &Solid, mut after: Solid) -> Result<Solid, RepairEr
     // colour border; a larger difference (two sheets of different colour
     // meeting) stays one.
     for corners in made.values() {
-        let mut cs: Vec<[f64; 4]> = corners.iter().map(|&(t, k)| new[t][k]).collect();
+        let mut cs: Vec<[f32; 4]> = corners.iter().map(|&(t, k)| new[t][k]).collect();
         let spread = (0..4)
             .map(|ch| {
                 let (lo, hi) = cs
                     .iter()
                     .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), c| {
-                        (l.min(c[ch]), h.max(c[ch]))
+                        (l.min(f64::from(c[ch])), h.max(f64::from(c[ch])))
                     });
                 hi - lo
             })
@@ -2118,7 +2150,9 @@ fn keep_input_colors(before: &Solid, mut after: Solid) -> Result<Solid, RepairEr
         }
         cs.sort_by(cmp);
         let n = cs.len() as f64;
-        let mean: [f64; 4] = core::array::from_fn(|ch| cs.iter().map(|c| c[ch]).sum::<f64>() / n);
+        let mean = shape_mesh::stored(core::array::from_fn(|ch| {
+            cs.iter().map(|c| f64::from(c[ch])).sum::<f64>() / n
+        }));
         for &(t, k) in corners {
             new[t][k] = mean;
         }

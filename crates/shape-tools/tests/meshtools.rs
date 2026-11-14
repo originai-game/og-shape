@@ -72,6 +72,11 @@ fn glb_round_trip_keeps_parts_transforms_and_names() {
     both.append(&ball);
     both.canonicalize().unwrap();
     same_points(&joined, &both);
+    // Taking the parts' solids gives the same solid and leaves them
+    // empty.
+    let mut parts = imported.parts.clone();
+    assert!(shape_tools::join_owned(&mut parts).unwrap() == joined);
+    assert!(parts.iter().all(|p| p.solid == Solid::default()));
     assert_eq!(joined.triangles.len(), both.triangles.len());
     assert_eq!(joined.faces(&["ball"]).unwrap().len(), ball.triangles.len());
     let m = joined.measure();
@@ -121,7 +126,7 @@ fn obj_round_trip_and_polygons() {
         Some(c[k])
     });
     let half = shape_core::trig::pow((0.5 + 0.055) / 1.055, 2.4);
-    assert_eq!(first, Some([1.0, half, 0.0, 1.0]));
+    assert_eq!(first, Some([1.0, half as f32, 0.0, 1.0]));
     assert!(colors.iter().flatten().filter(|c| **c == [1.0; 4]).count() > 0);
     assert_eq!(p.name, "plate");
     assert_eq!(p.solid.triangles.len(), 4);
@@ -186,7 +191,7 @@ fn gltf_with_external_and_embedded_buffers() {
     let coloured = json.replace(r#""POSITION":0}"#, r#""POSITION":0,"COLOR_0":0}"#);
     let imported = import_gltf(coloured.as_bytes(), &files).unwrap();
     assert!(imported.skipped.is_empty());
-    let mut colors: Vec<[f64; 4]> = imported.parts[0].solid.colors.as_ref().unwrap()[0].to_vec();
+    let mut colors: Vec<[f32; 4]> = imported.parts[0].solid.colors.as_ref().unwrap()[0].to_vec();
     colors.sort_by(|a, b| a.partial_cmp(b).unwrap());
     assert_eq!(
         colors,

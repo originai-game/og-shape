@@ -938,7 +938,10 @@ impl Mesh {
     fn attr(&self, t: u32, k: usize) -> Attr {
         Attr {
             uv: self.uvs.as_ref().map_or(DVec2::ZERO, |u| u[t as usize][k]),
-            color: self.colors.as_ref().map_or([0.0; 4], |c| c[t as usize][k]),
+            color: self
+                .colors
+                .as_ref()
+                .map_or([0.0; 4], |c| shape_mesh::wide(c[t as usize][k])),
         }
     }
 
@@ -1164,7 +1167,7 @@ impl Mesh {
                 uvs[t as usize][k] = new.uv;
             }
             if let Some(c) = &mut self.colors {
-                c[t as usize][k] = new.color;
+                c[t as usize][k] = shape_mesh::stored(new.color);
             }
         }
         let around = std::mem::take(&mut self.around[from as usize]);

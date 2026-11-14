@@ -358,7 +358,7 @@ pub fn measure(s: &Solid, d: &Measure) -> MeshMeasures {
 /// on it.
 fn color_borders(s: &Solid, c: &[shape_mesh::CornerColors]) -> usize {
     // Per edge, each triangle's colours at its two ends (smaller first).
-    type Ends = ([f64; 4], [f64; 4]);
+    type Ends = ([f32; 4], [f32; 4]);
     let mut by_edge: BTreeMap<(u32, u32), Vec<Ends>> = BTreeMap::new();
     for (i, t) in s.triangles.iter().enumerate() {
         for k in 0..3 {

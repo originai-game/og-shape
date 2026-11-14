@@ -29,9 +29,9 @@ pub struct RepairDesc {
 
 /// The repair report: `triangles_in`, `repair`, `measures`, `output`.
 pub fn repair(files: &dyn Files, d: &RepairDesc) -> Result<String, Failure> {
-    let mesh = load_mesh(files, &d.input, &d.import)?;
-    let joined = mesh.joined()?;
+    let mut mesh = load_mesh(files, &d.input, &d.import)?;
     let clips = mesh.clips()?;
+    let joined = mesh.take_joined()?;
     let triangles_in = joined.triangles.len();
     let (fixed, r) = shape_tools::repair_owned(joined, &d.repair).map_err(failed)?;
     let m = shape_tools::measure(&fixed, &Measure::default());
