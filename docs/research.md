@@ -10645,5 +10645,37 @@ order and lines of the joints, the hand's and head's ends on their
 bones, a forearm's turn leaving the torso still) and the golden case
 `skin.humanoid`.
 
-Left: retargeting clips onto the rig, Kimodo's preset motions, the
-`rig` MCP tool, fingers, and quadrupeds without a given skeleton.
+Left: retargeting clips onto the rig (§80), Kimodo's preset motions,
+the `rig` MCP tool, fingers, and quadrupeds without a given skeleton.
+
+## 80. Retargeting a clip onto another skeleton (2026-11-14)
+
+`shape_skin::retarget`, `shape retarget`. A clip is kept as skinning
+matrices (§40), so a source bone's matrix at a key is its motion in the
+world from its bind pose: its rotation part is the bone's world turn.
+A matched target bone takes that turn after a swing of its own rest
+direction (toward its first matched child) onto the source bone's; a
+target bone without a match turns with its parent; each child sits
+where its parent's posed frame carries its rest offset, so the target
+keeps its own lengths; the root moves as the source's does, scaled by
+the hips' heights above each skeleton's lowest joint (Meshy's meshes
+are centred on the origin, so heights from z = 0 gave 0.039).
+
+Checked on three.js's Xbot, its seven clips (agree, headShake, idle,
+run, sad_pose, sneak_pose, walk; 4 to 231 keys):
+
+| target | matched | joints against the source's, every key | vertices at mid-clip |
+|---|---|---|---|
+| Xbot's own 67 joints, bound by bone heat | 67 | 0.0 mm (max 0.0) in the five moving clips; the two poses 1.0 and 1.9 mean, 45.6 max (their bones are scaled, which is not carried) | mean 2.6 to 5.7 mm (the weights' difference) |
+| Xbot rigged from its mesh (§79, 27 joints) | 25 (the hands' tips follow) | mean 31, max 70 mm | mean 38 to 43, max 158 mm (run) |
+
+Previews of run and walk side by side match but for the fingers, which
+the rig has none of. Xbot's run, walk and idle onto Meshy's army man
+(A pose, 1.2 m, root scaled 0.57): written with the mesh, read by
+three.js r186's `GLTFLoader` (3 clips, 54 tracks each, 27 bones), its
+`AnimationMixer` moves the skinned vertices at 0, 0.2, 0.4 and 0.6 s,
+none NaN. Retargeting a clip of 231 keys takes 1 ms.
+
+Tests: `a_clip_moves_onto_another_skeleton` (onto itself the same
+matrices; onto an A pose's arm of other lengths the T pose's
+directions, and a bent elbow pointing up); golden `skin.retarget`.

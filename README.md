@@ -297,9 +297,10 @@ What a user might expect and will not find, as of 2026-11-14:
   design: the kernel holds meshes only.
 - **Rigging.** `shape rig` finds a humanoid's joints only in a T or A
   pose (no fingers) and refuses other poses; any other skeleton is
-  given as joints. Clips are not yet retargeted onto a rig, and the
-  preset motions (Kimodo) are not in yet (`docs/plan.md` phase 7,
-  `docs/research.md` §79).
+  given as joints. `shape retarget` carries a clip's turns, not its
+  bones' scale. The preset motions (Kimodo) are not in yet, and
+  neither command is an MCP tool yet (`docs/plan.md` phase 7,
+  `docs/research.md` §79, §80).
 - **Size.** A `Solid` of 819 000 coloured triangles is 126 MiB
   resident (its corner colours are 32-bit floats now, 48 bytes a
   triangle), and `repair` peaks at 506 MiB on it (837 before). Nothing
@@ -335,6 +336,7 @@ shape export model.json -o robot.urdf                # links, joints and STL mes
 shape export model.json -o model.usda                # a USD stage, maps beside it
 shape collide model.json --hulls 8 -o colliders.glb  # convex colliders
 shape rig character.glb --check-clip -o rigged.glb   # a humanoid's skeleton and weights
+shape retarget rigged.glb --from Xbot.glb -o moving.glb  # another skeleton's clips on it
 shape compress game.glb -o game.small.glb            # meshopt, lossless
 shape compress game.glb --quantize -o game.q.glb     # quantized, then meshopt
 shape compress game.glb --draco -o game.draco.glb    # Draco, quantized

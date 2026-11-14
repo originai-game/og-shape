@@ -7,7 +7,9 @@ use shape_bool::{Boolean, boolean};
 use shape_core::{DVec3, Frame, HashError, OutputHash, trig};
 use shape_gen::solids::{BoxDesc, CylinderDesc, cuboid, cylinder, sphere};
 use shape_mesh::{Bone, Skin, Solid, Weights};
-use shape_skin::{Pose, Rig, RigBone, Turn, bind, humanoid, measure_pose, pose, skin};
+use shape_skin::{
+    Pose, Rig, RigBone, Turn, bind, humanoid, measure_pose, pose, retarget, skin, skin_matrices,
+};
 use shape_tools::{Part, Scene, glb};
 
 use crate::cases::Case;
@@ -29,6 +31,10 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "skin.humanoid",
             run: rigged_figure,
+        },
+        Case {
+            name: "skin.retarget",
+            run: retargeted,
         },
         Case {
             name: "skin.glb",
@@ -209,4 +215,64 @@ fn rigged_figure(h: &mut OutputHash) -> Result<(), HashError> {
     }
     let (rigged, _) = bind(&s, &sk).map_err(|_| HashError::NaN)?;
     rigged.hash_into(h)
+}
+
+/// A T pose's clip (an elbow bent, a shoulder turned) moved onto an A
+/// pose's arm of other lengths: the clip's matrices.
+fn retargeted(h: &mut OutputHash) -> Result<(), HashError> {
+    let nan = |_| HashError::NaN;
+    let chain = |arm: DVec3, length: f64, prefix: &str| Skin {
+        bones: ["Hips", "LeftArm", "LeftForeArm", "LeftHand"]
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                let s = DVec3::new(0.0, 0.0, 100.0);
+                let at = [
+                    DVec3::new(0.0, 0.0, 60.0),
+                    s,
+                    s + arm * length,
+                    s + arm * (2.0 * length),
+                ][i];
+                Bone::new(
+                    &format!("{prefix}{n}"),
+                    (i > 0).then(|| i as u32 - 1),
+                    Frame {
+                        origin: at,
+                        ..Frame::IDENTITY
+                    },
+                )
+            })
+            .collect(),
+        weights: Vec::new(),
+    };
+    let source = chain(DVec3::X, 50.0, "mixamorig:");
+    let key = |turns: Vec<Turn>| skin_matrices(&source, &Pose { turns }).map_err(nan);
+    let clip = shape_mesh::SkinClip {
+        name: "bend".into(),
+        times: vec![0.0, 1.0],
+        poses: vec![
+            key(Vec::new())?,
+            key(vec![
+                Turn {
+                    bone: "mixamorig:LeftForeArm".into(),
+                    axis: DVec3::new(0.0, -1.0, 0.0),
+                    angle: 1.2,
+                },
+                Turn {
+                    bone: "mixamorig:LeftArm".into(),
+                    axis: DVec3::new(0.3, 0.2, 1.0),
+                    angle: 0.7,
+                },
+            ])?,
+        ],
+        morphs: Vec::new(),
+    };
+    let target = chain(DVec3::new(0.8, -0.1, -0.6) / 1.005, 37.0, "");
+    let (moved, _) = retarget(&source, &clip, &target, &Default::default()).map_err(nan)?;
+    for key in &moved.poses {
+        for m in key {
+            h.f64s(m)?;
+        }
+    }
+    Ok(())
 }

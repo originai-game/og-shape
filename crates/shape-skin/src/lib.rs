@@ -12,7 +12,8 @@
 //!
 //! A mesh with no named regions (an imported one) is skinned by
 //! [`bind`]: bone heat for a [`Skeleton`] of joints at points. A
-//! humanoid's joints are found from its mesh by [`humanoid`].
+//! humanoid's joints are found from its mesh by [`humanoid`]. A clip
+//! made for another skeleton is moved onto a skin by [`retarget`].
 //!
 //! The weights (`docs/research.md` §11):
 //! - A face belongs to the bone whose region names it carries: a region
@@ -42,11 +43,13 @@ mod heat;
 mod humanoid;
 mod mat;
 mod refine;
+mod retarget;
 mod rig;
 
 pub use heat::{BindReport, Joint, Skeleton, bind};
 pub use humanoid::{FitReport, Limb, humanoid};
 pub use mat::{apply, apply_vector, mul, turn};
+pub use retarget::{Retarget, RetargetReport, retarget};
 pub use rig::{
     Pose, PoseMeasures, Rig, RigBone, RigError, Turn, measure_pose, pose, pose_by, skin,
     skin_matrices,

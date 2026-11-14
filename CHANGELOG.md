@@ -1826,3 +1826,11 @@
   (`docs/research.md` §79). `shape_mesh::tree`: the box tree for
   segment crossings and nearest points, shared with `bake`. Golden:
   `skin.humanoid` added.
+- `shape retarget`: clips made for another skeleton moved onto a
+  skinned mesh (`shape_skin::retarget`): bones by name (Mixamo's prefix
+  taken off) and by `--map` pairs, world turns from the rest with each
+  bone's rest direction swung onto the source's, the root's motion
+  scaled by the hips' heights. Xbot's seven clips onto Xbot rigged anew
+  from its mesh: joints within 31 mm on average, exact onto its own
+  skeleton; onto Meshy's army man (an A pose), played by three.js
+  (`docs/research.md` §80). Golden: `skin.retarget` added.

@@ -461,3 +461,96 @@ fn a_figure_is_rigged_from_its_mesh() {
         }
     }
 }
+
+/// A chain hip → shoulder → elbow → hand: the arm along `arm` from the
+/// shoulder at (0, 0, 100), 50 a bone.
+fn chain(arm: DVec3, prefix: &str) -> shape_mesh::Skin {
+    use shape_mesh::{Bone, Skin};
+    let at = |p: DVec3| Frame {
+        origin: p,
+        ..Frame::IDENTITY
+    };
+    let s = DVec3::new(0.0, 0.0, 100.0);
+    let names = ["Hips", "LeftArm", "LeftForeArm", "LeftHand"];
+    let places = [
+        DVec3::new(0.0, 0.0, 60.0),
+        s,
+        s + arm * 50.0,
+        s + arm * 100.0,
+    ];
+    Skin {
+        bones: (0..4)
+            .map(|i| {
+                Bone::new(
+                    &format!("{prefix}{}", names[i]),
+                    (i > 0).then(|| i as u32 - 1),
+                    at(places[i]),
+                )
+            })
+            .collect(),
+        weights: Vec::new(),
+    }
+}
+
+#[test]
+fn a_clip_moves_onto_another_skeleton() {
+    use shape_mesh::SkinClip;
+    // A T pose's clip whose keys hold still, then bend the elbow a
+    // quarter turn about −y (the forearm from +x to +z, up).
+    let source = chain(DVec3::X, "mixamorig:");
+    let still = crate::skin_matrices(&source, &Pose::default()).unwrap();
+    let bent = crate::skin_matrices(
+        &source,
+        &Pose {
+            turns: vec![Turn {
+                bone: "mixamorig:LeftForeArm".into(),
+                axis: -DVec3::Y,
+                angle: trig::to_radians(90.0),
+            }],
+        },
+    )
+    .unwrap();
+    let clip = SkinClip {
+        name: "bend".into(),
+        times: vec![0.0, 1.0],
+        poses: vec![still, bent],
+        morphs: Vec::new(),
+    };
+    // Onto itself: the same matrices, by name past the prefix.
+    let same = chain(DVec3::X, "");
+    let (moved, r) = crate::retarget(&source, &clip, &same, &Default::default()).unwrap();
+    assert_eq!(r.matched.len(), 4);
+    for (a, b) in moved
+        .poses
+        .iter()
+        .flatten()
+        .zip(clip.poses.iter().flatten())
+    {
+        for k in 0..16 {
+            assert!((a[k] - b[k]).abs() < 1e-9, "{a:?} {b:?}");
+        }
+    }
+    // Onto an A pose (the arm 45° down, its bones 50 long): held still,
+    // the arm reaches out along +x as the source's does; bent, the
+    // forearm points up.
+    let down = DVec3::new(1.0, 0.0, -1.0) / 2f64.sqrt();
+    let a_pose = chain(down, "");
+    let (moved, r) = crate::retarget(&source, &clip, &a_pose, &Default::default()).unwrap();
+    assert!((r.scale - 1.0).abs() < 1e-12);
+    let place = |key: usize, bone: usize| {
+        crate::apply(&moved.poses[key][bone], a_pose.bones[bone].rest.origin)
+    };
+    let shoulder = DVec3::new(0.0, 0.0, 100.0);
+    assert!(
+        (place(0, 2) - (shoulder + DVec3::X * 50.0)).length() < 1e-9,
+        "{:?}",
+        place(0, 2)
+    );
+    assert!(
+        (place(0, 3) - (shoulder + DVec3::X * 100.0)).length() < 1e-9,
+        "{:?}",
+        place(0, 3)
+    );
+    let up = shoulder + DVec3::X * 50.0 + DVec3::Z * 50.0;
+    assert!((place(1, 3) - up).length() < 1e-9, "{:?}", place(1, 3));
+}

@@ -426,6 +426,17 @@ GLB that three.js, Godot, Unity and Unreal pose.
   bone (`bind.pieces_unseen`: an eye behind its lid) take their nearest
   bones'. About 3 s for 25 000 vertices; decimate a dense mesh first.
 
+Then give it motion: `shape retarget rigged.glb --from animated.glb
+[--clip run,walk] -o moving.glb` moves another skeleton's clips (a
+Mixamo file, three.js's Xbot) onto the rig. Bones match by name, with
+Mixamo's `mixamorig:` prefix taken off; `--map Source=Target,…` pairs
+the rest. Each matched bone turns in the world as its source bone does,
+after its rest direction is swung onto the source's, so a T pose's clip
+plays on an A pose's rig; the root's motion is scaled by the hips'
+heights. Read `unmatched` (the rig's bones that only follow their
+parents) and `unused` (the source's bones nothing took: fingers, when
+the rig has none). Scale in a clip's bones is not carried.
+
 ## Which way is up
 
 `measure --axes` (MCP `axes`) and `place`'s report give, for the mesh

@@ -34,6 +34,8 @@
 //!                [--unwrap] [--texture-max PX] [--ktx2 | --ktx2-rdo Q | --etc1s | --webp]
 //!                [--bake PX [--bake-distance MM]]
 //! shape rig      <mesh> [-o out.glb] [--skeleton joints.json] [--check-clip]
+//! shape retarget <rigged mesh> --from <animated file> [--clip NAME,…]
+//!                [--map SOURCE=TARGET,…] [-o out.glb]
 //! ```
 //!
 //! An input is a program (the JSON a binding records,
@@ -110,7 +112,10 @@ const USAGE: &str = "usage: shape <command> <input> [options]
   rig      <mesh> [-o out.glb] [--skeleton joints.json] [--check-clip]
                                                 a skin by bone heat: for the joints given,
                                                 or a humanoid's found from the mesh (up +Z,
-                                                facing -Y, T or A pose)";
+                                                facing -Y, T or A pose)
+  retarget <rigged mesh> --from <animated file> [--clip NAME,…] [--map SOURCE=TARGET,…]
+           [-o out.glb]                         the file's clips moved onto the mesh's
+                                                skeleton, bones matched by name";
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -131,6 +136,7 @@ fn main() -> ExitCode {
                 "compress" => shape_cli::compress::run(&a),
                 "process" => shape_cli::process::run(&a),
                 "rig" => shape_cli::rig::run(&a),
+                "retarget" => shape_cli::retarget::run(&a),
                 "help" | "-h" | "--help" => {
                     println!("{USAGE}");
                     return ExitCode::SUCCESS;
