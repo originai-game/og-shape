@@ -40,17 +40,14 @@ Design: `docs/design.md`. Plan and status: `docs/plan.md`. Verified research:
   - The determinism gate (`docs/plan.md` §Gate) proves all of this on all
     three targets. A claim that a crate is deterministic is checked by the
     gate, never assumed.
-- **Permissive licences only:** MIT, Apache-2.0, BSD, zlib, ISC, and
-  Unicode-3.0 (Unicode data tables). This project is MIT, and code under
-  GPL, LGPL or MPL cannot be made part of an MIT work: never use it,
-  whether copied, ported, translated or rewritten to its structure.
-  Vendored code keeps its licence under `third_party/<name>/`.
-  - GPL source (Blender's) may be read to understand what a tool does and
-    to compare results (the owner, 2026-11-11). What is then written here
-    is written from the published idea (a paper, design notes, the
-    behaviour seen), in this project's own structure and names, and its
-    commit says which source was read and what was taken from it: an
-    idea, never code.
+- **Licences** (the owner, 2026-11-14): code, data, model weights and
+  model outputs may be used under any licence that allows commercial use
+  and redistribution, such as the NVIDIA Open Model License. Each keeps
+  its licence, its notice and any use terms under `third_party/<name>/`.
+  - The one limit is the law, not a choice: this project is MIT, so code
+    under GPL or LGPL is not compiled into its crates (that would make
+    them GPL). Such code may be read, and what it does written here from
+    the idea, saying in the commit which source was read.
 - **Names survive operations.** Faces and edges are reached by name, never
   by computed coordinates. Every operation states how it carries names
   through (`docs/design.md` §4).

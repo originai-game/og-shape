@@ -1809,3 +1809,9 @@
   a mesh of 819 000 coloured triangles is 126 MiB after import (151),
   and `shape repair --non-manifold` on it peaks at 506 MiB (837), its
   output byte for byte the same (`docs/research.md` §78).
+- Licences: code, data, model weights and model outputs may be used
+  under any licence that allows commercial use and redistribution (the
+  NVIDIA Open Model License among them), each kept with its notice
+  under `third_party/`; only GPL and LGPL code stays out of the crates
+  (`AGENTS.md`). Rigging meshes without a skin, retargeting and preset
+  motions are planned as phase 7 (`docs/plan.md`).

@@ -26,8 +26,10 @@ the tool refuses it. It is never broken silently.
 What it is not:
 - A CAD kernel. There are no NURBS and no B-rep, only meshes.
 - A sculpting tool or a retopology tool.
-- A rigger for arbitrary meshes. Bones come from the program that builds
-  the mesh (§4, skinning), and imported skins are carried through.
+- A rigger by a learned model. Bones come from the program that builds
+  the mesh, imported skins are carried through, and a mesh without a
+  skin is rigged by published geometric methods (§4, skinning;
+  `docs/plan.md` phase 7), all in the kernel's own deterministic Rust.
 
 ## 2. Scope of the first release
 
@@ -132,6 +134,12 @@ last row.
     borders. Rigid placement is baked into the bones, and join merges
     skeletons by bone name.
   - GLB export writes a glTF skin.
+  - A mesh without a skin is rigged (`docs/plan.md` phase 7): given a
+    skeleton (joints by name, each at a point), its weights are bone
+    heat (Baran and Popović 2007: a heat equation on the surface, each
+    bone heating the vertices it sees nearest); for a humanoid, the
+    joints can be found from the mesh itself, and the report measures
+    where they fell so the agent judges them.
 - **Morph targets:** optional, on imported meshes: named per-vertex
   offsets, each with a rest weight (`Solid::morphs`). They follow the
   vertices as a skin's weights do (a weld takes the mean, a collapse

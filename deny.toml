@@ -1,5 +1,7 @@
-# Licence and dependency gate (AGENTS.md, "Permissive licences only" and
-# "No rayon or threads in the kernel"). Run by scripts/check.sh.
+# Licence and dependency gate (AGENTS.md, "Licences" and "No rayon or
+# threads in the kernel"). Run by scripts/check.sh. The list holds the
+# licences of the crates in use; add one when a crate needs it, unless it
+# is GPL or LGPL (AGENTS.md).
 
 [graph]
 all-features = true
