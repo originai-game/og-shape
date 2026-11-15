@@ -368,7 +368,7 @@ dependencies = [
 
 [[package]]
 name = "shape-2d"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "i_overlay",
  "shape-core",
@@ -378,7 +378,7 @@ dependencies = [
 
 [[package]]
 name = "shape-bevel"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "shape-2d",
  "shape-bool",
@@ -391,7 +391,7 @@ dependencies = [
 
 [[package]]
 name = "shape-bool"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "glam",
  "robust",
@@ -404,7 +404,7 @@ dependencies = [
 
 [[package]]
 name = "shape-cli"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "shape-core",
@@ -416,7 +416,7 @@ dependencies = [
 
 [[package]]
 name = "shape-core"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "glam",
  "libm",
@@ -426,7 +426,7 @@ dependencies = [
 
 [[package]]
 name = "shape-edit"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "robust",
  "shape-2d",
@@ -439,7 +439,7 @@ dependencies = [
 
 [[package]]
 name = "shape-gen"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "glam",
  "shape-2d",
@@ -449,7 +449,7 @@ dependencies = [
 
 [[package]]
 name = "shape-golden"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "miniz_oxide",
  "shape-2d",
@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "shape-mcp"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "miniz_oxide",
  "serde_json",
@@ -479,14 +479,14 @@ dependencies = [
 
 [[package]]
 name = "shape-mesh"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "shape-core",
 ]
 
 [[package]]
 name = "shape-model"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "gltf",
  "serde_json",
@@ -502,7 +502,7 @@ dependencies = [
 
 [[package]]
 name = "shape-skin"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "gltf",
  "shape-2d",
@@ -517,7 +517,7 @@ dependencies = [
 
 [[package]]
 name = "shape-tools"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "gltf",
  "image-webp",
@@ -533,7 +533,7 @@ dependencies = [
 
 [[package]]
 name = "shape-wasm"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "shape-model",
  "shape-tools",

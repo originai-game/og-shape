@@ -1,6 +1,6 @@
 {
   "name": "og-shape",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "TypeScript binding over og-shape's wasm build, for this repository's tests and examples. After the merge the binding is generated from the engine's IDL as og.shape.",
   "license": "MIT",

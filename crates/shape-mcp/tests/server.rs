@@ -413,9 +413,12 @@ fn guide_examples_build() {
 
     let built = Path::new(BINDING).join("pkg/shape_wasm_bg.wasm").is_file();
     if built && Command::new("bun").arg("--version").output().is_ok() {
+        // The binding by a relative path that does not start with `.`
+        // (as `--binding og-shape-0.1.0-binding` gives it; the tests run
+        // in crates/shape-mcp), which bun would read as a package's name.
         let ts = TsConfig {
             enabled: true,
-            binding: PathBuf::from(BINDING),
+            binding: PathBuf::from("ts/../../shape-wasm/ts"),
             ..TsConfig::default()
         };
         let source = example(include_str!("../../../guides/typescript.md"), "ts");

@@ -6,7 +6,14 @@ builds it, looks at its preview, measures it and exports it; or takes a
 mesh from elsewhere through import, repair, decimate and unwrap. Every
 report, image and file comes from the kernel: the same bytes on every host.
 
-## Build it
+## Get it
+
+From a release (https://github.com/originai-game/og-shape/releases):
+`og-shape-<version>-<host>.tar.gz` (`.zip` on Windows) holds `shape` and
+`shape-mcp` for x86-64 and aarch64 Linux, aarch64 macOS and x86-64
+Windows; `og-shape-<version>-binding.tar.gz` holds the TypeScript
+binding, for `run_typescript` with `--binding <its directory>`;
+`SHA256SUMS` checks them. Or build it:
 
 ```sh
 cargo build --release -p shape-mcp        # target/release/shape-mcp

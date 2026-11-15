@@ -1,0 +1,92 @@
+# A release: on a tag vX.Y.Z whose version is the workspace's, shape and
+# shape-mcp built on each host the gate runs on (Linux on Ubuntu 22.04
+# for an older glibc), the TypeScript binding, and SHA256SUMS, attached
+# to a GitHub release whose notes are the CHANGELOG's section for it.
+# The tagged commit has passed the gate on main before it is tagged.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: x86-64 Linux + binding
+            os: ubuntu-22.04
+            binding: true
+          - name: aarch64 Linux
+            os: ubuntu-22.04-arm
+          - name: aarch64 macOS
+            os: macos-latest
+          - name: x86-64 Windows
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag is the workspace's version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          test "${GITHUB_REF_NAME}" = "v${version}" || {
+            echo "tag ${GITHUB_REF_NAME} is not v${version} (Cargo.toml)" >&2
+            exit 1
+          }
+      - if: matrix.binding
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.130
+      - run: scripts/package.sh
+      - if: matrix.binding
+        run: scripts/package.sh binding
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: dist/og-shape-*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums and notes
+        run: |
+          (cd dist && sha256sum og-shape-* > SHA256SUMS && cat SHA256SUMS)
+          version=${GITHUB_REF_NAME#v}
+          awk -v h="## ${version} " 'index($0, h) == 1 {on = 1; next} on && /^## / {exit} on' \
+            CHANGELOG.md > notes.md
+          test -s notes.md || { echo "CHANGELOG.md has no section ${version}" >&2; exit 1; }
+          # GitHub takes 125 000 characters of notes: a longer section
+          # gives its opening paragraphs and a link to the whole.
+          if [ "$(wc -c < notes.md)" -gt 100000 ]; then
+            awk '/^- /{exit} {print}' notes.md > short.md
+            printf '\nEvery change: [CHANGELOG.md](%s/%s/blob/%s/CHANGELOG.md).\n' \
+              "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_REF_NAME}" >> short.md
+            mv short.md notes.md
+          fi
+          cat notes.md
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "og-shape ${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag

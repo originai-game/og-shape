@@ -107,6 +107,11 @@ pub fn run_polled(
             cfg.binding.display()
         )));
     }
+    // bun reads a relative path that does not start with `.` as a
+    // package's name: the binding is given to it by its full path.
+    let index = index
+        .canonicalize()
+        .map_err(|e| Failure::Failed(format!("{}: {e}", index.display())))?;
     let dir = scratch()?;
     let result = run_in(cfg, ws, src, &index, &dir, poll);
     let _ = std::fs::remove_dir_all(&dir);

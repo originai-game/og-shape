@@ -310,7 +310,9 @@ What a user might expect and will not find, as of 2026-11-14:
 
 ## Use it
 
-From an agent, through MCP (`guides/mcp.md`):
+From an agent, through MCP (`guides/mcp.md`), with `shape-mcp` from a
+[release](https://github.com/originai-game/og-shape/releases) (Linux,
+macOS and Windows) or built here:
 
 ```sh
 cargo build --release -p shape-mcp

@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 0.1.0 — 2026-11-15
+
+The first release: a deterministic 3D modeling kernel for agents.
+Models as programs (generators, booleans, edits, bevels, joints, UVs,
+materials, clips), previewed, measured and exported (GLB, OBJ, STL, USD,
+URDF); meshes from elsewhere imported (glTF, OBJ, FBX), repaired,
+decimated, unwrapped, baked, compressed; humanoids rigged and given
+another skeleton's clips. The same bytes on every host.
+
+`shape` and `shape-mcp` for x86-64 and aarch64 Linux (glibc 2.35 or
+later), aarch64 macOS and x86-64 Windows, and the TypeScript binding for
+`shape-mcp --binding`, with `SHA256SUMS` (`scripts/package.sh`,
+`.github/workflows/release.yml`). An agent connects with
+`claude mcp add og-shape -- /path/to/shape-mcp --root /path/to/workspace`
+(`guides/mcp.md`).
+
+- `shape-mcp --binding` takes a relative path such as
+  `og-shape-0.1.0-binding`: bun read one that does not start with `.`
+  as a package's name, so `run_typescript` failed.
+
 - Design: og-shape is "3D modeling in Rust, built for LLMs". It owns its
   capabilities, not where an agent's other meshes come from. Skinning is
   planned (phase 5b): bones from the program, imported skins carried
